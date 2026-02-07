@@ -3,43 +3,609 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>3D Ops Dashboard</title>
+    <title>Roboard</title>
     <link rel="stylesheet" href="style.css" />
   </head>
-  <body class="dashboard">
-    <header>
-      <div>
-        <h1>3D Ops Dashboard</h1>
-        <p>Realtime scene monitoring and event playback.</p>
-      </div>
-      <form aria-label="connection controls" class="header-form">
-        <label for="tenant-id">Tenant ID</label>
-        <input id="tenant-id" name="tenant-id" type="text" placeholder="tenant_001" />
-        <label for="api-key">API Key</label>
-        <input id="api-key" name="api-key" type="text" placeholder="api_..." />
-        <label for="task-id">Task ID</label>
-        <input id="task-id" name="task-id" type="text" placeholder="task_08f2" />
-        <button type="button" id="connect-button">Connect</button>
-        <span id="status-pill" class="status-pill neutral"></span>
-      </form>
-    </header>
+  <body class="app-shell">
+    <div id="app" class="app" data-route="landing">
+      <section id="view-landing" class="view view-landing" aria-label="Landing">
+        <div class="landing-atmos" aria-hidden="true"></div>
 
-    <main>
-      <section class="panel canvas" aria-label="3D scene">
-        <div id="scene-container" class="viewport">
-          <canvas id="scene-canvas"></canvas>
+        <header class="landing-top">
+          <a class="brand" href="/#/" aria-label="Roboard home">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <span class="brand-name">Roboard</span>
+          </a>
+          <div class="landing-kicker">Realtime 3D ops • event stream • playback</div>
+        </header>
+
+        <div class="landing-grid">
+          <div class="landing-copy">
+            <p class="landing-eyebrow">Milestone M0</p>
+            <h1 class="landing-title">A room where tasks become motion.</h1>
+            <p class="landing-lede">
+              Step into a 3D office view and wire the live event stream. Auth is UI-only for now —
+              submit to continue.
+            </p>
+
+            <div class="landing-cta-row">
+              <button id="enter-button" class="btn btn-primary" type="button">Enter</button>
+              <p class="landing-hint">Press <kbd>Enter</kbd> on the button, then <kbd>Esc</kbd> to close the modal.</p>
+            </div>
+          </div>
+
+          <div class="landing-art" aria-hidden="true">
+            <div class="sigil">
+              <div class="sigil-ring"></div>
+              <div class="sigil-ring sigil-ring--b"></div>
+              <div class="sigil-dot"></div>
+            </div>
+            <div class="landing-caption">Three agents. One stream. Zero build tooling.</div>
+          </div>
         </div>
       </section>
 
-      <section class="panel event-log" aria-label="event log" id="event-log">
-        <h2>Event Log</h2>
-        <ul id="event-log-list">
-          <li>Awaiting connection...</li>
-        </ul>
+      <section id="view-world" class="view view-world" aria-label="World" hidden>
+        <div id="scene-container" class="world-viewport" aria-label="3D scene">
+          <canvas id="scene-canvas"></canvas>
+        </div>
+
+        <div class="world-ui" aria-label="World controls">
+          <section class="panel connect-panel" aria-label="Connect to event stream">
+            <div class="connect-head">
+              <h2>Connect</h2>
+              <span id="status-pill" class="status-pill neutral" aria-live="polite"></span>
+            </div>
+            <form aria-label="connection controls" class="header-form" id="connect-form">
+              <label for="tenant-id">Tenant ID</label>
+              <input id="tenant-id" name="tenant-id" type="text" placeholder="tenant_001" autocomplete="off" />
+              <label for="api-key">API Key</label>
+              <input id="api-key" name="api-key" type="text" placeholder="api_..." autocomplete="off" />
+              <label for="task-id">Task ID</label>
+              <input id="task-id" name="task-id" type="text" placeholder="task_08f2" autocomplete="off" />
+              <button type="button" id="connect-button">Connect</button>
+            </form>
+          </section>
+
+          <section class="panel event-log" aria-label="event log" id="event-log">
+            <div class="event-log-head">
+              <h2>Event Log</h2>
+              <button type="button" class="btn btn-ghost" id="event-log-toggle" aria-expanded="true" aria-controls="event-log-list">
+                Hide
+              </button>
+            </div>
+            <ul id="event-log-list">
+              <li>Awaiting connection...</li>
+            </ul>
+          </section>
+        </div>
       </section>
-    </main>
+    </div>
+
+    <div id="auth-modal" class="modal" hidden>
+      <div class="modal-backdrop" data-modal-close aria-hidden="true"></div>
+      <div
+        class="modal-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="auth-title"
+        aria-describedby="auth-desc"
+      >
+        <button class="modal-close" type="button" aria-label="Close dialog" data-modal-close>
+          <span aria-hidden="true">×</span>
+        </button>
+        <h2 id="auth-title">Enter Roboard</h2>
+        <p id="auth-desc" class="modal-subtitle">UI-only login/register. Submit to continue into the world.</p>
+
+        <div class="tabs" role="tablist" aria-label="Authentication">
+          <button
+            type="button"
+            class="tab"
+            id="auth-tab-login"
+            role="tab"
+            aria-selected="true"
+            aria-controls="auth-panel-login"
+          >
+            Login
+          </button>
+          <button
+            type="button"
+            class="tab"
+            id="auth-tab-register"
+            role="tab"
+            aria-selected="false"
+            aria-controls="auth-panel-register"
+            tabindex="-1"
+          >
+            Register
+          </button>
+        </div>
+
+        <section id="auth-panel-login" class="tab-panel" role="tabpanel" aria-labelledby="auth-tab-login">
+          <form id="login-form" class="auth-form">
+            <label for="login-email">Email</label>
+            <input id="login-email" name="email" type="email" autocomplete="email" required />
+            <label for="login-password">Password</label>
+            <input id="login-password" name="password" type="password" autocomplete="current-password" required />
+            <button class="btn btn-primary" type="submit">Continue</button>
+          </form>
+        </section>
+
+        <section
+          id="auth-panel-register"
+          class="tab-panel"
+          role="tabpanel"
+          aria-labelledby="auth-tab-register"
+          hidden
+        >
+          <form id="register-form" class="auth-form">
+            <label for="register-name">Name</label>
+            <input id="register-name" name="name" type="text" autocomplete="name" required />
+            <label for="register-email">Email</label>
+            <input id="register-email" name="email" type="email" autocomplete="email" required />
+            <label for="register-password">Password</label>
+            <input id="register-password" name="password" type="password" autocomplete="new-password" required />
+            <button class="btn btn-primary" type="submit">Create account</button>
+          </form>
+        </section>
+
+        <p class="modal-note">
+          After you enter the world, use the Connect panel to attach to the task event stream via WebSocket.
+        </p>
+      </div>
+    </div>
 
     <script src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>
-    <script src="app.js"></script>
+    <script>
+      "use strict";
+
+      (() => {
+        const app = document.getElementById("app");
+        const landingView = document.getElementById("view-landing");
+        const worldView = document.getElementById("view-world");
+        const enterButton = document.getElementById("enter-button");
+
+        if (!app || !landingView || !worldView) {
+          return;
+        }
+
+        const isWorldHash = () => {
+          const hash = window.location.hash || "";
+          return hash === "#/world" || hash === "#/world/";
+        };
+
+        const setHashRoute = (route) => {
+          if (route === "world") {
+            window.location.hash = "#/world";
+          } else {
+            // Keep the URL at / (no server rewrite required).
+            window.location.hash = "#/";
+          }
+        };
+
+        const transitionToView = (next) => {
+          const current = app.getAttribute("data-route") || "landing";
+          if (current === next) {
+            return;
+          }
+
+          const currentEl = current === "world" ? worldView : landingView;
+          const nextEl = next === "world" ? worldView : landingView;
+
+          app.setAttribute("data-route", next);
+          document.body.setAttribute("data-route", next);
+
+          nextEl.hidden = false;
+          nextEl.classList.remove("is-leaving");
+          nextEl.classList.add("is-entering");
+
+          currentEl.classList.remove("is-entering");
+          currentEl.classList.add("is-leaving");
+
+          window.setTimeout(() => {
+            currentEl.hidden = true;
+            currentEl.classList.remove("is-leaving");
+            nextEl.classList.remove("is-entering");
+          }, 460);
+        };
+
+        const createAuthModal = () => {
+          const modal = document.getElementById("auth-modal");
+          if (!modal) {
+            return null;
+          }
+
+          const dialog = modal.querySelector(".modal-dialog");
+          const closeTargets = modal.querySelectorAll("[data-modal-close]");
+          const tabLogin = document.getElementById("auth-tab-login");
+          const tabRegister = document.getElementById("auth-tab-register");
+          const panelLogin = document.getElementById("auth-panel-login");
+          const panelRegister = document.getElementById("auth-panel-register");
+          const loginForm = document.getElementById("login-form");
+          const registerForm = document.getElementById("register-form");
+
+          if (!dialog || !tabLogin || !tabRegister || !panelLogin || !panelRegister) {
+            return null;
+          }
+
+          let lastFocused = null;
+
+          const focusFirstField = () => {
+            const activePanel = panelRegister.hidden ? panelLogin : panelRegister;
+            const first = activePanel.querySelector("input, button, select, textarea, a[href]");
+            if (first) {
+              first.focus();
+            }
+          };
+
+          const setActiveTab = (tab) => {
+            const loginActive = tab === "login";
+
+            tabLogin.setAttribute("aria-selected", String(loginActive));
+            tabLogin.tabIndex = loginActive ? 0 : -1;
+            tabRegister.setAttribute("aria-selected", String(!loginActive));
+            tabRegister.tabIndex = !loginActive ? 0 : -1;
+
+            panelLogin.hidden = !loginActive;
+            panelRegister.hidden = loginActive;
+
+            window.setTimeout(focusFirstField, 0);
+          };
+
+          const open = () => {
+            lastFocused = document.activeElement;
+            modal.hidden = false;
+            document.body.classList.add("modal-open");
+            setActiveTab("login");
+            window.setTimeout(focusFirstField, 0);
+          };
+
+          const close = () => {
+            modal.hidden = true;
+            document.body.classList.remove("modal-open");
+            if (lastFocused && typeof lastFocused.focus === "function") {
+              lastFocused.focus();
+            }
+          };
+
+          closeTargets.forEach((node) => {
+            node.addEventListener("click", close);
+          });
+
+          tabLogin.addEventListener("click", () => setActiveTab("login"));
+          tabRegister.addEventListener("click", () => setActiveTab("register"));
+
+          const onSubmit = (event) => {
+            event.preventDefault();
+            close();
+            setHashRoute("world");
+          };
+
+          if (loginForm) {
+            loginForm.addEventListener("submit", onSubmit);
+          }
+
+          if (registerForm) {
+            registerForm.addEventListener("submit", onSubmit);
+          }
+
+          modal.addEventListener("keydown", (event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              close();
+              return;
+            }
+
+            if (event.key !== "Tab") {
+              return;
+            }
+
+            const focusables = dialog.querySelectorAll(
+              "a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])"
+            );
+
+            if (!focusables.length) {
+              return;
+            }
+
+            const first = focusables[0];
+            const last = focusables[focusables.length - 1];
+
+            if (event.shiftKey && document.activeElement === first) {
+              event.preventDefault();
+              last.focus();
+              return;
+            }
+
+            if (!event.shiftKey && document.activeElement === last) {
+              event.preventDefault();
+              first.focus();
+            }
+          });
+
+          return { open, close };
+        };
+
+        const createWorld = () => {
+          let initialized = false;
+          let running = false;
+          let rafId = null;
+          let socket = null;
+
+          let canvas;
+          let connectButton;
+          let apiKeyInput;
+          let tenantInput;
+          let taskInput;
+          let eventLogList;
+          let statusPill;
+          let eventLogToggle;
+          let eventLog;
+
+          let scene;
+          let camera;
+          let renderer;
+          let agents;
+          let clock;
+
+          const appendEvent = (message, status) => {
+            if (eventLogList) {
+              const item = document.createElement("li");
+              item.textContent = message;
+              eventLogList.prepend(item);
+            }
+
+            if (statusPill && status) {
+              statusPill.textContent = status;
+              statusPill.classList.remove("success", "error", "warning", "neutral");
+              const statusLower = String(status).toLowerCase();
+              const statusClass =
+                statusLower === "connected"
+                  ? "success"
+                  : statusLower === "error"
+                    ? "error"
+                    : statusLower === "closed"
+                      ? "warning"
+                      : "neutral";
+              statusPill.classList.add(statusClass);
+            }
+          };
+
+          const resizeRenderer = () => {
+            if (!renderer || !camera || !canvas) {
+              return;
+            }
+
+            const width = canvas.clientWidth;
+            const height = canvas.clientHeight;
+
+            if (!width || !height) {
+              return;
+            }
+
+            renderer.setSize(width, height, false);
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+          };
+
+          const animate = () => {
+            if (!running) {
+              return;
+            }
+
+            rafId = requestAnimationFrame(animate);
+            const t = clock.getElapsedTime();
+
+            agents.forEach((agent, index) => {
+              agent.rotation.y = t * 0.4 + index * 0.6;
+              agent.position.y = 0.1 + Math.sin(t * 1.2 + index) * 0.05;
+            });
+
+            renderer.render(scene, camera);
+          };
+
+          const connectSocket = () => {
+            if (!apiKeyInput || !taskInput) {
+              return;
+            }
+
+            const apiKey = apiKeyInput.value.trim();
+            const tenantId = tenantInput ? tenantInput.value.trim() : "";
+            const taskId = taskInput.value.trim();
+            if (!apiKey || !taskId) {
+              appendEvent("Missing api_key or task_id", "error");
+              return;
+            }
+
+            if (socket) {
+              socket.close();
+            }
+
+            const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+            const host = window.location.host;
+            let url = `${scheme}://${host}/ws/events?api_key=${encodeURIComponent(apiKey)}&task_id=${encodeURIComponent(taskId)}`;
+            if (tenantId) {
+              url += `&tenant_id=${encodeURIComponent(tenantId)}`;
+            }
+
+            socket = new WebSocket(url);
+
+            socket.addEventListener("open", () => {
+              appendEvent("Connected to event stream", "connected");
+            });
+
+            socket.addEventListener("message", (event) => {
+              let payload = event.data;
+              let status = "event";
+
+              try {
+                const parsed = JSON.parse(event.data);
+                status = parsed.status || parsed.state || status;
+                payload = parsed.message || parsed.event || event.data;
+              } catch {
+                status = "event";
+              }
+
+              appendEvent(String(payload), String(status));
+            });
+
+            socket.addEventListener("close", () => {
+              appendEvent("Socket closed", "closed");
+            });
+
+            socket.addEventListener("error", () => {
+              appendEvent("Socket error", "error");
+            });
+          };
+
+          const init = () => {
+            if (initialized) {
+              return;
+            }
+
+            canvas = document.getElementById("scene-canvas");
+            const connectForm = document.getElementById("connect-form");
+            connectButton = document.getElementById("connect-button");
+            apiKeyInput = document.getElementById("api-key");
+            tenantInput = document.getElementById("tenant-id");
+            taskInput = document.getElementById("task-id");
+            eventLogList = document.getElementById("event-log-list");
+            statusPill = document.getElementById("status-pill");
+            eventLogToggle = document.getElementById("event-log-toggle");
+            eventLog = document.getElementById("event-log");
+
+            if (!canvas || !window.THREE) {
+              return;
+            }
+
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0f1115);
+
+            camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+            camera.position.set(0, 3.5, 7);
+            camera.lookAt(0, 0.5, 0);
+
+            renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+            renderer.setPixelRatio(window.devicePixelRatio || 1);
+
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+
+            const keyLight = new THREE.DirectionalLight(0xffffff, 0.9);
+            keyLight.position.set(5, 8, 3);
+            scene.add(keyLight);
+
+            const floorGeometry = new THREE.PlaneGeometry(12, 12);
+            const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x1b212b });
+            const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+            floor.rotation.x = -Math.PI / 2;
+            floor.position.y = -0.5;
+            scene.add(floor);
+
+            const agentMaterial = new THREE.MeshStandardMaterial({ color: 0x3c9cff });
+            agents = [-2, 0, 2].map((x, index) => {
+              const geometry = new THREE.BoxGeometry(1, 1, 1);
+              const mesh = new THREE.Mesh(geometry, agentMaterial.clone());
+              mesh.position.set(x, 0.1, 0);
+              mesh.material.color.offsetHSL(index * 0.08, 0.1, 0.05);
+              scene.add(mesh);
+              return mesh;
+            });
+
+            clock = new THREE.Clock();
+
+            window.addEventListener("resize", resizeRenderer);
+            if (connectButton) {
+              connectButton.addEventListener("click", connectSocket);
+            }
+
+            if (connectForm) {
+              connectForm.addEventListener("submit", (event) => {
+                event.preventDefault();
+                connectSocket();
+              });
+            }
+
+            if (eventLogToggle && eventLog && eventLogList) {
+              eventLogToggle.addEventListener("click", () => {
+                const expanded = eventLogToggle.getAttribute("aria-expanded") === "true";
+                eventLogToggle.setAttribute("aria-expanded", String(!expanded));
+                eventLogList.hidden = expanded;
+                eventLogToggle.textContent = expanded ? "Show" : "Hide";
+              });
+            }
+
+            window.addEventListener("beforeunload", () => {
+              if (socket) {
+                socket.close();
+              }
+              if (rafId) {
+                cancelAnimationFrame(rafId);
+              }
+              if (renderer) {
+                renderer.dispose();
+              }
+            });
+
+            initialized = true;
+          };
+
+          const start = () => {
+            init();
+            if (!initialized || running) {
+              resizeRenderer();
+              return;
+            }
+
+            running = true;
+            window.requestAnimationFrame(() => {
+              resizeRenderer();
+              animate();
+            });
+          };
+
+          const stop = () => {
+            running = false;
+            if (rafId) {
+              cancelAnimationFrame(rafId);
+              rafId = null;
+            }
+
+            if (socket) {
+              socket.close();
+            }
+          };
+
+          return { start, stop };
+        };
+
+        const modal = createAuthModal();
+        const world = createWorld();
+
+        const applyRoute = () => {
+          const next = isWorldHash() ? "world" : "landing";
+          document.body.setAttribute("data-route", next);
+          transitionToView(next);
+          if (next === "world") {
+            world.start();
+          } else {
+            world.stop();
+          }
+        };
+
+        if (enterButton && modal) {
+          enterButton.addEventListener("click", () => modal.open());
+        }
+
+        window.addEventListener("hashchange", applyRoute);
+
+        // Default route when the page loads.
+        if (!window.location.hash) {
+          window.location.hash = "#/";
+        }
+
+        applyRoute();
+      })();
+    </script>
   </body>
 </html>
