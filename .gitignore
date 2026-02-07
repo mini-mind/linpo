@@ -9,3 +9,6 @@ searxng/.env
 *.dump
 backups/
 .sisyphus/notepads/
+node_modules/
+package-lock.json
+package.json
