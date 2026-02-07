@@ -619,7 +619,8 @@
             const history = chatHistory.get(activeChatAgentType) || [];
             history.forEach((msg) => {
               const node = document.createElement("div");
-              node.textContent = msg.text;
+              const content = document.createElement("div");
+              content.textContent = msg.text;
               node.style.maxWidth = "92%";
               node.style.padding = "10px 12px";
               node.style.borderRadius = "16px";
@@ -628,6 +629,56 @@
               node.style.color = "rgba(255, 255, 255, 0.92)";
               node.style.lineHeight = "1.35";
               node.style.alignSelf = msg.from === "you" ? "flex-end" : "flex-start";
+              node.appendChild(content);
+
+              const citations = Array.isArray(msg.citations) ? msg.citations : [];
+              if (citations.length) {
+                const citeWrap = document.createElement("div");
+                const citeLabel = document.createElement("div");
+                citeLabel.textContent = "Citations:";
+                citeWrap.appendChild(citeLabel);
+
+                citations.forEach((citation) => {
+                  const row = document.createElement("div");
+                  const title = citation && typeof citation.title === "string" ? citation.title.trim() : "";
+                  const url = citation && typeof citation.url === "string" ? citation.url.trim() : "";
+                  const label = title || url || "(citation)";
+
+                  const safeHref = (() => {
+                    if (!url) return null;
+                    try {
+                      const parsed = new URL(url, window.location.origin);
+                      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+                        return null;
+                      }
+                      return parsed.href;
+                    } catch {
+                      return null;
+                    }
+                  })();
+
+                  if (safeHref) {
+                    const a = document.createElement("a");
+                    a.href = safeHref;
+                    a.target = "_blank";
+                    a.rel = "noopener noreferrer";
+                    a.textContent = label;
+                    row.appendChild(a);
+                  } else {
+                    const text = document.createElement("span");
+                    text.textContent = label;
+                    row.appendChild(text);
+                  }
+
+                  if (url) {
+                    row.appendChild(document.createTextNode(` — ${url}`));
+                  }
+
+                  citeWrap.appendChild(row);
+                });
+
+                node.appendChild(citeWrap);
+              }
               chatMessages.appendChild(node);
             });
 
@@ -652,10 +703,44 @@
             if (!history) {
               return;
             }
-            history.push({ from, text: String(text) });
+            const entry = { from, text: String(text) };
+            history.push(entry);
+            return entry;
           };
 
-          const submitChat = () => {
+          const normalizeCitations = (raw) => {
+            if (!raw) {
+              return [];
+            }
+            const items = Array.isArray(raw) ? raw : [raw];
+            const out = [];
+
+            items.forEach((item) => {
+              if (!item) {
+                return;
+              }
+
+              if (typeof item === "string") {
+                const url = item.trim();
+                if (url) {
+                  out.push({ title: url, url });
+                }
+                return;
+              }
+
+              if (typeof item === "object") {
+                const title = typeof item.title === "string" ? item.title.trim() : typeof item.name === "string" ? item.name.trim() : "";
+                const url = typeof item.url === "string" ? item.url.trim() : typeof item.href === "string" ? item.href.trim() : "";
+                if (title || url) {
+                  out.push({ title: title || url, url });
+                }
+              }
+            });
+
+            return out;
+          };
+
+          const submitChat = async () => {
             if (!chatInput || !chatMessages || !chatPanel || chatPanel.hidden) {
               return;
             }
@@ -665,14 +750,71 @@
               return;
             }
 
+            const agentTypeAtSend = activeChatAgentType;
             pushChatMessage("you", text);
-            openChat(activeChatAgentType);
+            openChat(agentTypeAtSend);
             chatInput.value = "";
 
-            window.setTimeout(() => {
-              pushChatMessage("agent", "Coming soon: agent-runtime");
-              openChat(activeChatAgentType);
-            }, 380);
+            // Placeholder bubble while awaiting the backend.
+            const placeholder = pushChatMessage("agent", "…");
+            if (activeChatAgentType === agentTypeAtSend) {
+              openChat(agentTypeAtSend);
+            }
+
+            const sessionToken = localStorage.getItem("roboard_session_token");
+            if (!sessionToken) {
+              if (placeholder) {
+                placeholder.text = "Sign in to chat.";
+              }
+              if (chatPanel && !chatPanel.hidden && activeChatAgentType === agentTypeAtSend) {
+                openChat(agentTypeAtSend);
+              }
+              return;
+            }
+
+            try {
+              const endpoint = `/api/agents/${encodeURIComponent(agentTypeAtSend)}/chat`;
+              const resp = await fetch(endpoint, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-Session-Token": sessionToken
+                },
+                body: JSON.stringify({ message: text })
+              });
+
+              if (resp.status === 401 || resp.status === 403) {
+                if (placeholder) {
+                  placeholder.text = "Sign in to chat.";
+                }
+                return;
+              }
+
+              if (!resp.ok) {
+                if (placeholder) {
+                  placeholder.text = `Error talking to agent (${resp.status}).`;
+                }
+                return;
+              }
+
+              const data = await resp.json().catch(() => null);
+              const reply = data && typeof data.reply === "string" ? data.reply : "";
+              const citations = data ? normalizeCitations(data.citations) : [];
+
+              if (placeholder) {
+                placeholder.text = reply || "(empty reply)";
+                placeholder.citations = citations;
+                placeholder.tool = data && typeof data.tool === "string" ? data.tool : null;
+              }
+            } catch {
+              if (placeholder) {
+                placeholder.text = "Network error. Please try again.";
+              }
+            } finally {
+              if (chatPanel && !chatPanel.hidden && activeChatAgentType === agentTypeAtSend) {
+                openChat(agentTypeAtSend);
+              }
+            }
           };
 
           const handleSceneTap = (clientX, clientY) => {

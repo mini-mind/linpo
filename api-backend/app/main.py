@@ -32,6 +32,7 @@ from pythonjsonlogger import jsonlogger  # type: ignore[import-not-found]
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.websockets import WebSocketDisconnect
+import httpx
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest  # type: ignore[import-not-found]
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
@@ -582,6 +583,16 @@ class AuthOut(BaseModel):
     expires_at: str
 
 
+class AgentChatIn(BaseModel):
+    message: str
+
+
+class AgentChatOut(BaseModel):
+    reply: str
+    tool: str | None = None
+    citations: list[dict[str, str]] = Field(default_factory=list)
+
+
 class MeOut(BaseModel):
     id: str
     email: str
@@ -848,6 +859,119 @@ def _create_session_for_user(session: Session, user_id: int) -> tuple[str, datet
     return raw_token, expires_at
 
 
+def _require_session_user(session: Session, x_session_token: str | None) -> models.User:
+    if not x_session_token:
+        raise HTTPException(status_code=401, detail="Missing session token")
+
+    token_hash = auth.hash_session_token(x_session_token)
+    session_row = (
+        session.query(models.Session)
+        .filter(models.Session.token_hash == token_hash)
+        .first()
+    )
+    if not session_row:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    revoked_at = getattr(session_row, "revoked_at", None)
+    if revoked_at is not None:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    expires_at = getattr(session_row, "expires_at", None)
+    if not isinstance(expires_at, datetime) or expires_at <= _utcnow_naive():
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    user_id = getattr(session_row, "user_id")
+    user = session.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    return user
+
+
+def _extract_citations(payload: object) -> list[dict[str, str]]:
+    if not isinstance(payload, dict):
+        return []
+
+    candidates: list[object] = []
+    for key in ("results", "items", "data"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            candidates = value
+            break
+        if isinstance(value, dict):
+            nested = value.get("results")
+            if isinstance(nested, list):
+                candidates = nested
+                break
+
+    citations: list[dict[str, str]] = []
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        title = item.get("title")
+        url = item.get("url")
+        if isinstance(title, str) and isinstance(url, str) and title.strip() and url.strip():
+            citations.append({"title": title.strip(), "url": url.strip()})
+        if len(citations) >= 3:
+            break
+
+    return citations
+
+
+async def _call_mcp_search(query: str) -> tuple[list[dict[str, str]], bool]:
+    internal_keys = [k.strip() for k in APP_SETTINGS.INTERNAL_API_KEY.split(",") if k.strip()]
+    if not internal_keys:
+        logger.warning("Missing INTERNAL_API_KEY for MCP search")
+        return [], True
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                "http://mcp-server:9000/search",
+                json={"query": query},
+                headers={"X-Internal-Key": internal_keys[0]},
+            )
+            response.raise_for_status()
+            payload = response.json()
+    except Exception as exc:
+        logger.warning("MCP search failed: %s", exc)
+        return [], True
+
+    return _extract_citations(payload), False
+
+
+def _format_agent_reply(
+    agent_type: str,
+    message: str,
+    citations: list[dict[str, str]],
+    tool_failed: bool,
+) -> str:
+    topic = message.strip() or "the request"
+    if agent_type == "pm":
+        prefix = "Search tool failed; offering a best-effort product summary" if tool_failed else "Product summary based on search results"
+        bullets = [
+            f"Primary user need: {topic}.",
+            "Key value: clarify scope and expected outcomes early.",
+            "Risks: unknown constraints or dependencies.",
+        ]
+        reply = f"{prefix} for {topic}.\n" + "\n".join(f"- {item}" for item in bullets)
+    else:
+        prefix = "Search tool failed; offering a best-effort technical response" if tool_failed else "Concise technical response based on search results"
+        steps = [
+            f"Assess requirements and constraints for {topic}.",
+            "Draft a minimal implementation plan with clear interfaces.",
+            "Validate assumptions and refine the plan based on findings.",
+        ]
+        reply = f"{prefix} for {topic}.\n" + "\n".join(f"{idx + 1}. {step}" for idx, step in enumerate(steps))
+
+    if citations:
+        reply = reply + "\nSources:\n" + "\n".join(
+            f"- {cite['title']} ({cite['url']})" for cite in citations
+        )
+
+    return reply
+
+
 @app.get("/health", response_model=HealthOut)
 async def health() -> HealthOut:
     return HealthOut(status="ok")
@@ -935,34 +1059,27 @@ def get_me(
     session: DbSessionDep,
     x_session_token: SessionTokenHeader = None,
 ) -> MeOut:
-    if not x_session_token:
-        raise HTTPException(status_code=401, detail="Missing session token")
-
-    token_hash = auth.hash_session_token(x_session_token)
-    session_row = (
-        session.query(models.Session)
-        .filter(models.Session.token_hash == token_hash)
-        .first()
-    )
-    if not session_row:
-        raise HTTPException(status_code=401, detail="Invalid session")
-
-    revoked_at = getattr(session_row, "revoked_at", None)
-    if revoked_at is not None:
-        raise HTTPException(status_code=401, detail="Invalid session")
-
-    expires_at = getattr(session_row, "expires_at", None)
-    if not isinstance(expires_at, datetime) or expires_at <= _utcnow_naive():
-        raise HTTPException(status_code=401, detail="Invalid session")
-
-    user_id = getattr(session_row, "user_id")
-    user = session.query(models.User).filter(models.User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid session")
-
+    user = _require_session_user(session, x_session_token)
+    user_id = getattr(user, "id")
     created_at = cast(datetime, getattr(user, "created_at"))
     email = cast(str, getattr(user, "email"))
     return MeOut(id=str(user_id), email=email, created_at=_dt_to_iso(created_at))
+
+
+@app.post("/api/agents/{agent_type}/chat", response_model=AgentChatOut, status_code=200)
+async def agent_chat(
+    agent_type: str,
+    body: AgentChatIn,
+    session: DbSessionDep,
+    x_session_token: SessionTokenHeader = None,
+) -> AgentChatOut:
+    _ = _require_session_user(session, x_session_token)
+    if agent_type not in {"pm", "engineer"}:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    citations, tool_failed = await _call_mcp_search(body.message)
+    reply = _format_agent_reply(agent_type, body.message, citations, tool_failed)
+    return AgentChatOut(reply=reply, tool="search", citations=citations)
 
 
 @app.post("/api/tasks", response_model=TaskOut)
