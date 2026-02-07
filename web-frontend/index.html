@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>3D Ops Dashboard</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body class="dashboard">
+    <header>
+      <div>
+        <h1>3D Ops Dashboard</h1>
+        <p>Realtime scene monitoring and event playback.</p>
+      </div>
+      <form aria-label="connection controls" class="header-form">
+        <label for="tenant-id">Tenant ID</label>
+        <input id="tenant-id" name="tenant-id" type="text" placeholder="tenant_001" />
+        <label for="api-key">API Key</label>
+        <input id="api-key" name="api-key" type="text" placeholder="api_..." />
+        <label for="task-id">Task ID</label>
+        <input id="task-id" name="task-id" type="text" placeholder="task_08f2" />
+        <button type="button" id="connect-button">Connect</button>
+        <span id="status-pill" class="status-pill neutral"></span>
+      </form>
+    </header>
+
+    <main>
+      <section class="panel canvas" aria-label="3D scene">
+        <div id="scene-container" class="viewport">
+          <canvas id="scene-canvas"></canvas>
+        </div>
+      </section>
+
+      <section class="panel event-log" aria-label="event log" id="event-log">
+        <h2>Event Log</h2>
+        <ul id="event-log-list">
+          <li>Awaiting connection...</li>
+        </ul>
+      </section>
+    </main>
+
+    <script src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

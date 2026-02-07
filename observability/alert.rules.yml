@@ -1,0 +1,33 @@
+groups:
+  - name: commercial_alerts
+    interval: 30s
+    rules:
+      - alert: ServiceDown
+        expr: |
+          up{job=~"api-backend|agent-manager"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "服务已停止"
+          description: "服务 {{ $labels.job }} 已经下线超过 2 分钟"
+
+      - alert: DispatchDeadletterIncrease
+        expr: |
+          increase(web3d_dispatch_messages_dead_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "调度死信队列消息增加"
+          description: "过去 5 分钟内检测到 {{ $value }} 条消息进入死信队列"
+
+      - alert: DispatchEnqueueFailures
+        expr: |
+          increase(web3d_dispatch_enqueue_failures_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "调度入队失败"
+          description: "过去 5 分钟内发生 {{ $value }} 次调度入队失败"

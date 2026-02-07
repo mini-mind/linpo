@@ -1,0 +1,20 @@
+services:
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    container_name: searxng
+    environment:
+      - SEARXNG_SETTINGS_PATH=/etc/searxng/settings.yml
+      - SEARXNG_SECRET_KEY=${SEARXNG_SECRET_KEY:?set}
+    volumes:
+      - ./config:/etc/searxng
+      - ./data:/var/cache/searxng
+    ports:
+      - "127.0.0.1:8081:8080"
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped

@@ -1,0 +1,11 @@
+.bin/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+.venv-*/
+searxng/.env
+*.dump
+backups/
+.sisyphus/notepads/
