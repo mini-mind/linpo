@@ -51,6 +51,17 @@
         </div>
 
         <div class="world-ui" aria-label="World controls">
+          <button
+            id="kanban-back"
+            type="button"
+            class="btn btn-ghost"
+            aria-label="Back from kanban zoom"
+            hidden
+            style="position: absolute; top: clamp(14px, 2.6vw, 28px); right: clamp(14px, 2.6vw, 28px); pointer-events: auto; z-index: 4"
+          >
+            Back
+          </button>
+
           <section class="panel connect-panel" aria-label="Connect to event stream">
             <div class="connect-head">
               <h2>Connect</h2>
@@ -77,6 +88,49 @@
             <ul id="event-log-list">
               <li>Awaiting connection...</li>
             </ul>
+          </section>
+
+          <section
+            id="chat-panel"
+            class="panel"
+            aria-label="Chat panel"
+            hidden
+            style="position: absolute; top: calc(clamp(14px, 2.6vw, 28px) + 54px); right: clamp(14px, 2.6vw, 28px); width: min(460px, calc(100vw - 28px)); max-height: min(70vh, 620px); padding: var(--space-5); display: grid; grid-template-rows: auto 1fr auto; gap: var(--space-4); overflow: hidden; z-index: 3"
+          >
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px">
+              <h2
+                id="chat-title"
+                style="margin: 0; font-family: var(--font-display); font-size: 14px; text-transform: uppercase; letter-spacing: 0.22em; color: rgba(255, 255, 255, 0.78)"
+              >
+                Chat
+              </h2>
+              <button id="chat-close" type="button" class="btn btn-ghost" aria-label="Close chat panel">Close</button>
+            </div>
+
+            <div
+              id="chat-messages"
+              role="log"
+              aria-label="Chat messages"
+              aria-live="polite"
+              style="overflow: auto; padding-right: 6px; display: flex; flex-direction: column; gap: 10px"
+            ></div>
+
+            <form
+              id="chat-form"
+              aria-label="Send message"
+              style="display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center"
+            >
+              <label for="chat-input" style="position: absolute; left: -10000px; top: auto; width: 1px; height: 1px; overflow: hidden">Message</label>
+              <input
+                id="chat-input"
+                type="text"
+                autocomplete="off"
+                aria-label="Message"
+                placeholder="Message..."
+                style="width: 100%; padding: 12px 14px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.16); background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.92); font-family: var(--font-body)"
+              />
+              <button id="chat-send" type="submit" class="btn btn-primary" aria-label="Send message">Send</button>
+            </form>
           </section>
         </div>
       </section>
@@ -350,6 +404,47 @@
           let monitorScreens;
           let clock;
 
+          let raycaster;
+          let pointerNdc;
+          let pointerDownId = null;
+          let pointerDownX = 0;
+          let pointerDownY = 0;
+
+          let interactiveRoots;
+          let kanbanRoot;
+          let kanbanZoomed = false;
+          let kanbanBack;
+
+          let chatPanel;
+          let chatTitle;
+          let chatMessages;
+          let chatForm;
+          let chatInput;
+          let chatClose;
+
+          const chatHistory = new Map();
+          let activeChatAgentType = null;
+
+          const cameraTarget = new THREE.Vector3(0, 1.1, -2.4);
+          const cameraHomePos = new THREE.Vector3();
+          const cameraHomeTarget = new THREE.Vector3();
+          const cameraTween = {
+            active: false,
+            startMs: 0,
+            durationMs: 620,
+            fromPos: new THREE.Vector3(),
+            toPos: new THREE.Vector3(),
+            fromTarget: new THREE.Vector3(),
+            toTarget: new THREE.Vector3()
+          };
+
+          const tmpVec3A = new THREE.Vector3();
+          const tmpVec3B = new THREE.Vector3();
+          const tmpVec3C = new THREE.Vector3();
+          const tmpQuat = new THREE.Quaternion();
+          const tmpBox = new THREE.Box3();
+          const tmpSize = new THREE.Vector3();
+
           const appendEvent = (message, status) => {
             if (eventLogList) {
               const item = document.createElement("li");
@@ -398,6 +493,25 @@
             rafId = requestAnimationFrame(animate);
             const t = clock.getElapsedTime();
 
+            if (cameraTween.active) {
+              const now = performance.now();
+              const raw = (now - cameraTween.startMs) / cameraTween.durationMs;
+              const clamped = raw >= 1 ? 1 : raw <= 0 ? 0 : raw;
+              const eased =
+                clamped < 0.5
+                  ? 4 * clamped * clamped * clamped
+                  : 1 - (-2 * clamped + 2) ** 3 / 2;
+
+              camera.position.lerpVectors(cameraTween.fromPos, cameraTween.toPos, eased);
+              cameraTarget.lerpVectors(cameraTween.fromTarget, cameraTween.toTarget, eased);
+              if (clamped === 1) {
+                cameraTween.active = false;
+              }
+            }
+
+            // Keep a stable camera target so tweening can adjust both.
+            camera.lookAt(cameraTarget);
+
             // Keep the office alive: subtle typing + screen glow + billboard labels.
             agents.forEach((agent, index) => {
               const phase = index * 1.7;
@@ -422,6 +536,176 @@
             }
 
             renderer.render(scene, camera);
+          };
+
+          const findTaggedHit = (object) => {
+            let node = object;
+            while (node) {
+              const kind = node.userData?.kind;
+              if (kind) {
+                return node;
+              }
+              node = node.parent;
+            }
+            return null;
+          };
+
+          const easeToCamera = (toPos, toTarget) => {
+            if (!camera || cameraTween.active) {
+              return;
+            }
+
+            cameraTween.active = true;
+            cameraTween.startMs = performance.now();
+            cameraTween.fromPos.copy(camera.position);
+            cameraTween.toPos.copy(toPos);
+            cameraTween.fromTarget.copy(cameraTarget);
+            cameraTween.toTarget.copy(toTarget);
+          };
+
+          const setKanbanZoomed = (next) => {
+            if (!camera || !kanbanRoot || next === kanbanZoomed) {
+              return;
+            }
+            if (cameraTween.active) {
+              return;
+            }
+
+            if (next) {
+              cameraHomePos.copy(camera.position);
+              cameraHomeTarget.copy(cameraTarget);
+
+              tmpBox.setFromObject(kanbanRoot);
+              tmpBox.getCenter(tmpVec3A);
+              tmpBox.getSize(tmpSize);
+
+              // Board faces +Z; compute world normal.
+              tmpVec3B.set(0, 0, 1).applyQuaternion(kanbanRoot.getWorldQuaternion(tmpQuat));
+              const fov = THREE.MathUtils.degToRad(camera.fov);
+              const fitHeight = (tmpSize.y * 0.5) / Math.tan(fov * 0.5);
+              const fitWidth = (tmpSize.x * 0.5) / (Math.tan(fov * 0.5) * camera.aspect);
+              const dist = Math.max(fitHeight, fitWidth) * 1.12;
+
+              tmpVec3C.copy(tmpVec3A).addScaledVector(tmpVec3B, dist);
+              tmpVec3C.y += tmpSize.y * 0.04;
+              easeToCamera(tmpVec3C, tmpVec3A);
+            } else {
+              easeToCamera(cameraHomePos, cameraHomeTarget);
+            }
+
+            kanbanZoomed = next;
+            if (kanbanBack) {
+              kanbanBack.hidden = !kanbanZoomed;
+            }
+          };
+
+          const openChat = (agentType) => {
+            if (!chatPanel || !chatTitle || !chatMessages) {
+              return;
+            }
+
+            const type = String(agentType || "").toLowerCase();
+            const label = type === "engineer" ? "Engineer" : "PM";
+            activeChatAgentType = type === "engineer" ? "engineer" : "pm";
+            chatTitle.textContent = `Chat with ${label}`;
+            chatPanel.hidden = false;
+
+            if (!chatHistory.has(activeChatAgentType)) {
+              chatHistory.set(activeChatAgentType, []);
+            }
+
+            // Render chat history.
+            chatMessages.innerHTML = "";
+            const history = chatHistory.get(activeChatAgentType) || [];
+            history.forEach((msg) => {
+              const node = document.createElement("div");
+              node.textContent = msg.text;
+              node.style.maxWidth = "92%";
+              node.style.padding = "10px 12px";
+              node.style.borderRadius = "16px";
+              node.style.border = "1px solid rgba(255, 255, 255, 0.12)";
+              node.style.background = msg.from === "you" ? "rgba(255, 255, 255, 0.10)" : "rgba(255, 255, 255, 0.06)";
+              node.style.color = "rgba(255, 255, 255, 0.92)";
+              node.style.lineHeight = "1.35";
+              node.style.alignSelf = msg.from === "you" ? "flex-end" : "flex-start";
+              chatMessages.appendChild(node);
+            });
+
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            if (chatInput) {
+              window.setTimeout(() => chatInput.focus(), 0);
+            }
+          };
+
+          const closeChat = () => {
+            if (chatPanel) {
+              chatPanel.hidden = true;
+            }
+            activeChatAgentType = null;
+          };
+
+          const pushChatMessage = (from, text) => {
+            if (!activeChatAgentType) {
+              return;
+            }
+            const history = chatHistory.get(activeChatAgentType);
+            if (!history) {
+              return;
+            }
+            history.push({ from, text: String(text) });
+          };
+
+          const submitChat = () => {
+            if (!chatInput || !chatMessages || !chatPanel || chatPanel.hidden) {
+              return;
+            }
+            const raw = chatInput.value;
+            const text = typeof raw === "string" ? raw.trim() : "";
+            if (!text) {
+              return;
+            }
+
+            pushChatMessage("you", text);
+            openChat(activeChatAgentType);
+            chatInput.value = "";
+
+            window.setTimeout(() => {
+              pushChatMessage("agent", "Coming soon: agent-runtime");
+              openChat(activeChatAgentType);
+            }, 380);
+          };
+
+          const handleSceneTap = (clientX, clientY) => {
+            if (!canvas || !camera || !raycaster || !pointerNdc || !interactiveRoots || !interactiveRoots.length) {
+              return;
+            }
+
+            const rect = canvas.getBoundingClientRect();
+            if (!rect.width || !rect.height) {
+              return;
+            }
+            pointerNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+            pointerNdc.y = -(((clientY - rect.top) / rect.height) * 2 - 1);
+
+            raycaster.setFromCamera(pointerNdc, camera);
+            const hits = raycaster.intersectObjects(interactiveRoots, true);
+            if (!hits.length) {
+              return;
+            }
+
+            const tagged = findTaggedHit(hits[0].object);
+            if (!tagged) {
+              return;
+            }
+
+            if (tagged.userData.kind === "agent") {
+              openChat(tagged.userData.agentType);
+              return;
+            }
+
+            if (tagged.userData.kind === "kanban") {
+              setKanbanZoomed(!kanbanZoomed);
+            }
           };
 
           const connectSocket = () => {
@@ -494,6 +778,14 @@
             eventLogToggle = document.getElementById("event-log-toggle");
             eventLog = document.getElementById("event-log");
 
+            chatPanel = document.getElementById("chat-panel");
+            chatTitle = document.getElementById("chat-title");
+            chatMessages = document.getElementById("chat-messages");
+            chatForm = document.getElementById("chat-form");
+            chatInput = document.getElementById("chat-input");
+            chatClose = document.getElementById("chat-close");
+            kanbanBack = document.getElementById("kanban-back");
+
             if (!canvas || !window.THREE) {
               return;
             }
@@ -504,10 +796,15 @@
 
             camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
             camera.position.set(0, 2.7, 7.8);
-            camera.lookAt(0, 1.1, -2.4);
+            cameraTarget.set(0, 1.1, -2.4);
+            camera.lookAt(cameraTarget);
 
             renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
             renderer.setPixelRatio(window.devicePixelRatio || 1);
+
+            raycaster = new THREE.Raycaster();
+            pointerNdc = new THREE.Vector2();
+            interactiveRoots = [];
 
             // Color + tone: keep it crisp but not blown out.
             if ("outputColorSpace" in renderer && THREE.SRGBColorSpace) {
@@ -772,6 +1069,7 @@
               body.userData.kind = "agent";
               body.userData.agentType = agentType;
               root.add(body);
+              interactiveRoots.push(body);
 
               const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 16, 16), makeStandard(0xf1ede6, 0.65, 0.0));
               head.position.set(0, 1.12, 0);
@@ -841,8 +1139,11 @@
 
             // Kanban board on the back wall (faces camera).
             const kanban = new THREE.Group();
+            kanban.userData.kind = "kanban";
             kanban.position.set(0, GROUND_Y + 2.0, -4.96);
             scene.add(kanban);
+            kanbanRoot = kanban;
+            interactiveRoots.push(kanban);
 
             const board = new THREE.Mesh(
               new THREE.PlaneGeometry(5.0, 2.55),
@@ -900,6 +1201,55 @@
             mkCard(1.66, 0.10, 0x1f2e3a, 0.03);
 
             clock = new THREE.Clock();
+
+            if (chatClose) {
+              chatClose.addEventListener("click", closeChat);
+            }
+
+            if (chatForm) {
+              chatForm.addEventListener("submit", (event) => {
+                event.preventDefault();
+                submitChat();
+              });
+            }
+
+            if (kanbanBack) {
+              kanbanBack.addEventListener("click", () => setKanbanZoomed(false));
+            }
+
+            const TAP_SLOP_PX = 7;
+            canvas.addEventListener(
+              "pointerdown",
+              (event) => {
+                if (!running) {
+                  return;
+                }
+                pointerDownId = event.pointerId;
+                pointerDownX = event.clientX;
+                pointerDownY = event.clientY;
+              },
+              { passive: true }
+            );
+
+            canvas.addEventListener(
+              "pointerup",
+              (event) => {
+                if (!running) {
+                  return;
+                }
+                if (pointerDownId == null || event.pointerId !== pointerDownId) {
+                  return;
+                }
+                const dx = event.clientX - pointerDownX;
+                const dy = event.clientY - pointerDownY;
+                pointerDownId = null;
+                if (dx * dx + dy * dy > TAP_SLOP_PX * TAP_SLOP_PX) {
+                  return;
+                }
+                handleSceneTap(event.clientX, event.clientY);
+              },
+              { passive: true }
+            );
 
             window.addEventListener("resize", resizeRenderer);
             if (connectButton) {
