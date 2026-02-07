@@ -1204,6 +1204,18 @@
               root.position.copy(position);
               root.lookAt(lookTarget);
 
+              // Invisible click target: improves raycast reliability without changing visuals.
+              // Keep it raycastable (do NOT set visible=false).
+              const hitTarget = new THREE.Mesh(
+                new THREE.SphereGeometry(0.68, 12, 10),
+                new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })
+              );
+              hitTarget.position.set(0, 0.95, 0);
+              hitTarget.userData.kind = "agent";
+              hitTarget.userData.agentType = agentType;
+              root.add(hitTarget);
+              interactiveRoots.push(hitTarget);
+
               const bodyMat = makeStandard(color, 0.55, 0.02);
               const body = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.25, 0.9, 14), bodyMat);
               body.position.set(0, 0.50, 0);
