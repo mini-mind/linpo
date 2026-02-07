@@ -1,6 +1,13 @@
 import hashlib
+import hmac
+import secrets
+import base64
 from fastapi import HTTPException, status
 from .settings import Settings
+
+
+PBKDF2_ITERATIONS = 200_000
+PBKDF2_SALT_LENGTH = 16
 
 
 def hash_api_key(api_key: str) -> str:
@@ -45,3 +52,35 @@ def require_internal_key(x_internal_key: str | None, settings: Settings) -> None
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid internal API key"
         )
+
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(PBKDF2_SALT_LENGTH)
+    dk = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, PBKDF2_ITERATIONS)
+    salt_b64 = base64.b64encode(salt).decode('ascii')
+    dk_b64 = base64.b64encode(dk).decode('ascii')
+    return f"pbkdf2_sha256${PBKDF2_ITERATIONS}${salt_b64}${dk_b64}"
+
+
+def verify_password(password: str, encoded: str) -> bool:
+    try:
+        parts = encoded.split('$')
+        if len(parts) != 4 or parts[0] != 'pbkdf2_sha256':
+            return False
+        iterations = int(parts[1])
+        salt_b64 = parts[2]
+        dk_b64 = parts[3]
+        salt = base64.b64decode(salt_b64.encode('ascii'))
+        expected_dk = base64.b64decode(dk_b64.encode('ascii'))
+        computed_dk = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, iterations)
+        return hmac.compare_digest(expected_dk, computed_dk)
+    except Exception:
+        return False
+
+
+def hash_session_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def verify_session_token(token: str, token_hash: str) -> bool:
+    return hmac.compare_digest(hash_session_token(token), token_hash)

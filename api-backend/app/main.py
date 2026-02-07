@@ -22,7 +22,7 @@ import time
 import uuid
 from contextvars import ContextVar
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from collections.abc import AsyncIterator, Generator
 from email.message import EmailMessage
 from typing import Annotated, cast
@@ -567,6 +567,27 @@ class TenantCreateOut(BaseModel):
     api_key: str
 
 
+class RegisterIn(BaseModel):
+    email: str
+    password: str
+
+
+class LoginIn(BaseModel):
+    email: str
+    password: str
+
+
+class AuthOut(BaseModel):
+    session_token: str
+    expires_at: str
+
+
+class MeOut(BaseModel):
+    id: str
+    email: str
+    created_at: str
+
+
 class TaskResultOut(BaseModel):
     summary: str | None = None
     artifacts: list[dict[str, object]] = Field(default_factory=list)
@@ -690,6 +711,7 @@ DbSessionDep = Annotated[Session, Depends(get_db)]
 InternalKeyHeader = Annotated[str | None, Header(alias="X-Internal-Key")]
 TenantIdHeader = Annotated[str | None, Header(alias="X-Tenant-ID")]
 ApiKeyHeader = Annotated[str | None, Header(alias="X-API-Key")]
+SessionTokenHeader = Annotated[str | None, Header(alias="X-Session-Token")]
 
 
 def require_tenant(
@@ -814,6 +836,18 @@ def _notification_to_out(notification: models.Notification) -> NotificationOut:
     )
 
 
+def _create_session_for_user(session: Session, user_id: int) -> tuple[str, datetime]:
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = auth.hash_session_token(raw_token)
+    expires_at = _utcnow_naive() + timedelta(days=7)
+    session_row = models.Session()
+    setattr(session_row, "user_id", user_id)
+    setattr(session_row, "token_hash", token_hash)
+    setattr(session_row, "expires_at", expires_at)
+    session.add(session_row)
+    return raw_token, expires_at
+
+
 @app.get("/health", response_model=HealthOut)
 async def health() -> HealthOut:
     return HealthOut(status="ok")
@@ -852,6 +886,83 @@ def create_tenant(
         return TenantCreateOut(tenant_id=str(tenant_id), name=tenant_name, api_key=api_key)
 
     raise HTTPException(status_code=500, detail="Failed to create tenant")
+
+
+@app.post("/api/auth/register", response_model=AuthOut, status_code=201)
+def register_user(body: RegisterIn, session: DbSessionDep) -> AuthOut:
+    user = models.User()
+    setattr(user, "email", body.email)
+    setattr(user, "password_hash", auth.hash_password(body.password))
+    try:
+        session.add(user)
+        session.flush()
+        user_id = cast(int, getattr(user, "id"))
+        raw_token, expires_at = _create_session_for_user(session, user_id)
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Email already registered")
+    except Exception:
+        session.rollback()
+        raise
+
+    return AuthOut(session_token=raw_token, expires_at=_dt_to_iso(expires_at))
+
+
+@app.post("/api/auth/login", response_model=AuthOut, status_code=200)
+def login_user(body: LoginIn, session: DbSessionDep) -> AuthOut:
+    user = session.query(models.User).filter(models.User.email == body.email).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    password_hash = cast(str, getattr(user, "password_hash"))
+    if not auth.verify_password(body.password, password_hash):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    try:
+        user_id = cast(int, getattr(user, "id"))
+        raw_token, expires_at = _create_session_for_user(session, user_id)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+
+    return AuthOut(session_token=raw_token, expires_at=_dt_to_iso(expires_at))
+
+
+@app.get("/api/auth/me", response_model=MeOut, status_code=200)
+def get_me(
+    session: DbSessionDep,
+    x_session_token: SessionTokenHeader = None,
+) -> MeOut:
+    if not x_session_token:
+        raise HTTPException(status_code=401, detail="Missing session token")
+
+    token_hash = auth.hash_session_token(x_session_token)
+    session_row = (
+        session.query(models.Session)
+        .filter(models.Session.token_hash == token_hash)
+        .first()
+    )
+    if not session_row:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    revoked_at = getattr(session_row, "revoked_at", None)
+    if revoked_at is not None:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    expires_at = getattr(session_row, "expires_at", None)
+    if not isinstance(expires_at, datetime) or expires_at <= _utcnow_naive():
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    user_id = getattr(session_row, "user_id")
+    user = session.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    created_at = cast(datetime, getattr(user, "created_at"))
+    email = cast(str, getattr(user, "email"))
+    return MeOut(id=str(user_id), email=email, created_at=_dt_to_iso(created_at))
 
 
 @app.post("/api/tasks", response_model=TaskOut)
