@@ -346,6 +346,8 @@
           let camera;
           let renderer;
           let agents;
+          let labelPlanes;
+          let monitorScreens;
           let clock;
 
           const appendEvent = (message, status) => {
@@ -396,10 +398,28 @@
             rafId = requestAnimationFrame(animate);
             const t = clock.getElapsedTime();
 
+            // Keep the office alive: subtle typing + screen glow + billboard labels.
             agents.forEach((agent, index) => {
-              agent.rotation.y = t * 0.4 + index * 0.6;
-              agent.position.y = 0.1 + Math.sin(t * 1.2 + index) * 0.05;
+              const phase = index * 1.7;
+              agent.root.position.y = agent.baseY + Math.sin(t * 1.1 + phase) * 0.015;
+              agent.head.rotation.y = Math.sin(t * 0.55 + phase) * 0.16;
+              agent.head.rotation.x = -0.08 + Math.sin(t * 0.8 + phase) * 0.06;
+              agent.armL.rotation.x = -1.15 + Math.sin(t * 4.2 + phase) * 0.12;
+              agent.armR.rotation.x = -1.12 + Math.sin(t * 4.4 + phase + 0.6) * 0.14;
             });
+
+            if (monitorScreens) {
+              monitorScreens.forEach((screenMat, idx) => {
+                screenMat.emissiveIntensity = 0.75 + Math.sin(t * 2.2 + idx * 0.9) * 0.18;
+              });
+            }
+
+            if (labelPlanes && camera) {
+              labelPlanes.forEach((label) => {
+                // Billboard toward camera without altering the agent orientation.
+                label.quaternion.copy(camera.quaternion);
+              });
+            }
 
             renderer.render(scene, camera);
           };
@@ -479,38 +499,405 @@
             }
 
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x0f1115);
+            scene.background = new THREE.Color(0x0b0d10);
+            scene.fog = new THREE.Fog(0x0b0d10, 9, 24);
 
             camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
-            camera.position.set(0, 3.5, 7);
-            camera.lookAt(0, 0.5, 0);
+            camera.position.set(0, 2.7, 7.8);
+            camera.lookAt(0, 1.1, -2.4);
 
             renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
             renderer.setPixelRatio(window.devicePixelRatio || 1);
 
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-            scene.add(ambientLight);
+            // Color + tone: keep it crisp but not blown out.
+            if ("outputColorSpace" in renderer && THREE.SRGBColorSpace) {
+              renderer.outputColorSpace = THREE.SRGBColorSpace;
+            }
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.12;
 
-            const keyLight = new THREE.DirectionalLight(0xffffff, 0.9);
-            keyLight.position.set(5, 8, 3);
+            const GROUND_Y = -0.5;
+
+            const makeCanvasLabelTexture = (text, accentHex) => {
+              const canvasEl = document.createElement("canvas");
+              canvasEl.width = 384;
+              canvasEl.height = 192;
+              const ctx = canvasEl.getContext("2d");
+              if (!ctx) {
+                return new THREE.Texture();
+              }
+
+              const w = canvasEl.width;
+              const h = canvasEl.height;
+              ctx.clearRect(0, 0, w, h);
+
+              // Backplate with a subtle highlight strip.
+              ctx.fillStyle = "rgba(10, 12, 16, 0.80)";
+              ctx.strokeStyle = "rgba(255, 255, 255, 0.16)";
+              ctx.lineWidth = 6;
+              const r = 26;
+              ctx.beginPath();
+              ctx.moveTo(r, 10);
+              ctx.arcTo(w - 10, 10, w - 10, h - 10, r);
+              ctx.arcTo(w - 10, h - 10, 10, h - 10, r);
+              ctx.arcTo(10, h - 10, 10, 10, r);
+              ctx.arcTo(10, 10, w - 10, 10, r);
+              ctx.closePath();
+              ctx.fill();
+              ctx.stroke();
+
+              ctx.fillStyle = accentHex;
+              ctx.fillRect(18, 18, 12, h - 36);
+
+              ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
+              ctx.font = "700 56px system-ui, -apple-system, Segoe UI, sans-serif";
+              ctx.textBaseline = "middle";
+              ctx.fillText(String(text), 54, h / 2);
+
+              const tex = new THREE.CanvasTexture(canvasEl);
+              if ("colorSpace" in tex && THREE.SRGBColorSpace) {
+                tex.colorSpace = THREE.SRGBColorSpace;
+              } else if ("encoding" in tex && THREE.sRGBEncoding) {
+                tex.encoding = THREE.sRGBEncoding;
+              }
+              tex.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+              tex.needsUpdate = true;
+              return tex;
+            };
+
+            const createLabelPlane = (text, accentHex) => {
+              const tex = makeCanvasLabelTexture(text, accentHex);
+              const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false });
+              const geo = new THREE.PlaneGeometry(0.85, 0.42);
+              const mesh = new THREE.Mesh(geo, mat);
+              mesh.renderOrder = 5;
+              return mesh;
+            };
+
+            const makeStandard = (color, roughness, metalness) =>
+              new THREE.MeshStandardMaterial({ color, roughness, metalness });
+
+            // Lighting: key + fill + rim + a soft ceiling bounce.
+            const hemi = new THREE.HemisphereLight(0xbfd6ff, 0x171014, 0.55);
+            scene.add(hemi);
+
+            const keyLight = new THREE.DirectionalLight(0xfff1d6, 1.05);
+            keyLight.position.set(5.2, 7.4, 4.4);
             scene.add(keyLight);
 
-            const floorGeometry = new THREE.PlaneGeometry(12, 12);
-            const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x1b212b });
-            const floor = new THREE.Mesh(floorGeometry, floorMaterial);
-            floor.rotation.x = -Math.PI / 2;
-            floor.position.y = -0.5;
-            scene.add(floor);
+            const fillLight = new THREE.DirectionalLight(0x9ec7ff, 0.33);
+            fillLight.position.set(-6.6, 3.9, 4.0);
+            scene.add(fillLight);
 
-            const agentMaterial = new THREE.MeshStandardMaterial({ color: 0x3c9cff });
-            agents = [-2, 0, 2].map((x, index) => {
-              const geometry = new THREE.BoxGeometry(1, 1, 1);
-              const mesh = new THREE.Mesh(geometry, agentMaterial.clone());
-              mesh.position.set(x, 0.1, 0);
-              mesh.material.color.offsetHSL(index * 0.08, 0.1, 0.05);
-              scene.add(mesh);
-              return mesh;
+            const rimLight = new THREE.DirectionalLight(0xffffff, 0.38);
+            rimLight.position.set(0.0, 4.8, -8.5);
+            scene.add(rimLight);
+
+            // Room shell.
+            const room = new THREE.Group();
+            scene.add(room);
+
+            const floor = new THREE.Mesh(
+              new THREE.PlaneGeometry(14, 10),
+              makeStandard(0x1b2028, 0.96, 0.0)
+            );
+            floor.rotation.x = -Math.PI / 2;
+            floor.position.y = GROUND_Y;
+            room.add(floor);
+
+            const grid = new THREE.GridHelper(14, 28, 0x2b3a54, 0x202b3e);
+            grid.position.y = GROUND_Y + 0.01;
+            const gridMat = grid.material;
+            if (Array.isArray(gridMat)) {
+              gridMat.forEach((mat) => {
+                mat.transparent = true;
+                mat.opacity = 0.22;
+              });
+            } else {
+              gridMat.transparent = true;
+              gridMat.opacity = 0.22;
+            }
+            room.add(grid);
+
+            const wallMat = makeStandard(0x2a2f38, 0.92, 0.0);
+            wallMat.color.offsetHSL(0.0, -0.1, 0.08);
+
+            const backWall = new THREE.Mesh(new THREE.PlaneGeometry(14, 4.2), wallMat);
+            backWall.position.set(0, GROUND_Y + 2.1, -5.0);
+            room.add(backWall);
+
+            const leftWall = new THREE.Mesh(new THREE.PlaneGeometry(10, 4.2), wallMat);
+            leftWall.rotation.y = Math.PI / 2;
+            leftWall.position.set(-7.0, GROUND_Y + 2.1, 0);
+            room.add(leftWall);
+
+            const ceilingMat = makeStandard(0x1a1f29, 0.96, 0.0);
+            ceilingMat.emissive = new THREE.Color(0x06080d);
+            ceilingMat.emissiveIntensity = 0.35;
+            const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(14, 10), ceilingMat);
+            ceiling.rotation.x = Math.PI / 2;
+            ceiling.position.y = GROUND_Y + 3.25;
+            room.add(ceiling);
+
+            const ceilingPanel = new THREE.Mesh(
+              new THREE.PlaneGeometry(3.0, 1.25),
+              new THREE.MeshStandardMaterial({
+                color: 0xfff6e2,
+                emissive: new THREE.Color(0xfff1cf),
+                emissiveIntensity: 1.25,
+                roughness: 0.5,
+                metalness: 0.0,
+                side: THREE.DoubleSide
+              })
+            );
+            ceilingPanel.rotation.x = Math.PI / 2;
+            ceilingPanel.position.set(0.0, GROUND_Y + 3.22, -1.4);
+            room.add(ceilingPanel);
+
+            // Desk.
+            const desk = new THREE.Group();
+            desk.position.set(0, 0, 0);
+            scene.add(desk);
+
+            const deskTop = new THREE.Mesh(
+              new THREE.BoxGeometry(3.9, 0.12, 1.85),
+              makeStandard(0x6a4b2f, 0.58, 0.05)
+            );
+            deskTop.position.set(0, GROUND_Y + 0.78, 0);
+            desk.add(deskTop);
+
+            const legMat = makeStandard(0x1a1d24, 0.72, 0.15);
+            const legGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.72, 12);
+            const legPos = [
+              [-1.78, GROUND_Y + 0.42, -0.78],
+              [1.78, GROUND_Y + 0.42, -0.78],
+              [-1.78, GROUND_Y + 0.42, 0.78],
+              [1.78, GROUND_Y + 0.42, 0.78]
+            ];
+            legPos.forEach(([x, y, z]) => {
+              const leg = new THREE.Mesh(legGeo, legMat);
+              leg.position.set(x, y, z);
+              desk.add(leg);
             });
+
+            const deskInset = new THREE.Mesh(
+              new THREE.BoxGeometry(3.5, 0.06, 1.55),
+              makeStandard(0x2a2020, 0.85, 0.0)
+            );
+            deskInset.position.set(0, GROUND_Y + 0.73, 0);
+            desk.add(deskInset);
+
+            // Monitors / laptops.
+            monitorScreens = [];
+            const createMonitor = (accent) => {
+              const g = new THREE.Group();
+
+              const base = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.06, 0.28), makeStandard(0x11141a, 0.75, 0.25));
+              base.position.set(0, 0.03, 0);
+              g.add(base);
+
+              const stem = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.22, 0.08), makeStandard(0x151922, 0.62, 0.25));
+              stem.position.set(0, 0.16, -0.02);
+              g.add(stem);
+
+              const frame = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.44, 0.05), makeStandard(0x0e1016, 0.5, 0.3));
+              frame.position.set(0, 0.41, 0);
+              g.add(frame);
+
+              const screenMat = new THREE.MeshStandardMaterial({
+                color: 0x091219,
+                emissive: new THREE.Color(accent),
+                emissiveIntensity: 0.75,
+                roughness: 0.35,
+                metalness: 0.0
+              });
+              const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.64, 0.36), screenMat);
+              screen.position.set(0, 0.41, 0.028);
+              screen.rotation.x = -0.1;
+              g.add(screen);
+              monitorScreens.push(screenMat);
+
+              const keyboard = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.03, 0.22), makeStandard(0x0f1218, 0.92, 0.05));
+              keyboard.position.set(0, 0.045, 0.30);
+              g.add(keyboard);
+
+              return g;
+            };
+
+            const pmMonitor = createMonitor(0x39b8ff);
+            pmMonitor.position.set(-1.05, GROUND_Y + 0.79, -0.15);
+            desk.add(pmMonitor);
+
+            const engMonitor = createMonitor(0x49e3b9);
+            engMonitor.position.set(1.05, GROUND_Y + 0.79, -0.15);
+            desk.add(engMonitor);
+
+            // Chairs (simple, but adds instant "office").
+            const chairMat = makeStandard(0x161a22, 0.85, 0.1);
+            const createChair = () => {
+              const chair = new THREE.Group();
+              const seat = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.08, 0.55), chairMat);
+              seat.position.set(0, GROUND_Y + 0.46, 0);
+              chair.add(seat);
+              const back = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.6, 0.08), chairMat);
+              back.position.set(0, GROUND_Y + 0.78, -0.24);
+              chair.add(back);
+              const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.42, 10), chairMat);
+              post.position.set(0, GROUND_Y + 0.22, 0);
+              chair.add(post);
+              return chair;
+            };
+
+            const pmChair = createChair();
+            pmChair.position.set(-1.05, 0, 1.35);
+            pmChair.rotation.y = Math.PI;
+            scene.add(pmChair);
+
+            const engChair = createChair();
+            engChair.position.set(1.05, 0, 1.35);
+            engChair.rotation.y = Math.PI;
+            scene.add(engChair);
+
+            // Agents.
+            labelPlanes = [];
+            const createAgent = ({ name, agentType, color, accentHex, position, lookTarget }) => {
+              const root = new THREE.Group();
+              root.position.copy(position);
+              root.lookAt(lookTarget);
+
+              const bodyMat = makeStandard(color, 0.55, 0.02);
+              const body = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.25, 0.9, 14), bodyMat);
+              body.position.set(0, 0.50, 0);
+              // Interactivity hook for M3 raycasting.
+              body.userData.kind = "agent";
+              body.userData.agentType = agentType;
+              root.add(body);
+
+              const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 16, 16), makeStandard(0xf1ede6, 0.65, 0.0));
+              head.position.set(0, 1.12, 0);
+              root.add(head);
+
+              const visor = new THREE.Mesh(
+                new THREE.SphereGeometry(0.18, 12, 12, 0, Math.PI),
+                new THREE.MeshStandardMaterial({
+                  color: 0x0f1520,
+                  emissive: new THREE.Color(color),
+                  emissiveIntensity: 0.18,
+                  roughness: 0.25,
+                  metalness: 0.1
+                })
+              );
+              visor.scale.set(1.05, 0.7, 0.55);
+              visor.rotation.y = Math.PI;
+              visor.position.set(0, 1.13, 0.19);
+              root.add(visor);
+
+              const armGeo = new THREE.CylinderGeometry(0.055, 0.06, 0.55, 10);
+              const armMat = makeStandard(0x0f1218, 0.75, 0.08);
+
+              const armL = new THREE.Mesh(armGeo, armMat);
+              armL.position.set(-0.28, 0.72, 0.18);
+              armL.rotation.z = Math.PI / 10;
+              armL.rotation.x = -1.1;
+              root.add(armL);
+
+              const armR = new THREE.Mesh(armGeo, armMat);
+              armR.position.set(0.28, 0.72, 0.18);
+              armR.rotation.z = -Math.PI / 10;
+              armR.rotation.x = -1.1;
+              root.add(armR);
+
+              const label = createLabelPlane(name, accentHex);
+              label.position.set(0, 1.62, 0);
+              labelPlanes.push(label);
+              root.add(label);
+
+              scene.add(root);
+              return { root, head, armL, armR, baseY: position.y };
+            };
+
+            agents = [];
+            agents.push(
+              createAgent({
+                name: "PM",
+                agentType: "pm",
+                color: 0xffa14b,
+                accentHex: "#ffa14b",
+                position: new THREE.Vector3(-1.05, GROUND_Y, 1.55),
+                lookTarget: new THREE.Vector3(-1.05, GROUND_Y + 0.8, -0.15)
+              })
+            );
+
+            agents.push(
+              createAgent({
+                name: "Engineer",
+                agentType: "engineer",
+                color: 0x49e3b9,
+                accentHex: "#49e3b9",
+                position: new THREE.Vector3(1.05, GROUND_Y, 1.55),
+                lookTarget: new THREE.Vector3(1.05, GROUND_Y + 0.8, -0.15)
+              })
+            );
+
+            // Kanban board on the back wall (faces camera).
+            const kanban = new THREE.Group();
+            kanban.position.set(0, GROUND_Y + 2.0, -4.96);
+            scene.add(kanban);
+
+            const board = new THREE.Mesh(
+              new THREE.PlaneGeometry(5.0, 2.55),
+              new THREE.MeshStandardMaterial({ color: 0x10141c, roughness: 0.78, metalness: 0.08 })
+            );
+            board.userData.kind = "kanban";
+            kanban.add(board);
+
+            const frame = new THREE.Mesh(
+              new THREE.BoxGeometry(5.12, 2.68, 0.06),
+              makeStandard(0x0b0d12, 0.65, 0.18)
+            );
+            frame.position.z = -0.03;
+            kanban.add(frame);
+
+            const sepMat = makeStandard(0x2a3343, 0.8, 0.1);
+            const sepGeo = new THREE.BoxGeometry(0.04, 2.35, 0.02);
+            const sep1 = new THREE.Mesh(sepGeo, sepMat);
+            sep1.position.set(-5.0 / 6.0, 0, 0.02);
+            kanban.add(sep1);
+            const sep2 = new THREE.Mesh(sepGeo, sepMat);
+            sep2.position.set(5.0 / 6.0, 0, 0.02);
+            kanban.add(sep2);
+
+            const headerGeo = new THREE.PlaneGeometry(1.58, 0.36);
+            const mkHeader = (text, accentHex, x) => {
+              const header = new THREE.Mesh(headerGeo, new THREE.MeshBasicMaterial({ map: makeCanvasLabelTexture(text, accentHex), transparent: true }));
+              header.position.set(x, 1.0, 0.03);
+              kanban.add(header);
+            };
+            mkHeader("TODO", "#39b8ff", -1.66);
+            mkHeader("DOING", "#ffa14b", 0);
+            mkHeader("DONE", "#49e3b9", 1.66);
+
+            const cardGeo = new THREE.PlaneGeometry(1.42, 0.5);
+            const mkCard = (x, y, color, rot) => {
+              const card = new THREE.Mesh(
+                cardGeo,
+                new THREE.MeshStandardMaterial({ color, roughness: 0.9, metalness: 0.0 })
+              );
+              card.position.set(x, y, 0.035);
+              card.rotation.z = rot;
+              kanban.add(card);
+            };
+
+            // A few cards per column.
+            mkCard(-1.66, 0.46, 0x233a52, -0.03);
+            mkCard(-1.66, 0.10, 0x253a2e, 0.02);
+            mkCard(-1.66, -0.26, 0x3a2a2a, -0.015);
+
+            mkCard(0.0, 0.46, 0x3a2f1e, 0.02);
+            mkCard(0.0, 0.10, 0x2c2f3a, -0.02);
+
+            mkCard(1.66, 0.46, 0x1f3a36, -0.01);
+            mkCard(1.66, 0.10, 0x1f2e3a, 0.03);
 
             clock = new THREE.Clock();
 
@@ -607,5 +994,418 @@
         applyRoute();
       })();
     </script>
-  </body>
+</body>
+
+<!-- Auth integration: login -> /api/auth/login, store session token. -->
+<script>
+  (() => {
+    const STORAGE_TOKEN_KEY = 'roboard_session_token';
+    const STORAGE_EXPIRES_AT_KEY = 'roboard_session_expires_at';
+
+    const parseExpiresAtMs = (expiresAtRaw) => {
+      if (expiresAtRaw == null) return null;
+      const raw = String(expiresAtRaw).trim();
+      if (!raw) return null;
+
+      // Accept ISO strings or numeric timestamps.
+      if (/^\d+$/.test(raw)) {
+        const n = Number(raw);
+        if (!Number.isFinite(n)) return null;
+        // Heuristic: 10 digits => seconds, 13+ => milliseconds.
+        return raw.length <= 10 ? n * 1000 : n;
+      }
+
+      const ms = Date.parse(raw);
+      return Number.isFinite(ms) ? ms : null;
+    };
+
+    const getStoredSession = () => {
+      const token = localStorage.getItem(STORAGE_TOKEN_KEY);
+      const expiresAtRaw = localStorage.getItem(STORAGE_EXPIRES_AT_KEY);
+      const expiresAtMs = parseExpiresAtMs(expiresAtRaw);
+
+      if (!token) return null;
+      if (!expiresAtMs) return null;
+      if (expiresAtMs <= Date.now()) return null;
+
+      return { token, expiresAtMs };
+    };
+
+    const clearStoredSession = () => {
+      localStorage.removeItem(STORAGE_TOKEN_KEY);
+      localStorage.removeItem(STORAGE_EXPIRES_AT_KEY);
+    };
+
+    const getFieldValue = (form, selectors) => {
+      for (const sel of selectors) {
+        const el = form.querySelector(sel);
+        if (typeof el?.value === 'string') return el.value.trim();
+      }
+      return '';
+    };
+
+    const isLikelyLoginForm = (form) => {
+      const id = (form.id || '').toLowerCase();
+      const name = (form.getAttribute('name') || '').toLowerCase();
+      if (id.includes('login') || name.includes('login') || id.includes('signin') || name.includes('signin')) {
+        return true;
+      }
+
+      // Heuristic fallback: submit button label.
+      const submit = form.querySelector('button[type="submit"], input[type="submit"]');
+      const submitLabel = (submit?.textContent || submit?.value || '').toLowerCase();
+      if (submitLabel.includes('login') || submitLabel.includes('log in') || submitLabel.includes('sign in')) {
+        return true;
+      }
+
+      // Heuristic fallback: form is within a container labelled as login.
+      const container = form.closest('[id], [class]');
+      const containerId = (container?.id || '').toLowerCase();
+      const containerClass = (container?.className || '').toString().toLowerCase();
+      if (containerId.includes('login') || containerClass.includes('login') || containerId.includes('signin') || containerClass.includes('signin')) {
+        return true;
+      }
+
+      return false;
+    };
+
+    const isLikelyRegisterForm = (form) => {
+      const id = (form.id || '').toLowerCase();
+      const name = (form.getAttribute('name') || '').toLowerCase();
+      if (id.includes('register') || name.includes('register') || id.includes('signup') || name.includes('signup') || id.includes('sign-up') || name.includes('sign-up')) {
+        return true;
+      }
+
+      // Heuristic fallback: submit button label.
+      const submit = form.querySelector('button[type="submit"], input[type="submit"]');
+      const submitLabel = (submit?.textContent || submit?.value || '').toLowerCase();
+      if (submitLabel.includes('register') || submitLabel.includes('sign up') || submitLabel.includes('signup') || submitLabel.includes('create account')) {
+        return true;
+      }
+
+      // Heuristic fallback: form is within a container labelled as register/signup.
+      const container = form.closest('[id], [class]');
+      const containerId = (container?.id || '').toLowerCase();
+      const containerClass = (container?.className || '').toString().toLowerCase();
+      if (containerId.includes('register') || containerClass.includes('register') || containerId.includes('signup') || containerClass.includes('signup')) {
+        return true;
+      }
+
+      return false;
+    };
+
+    const getOrCreateInlineErrorBox = (form) => {
+      let box = form.querySelector('[data-auth-inline-error]');
+      if (box) return box;
+
+      box = document.createElement('div');
+      box.setAttribute('data-auth-inline-error', '');
+      box.setAttribute('role', 'alert');
+      box.setAttribute('aria-live', 'polite');
+      // Inline styles to avoid touching CSS in this task.
+      box.style.display = 'none';
+      box.style.margin = '10px 0 0';
+      box.style.padding = '10px 12px';
+      box.style.borderRadius = '10px';
+      box.style.border = '1px solid rgba(200, 60, 60, 0.35)';
+      box.style.background = 'rgba(200, 60, 60, 0.10)';
+      box.style.color = 'rgba(255, 255, 255, 0.92)';
+      box.style.fontSize = '0.95rem';
+      box.style.lineHeight = '1.35';
+
+      // Prefer inserting near the submit action if possible.
+      const submit = form.querySelector('button[type="submit"], input[type="submit"]');
+      if (submit?.parentElement) {
+        submit.parentElement.insertBefore(box, submit);
+      } else {
+        form.appendChild(box);
+      }
+
+      return box;
+    };
+
+    const setInlineError = (form, message) => {
+      const box = getOrCreateInlineErrorBox(form);
+      const msg = (message || '').toString().trim();
+      if (!msg) {
+        box.textContent = '';
+        box.style.display = 'none';
+        return;
+      }
+      box.textContent = msg;
+      box.style.display = 'block';
+    };
+
+    const storeSession = (sessionToken, expiresAt) => {
+      localStorage.setItem(STORAGE_TOKEN_KEY, sessionToken);
+      localStorage.setItem(STORAGE_EXPIRES_AT_KEY, expiresAt);
+    };
+
+    const openAuthModalIfPossible = () => {
+      // Prefer app-level modal open hooks to preserve focus trap / a11y behavior.
+      if (typeof window.openAuthModal === 'function') {
+        window.openAuthModal();
+        return;
+      }
+      if (typeof window.showAuthModal === 'function') {
+        window.showAuthModal();
+        return;
+      }
+      if (typeof window.openLoginModal === 'function') {
+        window.openLoginModal();
+        return;
+      }
+      if (typeof window.showLoginModal === 'function') {
+        window.showLoginModal();
+        return;
+      }
+
+      // Best-effort fallback: click a visible login/sign-in trigger.
+      const trigger = document.querySelector(
+        '[data-open-auth-modal], [data-auth-open], [data-login-open], [data-open-login], a[href="#/login"], button[data-modal="auth"]'
+      );
+      trigger?.click?.();
+    };
+
+    const loginRequest = async (email, password) => {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ email, password })
+      });
+
+      let data = null;
+      try {
+        data = await res.json();
+      } catch {
+        // Leave data null; we'll surface a generic error message.
+      }
+
+      if (!res.ok) {
+        const msg = data?.error || data?.message || `Login failed (${res.status})`;
+        throw new Error(msg);
+      }
+
+      if (!data?.session_token || !data?.expires_at) {
+        throw new Error('Login succeeded but response was missing session details.');
+      }
+
+      return data;
+    };
+
+    const registerRequest = async (email, password) => {
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ email, password })
+      });
+
+      let data = null;
+      try {
+        data = await res.json();
+      } catch {
+        // Leave data null; we'll surface a generic error message.
+      }
+
+      if (!res.ok) {
+        const msg = data?.error || data?.message || `Registration failed (${res.status})`;
+        throw new Error(msg);
+      }
+
+      if (!data?.session_token || !data?.expires_at) {
+        throw new Error('Registration succeeded but response was missing session details.');
+      }
+
+      return data;
+    };
+
+    const transitionToWorldView = () => {
+      // Hash routing is the existing mechanism; keep this minimal.
+      window.location.hash = '#/world';
+    };
+
+    const guardWorldRoute = () => {
+      const hash = window.location.hash || '';
+      const isWorld = hash === '#/world' || hash.startsWith('#/world?') || hash.startsWith('#/world/');
+      if (!isWorld) return;
+
+      if (getStoredSession()) return;
+
+      // Logged out: go back to landing and open auth modal.
+      if (window.location.hash !== '#/' && window.location.hash !== '#') {
+        window.location.hash = '#/';
+      }
+      // Let the router render landing before opening the modal.
+      window.setTimeout(openAuthModalIfPossible, 0);
+    };
+
+    const ensureSignOutAction = () => {
+      const hash = window.location.hash || '';
+      const isWorld = hash === '#/world' || hash.startsWith('#/world?') || hash.startsWith('#/world/');
+
+      const existing = document.querySelector('[data-auth-sign-out]');
+      if (existing) {
+        existing.style.display = isWorld ? '' : 'none';
+        return;
+      }
+
+      // Try to mount in a world UI panel (prefer Connect panel header).
+      const panel = document.querySelector(
+        '[data-connect-panel], #connect-panel, #connectPanel, .connect-panel, .connectPanel, #connect, .connect'
+      );
+      const mount = panel?.querySelector('header, .panel-header, .header, .titlebar') || panel;
+      if (!mount) return;
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = 'Sign out';
+      btn.setAttribute('data-auth-sign-out', '');
+      btn.setAttribute('aria-label', 'Sign out');
+
+      // Keep styling minimal: reuse an existing button/link class if possible.
+      const sample = mount.querySelector('button, a');
+      if (sample && typeof sample.className === 'string') btn.className = sample.className;
+
+      btn.addEventListener('click', (evt) => {
+        evt.preventDefault();
+        clearStoredSession();
+        window.location.hash = '#/';
+      });
+
+      btn.style.display = isWorld ? '' : 'none';
+      mount.appendChild(btn);
+    };
+
+    const closeAuthModalIfPossible = () => {
+      // Preserve existing modal/focus behavior by invoking app-level close hooks if present.
+      if (typeof window.closeAuthModal === 'function') {
+        window.closeAuthModal();
+        return;
+      }
+      if (typeof window.hideAuthModal === 'function') {
+        window.hideAuthModal();
+        return;
+      }
+
+      // Best-effort fallback: click a visible close button.
+      const closeBtn = document.querySelector('[data-modal-close], [data-close-modal], .modal [aria-label="Close"], .modal button[aria-label="Close"]');
+      closeBtn?.click?.();
+    };
+
+    const handleLoginSubmit = async (form, evt) => {
+      evt.preventDefault();
+      setInlineError(form, '');
+
+      const email = getFieldValue(form, [
+        'input[type="email"]',
+        'input[name="email"]',
+        'input[name*="email" i]',
+        'input[id*="email" i]'
+      ]);
+      const password = getFieldValue(form, [
+        'input[type="password"]',
+        'input[name="password"]',
+        'input[name*="password" i]',
+        'input[id*="password" i]'
+      ]);
+
+      if (!email || !password) {
+        setInlineError(form, 'Email and password are required.');
+        return;
+      }
+
+      const submit = form.querySelector('button[type="submit"], input[type="submit"]');
+      const prevDisabled = submit?.disabled;
+      if (submit) submit.disabled = true;
+
+      try {
+        const { session_token, expires_at } = await loginRequest(email, password);
+        storeSession(session_token, expires_at);
+        closeAuthModalIfPossible();
+        transitionToWorldView();
+      } catch (err) {
+        const msg = err?.message || 'Login failed due to a network error. Please try again.';
+        setInlineError(form, msg);
+      } finally {
+        if (submit) submit.disabled = prevDisabled ?? false;
+      }
+    };
+
+    const handleRegisterSubmit = async (form, evt) => {
+      evt.preventDefault();
+      setInlineError(form, '');
+
+      const email = getFieldValue(form, [
+        'input[type="email"]',
+        'input[name="email"]',
+        'input[name*="email" i]',
+        'input[id*="email" i]'
+      ]);
+      const password = getFieldValue(form, [
+        'input[type="password"]',
+        'input[name="password"]',
+        'input[name*="password" i]',
+        'input[id*="password" i]'
+      ]);
+
+      if (!email || !password) {
+        setInlineError(form, 'Email and password are required.');
+        return;
+      }
+
+      const submit = form.querySelector('button[type="submit"], input[type="submit"]');
+      const prevDisabled = submit?.disabled;
+      if (submit) submit.disabled = true;
+
+      try {
+        const { session_token, expires_at } = await registerRequest(email, password);
+        // Store in the same keys used by login.
+        storeSession(session_token, expires_at);
+        closeAuthModalIfPossible();
+        transitionToWorldView();
+      } catch (err) {
+        const msg = err?.message || 'Registration failed due to a network error. Please try again.';
+        setInlineError(form, msg);
+      } finally {
+        if (submit) submit.disabled = prevDisabled ?? false;
+      }
+    };
+
+    const bindLoginHandler = () => {
+      // Capture submit events so we don't rely on existing inline handlers.
+      document.addEventListener('submit', (evt) => {
+        const form = evt.target;
+        if (!(form instanceof HTMLFormElement)) return;
+
+        // Ensure register takes precedence over login when heuristics overlap.
+        if (isLikelyRegisterForm(form)) {
+          handleRegisterSubmit(form, evt);
+          return;
+        }
+
+        if (!isLikelyLoginForm(form)) return;
+        handleLoginSubmit(form, evt);
+      }, true);
+
+      // Guard world route on navigation and refresh.
+      window.addEventListener('hashchange', guardWorldRoute);
+      guardWorldRoute();
+
+      // Sign out action availability.
+      window.addEventListener('hashchange', ensureSignOutAction);
+      ensureSignOutAction();
+    };
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', bindLoginHandler);
+    } else {
+      bindLoginHandler();
+    }
+  })();
+</script>
+
 </html>
