@@ -45,8 +45,8 @@ def upgrade() -> None:
     )
 
     # Create indexes for sessions table
-    op.create_index("ix_sessions_token_hash", "sessions", "token_hash")
-    op.create_index("ix_sessions_user_id", "sessions", "user_id")
+    op.create_index("ix_sessions_token_hash", "sessions", ["token_hash"])
+    op.create_index("ix_sessions_user_id", "sessions", ["user_id"])
 
 
 def downgrade() -> None:
