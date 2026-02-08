@@ -5,6 +5,80 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Roboard</title>
     <link rel="stylesheet" href="style.css" />
+    <style>
+      /* World-only layout tweaks (keep style.css intact). */
+      .world-hud {
+        position: absolute;
+        top: clamp(14px, 2.6vw, 28px);
+        left: clamp(14px, 2.6vw, 28px);
+        right: clamp(14px, 2.6vw, 28px);
+        padding: 12px 14px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        z-index: 3;
+      }
+
+      .world-hud-left {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+      }
+
+      .world-hud-left .brand-name {
+        font-size: 16px;
+      }
+
+      .world-hud-actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: nowrap;
+      }
+
+      .event-drawer {
+        position: absolute;
+        top: calc(clamp(14px, 2.6vw, 28px) + 58px);
+        right: clamp(14px, 2.6vw, 28px);
+        bottom: clamp(14px, 2.6vw, 28px);
+        width: min(420px, calc(100vw - 28px));
+        max-height: none;
+        padding: var(--space-5);
+        display: grid;
+        grid-template-rows: auto 1fr;
+        gap: var(--space-4);
+        overflow: hidden;
+        transform: translateX(calc(100% + 18px));
+        opacity: 0;
+        pointer-events: none;
+        transition: transform 0.24s ease, opacity 0.22s ease;
+        z-index: 3;
+      }
+
+      .event-drawer.is-open {
+        transform: translateX(0);
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      @media (max-width: 600px) {
+        .world-hud {
+          padding: 10px 12px;
+        }
+
+        .world-hud-left .brand-name {
+          font-size: 15px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .event-drawer {
+          transition: none;
+        }
+      }
+    </style>
   </head>
   <body class="app-shell">
     <div id="app" class="app" data-route="landing">
@@ -62,33 +136,62 @@
             Back
           </button>
 
-          <section class="panel connect-panel" aria-label="Connect to event stream">
-            <div class="connect-head">
-              <h2>Connect</h2>
-              <span id="status-pill" class="status-pill neutral" aria-live="polite"></span>
+          <header class="panel world-hud" aria-label="World HUD">
+            <div class="world-hud-left">
+              <a class="brand" href="/#/" aria-label="Roboard home">
+                <span class="brand-mark" aria-hidden="true"></span>
+                <span class="brand-name">Roboard</span>
+              </a>
+              <span id="status-pill" class="status-pill neutral" aria-live="polite">Idle</span>
             </div>
-            <form aria-label="connection controls" class="header-form" id="connect-form">
-              <label for="tenant-id">Tenant ID</label>
-              <input id="tenant-id" name="tenant-id" type="text" placeholder="tenant_001" autocomplete="off" />
-              <label for="api-key">API Key</label>
-              <input id="api-key" name="api-key" type="text" placeholder="api_..." autocomplete="off" />
-              <label for="task-id">Task ID</label>
-              <input id="task-id" name="task-id" type="text" placeholder="task_08f2" autocomplete="off" />
-              <button type="button" id="connect-button">Connect</button>
-            </form>
-          </section>
 
-          <section class="panel event-log" aria-label="event log" id="event-log">
+            <div class="world-hud-actions" aria-label="World HUD actions">
+              <button
+                id="hud-events-button"
+                type="button"
+                class="btn btn-ghost"
+                aria-label="Toggle events drawer"
+                aria-expanded="false"
+                aria-controls="event-drawer"
+              >
+                Events
+              </button>
+              <button
+                id="hud-lang-button"
+                type="button"
+                class="btn btn-ghost"
+                aria-label="Language (coming soon)"
+                title="Coming soon"
+              >
+                Lang
+              </button>
+              <button
+                id="hud-signout-button"
+                type="button"
+                class="btn btn-ghost"
+                aria-label="Sign out"
+                data-auth-sign-out
+              >
+                Sign out
+              </button>
+            </div>
+          </header>
+
+          <aside
+            class="panel event-log event-drawer"
+            aria-label="Event log"
+            id="event-drawer"
+            role="complementary"
+            aria-hidden="true"
+          >
             <div class="event-log-head">
               <h2>Event Log</h2>
-              <button type="button" class="btn btn-ghost" id="event-log-toggle" aria-expanded="true" aria-controls="event-log-list">
-                Hide
-              </button>
+              <button type="button" class="btn btn-ghost" id="event-drawer-close" aria-label="Close events drawer">Close</button>
             </div>
             <ul id="event-log-list">
               <li>Awaiting connection...</li>
             </ul>
-          </section>
+          </aside>
 
           <section
             id="chat-panel"
@@ -204,7 +307,7 @@
         </section>
 
         <p class="modal-note">
-          After you enter the world, use the Connect panel to attach to the task event stream via WebSocket.
+          After you enter the world, the event stream connects automatically.
         </p>
       </div>
     </div>
@@ -387,14 +490,12 @@
           let socket = null;
 
           let canvas;
-          let connectButton;
-          let apiKeyInput;
-          let tenantInput;
-          let taskInput;
           let eventLogList;
           let statusPill;
-          let eventLogToggle;
-          let eventLog;
+          let eventsButton;
+          let eventDrawer;
+          let eventDrawerClose;
+          let signOutButton;
 
           let scene;
           let camera;
@@ -445,27 +546,87 @@
           const tmpBox = new THREE.Box3();
           const tmpSize = new THREE.Vector3();
 
+          const updateStatusPill = (status) => {
+            if (!statusPill || !status) {
+              return;
+            }
+            statusPill.textContent = status;
+            statusPill.classList.remove("success", "error", "warning", "neutral");
+            const statusLower = String(status).toLowerCase();
+            const statusClass =
+              statusLower === "connected"
+                ? "success"
+                : statusLower === "error"
+                  ? "error"
+                  : statusLower === "closed"
+                    ? "warning"
+                    : "neutral";
+            statusPill.classList.add(statusClass);
+          };
+
           const appendEvent = (message, status) => {
-            if (eventLogList) {
+            const msg = message == null ? "" : String(message);
+            if (eventLogList && msg.trim()) {
               const item = document.createElement("li");
-              item.textContent = message;
+              item.textContent = msg;
               eventLogList.prepend(item);
             }
+            updateStatusPill(status);
+          };
 
-            if (statusPill && status) {
-              statusPill.textContent = status;
-              statusPill.classList.remove("success", "error", "warning", "neutral");
-              const statusLower = String(status).toLowerCase();
-              const statusClass =
-                statusLower === "connected"
-                  ? "success"
-                  : statusLower === "error"
-                    ? "error"
-                    : statusLower === "closed"
-                      ? "warning"
-                      : "neutral";
-              statusPill.classList.add(statusClass);
+          const setDrawerOpen = (open, opts = {}) => {
+            const next = Boolean(open);
+            if (eventDrawer) {
+              eventDrawer.classList.toggle("is-open", next);
+              eventDrawer.setAttribute("aria-hidden", String(!next));
             }
+            if (eventsButton) {
+              eventsButton.setAttribute("aria-expanded", String(next));
+            }
+            if (next && opts.focus && eventDrawerClose) {
+              window.setTimeout(() => eventDrawerClose.focus(), 0);
+            }
+          };
+
+          const toggleDrawer = () => {
+            const isOpen = eventsButton?.getAttribute("aria-expanded") === "true";
+            setDrawerOpen(!isOpen, { focus: !isOpen });
+          };
+
+          const getSessionToken = () => localStorage.getItem("roboard_session_token");
+
+          const makeFallbackWsUrl = (sessionToken) => {
+            const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+            const host = window.location.host;
+            return `${scheme}://${host}/ws/world?session_token=${encodeURIComponent(sessionToken)}`;
+          };
+
+          const normalizeWsUrl = (rawUrl, sessionToken) => {
+            const raw = typeof rawUrl === "string" ? rawUrl.trim() : "";
+            if (!raw) {
+              return makeFallbackWsUrl(sessionToken);
+            }
+
+            // Accept absolute ws/wss URLs and relative paths.
+            if (raw.startsWith("ws://") || raw.startsWith("wss://")) {
+              return raw;
+            }
+            if (raw.startsWith("/")) {
+              const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+              const host = window.location.host;
+              return `${scheme}://${host}${raw}`;
+            }
+
+            // Best-effort: treat as a URL; fallback to a session-token-based URL.
+            try {
+              const parsed = new URL(raw, window.location.origin);
+              if (parsed.protocol === "ws:" || parsed.protocol === "wss:") {
+                return parsed.href;
+              }
+            } catch {
+              // Ignore.
+            }
+            return makeFallbackWsUrl(sessionToken);
           };
 
           const resizeRenderer = () => {
@@ -850,16 +1011,9 @@
             }
           };
 
-          const connectSocket = () => {
-            if (!apiKeyInput || !taskInput) {
-              return;
-            }
-
-            const apiKey = apiKeyInput.value.trim();
-            const tenantId = tenantInput ? tenantInput.value.trim() : "";
-            const taskId = taskInput.value.trim();
-            if (!apiKey || !taskId) {
-              appendEvent("Missing api_key or task_id", "error");
+          const connectWorldSocket = (wsUrl) => {
+            if (!wsUrl) {
+              appendEvent("Missing WebSocket URL.", "error");
               return;
             }
 
@@ -867,17 +1021,11 @@
               socket.close();
             }
 
-            const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-            const host = window.location.host;
-            let url = `${scheme}://${host}/ws/events?api_key=${encodeURIComponent(apiKey)}&task_id=${encodeURIComponent(taskId)}`;
-            if (tenantId) {
-              url += `&tenant_id=${encodeURIComponent(tenantId)}`;
-            }
-
-            socket = new WebSocket(url);
+            updateStatusPill("connecting");
+            socket = new WebSocket(wsUrl);
 
             socket.addEventListener("open", () => {
-              appendEvent("Connected to event stream", "connected");
+              appendEvent("Connected.", "connected");
             });
 
             socket.addEventListener("message", (event) => {
@@ -886,8 +1034,11 @@
 
               try {
                 const parsed = JSON.parse(event.data);
-                status = parsed.status || parsed.state || status;
-                payload = parsed.message || parsed.event || event.data;
+                status = parsed.status || parsed.state || parsed.type || status;
+                payload = parsed.message ?? parsed.event ?? parsed.data ?? event.data;
+                if (payload && typeof payload === "object") {
+                  payload = JSON.stringify(payload);
+                }
               } catch {
                 status = "event";
               }
@@ -896,12 +1047,47 @@
             });
 
             socket.addEventListener("close", () => {
-              appendEvent("Socket closed", "closed");
+              appendEvent("Disconnected.", "closed");
             });
 
             socket.addEventListener("error", () => {
-              appendEvent("Socket error", "error");
+              appendEvent("Socket error.", "error");
             });
+          };
+
+          const bootstrapAndConnect = async () => {
+            const sessionToken = getSessionToken();
+            if (!sessionToken) {
+              appendEvent("Sign in to connect.", "closed");
+              return;
+            }
+
+            updateStatusPill("connecting");
+
+            try {
+              const resp = await fetch("/api/world/bootstrap", {
+                method: "POST",
+                headers: {
+                  "X-Session-Token": sessionToken
+                }
+              });
+
+              if (resp.status === 401 || resp.status === 403) {
+                appendEvent("Session expired. Sign in again.", "error");
+                return;
+              }
+
+              if (!resp.ok) {
+                appendEvent(`Bootstrap failed (${resp.status}).`, "error");
+                return;
+              }
+
+              const data = await resp.json().catch(() => null);
+              const wsUrl = normalizeWsUrl(data?.ws_url, sessionToken);
+              connectWorldSocket(wsUrl);
+            } catch {
+              appendEvent("Network error while connecting.", "error");
+            }
           };
 
           const init = () => {
@@ -910,15 +1096,12 @@
             }
 
             canvas = document.getElementById("scene-canvas");
-            const connectForm = document.getElementById("connect-form");
-            connectButton = document.getElementById("connect-button");
-            apiKeyInput = document.getElementById("api-key");
-            tenantInput = document.getElementById("tenant-id");
-            taskInput = document.getElementById("task-id");
             eventLogList = document.getElementById("event-log-list");
             statusPill = document.getElementById("status-pill");
-            eventLogToggle = document.getElementById("event-log-toggle");
-            eventLog = document.getElementById("event-log");
+            eventsButton = document.getElementById("hud-events-button");
+            eventDrawer = document.getElementById("event-drawer");
+            eventDrawerClose = document.getElementById("event-drawer-close");
+            signOutButton = document.getElementById("hud-signout-button");
 
             chatPanel = document.getElementById("chat-panel");
             chatTitle = document.getElementById("chat-title");
@@ -930,6 +1113,30 @@
 
             if (!canvas || !window.THREE) {
               return;
+            }
+
+            // Drawer: closed by default on small screens.
+            const openByDefault = !window.matchMedia("(max-width: 600px)").matches;
+            setDrawerOpen(openByDefault);
+
+            if (eventsButton) {
+              eventsButton.addEventListener("click", toggleDrawer);
+            }
+
+            if (eventDrawerClose) {
+              eventDrawerClose.addEventListener("click", () => setDrawerOpen(false));
+            }
+
+            if (signOutButton) {
+              signOutButton.addEventListener("click", (event) => {
+                event.preventDefault();
+                localStorage.removeItem("roboard_session_token");
+                localStorage.removeItem("roboard_session_expires_at");
+                if (socket) {
+                  socket.close();
+                }
+                window.location.hash = "#/";
+              });
             }
 
             scene = new THREE.Scene();
@@ -1406,25 +1613,7 @@
             );
 
             window.addEventListener("resize", resizeRenderer);
-            if (connectButton) {
-              connectButton.addEventListener("click", connectSocket);
-            }
-
-            if (connectForm) {
-              connectForm.addEventListener("submit", (event) => {
-                event.preventDefault();
-                connectSocket();
-              });
-            }
-
-            if (eventLogToggle && eventLog && eventLogList) {
-              eventLogToggle.addEventListener("click", () => {
-                const expanded = eventLogToggle.getAttribute("aria-expanded") === "true";
-                eventLogToggle.setAttribute("aria-expanded", String(!expanded));
-                eventLogList.hidden = expanded;
-                eventLogToggle.textContent = expanded ? "Show" : "Hide";
-              });
-            }
+            // No manual connect panel; the world bootstraps the WS stream.
 
             window.addEventListener("beforeunload", () => {
               if (socket) {
@@ -1449,6 +1638,7 @@
             }
 
             running = true;
+            bootstrapAndConnect();
             window.requestAnimationFrame(() => {
               resizeRenderer();
               animate();
@@ -1754,6 +1944,16 @@
       const existing = document.querySelector('[data-auth-sign-out]');
       if (existing) {
         existing.style.display = isWorld ? '' : 'none';
+
+        // If the button exists in markup (world HUD), ensure it behaves like the injected one.
+        if (!existing.hasAttribute('data-auth-sign-out-bound')) {
+          existing.setAttribute('data-auth-sign-out-bound', '');
+          existing.addEventListener('click', (evt) => {
+            evt.preventDefault();
+            clearStoredSession();
+            window.location.hash = '#/';
+          });
+        }
         return;
       }
 
