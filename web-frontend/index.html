@@ -142,7 +142,7 @@
                 <span class="brand-mark" aria-hidden="true"></span>
                 <span class="brand-name">Roboard</span>
               </a>
-              <span id="status-pill" class="status-pill neutral" aria-live="polite">Idle</span>
+              <span id="status-pill" class="status-pill neutral" aria-live="polite" data-status="idle">Idle</span>
             </div>
 
             <div class="world-hud-actions" aria-label="World HUD actions">
@@ -160,8 +160,7 @@
                 id="hud-lang-button"
                 type="button"
                 class="btn btn-ghost"
-                aria-label="Language (coming soon)"
-                title="Coming soon"
+                aria-label="Language"
               >
                 Lang
               </button>
@@ -185,11 +184,11 @@
             aria-hidden="true"
           >
             <div class="event-log-head">
-              <h2>Event Log</h2>
+              <h2 id="event-drawer-title">Event Log</h2>
               <button type="button" class="btn btn-ghost" id="event-drawer-close" aria-label="Close events drawer">Close</button>
             </div>
             <ul id="event-log-list">
-              <li>Awaiting connection...</li>
+              <li data-event-empty>Awaiting connection...</li>
             </ul>
           </aside>
 
@@ -317,6 +316,307 @@
       "use strict";
 
       (() => {
+        const I18N_STORAGE_KEY = "roboard_lang";
+        const I18N_SUPPORTED = new Set(["en", "zh"]);
+        const I18N_STRINGS = {
+          en: {
+            "landing.kicker": "Realtime 3D ops \u2022 event stream \u2022 playback",
+            "landing.eyebrow": "Milestone M0",
+            "landing.title": "A room where tasks become motion.",
+            "landing.lede":
+              "Step into a 3D office view and wire the live event stream. Auth is UI-only for now \u2014 submit to continue.",
+            "landing.enter": "Enter",
+            "landing.hintHtml": "Press <kbd>Enter</kbd> on the button, then <kbd>Esc</kbd> to close the modal.",
+            "landing.caption": "Three agents. One stream. Zero build tooling.",
+
+            "auth.title": "Enter Roboard",
+            "auth.desc": "UI-only login/register. Submit to continue into the world.",
+            "auth.tab.login": "Login",
+            "auth.tab.register": "Register",
+            "auth.field.name": "Name",
+            "auth.field.email": "Email",
+            "auth.field.password": "Password",
+            "auth.submit.login": "Continue",
+            "auth.submit.register": "Create account",
+            "auth.note": "After you enter the world, the event stream connects automatically.",
+
+            "hud.events": "Events",
+            "hud.lang": "Lang",
+            "hud.langLabel.en": "EN",
+            "hud.langLabel.zh": "\u4e2d\u6587",
+            "hud.signout": "Sign out",
+
+            "status.idle": "Idle",
+            "status.connecting": "Connecting",
+            "status.connected": "Connected",
+            "status.closed": "Closed",
+            "status.error": "Error",
+
+            "events.title": "Event Log",
+            "events.close": "Close",
+            "events.empty": "Awaiting connection...",
+
+            "chat.title": "Chat",
+            "chat.titleWith": "Chat with {label}",
+            "chat.agent.pm": "PM",
+            "chat.agent.engineer": "Engineer",
+            "chat.close": "Close",
+            "chat.message": "Message",
+            "chat.placeholder": "Message...",
+            "chat.send": "Send",
+            "chat.signIn": "Sign in to chat.",
+            "chat.netError": "Network error. Please try again.",
+            "chat.errorWithStatus": "Error talking to agent ({status}).",
+            "chat.emptyReply": "(empty reply)",
+            "chat.citations": "Citations:",
+
+            "world.missingWsUrl": "Missing WebSocket URL.",
+            "world.connected": "Connected.",
+            "world.disconnected": "Disconnected.",
+            "world.socketError": "Socket error.",
+            "world.signInToConnect": "Sign in to connect.",
+            "world.sessionExpired": "Session expired. Sign in again.",
+            "world.bootstrapFailed": "Bootstrap failed ({status}).",
+            "world.netErrorConnecting": "Network error while connecting.",
+
+            "auth.err.required": "Email and password are required.",
+            "auth.err.loginNetwork": "Login failed due to a network error. Please try again.",
+            "auth.err.registerNetwork": "Registration failed due to a network error. Please try again.",
+            "auth.err.loginMissingSession": "Login succeeded but response was missing session details.",
+            "auth.err.registerMissingSession": "Registration succeeded but response was missing session details.",
+            "auth.err.loginFailedStatus": "Login failed ({status})",
+            "auth.err.registerFailedStatus": "Registration failed ({status})"
+          },
+          zh: {
+            "landing.kicker": "\u5b9e\u65f6 3D \u8fd0\u7ef4 \u2022 \u4e8b\u4ef6\u6d41 \u2022 \u56de\u653e",
+            "landing.eyebrow": "\u91cc\u7a0b\u7891 M0",
+            "landing.title": "\u4e00\u95f4\u8ba9\u4efb\u52a1\u53d8\u6210\u8fd0\u52a8\u7684\u529e\u516c\u5ba4\u3002",
+            "landing.lede":
+              "\u8d70\u8fdb 3D \u529e\u516c\u5ba4\u89c6\u56fe\uff0c\u8fde\u63a5\u5b9e\u65f6\u4e8b\u4ef6\u6d41\u3002\u5f53\u524d\u8ba4\u8bc1\u4ec5\u4f5c\u4e3a UI \u6f14\u793a \u2014 \u63d0\u4ea4\u5373\u53ef\u7ee7\u7eed\u3002",
+            "landing.enter": "\u8fdb\u5165",
+            "landing.hintHtml": "\u5148\u6309\u4e0b\u6309\u94ae\u4e0a\u7684 <kbd>Enter</kbd>\uff0c\u518d\u7528 <kbd>Esc</kbd> \u5173\u95ed\u5f39\u7a97\u3002",
+            "landing.caption": "\u4e09\u4e2a\u4ee3\u7406\u3002\u4e00\u6761\u6d41\u3002\u96f6\u6784\u5efa\u5de5\u5177\u3002",
+
+            "auth.title": "\u8fdb\u5165 Roboard",
+            "auth.desc": "\u767b\u5f55/\u6ce8\u518c\u53ea\u662f UI \u6f14\u793a\u3002\u63d0\u4ea4\u540e\u5373\u53ef\u8fdb\u5165\u4e16\u754c\u3002",
+            "auth.tab.login": "\u767b\u5f55",
+            "auth.tab.register": "\u6ce8\u518c",
+            "auth.field.name": "\u59d3\u540d",
+            "auth.field.email": "\u90ae\u7bb1",
+            "auth.field.password": "\u5bc6\u7801",
+            "auth.submit.login": "\u7ee7\u7eed",
+            "auth.submit.register": "\u521b\u5efa\u8d26\u53f7",
+            "auth.note": "\u8fdb\u5165\u4e16\u754c\u540e\uff0c\u4e8b\u4ef6\u6d41\u4f1a\u81ea\u52a8\u8fde\u63a5\u3002",
+
+            "hud.events": "\u4e8b\u4ef6",
+            "hud.lang": "\u8bed\u8a00",
+            "hud.langLabel.en": "EN",
+            "hud.langLabel.zh": "\u4e2d\u6587",
+            "hud.signout": "\u9000\u51fa\u767b\u5f55",
+
+            "status.idle": "\u7a7a\u95f2",
+            "status.connecting": "\u8fde\u63a5\u4e2d",
+            "status.connected": "\u5df2\u8fde\u63a5",
+            "status.closed": "\u5df2\u5173\u95ed",
+            "status.error": "\u9519\u8bef",
+
+            "events.title": "\u4e8b\u4ef6\u65e5\u5fd7",
+            "events.close": "\u5173\u95ed",
+            "events.empty": "\u7b49\u5f85\u8fde\u63a5\u2026\u2026",
+
+            "chat.title": "\u804a\u5929",
+            "chat.titleWith": "\u4e0e {label} \u804a\u5929",
+            "chat.agent.pm": "PM",
+            "chat.agent.engineer": "\u5de5\u7a0b\u5e08",
+            "chat.close": "\u5173\u95ed",
+            "chat.message": "\u6d88\u606f",
+            "chat.placeholder": "\u8bf7\u8f93\u5165\u6d88\u606f\u2026\u2026",
+            "chat.send": "\u53d1\u9001",
+            "chat.signIn": "\u8bf7\u5148\u767b\u5f55\u540e\u804a\u5929\u3002",
+            "chat.netError": "\u7f51\u7edc\u5f02\u5e38\uff0c\u8bf7\u7a0d\u540e\u518d\u8bd5\u3002",
+            "chat.errorWithStatus": "\u4e0e\u4ee3\u7406\u901a\u4fe1\u5931\u8d25\uff08{status}\uff09\u3002",
+            "chat.emptyReply": "\uff08\u7a7a\u56de\u590d\uff09",
+            "chat.citations": "\u5f15\u7528\uff1a",
+
+            "world.missingWsUrl": "\u7f3a\u5c11 WebSocket \u5730\u5740\u3002",
+            "world.connected": "\u5df2\u8fde\u63a5\u3002",
+            "world.disconnected": "\u5df2\u65ad\u5f00\u3002",
+            "world.socketError": "Socket \u51fa\u9519\u3002",
+            "world.signInToConnect": "\u8bf7\u5148\u767b\u5f55\u540e\u8fde\u63a5\u3002",
+            "world.sessionExpired": "\u4f1a\u8bdd\u5df2\u8fc7\u671f\uff0c\u8bf7\u91cd\u65b0\u767b\u5f55\u3002",
+            "world.bootstrapFailed": "\u521d\u59cb\u5316\u5931\u8d25\uff08{status}\uff09\u3002",
+            "world.netErrorConnecting": "\u8fde\u63a5\u65f6\u7f51\u7edc\u5f02\u5e38\u3002",
+
+            "auth.err.required": "\u90ae\u7bb1\u548c\u5bc6\u7801\u4e3a\u5fc5\u586b\u3002",
+            "auth.err.loginNetwork": "\u767b\u5f55\u5931\u8d25\uff0c\u7f51\u7edc\u5f02\u5e38\uff0c\u8bf7\u7a0d\u540e\u518d\u8bd5\u3002",
+            "auth.err.registerNetwork": "\u6ce8\u518c\u5931\u8d25\uff0c\u7f51\u7edc\u5f02\u5e38\uff0c\u8bf7\u7a0d\u540e\u518d\u8bd5\u3002",
+            "auth.err.loginMissingSession": "\u767b\u5f55\u6210\u529f\uff0c\u4f46\u54cd\u5e94\u7f3a\u5c11\u4f1a\u8bdd\u4fe1\u606f\u3002",
+            "auth.err.registerMissingSession": "\u6ce8\u518c\u6210\u529f\uff0c\u4f46\u54cd\u5e94\u7f3a\u5c11\u4f1a\u8bdd\u4fe1\u606f\u3002",
+            "auth.err.loginFailedStatus": "\u767b\u5f55\u5931\u8d25\uff08{status}\uff09",
+            "auth.err.registerFailedStatus": "\u6ce8\u518c\u5931\u8d25\uff08{status}\uff09"
+          }
+        };
+
+        const inferLanguage = () => {
+          const raw = String(navigator.language || "").toLowerCase();
+          return raw.startsWith("zh") ? "zh" : "en";
+        };
+
+        const normalizeLanguage = (lang) => {
+          const raw = typeof lang === "string" ? lang.trim().toLowerCase() : "";
+          return I18N_SUPPORTED.has(raw) ? raw : "en";
+        };
+
+        const getLanguage = () => normalizeLanguage(localStorage.getItem(I18N_STORAGE_KEY) || inferLanguage());
+
+        const setLanguage = (lang) => {
+          const next = normalizeLanguage(lang);
+          localStorage.setItem(I18N_STORAGE_KEY, next);
+          document.documentElement.setAttribute("lang", next);
+          return next;
+        };
+
+        let activeLanguage = setLanguage(getLanguage());
+
+        const t = (key, vars) => {
+          const langTable = I18N_STRINGS[activeLanguage] || I18N_STRINGS.en;
+          const raw = langTable[key] ?? I18N_STRINGS.en[key] ?? String(key);
+          if (!vars || typeof raw !== "string") {
+            return raw;
+          }
+          return raw.replace(/\{(\w+)\}/g, (match, name) => {
+            if (!Object.prototype.hasOwnProperty.call(vars, name)) return match;
+            const value = vars[name];
+            return value == null ? "" : String(value);
+          });
+        };
+
+        const applyI18n = () => {
+          activeLanguage = setLanguage(getLanguage());
+
+          const setText = (sel, key) => {
+            const el = document.querySelector(sel);
+            if (!el) return;
+            el.textContent = t(key);
+          };
+          const setHtml = (sel, key) => {
+            const el = document.querySelector(sel);
+            if (!el) return;
+            el.innerHTML = t(key);
+          };
+
+          setText(".landing-kicker", "landing.kicker");
+          setText(".landing-eyebrow", "landing.eyebrow");
+          setText(".landing-title", "landing.title");
+          setText(".landing-lede", "landing.lede");
+          setText("#enter-button", "landing.enter");
+          setHtml(".landing-hint", "landing.hintHtml");
+          setText(".landing-caption", "landing.caption");
+
+          setText("#auth-title", "auth.title");
+          setText("#auth-desc", "auth.desc");
+          setText("#auth-tab-login", "auth.tab.login");
+          setText("#auth-tab-register", "auth.tab.register");
+          setText('label[for="login-email"]', "auth.field.email");
+          setText('label[for="login-password"]', "auth.field.password");
+          setText('label[for="register-name"]', "auth.field.name");
+          setText('label[for="register-email"]', "auth.field.email");
+          setText('label[for="register-password"]', "auth.field.password");
+          setText("#login-form button[type=\"submit\"]", "auth.submit.login");
+          setText("#register-form button[type=\"submit\"]", "auth.submit.register");
+          setText(".modal-note", "auth.note");
+
+          const eventsBtn = document.getElementById("hud-events-button");
+          if (eventsBtn) {
+            eventsBtn.textContent = t("hud.events");
+            eventsBtn.setAttribute("aria-label", t("hud.events"));
+          }
+
+          const langBtn = document.getElementById("hud-lang-button");
+          if (langBtn) {
+            const labelKey = activeLanguage === "zh" ? "hud.langLabel.zh" : "hud.langLabel.en";
+            langBtn.textContent = t(labelKey);
+            langBtn.setAttribute("aria-label", t("hud.lang"));
+            langBtn.removeAttribute("title");
+          }
+
+          const signOutBtn = document.getElementById("hud-signout-button");
+          if (signOutBtn) {
+            signOutBtn.textContent = t("hud.signout");
+            signOutBtn.setAttribute("aria-label", t("hud.signout"));
+          }
+
+          setText("#event-drawer-title", "events.title");
+          const closeDrawer = document.getElementById("event-drawer-close");
+          if (closeDrawer) {
+            closeDrawer.textContent = t("events.close");
+            closeDrawer.setAttribute("aria-label", t("events.close"));
+          }
+
+          const empty = document.querySelector("#event-log-list [data-event-empty]");
+          if (empty) {
+            empty.textContent = t("events.empty");
+          }
+
+          const statusPill = document.getElementById("status-pill");
+          if (statusPill) {
+            const raw = String(statusPill.getAttribute("data-status") || statusPill.textContent || "").trim().toLowerCase();
+            const key =
+              raw === "connected"
+                ? "status.connected"
+                : raw === "closed"
+                  ? "status.closed"
+                  : raw === "error"
+                    ? "status.error"
+                    : raw === "connecting"
+                      ? "status.connecting"
+                      : raw === "idle"
+                        ? "status.idle"
+                        : null;
+            if (key) {
+              statusPill.textContent = t(key);
+            }
+          }
+
+          const chatInput = document.getElementById("chat-input");
+          if (chatInput) {
+            chatInput.setAttribute("placeholder", t("chat.placeholder"));
+            chatInput.setAttribute("aria-label", t("chat.message"));
+          }
+          const chatLabel = document.querySelector('label[for="chat-input"]');
+          if (chatLabel) {
+            chatLabel.textContent = t("chat.message");
+          }
+          const chatSend = document.getElementById("chat-send");
+          if (chatSend) {
+            chatSend.textContent = t("chat.send");
+            chatSend.setAttribute("aria-label", t("chat.send"));
+          }
+          const chatClose = document.getElementById("chat-close");
+          if (chatClose) {
+            chatClose.textContent = t("chat.close");
+            chatClose.setAttribute("aria-label", t("chat.close"));
+          }
+          const chatTitle = document.getElementById("chat-title");
+          if (chatTitle) {
+            const agentType = String(chatTitle.getAttribute("data-chat-agent") || "").toLowerCase();
+            if (agentType) {
+              const label = agentType === "engineer" ? t("chat.agent.engineer") : t("chat.agent.pm");
+              chatTitle.textContent = t("chat.titleWith", { label });
+            } else {
+              chatTitle.textContent = t("chat.title");
+            }
+          }
+        };
+
+        window.roboardI18n = {
+          key: I18N_STORAGE_KEY,
+          getLanguage,
+          setLanguage,
+          t,
+          applyI18n
+        };
+
         const app = document.getElementById("app");
         const landingView = document.getElementById("view-landing");
         const worldView = document.getElementById("view-world");
@@ -493,6 +793,7 @@
           let eventLogList;
           let statusPill;
           let eventsButton;
+          let langButton;
           let eventDrawer;
           let eventDrawerClose;
           let signOutButton;
@@ -550,9 +851,22 @@
             if (!statusPill || !status) {
               return;
             }
-            statusPill.textContent = status;
-            statusPill.classList.remove("success", "error", "warning", "neutral");
             const statusLower = String(status).toLowerCase();
+            statusPill.setAttribute("data-status", statusLower);
+            const labelKey =
+              statusLower === "connected"
+                ? "status.connected"
+                : statusLower === "error"
+                  ? "status.error"
+                  : statusLower === "closed"
+                    ? "status.closed"
+                    : statusLower === "connecting"
+                      ? "status.connecting"
+                      : statusLower === "idle"
+                        ? "status.idle"
+                        : null;
+            statusPill.textContent = labelKey ? t(labelKey) : String(status);
+            statusPill.classList.remove("success", "error", "warning", "neutral");
             const statusClass =
               statusLower === "connected"
                 ? "success"
@@ -567,6 +881,9 @@
           const appendEvent = (message, status) => {
             const msg = message == null ? "" : String(message);
             if (eventLogList && msg.trim()) {
+              eventLogList.querySelectorAll("[data-event-empty]").forEach((node) => {
+                node.remove();
+              });
               const item = document.createElement("li");
               item.textContent = msg;
               eventLogList.prepend(item);
@@ -766,9 +1083,10 @@
             }
 
             const type = String(agentType || "").toLowerCase();
-            const label = type === "engineer" ? "Engineer" : "PM";
+            const label = type === "engineer" ? t("chat.agent.engineer") : t("chat.agent.pm");
             activeChatAgentType = type === "engineer" ? "engineer" : "pm";
-            chatTitle.textContent = `Chat with ${label}`;
+            chatTitle.setAttribute("data-chat-agent", activeChatAgentType);
+            chatTitle.textContent = t("chat.titleWith", { label });
             chatPanel.hidden = false;
 
             if (!chatHistory.has(activeChatAgentType)) {
@@ -796,7 +1114,7 @@
               if (citations.length) {
                 const citeWrap = document.createElement("div");
                 const citeLabel = document.createElement("div");
-                citeLabel.textContent = "Citations:";
+                citeLabel.textContent = t("chat.citations");
                 citeWrap.appendChild(citeLabel);
 
                 citations.forEach((citation) => {
@@ -925,7 +1243,7 @@
             const sessionToken = localStorage.getItem("roboard_session_token");
             if (!sessionToken) {
               if (placeholder) {
-                placeholder.text = "Sign in to chat.";
+                placeholder.text = t("chat.signIn");
               }
               if (chatPanel && !chatPanel.hidden && activeChatAgentType === agentTypeAtSend) {
                 openChat(agentTypeAtSend);
@@ -946,14 +1264,14 @@
 
               if (resp.status === 401 || resp.status === 403) {
                 if (placeholder) {
-                  placeholder.text = "Sign in to chat.";
+                  placeholder.text = t("chat.signIn");
                 }
                 return;
               }
 
               if (!resp.ok) {
                 if (placeholder) {
-                  placeholder.text = `Error talking to agent (${resp.status}).`;
+                  placeholder.text = t("chat.errorWithStatus", { status: resp.status });
                 }
                 return;
               }
@@ -963,13 +1281,13 @@
               const citations = data ? normalizeCitations(data.citations) : [];
 
               if (placeholder) {
-                placeholder.text = reply || "(empty reply)";
+                placeholder.text = reply || t("chat.emptyReply");
                 placeholder.citations = citations;
                 placeholder.tool = data && typeof data.tool === "string" ? data.tool : null;
               }
             } catch {
               if (placeholder) {
-                placeholder.text = "Network error. Please try again.";
+                placeholder.text = t("chat.netError");
               }
             } finally {
               if (chatPanel && !chatPanel.hidden && activeChatAgentType === agentTypeAtSend) {
@@ -1013,7 +1331,7 @@
 
           const connectWorldSocket = (wsUrl) => {
             if (!wsUrl) {
-              appendEvent("Missing WebSocket URL.", "error");
+              appendEvent(t("world.missingWsUrl"), "error");
               return;
             }
 
@@ -1025,7 +1343,7 @@
             socket = new WebSocket(wsUrl);
 
             socket.addEventListener("open", () => {
-              appendEvent("Connected.", "connected");
+              appendEvent(t("world.connected"), "connected");
             });
 
             socket.addEventListener("message", (event) => {
@@ -1047,18 +1365,18 @@
             });
 
             socket.addEventListener("close", () => {
-              appendEvent("Disconnected.", "closed");
+              appendEvent(t("world.disconnected"), "closed");
             });
 
             socket.addEventListener("error", () => {
-              appendEvent("Socket error.", "error");
+              appendEvent(t("world.socketError"), "error");
             });
           };
 
           const bootstrapAndConnect = async () => {
             const sessionToken = getSessionToken();
             if (!sessionToken) {
-              appendEvent("Sign in to connect.", "closed");
+              appendEvent(t("world.signInToConnect"), "closed");
               return;
             }
 
@@ -1073,12 +1391,12 @@
               });
 
               if (resp.status === 401 || resp.status === 403) {
-                appendEvent("Session expired. Sign in again.", "error");
+                appendEvent(t("world.sessionExpired"), "error");
                 return;
               }
 
               if (!resp.ok) {
-                appendEvent(`Bootstrap failed (${resp.status}).`, "error");
+                appendEvent(t("world.bootstrapFailed", { status: resp.status }), "error");
                 return;
               }
 
@@ -1086,7 +1404,7 @@
               const wsUrl = normalizeWsUrl(data?.ws_url, sessionToken);
               connectWorldSocket(wsUrl);
             } catch {
-              appendEvent("Network error while connecting.", "error");
+              appendEvent(t("world.netErrorConnecting"), "error");
             }
           };
 
@@ -1099,6 +1417,7 @@
             eventLogList = document.getElementById("event-log-list");
             statusPill = document.getElementById("status-pill");
             eventsButton = document.getElementById("hud-events-button");
+            langButton = document.getElementById("hud-lang-button");
             eventDrawer = document.getElementById("event-drawer");
             eventDrawerClose = document.getElementById("event-drawer-close");
             signOutButton = document.getElementById("hud-signout-button");
@@ -1121,6 +1440,15 @@
 
             if (eventsButton) {
               eventsButton.addEventListener("click", toggleDrawer);
+            }
+
+            if (langButton && !langButton.hasAttribute("data-lang-bound")) {
+              langButton.setAttribute("data-lang-bound", "");
+              langButton.addEventListener("click", () => {
+                const next = getLanguage() === "zh" ? "en" : "zh";
+                setLanguage(next);
+                applyI18n();
+              });
             }
 
             if (eventDrawerClose) {
@@ -1678,6 +2006,9 @@
           enterButton.addEventListener("click", () => modal.open());
         }
 
+        // Ensure initial render matches saved/inferred language.
+        applyI18n();
+
         window.addEventListener("hashchange", applyRoute);
 
         // Default route when the page loads.
@@ -1693,6 +2024,14 @@
 <!-- Auth integration: login -> /api/auth/login, store session token. -->
 <script>
   (() => {
+    const i18n = window.roboardI18n;
+    const t = (key, vars) => {
+      if (i18n && typeof i18n.t === 'function') {
+        return i18n.t(key, vars);
+      }
+      return String(key);
+    };
+
     const STORAGE_TOKEN_KEY = 'roboard_session_token';
     const STORAGE_EXPIRES_AT_KEY = 'roboard_session_expires_at';
 
@@ -1878,12 +2217,12 @@
       }
 
       if (!res.ok) {
-        const msg = data?.error || data?.message || `Login failed (${res.status})`;
+        const msg = data?.error || data?.message || t('auth.err.loginFailedStatus', { status: res.status });
         throw new Error(msg);
       }
 
       if (!data?.session_token || !data?.expires_at) {
-        throw new Error('Login succeeded but response was missing session details.');
+        throw new Error(t('auth.err.loginMissingSession'));
       }
 
       return data;
@@ -1906,12 +2245,12 @@
       }
 
       if (!res.ok) {
-        const msg = data?.error || data?.message || `Registration failed (${res.status})`;
+        const msg = data?.error || data?.message || t('auth.err.registerFailedStatus', { status: res.status });
         throw new Error(msg);
       }
 
       if (!data?.session_token || !data?.expires_at) {
-        throw new Error('Registration succeeded but response was missing session details.');
+        throw new Error(t('auth.err.registerMissingSession'));
       }
 
       return data;
@@ -1966,9 +2305,9 @@
 
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.textContent = 'Sign out';
+      btn.textContent = t('hud.signout');
       btn.setAttribute('data-auth-sign-out', '');
-      btn.setAttribute('aria-label', 'Sign out');
+      btn.setAttribute('aria-label', t('hud.signout'));
 
       // Keep styling minimal: reuse an existing button/link class if possible.
       const sample = mount.querySelector('button, a');
@@ -2018,7 +2357,7 @@
       ]);
 
       if (!email || !password) {
-        setInlineError(form, 'Email and password are required.');
+        setInlineError(form, t('auth.err.required'));
         return;
       }
 
@@ -2032,7 +2371,7 @@
         closeAuthModalIfPossible();
         transitionToWorldView();
       } catch (err) {
-        const msg = err?.message || 'Login failed due to a network error. Please try again.';
+        const msg = err?.message || t('auth.err.loginNetwork');
         setInlineError(form, msg);
       } finally {
         if (submit) submit.disabled = prevDisabled ?? false;
@@ -2057,7 +2396,7 @@
       ]);
 
       if (!email || !password) {
-        setInlineError(form, 'Email and password are required.');
+        setInlineError(form, t('auth.err.required'));
         return;
       }
 
@@ -2072,7 +2411,7 @@
         closeAuthModalIfPossible();
         transitionToWorldView();
       } catch (err) {
-        const msg = err?.message || 'Registration failed due to a network error. Please try again.';
+        const msg = err?.message || t('auth.err.registerNetwork');
         setInlineError(form, msg);
       } finally {
         if (submit) submit.disabled = prevDisabled ?? false;
