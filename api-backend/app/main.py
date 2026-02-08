@@ -19,6 +19,7 @@ import logging
 import sys
 import secrets
 import time
+import urllib.parse
 import uuid
 from contextvars import ContextVar
 from contextlib import asynccontextmanager
@@ -599,6 +600,12 @@ class MeOut(BaseModel):
     created_at: str
 
 
+class WorldBootstrapOut(BaseModel):
+    status: str
+    task_id: str
+    ws_url: str
+
+
 class TaskResultOut(BaseModel):
     summary: str | None = None
     artifacts: list[dict[str, object]] = Field(default_factory=list)
@@ -1082,6 +1089,60 @@ async def agent_chat(
     return AgentChatOut(reply=reply, tool="search", citations=citations)
 
 
+@app.post("/api/world/bootstrap", response_model=WorldBootstrapOut, status_code=200)
+async def world_bootstrap(
+    request: Request,
+    session: DbSessionDep,
+    x_session_token: SessionTokenHeader = None,
+) -> WorldBootstrapOut:
+    user = _require_session_user(session, x_session_token)
+    user_id = cast(int, getattr(user, "id"))
+    user_tenant_id = getattr(user, "tenant_id")
+
+    if user_tenant_id is None:
+        tenant = models.Tenant()
+        setattr(tenant, "name", f"User {user_id}")
+        raw_api_key = secrets.token_urlsafe(32)
+        setattr(tenant, "api_key_hash", auth.hash_api_key(raw_api_key))
+        session.add(tenant)
+        session.commit()
+        tenant_id_int = cast(int, getattr(tenant, "id"))
+        setattr(user, "tenant_id", tenant_id_int)
+        session.commit()
+    else:
+        tenant_id_int = cast(int, user_tenant_id)
+        tenant = session.query(models.Tenant).filter(models.Tenant.id == tenant_id_int).first()
+        if not tenant:
+            raise HTTPException(status_code=404, detail="Tenant not found")
+
+    task = (
+        session.query(models.Task)
+        .filter(models.Task.tenant_id == tenant_id_int)
+        .order_by(models.Task.id.desc())
+        .first()
+    )
+    if not task:
+        task = models.Task()
+        setattr(task, "tenant_id", tenant_id_int)
+        setattr(task, "status", "idle")
+        setattr(task, "input_json", json.dumps({"bootstrap": True}))
+        session.add(task)
+        session.commit()
+
+    task_id_int = cast(int, getattr(task, "id"))
+
+    x_forwarded_proto = request.headers.get("x-forwarded-proto")
+    x_forwarded_host = request.headers.get("x-forwarded-host", request.headers.get("host"))
+
+    protocol = x_forwarded_proto if x_forwarded_proto else request.url.scheme
+    host = x_forwarded_host if x_forwarded_host else request.url.hostname
+    ws_scheme = "wss" if protocol == "https" else "ws"
+
+    ws_url = f"{ws_scheme}://{host}/ws/world?session_token={x_session_token}"
+
+    return WorldBootstrapOut(status="ok", task_id=str(task_id_int), ws_url=ws_url)
+
+
 @app.post("/api/tasks", response_model=TaskOut)
 async def create_task(
     tenant: Annotated[models.Tenant, Depends(require_tenant)],
@@ -1392,6 +1453,87 @@ async def ws_events(
         if not task:
             await websocket.close(code=1008)
             return
+
+        events = (
+            session.query(models.Event)
+            .filter(models.Event.task_id == task_id_int, models.Event.tenant_id == tenant_id_int)
+            .order_by(models.Event.id.asc())
+            .all()
+        )
+        snapshot = {
+            "task": _task_to_out(task).model_dump(),
+            "events": [_event_to_out(e).model_dump() for e in events],
+        }
+    finally:
+        session.close()
+
+    await WS_MANAGER.add(str(tenant_id_int), str(task_id_int), websocket)
+    await websocket.send_json({"type": "snapshot", "data": snapshot})
+
+    try:
+        while True:
+            # We don't require client messages; this keeps the connection open
+            # and lets us notice disconnects.
+            _ = await websocket.receive_text()
+    except WebSocketDisconnect:
+        await WS_MANAGER.remove(str(tenant_id_int), str(task_id_int), websocket)
+
+
+@app.websocket("/ws/world")
+async def ws_world(
+    websocket: WebSocket,
+    session_token: Annotated[str | None, Query()] = None,
+) -> None:
+    await websocket.accept()
+
+    session = db.SessionLocal()
+    try:
+        if not session_token:
+            await websocket.close(code=1008)
+            return
+
+        try:
+            user = _require_session_user(session, session_token)
+        except HTTPException:
+            await websocket.close(code=1008)
+            return
+
+        user_id = cast(int, getattr(user, "id"))
+        user_tenant_id = getattr(user, "tenant_id")
+
+        # Auto-bootstrap tenant if user doesn't have one
+        if user_tenant_id is None:
+            tenant = models.Tenant()
+            setattr(tenant, "name", f"User {user_id}")
+            raw_api_key = secrets.token_urlsafe(32)
+            setattr(tenant, "api_key_hash", auth.hash_api_key(raw_api_key))
+            session.add(tenant)
+            session.commit()
+            tenant_id_int = cast(int, getattr(tenant, "id"))
+            setattr(user, "tenant_id", tenant_id_int)
+            session.commit()
+        else:
+            tenant_id_int = cast(int, user_tenant_id)
+            tenant = session.query(models.Tenant).filter(models.Tenant.id == tenant_id_int).first()
+            if not tenant:
+                await websocket.close(code=1008)
+                return
+
+        task = (
+            session.query(models.Task)
+            .filter(models.Task.tenant_id == tenant_id_int)
+            .order_by(models.Task.id.desc())
+            .first()
+        )
+        if not task:
+            task = models.Task()
+            setattr(task, "tenant_id", tenant_id_int)
+            setattr(task, "status", "idle")
+            setattr(task, "input_json", json.dumps({"bootstrap": True}))
+            session.add(task)
+            session.commit()
+
+        task_id_int = cast(int, getattr(task, "id"))
 
         events = (
             session.query(models.Event)

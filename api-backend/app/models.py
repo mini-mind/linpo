@@ -10,6 +10,7 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     email = Column(String(255), nullable=False, unique=True)
     password_hash = Column(String(255), nullable=False)
+    tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
