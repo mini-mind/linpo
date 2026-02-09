@@ -13,9 +13,6 @@
 - **postgres**: (内部，数据持久化，绑定 127.0.0.1:5432)
 - **redis**: (内部，速率限制，绑定 127.0.0.1:6379)
 - **searxng**: 127.0.0.1:8081 (搜索引擎)
-- **prometheus**: 127.0.0.1:9090 (监控)
-- **alertmanager**: 127.0.0.1:9093 (告警)
-- **grafana**: 127.0.0.1:3000 (可视化)
 - **mailhog**: 127.0.0.1:8025 (邮件测试)
 
 ### 访问入口/端口暴露
@@ -28,12 +25,9 @@
 - **不暴露的端口**: 8082/8000/7000/7100/9000 等均不对外暴露
 
 **内部管理访问**：
-- **监控服务**: 绑定 127.0.0.1，仅本地访问
-  - Prometheus: `http://127.0.0.1:9090`
-  - Grafana: `http://127.0.0.1:3000`
-  - Alertmanager: `http://127.0.0.1:9093`
-  - MailHog: `http://127.0.0.1:8025`
-  - SearXNG: `http://127.0.0.1:8081`
+- **内部管理服务**: 绑定 127.0.0.1，仅本地访问
+  - MailHog: `http://127.0.0.1:8025` (邮件测试)
+  - SearXNG: `http://127.0.0.1:8081` (搜索引擎)
 - **内部管理端点**: 使用 `docker compose exec` 进入容器
   - 临时端口映射 (仅本地调试): 修改 docker-compose.yml 添加 `127.0.0.1:端口号:端口号`
 
@@ -194,8 +188,20 @@ curl -s https://roboard.duckdns.org/api/tasks/$TASK_ID/notifications \
   # 默认通知收件人
   DEFAULT_NOTIFICATION_EMAIL=admin@example.com
   ```
-- 邮件通知会在任务完成、失败或特定事件触发时自动发送
+  - 邮件通知会在任务完成、失败或特定事件触发时自动发送
 - 未配置 SMTP 时，通知会默认发送到 MailHog（开发环境）或静默丢弃（生产环境需显式配置）
+
+## Worker 部署 (Playwright)
+
+Playwright 浏览器执行任务已迁移至独立 worker 服务器以提升性能和隔离性。
+
+- **Worker 主机**: `175.178.213.10` (用户: `ubuntu`)
+- **部署文档**: [docs/worker-deployment.md](docs/worker-deployment.md)
+- **部署脚本**:
+  - `scripts/push_worker_images.sh` - 推送 worker 镜像到远程
+  - `scripts/deploy_worker.sh` - 在 worker 主机上部署服务
+
+提示：项目根目录 `.env` 需要设置 `PLAYWRIGHT_GATEWAY_URL=http://175.178.213.10:7200`（以及 `ADMIN_API_KEY`/`INTERNAL_API_KEY`/`SEARXNG_SECRET_KEY`）。
 
 ## 免费域名/DDNS
 
@@ -250,7 +256,7 @@ edge 服务使用 Caddy 作为反向代理，自动通过 Let's Encrypt 获取�
 
 - **生产环境端口 8082/8000/7000 不对外暴露**
   - 内部服务端口 (gateway:8082, api-backend:8000, agent-manager:7000) 仅绑定在 Docker 网络内
-  - 监控服务 (prometheus:9090, grafana:3000, alertmanager:9093, mailhog:8025) 绑定 127.0.0.1
+  - 内部管理服务 (mailhog:8025, searxng:8081) 绑定 127.0.0.1
   - 访问内部管理端点使用 `docker compose exec` 或临时添加 `127.0.0.1:端口号:端口号` 映射
 
 - **临时测试**：本地调试时可在 docker-compose.yml 添加端口映射
@@ -292,37 +298,8 @@ edge 服务使用 Caddy 作为反向代理，自动通过 Let's Encrypt 获取�
 - 建议设置自动续期任务（crontab）
 - 示例续期命令：
   ```bash
-  certbot renew --deploy-hook "docker exec edge reload-nginx"
+certbot renew --deploy-hook "docker exec edge reload-nginx"
   ```
-
-## 监控堆栈
-
-系统集成了完整的监控服务，可通过以下地址访问：
-
-### Prometheus
-
-- **访问地址**：`http://127.0.0.1:9090`
-- **说明**：时序数据库，存储和查询所有监控指标
-- **常用查询**：
-  - 查询请求速率：`rate(http_requests_total[5m])`
-  - 查询任务状态：分布查看 task_* 系列指标
-
-### Alertmanager
-
-- **访问地址**：`http://127.0.0.1:9093`
-- **说明**：告警管理，处理 Prometheus 规发的告警
-- **功能**：
-  - 告警分组、去重
-  - 告警路由到不同通知渠道（邮件、Webhook）
-  - 告警抑制和静默
-
-### Grafana
-
-- **访问地址**：`http://127.0.0.1:3000`
-- **默认账号**：`admin` / `admin`（首次登录需修改密码）
-- **环境变量覆盖**：通过 `GF_SECURITY_ADMIN_USER` 和 `GF_SECURITY_ADMIN_PASSWORD` 自定义
-- **说明**：可视化监控面板，连接 Prometheus 数据源
-- **建议**：导入或创建监控 Dashboard，实时查看系统健康状况
 
 ## 数据备份与恢复
 

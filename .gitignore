@@ -6,6 +6,8 @@
 .venv/
 .venv-*/
 searxng/.env
+.env
+.env.*
 *.dump
 backups/
 .sisyphus/notepads/

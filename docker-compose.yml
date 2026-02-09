@@ -100,6 +100,7 @@ services:
       - WORKER_URL=${WORKER_URL:-http://worker-playwright:7100}
       - API_BACKEND_URL=${API_BACKEND_URL:-http://api-backend:8000}
       - MCP_URL=${MCP_URL:-http://mcp-server:9000}
+      - PLAYWRIGHT_GATEWAY_URL=${PLAYWRIGHT_GATEWAY_URL:-}
     depends_on:
       - agent-manager
       - redis
@@ -183,46 +184,6 @@ services:
     image: mailhog/mailhog:v1.0.1
     ports:
       - "127.0.0.1:8025:8025"
-    networks:
-      - app-net
-    restart: unless-stopped
-
-  prometheus:
-    image: prom/prometheus:v2.55.1
-    ports:
-      - "127.0.0.1:9090:9090"
-    volumes:
-      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./observability/alert.rules.yml:/etc/prometheus/alert.rules.yml:ro
-    command:
-      - --config.file=/etc/prometheus/prometheus.yml
-    networks:
-      - app-net
-    depends_on:
-      - api-backend
-      - agent-manager
-      - alertmanager
-    restart: unless-stopped
-
-  alertmanager:
-    image: prom/alertmanager:v0.27.0
-    ports:
-      - "127.0.0.1:9093:9093"
-    volumes:
-      - ./observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
-    command:
-      - --config.file=/etc/alertmanager/alertmanager.yml
-    networks:
-      - app-net
-    restart: unless-stopped
-
-  grafana:
-    image: grafana/grafana:10.3.5
-    ports:
-      - "127.0.0.1:3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_USER=${GF_SECURITY_ADMIN_USER:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD:-admin}
     networks:
       - app-net
     restart: unless-stopped

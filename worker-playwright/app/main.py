@@ -20,6 +20,7 @@ jsonlogger: ModuleType = importlib.import_module("pythonjsonlogger.jsonlogger")
 app = FastAPI()
 
 MCP_URL = os.getenv("MCP_URL", "http://mcp-server:9000")
+PLAYWRIGHT_GATEWAY_URL = os.getenv("PLAYWRIGHT_GATEWAY_URL", "")
 INTERNAL_API_KEYS = [key.strip() for key in (os.getenv("INTERNAL_API_KEY") or "").split(",") if key.strip()]
 if not INTERNAL_API_KEYS:
     raise ValueError("INTERNAL_API_KEY environment variable is required")
@@ -86,25 +87,61 @@ async def run(body: RunRequest, x_internal_key: Annotated[str | None, Header(ali
     task_token = task_id_var.set(body.task_id)
     try:
         logger.info("run request received")
+        
+        job_dict = body.input.get("job")
+        url_str = body.input.get("url")
+        
+        if job_dict is not None or url_str is not None:
+            if not PLAYWRIGHT_GATEWAY_URL:
+                raise HTTPException(status_code=400, detail="PLAYWRIGHT_GATEWAY_URL not configured")
+            
+            if job_dict is not None and isinstance(job_dict, dict):
+                job = job_dict
+            elif isinstance(url_str, str):
+                job = {"url": url_str, "screenshot": True}
+            else:
+                raise HTTPException(status_code=400, detail="Invalid browser job parameters")
+            
+            gateway_payload = {
+                "tenant_id": body.tenant_id,
+                "task_id": body.task_id,
+                "job": job
+            }
+            
+            try:
+                gateway_response = requests.post(
+                    f"{PLAYWRIGHT_GATEWAY_URL}/run",
+                    json=gateway_payload,
+                    headers={
+                        "X-Internal-Key": INTERNAL_API_KEYS[0],
+                        "X-Request-ID": trace_id_var.get() or "",
+                    },
+                    timeout=120,
+                )
+                gateway_response.raise_for_status()
+                return gateway_response.json()
+            except requests.exceptions.RequestException:
+                raise HTTPException(status_code=502, detail="Playwright gateway unavailable")
+        
         query = body.input.get("query")
         if not isinstance(query, str):
             raise HTTPException(status_code=400, detail="query is required in input")
 
-        mcp_response = requests.post(
-            f"{MCP_URL}/search",
-            json={"query": query},
-            headers={
-                "X-Internal-Key": INTERNAL_API_KEYS[0],
-                "X-Request-ID": trace_id_var.get() or "",
-            },
-            timeout=30,
-        )
-        mcp_response.raise_for_status()
+        try:
+            mcp_response = requests.post(
+                f"{MCP_URL}/search",
+                json={"query": query},
+                headers={
+                    "X-Internal-Key": INTERNAL_API_KEYS[0],
+                    "X-Request-ID": trace_id_var.get() or "",
+                },
+                timeout=30,
+            )
+            mcp_response.raise_for_status()
+            return {"results": mcp_response.json()}
+        except requests.exceptions.RequestException:
+            raise HTTPException(status_code=502, detail="MCP server unavailable")
 
-        return {"results": mcp_response.json()}
-
-    except requests.exceptions.RequestException:
-        raise HTTPException(status_code=502, detail="MCP server unavailable")
     finally:
         tenant_id_var.reset(tenant_token)
         task_id_var.reset(task_token)

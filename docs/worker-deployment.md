@@ -1,0 +1,392 @@
+# Worker Deployment Guide
+
+This guide explains how to build and push worker Docker images to Aliyun ACR, and deploy the worker stack to the remote worker host.
+
+## Overview
+
+The worker stack consists of three services running on a dedicated worker host:
+
+- **docker-socket-proxy**: Proxies the Docker daemon socket (required for spawning runner containers)
+- **playwright-gateway**: API gateway that accepts browser automation requests and orchestrates runner containers
+- **playwright-runner**: (Dynamical container) Executes Playwright browser automation tasks
+
+### Worker Host Details
+
+- **IP Address**: `175.178.213.10`
+- **SSH User**: `ubuntu`
+- **Working Directory**: `~/web3d-worker`
+- **Swap Size**: 16GB (prevents OOM during heavy browser workloads)
+- **Public Port**: `7200` (Playwright Gateway API)
+
+### Architecture
+
+```
+[Main Server HK]              [Worker Host CN]
+      |                              |
+      |  INTERNAL_API_KEY           |
+      +-------------> 7200 --------> playwright-gateway
+                              |
+                              | DOCKER_HOST=tcp://docker-socket-proxy:2375
+                              v
+                    docker-socket-proxy (ro-mount /var/run/docker.sock)
+                              |
+                              | spawns ephemeral containers
+                              v
+                    playwright-runner (per request)
+```
+
+## Prerequisites
+
+### Local Machine
+
+1. **Docker installed** and running
+2. **Docker login to Aliyun ACR**:
+   ```bash
+    docker login registry.cn-hangzhou.aliyuncs.com
+    # Enter your Aliyun username and password when prompted
+    ```
+
+3. **Create project root `.env` (HK main host)**
+
+Docker Compose will automatically load variables from the project root `.env`. This repo expects (at minimum):
+
+```bash
+ADMIN_API_KEY=...            # required by api-backend
+INTERNAL_API_KEY=...         # required by internal service-to-service auth
+SEARXNG_SECRET_KEY=...        # required by searxng
+PLAYWRIGHT_GATEWAY_URL=http://175.178.213.10:7200
+```
+
+**Important**: `.env` is ignored by git (`.gitignore` includes `.env` and `.env.*`).
+
+### Worker Host
+
+1. **Docker and Docker Compose** installed
+2. **Docker login to Aliyun ACR** (for pulling images):
+   ```bash
+   ssh ubuntu@175.178.213.10
+   docker login registry.cn-hangzhou.aliyuncs.com
+   ```
+3. **16GB swap** configured (verify with `free -h`)
+
+## Aliyun ACR Repository
+
+All worker images are stored in the Aliyun Container Registry:
+
+- **Registry**: `registry.cn-hangzhou.aliyuncs.com/ravin/`
+- **Repositories**:
+  - `web3d-playwright-runner:${TAG}` - Playwright runner container
+  - `web3d-playwright-gateway:${TAG}` - Playwright gateway service
+  - `web3d-worker-playwright:${TAG}` - Worker playbook (if any)
+  - `docker-socket-proxy:0.1.1` - Docker socket proxy (mirror from tecnativa)
+
+**Important**: The worker host cannot access Docker Hub directly. Therefore, `docker-socket-proxy` must be mirrored to ACR, and the compose file must reference the ACR image (`registry.cn-hangzhou.aliyuncs.com/ravin/docker-socket-proxy:0.1.1`).
+
+## Deployment Workflow
+
+### Step 1: Build and Push Images
+
+From the project root, run:
+
+```bash
+# Recommended tag: YYYYMMDD-<git-short-sha> (script defaults to this)
+TAG=20260209-0277415 ./scripts/push_worker_images.sh
+```
+
+The script performs the following:
+
+1. Builds `playwright-runner` image from `./playwright-runner`
+2. Builds `playwright-gateway` image from `./playwright-gateway`
+3. Builds `worker-playwright` image from `./worker-playwright`
+4. Pulls `tecnativa/docker-socket-proxy:0.1.1` and mirrors it to ACR
+5. Pushes all images to `registry.cn-hangzhou.aliyuncs.com/ravin/`
+
+**Output Example**:
+```
+================================
+PUSH WORKER IMAGES TO ACR
+================================
+
+TAG: v1.0.0
+ACR_REGISTRY: registry.cn-hangzhou.aliyuncs.com
+ACR_NAMESPACE: ravin
+
+Images to push:
+  - registry.cn-hangzhou.aliyuncs.com/ravin/web3d-playwright-runner:v1.0.0
+  - registry.cn-hangzhou.aliyuncs.com/ravin/web3d-playwright-gateway:v1.0.0
+  - registry.cn-hangzhou.aliyuncs.com/ravin/web3d-worker-playwright:v1.0.0
+  - registry.cn-hangzhou.aliyuncs.com/ravin/docker-socket-proxy:0.1.1
+
+[1/4] Building and pushing playwright-runner...
+[2/4] Building and pushing playwright-gateway...
+[3/4] Building and pushing worker-playwright...
+[4/4] Mirroring docker-socket-proxy to ACR...
+
+================================
+PUSH COMPLETE
+================================
+```
+
+### Step 2: Deploy to Worker Host
+
+From the project root, run:
+
+```bash
+# Set the shared secret and tag
+INTERNAL_API_KEY=your-secret-key TAG=20260209-0277415 ./scripts/deploy_worker.sh
+```
+
+The script performs the following:
+
+1. Creates `~/web3d-worker` directory on the worker host
+2. Copies `deploy/worker/docker-compose.yml` to the worker host
+3. Runs `docker compose up -d` with environment variables:
+   - `TAG=v1.0.0` (used by compose file for image selection)
+   - `INTERNAL_API_KEY=your-secret-key` (authentication secret)
+
+**Environment Variables**:
+
+- `WORKER_HOST`: Worker host IP (default: `175.178.213.10`)
+- `WORKER_USER`: SSH user (default: `ubuntu`)
+- `REMOTE_DIR`: Remote working directory (default: `~/web3d-worker`)
+- `TAG`: Image tag (default: `latest`)
+- `INTERNAL_API_KEY`: Shared secret between main server and worker (required)
+
+### Step 3: Verify Deployment
+
+SSH into the worker host and check the status:
+
+```bash
+ssh ubuntu@175.178.213.10
+
+# Check running containers
+cd ~/web3d-worker
+docker compose ps
+
+# Check logs
+docker compose logs -f
+
+# Verify gateway is accessible
+curl -H "X-Internal-Key: your-secret-key" http://localhost:7200/health
+```
+
+## Docker Compose Configuration
+
+The `deploy/worker/docker-compose.yml` defines the worker stack:
+
+```yaml
+services:
+  docker-socket-proxy:
+    image: registry.cn-hangzhou.aliyuncs.com/ravin/docker-socket-proxy:0.1.1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro  # Read-only mount
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      VOLUMES: 1
+      NETWORKS: 1
+      POST: 1
+      GET: 0
+      DELETE: 0
+      PUT: 0
+      PATCH: 0
+    networks:
+      - worker-net
+
+  playwright-gateway:
+    image: registry.cn-hangzhou.aliyuncs.com/ravin/web3d-playwright-gateway:${TAG:-latest}
+    environment:
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?set}
+      PW_RUNNER_IMAGE: registry.cn-hangzhou.aliyuncs.com/ravin/web3d-playwright-runner:${TAG:-latest}
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
+    ports:
+      - "7200:7200"
+    networks:
+      - worker-net
+    depends_on:
+      - docker-socket-proxy
+
+networks:
+  worker-net:
+    driver: bridge
+```
+
+**Key Points**:
+
+- `docker-socket-proxy` mounts `/var/run/docker.sock` **read-only** for security
+- Proxy only allows `POST` operations (creating containers), blocking destructive actions
+- `playwright-gateway` uses `INTERNAL_API_KEY` for authentication
+- Runner images are pulled dynamically from ACR based on the same `TAG`
+
+## Security Considerations
+
+### INTERNAL_API_KEY
+
+The `INTERNAL_API_KEY` is a shared secret used for authentication between the main server and the worker gateway:
+
+- Must be identical on both the main server and worker host
+- Should be a strong, randomly generated string (e.g., 32+ characters)
+- Stored in environment variables, not in configuration files
+- Treat this as a sensitive credential
+
+### Firewall Configuration
+
+**Recommendation**: Restrict port 7200 to the Hong Kong server IP only via cloud firewall.
+
+**Example** (Aliyun security group rules):
+
+| Protocol | Port Range | Source IP | Policy |
+|----------|------------|------------|--------|
+| TCP      | 7200       | HK_SERVER_IP/32 | Allow |
+| TCP      | 7200       | 0.0.0.0/0  | Deny |
+
+This prevents unauthorized access to the worker gateway from the internet.
+
+### Docker Socket Security
+
+- `docker-socket-proxy` mounts Docker socket read-only
+- Proxy only allows `POST` operations (create containers)
+- Destructive operations (`DELETE`, `PUT`, `PATCH`) are blocked
+- `GET` operations are blocked to prevent information leakage
+
+## Common Troubleshooting
+
+### Issue: "Unable to pull image" or "permission denied"
+
+**Cause**: Docker not logged in to ACR on the worker host.
+
+**Solution**:
+```bash
+ssh ubuntu@175.178.213.10
+docker login registry.cn-hangzhou.aliyuncs.com
+# Enter Aliyun credentials
+docker compose pull
+```
+
+### Issue: "Failed to connect to docker-socket-proxy"
+
+**Cause**: Docker socket proxy service not running or network issue.
+
+**Solution**:
+```bash
+ssh ubuntu@175.178.213.10
+cd ~/web3d-worker
+docker compose logs docker-socket-proxy
+docker compose restart docker-socket-proxy
+```
+
+### Issue: "Container exited with code 137" (OOM)
+
+**Cause**: Out of memory during browser task execution.
+
+**Solution**:
+1. Verify swap is configured:
+   ```bash
+   free -h
+   # Should show Swap: 16G
+   ```
+2. If swap is missing, add 16GB swap:
+   ```bash
+   sudo fallocate -l 16G /swap.img
+   sudo chmod 600 /swap.img
+   sudo mkswap /swap.img
+   sudo swapon /swap.img
+   echo '/swap.img none swap sw 0 0' | sudo tee -a /etc/fstab
+   ```
+
+**Note**: The current worker already has 16GB swap configured at `/swap.img` with the fstab entry `/swap.img none swap sw 0 0`. The commands above are only needed if the swap needs to be rebuilt.
+
+### Issue: "401 Unauthorized" when calling gateway API
+
+**Cause**: `INTERNAL_API_KEY` mismatch or missing header.
+
+**Solution**:
+1. Verify the key is set in compose file:
+   ```bash
+   ssh ubuntu@175.178.213.10
+   cd ~/web3d-worker
+   docker compose exec playwright-gateway env | grep INTERNAL_API_KEY
+   ```
+2. Ensure main server uses the same key in requests:
+   ```bash
+   curl -H "X-Internal-Key: your-secret-key" http://175.178.213.10:7200/health
+   ```
+
+### Issue: "Failed to start runner container"
+
+**Cause**: `docker-socket-proxy` cannot pull runner image from Docker Hub.
+
+**Solution**:
+Ensure compose file uses ACR images and `docker-socket-proxy` is mirrored:
+```yaml
+environment:
+  PW_RUNNER_IMAGE: registry.cn-hangzhou.aliyuncs.com/ravin/web3d-playwright-runner:${TAG}
+```
+
+Re-run the push script to mirror images:
+```bash
+TAG=v1.0.0 ./scripts/push_worker_images.sh
+```
+
+## Updating the Worker Stack
+
+To update the worker stack with new images:
+
+1. **Build and push new images**:
+   ```bash
+   TAG=v1.1.0 ./scripts/push_worker_images.sh
+   ```
+
+2. **Deploy with new tag**:
+   ```bash
+   INTERNAL_API_KEY=your-secret-key TAG=v1.1.0 ./scripts/deploy_worker.sh
+   ```
+
+3. **Verify deployment**:
+   ```bash
+   ssh ubuntu@175.178.213.10
+   cd ~/web3d-worker
+   docker compose ps
+   docker compose logs -f
+   ```
+
+## Rollback Procedure
+
+To rollback to a previous version:
+
+1. **Identify the previous tag** (e.g., `v1.0.0`)
+
+2. **Deploy with previous tag**:
+   ```bash
+   INTERNAL_API_KEY=your-secret-key TAG=v1.0.0 ./scripts/deploy_worker.sh
+   ```
+
+3. **Verify rollback**:
+   ```bash
+   ssh ubuntu@175.178.213.10
+   cd ~/web3d-worker
+   docker compose ps
+   ```
+
+## Appendix: Complete Deployment Example
+
+```bash
+# 1. Set variables
+TAG=v1.0.0
+INTERNAL_API_KEY="your-32-character-random-secret-key"
+
+# 2. Build and push images to ACR
+TAG=$TAG ./scripts/push_worker_images.sh
+
+# 3. Deploy to worker host
+INTERNAL_API_KEY=$INTERNAL_API_KEY TAG=$TAG ./scripts/deploy_worker.sh
+
+# 4. Verify deployment
+ssh ubuntu@175.178.213.10
+cd ~/web3d-worker
+docker compose ps
+docker compose logs -f
+
+# 5. Test gateway health (exit SSH first or run inside)
+curl -H "X-Internal-Key: $INTERNAL_API_KEY" http://175.178.213.10:7200/health
+```
