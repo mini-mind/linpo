@@ -394,3 +394,62 @@ docker compose logs -f
 # 5. Test gateway health (exit SSH first or run inside)
 curl -H "X-Internal-Key: $INTERNAL_API_KEY" http://175.178.213.10:7200/health
 ```
+
+## 升级 / 更新 Worker 到最新镜像
+
+将远程 worker 升级到最新代码构建的镜像，按以下步骤操作：
+
+### Step 1: 确定版本 Tag
+
+使用推荐的 Tag 格式：`YYYYMMDD-<git-short-sha>`
+
+**示例**：`20260210-28d14cd`
+
+获取 git 短 SHA：
+```bash
+git rev-parse --short HEAD
+```
+
+### Step 2: 构建并推送镜像
+
+```bash
+TAG=20260210-28d14cd ./scripts/push_worker_images.sh
+```
+
+**注意**：如果脚本在镜像 `tecnativa/docker-socket-proxy:0.1.1` 时失败，需先确保该镜像在本地存在：
+```bash
+docker pull tecnativa/docker-socket-proxy:0.1.1
+TAG=20260210-28d14cd ./scripts/push_worker_images.sh
+```
+
+### Step 3: 部署到 Worker 主机
+
+```bash
+INTERNAL_API_KEY=your-secret-key TAG=20260210-28d14cd ./scripts/deploy_worker.sh
+```
+
+### Step 4: 验证镜像 Tag
+
+确认远程 worker 运行了正确的镜像 tag：
+
+```bash
+ssh ubuntu@175.178.213.10 'docker ps --format "{{.Names}}\t{{.Image}}" | grep playwright-gateway'
+```
+
+预期输出应包含你部署的 tag（检查 `...web3d-playwright-gateway:<TAG>`）：
+```
+...web3d-playwright-gateway:20260210-28d14cd
+```
+
+### Step 5: 功能验证
+
+验证 worker health 端点正常响应：
+
+```bash
+curl -H "X-Internal-Key: your-secret-key" http://175.178.213.10:7200/health
+```
+
+预期响应：
+```json
+{"status":"ok"}
+```

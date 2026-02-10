@@ -4,6 +4,20 @@
 
 本指南适用于部署后的运维工作。首次部署请参考 [Worker 部署指南](worker-deployment.md)。
 
+## 版本确认
+
+确认当前运行的镜像标签：
+
+```bash
+# 检查运行的镜像标签
+ssh ubuntu@175.178.213.10 'docker ps --format "{{.Names}}\t{{.Image}}" | grep playwright-gateway'
+
+# 健康检查
+curl -H "X-Internal-Key: your-secret-key" http://175.178.213.10:7200/health
+```
+
+升级步骤请参考 [Worker 部署指南](worker-deployment.md) 的 "升级 / 更新 Worker 到最新镜像" 章节。
+
 This document provides operational guidance for maintaining the Tencent worker host `175.178.213.10`.
 
 ## Host Identity
