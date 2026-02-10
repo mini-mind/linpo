@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnusedCallResult=false, reportUntypedBaseClass=false, reportUnknownParameterType=false, reportMissingParameterType=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnusedCallResult=false, reportUntypedBaseClass=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnusedImport=false
 
 """FastAPI app: multi-tenant tasks + event streaming.
 
@@ -911,88 +911,56 @@ def _require_session_user(session: Session, x_session_token: str | None) -> mode
     return user
 
 
-def _extract_citations(payload: object) -> list[dict[str, str]]:
-    if not isinstance(payload, dict):
-        return []
-
-    candidates: list[object] = []
-    for key in ("results", "items", "data"):
-        value = payload.get(key)
-        if isinstance(value, list):
-            candidates = value
-            break
-        if isinstance(value, dict):
-            nested = value.get("results")
-            if isinstance(nested, list):
-                candidates = nested
-                break
-
-    citations: list[dict[str, str]] = []
-    for item in candidates:
-        if not isinstance(item, dict):
-            continue
-        title = item.get("title")
-        url = item.get("url")
-        if isinstance(title, str) and isinstance(url, str) and title.strip() and url.strip():
-            citations.append({"title": title.strip(), "url": url.strip()})
-        if len(citations) >= 3:
-            break
-
-    return citations
+def _load_prompt_file(path: str) -> str:
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return handle.read()
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="Prompt not available")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Prompt not available")
 
 
-async def _call_mcp_search(query: str) -> tuple[list[dict[str, str]], bool]:
+def _build_agent_prompt(agent_type: str) -> str:
+    agent_prompt = _load_prompt_file(f"/app/prompts/agents/{agent_type}.md")
+    user_prompt = _load_prompt_file("/app/prompts/skills/chat_user.md")
+    return f"{agent_prompt}\n\n---\n\n{user_prompt}"
+
+
+def _resolve_internal_key() -> str:
     internal_keys = [k.strip() for k in APP_SETTINGS.INTERNAL_API_KEY.split(",") if k.strip()]
     if not internal_keys:
-        logger.warning("Missing INTERNAL_API_KEY for MCP search")
-        return [], True
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(
-                "http://mcp-server:9000/search",
-                json={"query": query},
-                headers={"X-Internal-Key": internal_keys[0]},
-            )
-            response.raise_for_status()
-            payload = response.json()
-    except Exception as exc:
-        logger.warning("MCP search failed: %s", exc)
-        return [], True
-
-    return _extract_citations(payload), False
+        raise HTTPException(status_code=500, detail="Internal key not available")
+    return internal_keys[0]
 
 
-def _format_agent_reply(
-    agent_type: str,
-    message: str,
-    citations: list[dict[str, str]],
-    tool_failed: bool,
-) -> str:
-    topic = message.strip() or "the request"
-    if agent_type == "pm":
-        prefix = "Search tool failed; offering a best-effort product summary" if tool_failed else "Product summary based on search results"
-        bullets = [
-            f"Primary user need: {topic}.",
-            "Key value: clarify scope and expected outcomes early.",
-            "Risks: unknown constraints or dependencies.",
-        ]
-        reply = f"{prefix} for {topic}.\n" + "\n".join(f"- {item}" for item in bullets)
-    else:
-        prefix = "Search tool failed; offering a best-effort technical response" if tool_failed else "Concise technical response based on search results"
-        steps = [
-            f"Assess requirements and constraints for {topic}.",
-            "Draft a minimal implementation plan with clear interfaces.",
-            "Validate assumptions and refine the plan based on findings.",
-        ]
-        reply = f"{prefix} for {topic}.\n" + "\n".join(f"{idx + 1}. {step}" for idx, step in enumerate(steps))
-
-    if citations:
-        reply = reply + "\nSources:\n" + "\n".join(
-            f"- {cite['title']} ({cite['url']})" for cite in citations
+async def _call_llm_gateway(system_prompt: str, user_message: str) -> str:
+    llm_gateway_url = (os.getenv("LLM_GATEWAY_URL") or "http://llm-gateway:7300").strip()
+    if not llm_gateway_url:
+        llm_gateway_url = "http://llm-gateway:7300"
+    payload = {
+        "model": "ark-code-latest",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+    }
+    async with httpx.AsyncClient(base_url=llm_gateway_url, timeout=30.0) as client:
+        response = await client.post(
+            "/internal/llm/chat",
+            json=payload,
+            headers={"X-Internal-Key": _resolve_internal_key()},
         )
-
-    return reply
+    response.raise_for_status()
+    data = response.json()
+    choices = data.get("choices") if isinstance(data, dict) else None
+    if not isinstance(choices, list) or not choices:
+        raise ValueError("LLM response missing choices")
+    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("LLM response missing content")
+    return content.strip()
 
 
 @app.get("/health", response_model=HealthOut)
@@ -1324,16 +1292,19 @@ async def agent_chat(
                 a2a_thread_id=str(a2a_thread_id_int),
                 a2a_summary=a2a_summary
             )
-        else:
-            reply = "I can help you find GitHub trending repositories. Just ask about GitHub trending or popular repositories."
-            return AgentChatOut(reply=reply, tool=None, citations=[])
 
-    if agent_type not in {"pm", "engineer"}:
+    if agent_type not in {"pm", "engineer", "ceo"}:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    citations, tool_failed = await _call_mcp_search(body.message)
-    reply = _format_agent_reply(agent_type, body.message, citations, tool_failed)
-    return AgentChatOut(reply=reply, tool="search", citations=citations)
+    system_prompt = _build_agent_prompt(agent_type)
+    try:
+        reply = await _call_llm_gateway(system_prompt, body.message)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("LLM gateway call failed: %s", exc)
+        reply = "I'm having trouble reaching the language model right now. Please try again in a moment."
+    return AgentChatOut(reply=reply, tool=None, citations=[])
 
 
 @app.post("/api/world/bootstrap", response_model=WorldBootstrapOut, status_code=200)

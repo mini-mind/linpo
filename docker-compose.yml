@@ -51,6 +51,10 @@ services:
       - DEFAULT_NOTIFICATION_EMAIL=${DEFAULT_NOTIFICATION_EMAIL:-demo@example.com}
       - EMAIL_POLL_INTERVAL_SEC=${EMAIL_POLL_INTERVAL_SEC:-2}
       - EMAIL_MAX_ATTEMPTS=${EMAIL_MAX_ATTEMPTS:-3}
+      - LLM_GATEWAY_URL=${LLM_GATEWAY_URL:-http://llm-gateway:7300}
+    volumes:
+      - ./config:/app/config:ro
+      - ./prompts:/app/prompts:ro
     depends_on:
       - postgres
       - redis
