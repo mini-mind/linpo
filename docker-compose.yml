@@ -188,6 +188,22 @@ services:
       - app-net
     restart: unless-stopped
 
+  llm-gateway:
+    build:
+      context: ./llm-gateway
+    environment:
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:?set}
+      - LLM_PROVIDERS_PATH=/run/secrets/llm-providers.json
+    volumes:
+      - ${LLM_PROVIDERS_HOST_PATH:-./config/llm-providers.example.json}:/run/secrets/llm-providers.json:ro
+    expose:
+      - "7300"
+    networks:
+      - app-net
+    restart: unless-stopped
+
+
+
 networks:
   app-net:
     driver: bridge

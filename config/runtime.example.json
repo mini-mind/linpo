@@ -1,11 +1,10 @@
 {
   "model": {
     "provider": "volcengine",
-    "name": "ark-code-latest",
-    "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
-    "api_key": "YOUR_VOLCENGINE_ARK_API_KEY_HERE"
+    "name": "ark-code-latest"
   },
   "services": {
+    "llm_gateway_url": "http://llm-gateway:7300",
     "mcp_url": "http://mcp-server:9000",
     "playwright_gateway_url": "http://175.178.213.10:7200"
   }

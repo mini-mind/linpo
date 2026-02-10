@@ -3,13 +3,14 @@
 
 models:
   ark-code-latest:
-    provider: volcengine
+    provider: llm-gateway
     model_id: ark-code-latest
-    # Project-specific authentication via environment variables
-    api_key:
-      env: ARK_API_KEY
-    base_url:
-      env: ARK_BASE_URL
+    endpoint:
+      url_env: LLM_GATEWAY_URL
+      path: /internal/llm/chat
+      headers:
+        X-Internal-Key:
+          env: INTERNAL_API_KEY
     capabilities:
       chat_completion: true
       streaming: true
