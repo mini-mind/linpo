@@ -53,6 +53,31 @@ View logs:
 docker compose logs -f
 ```
 
+## A2A (Agent-to-Agent) Communication
+
+The system supports async agent-to-agent communication via Redis streams:
+
+### Flow
+1. `POST /internal/a2a/ask` enqueues A2A jobs to Redis stream `queue:a2a`
+2. `agent-manager` consumes `queue:a2a` (consumer group: `agent-manager-a2a`) and processes messages
+3. `agent-manager` replies by calling `POST /internal/a2a/send`
+4. `GET /api/a2a/threads/{id}` is used by the UI for expanding thread details
+
+### Environment Variables
+
+#### A2A Stream Configuration
+- `A2A_STREAM`: Redis stream for A2A jobs (default: `queue:a2a`)
+- `A2A_DEAD_STREAM`: Dead-letter stream for failed A2A jobs (default: `queue:a2a:dead`)
+- `A2A_GROUP`: Redis consumer group for A2A (default: `agent-manager-a2a`)
+- `A2A_CONSUMER`: Redis consumer name (default: `agent-manager` or hostname)
+- `A2A_MAX_ATTEMPTS`: Max retry attempts for A2A jobs (default: `3`)
+
+#### LLM Gateway Configuration
+- `LLM_GATEWAY_URL`: URL of the LLM gateway service (default: `http://llm-gateway:7300`)
+- `LLM_PROVIDERS_HOST_PATH`: Path to llm-providers.json file mounted by `llm-gateway`
+  - HK dev path: `/home/ravin/.web3d-secrets/llm-providers.json`
+  - Without a real providers file, LLM calls will return 502 errors
+
 ## Environment Variables
 
 ### 必填环境变量
