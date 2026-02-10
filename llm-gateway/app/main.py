@@ -25,6 +25,10 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage]
     temperature: float | None = None
     max_tokens: int | None = Field(default=None, ge=1)
+    tools: list[dict[str, object]] | None = None
+    tool_choice: object | str | None = None
+    parallel_tool_calls: bool | None = None
+    response_format: dict[str, object] | None = None
 
 
 def _require_internal_key(request: Request) -> None:
@@ -81,6 +85,14 @@ async def chat(request: ChatRequest, http_request: Request) -> object:
         payload["temperature"] = request.temperature
     if request.max_tokens is not None:
         payload["max_tokens"] = request.max_tokens
+    if request.tools is not None:
+        payload["tools"] = request.tools
+    if request.tool_choice is not None:
+        payload["tool_choice"] = request.tool_choice
+    if request.parallel_tool_calls is not None:
+        payload["parallel_tool_calls"] = request.parallel_tool_calls
+    if request.response_format is not None:
+        payload["response_format"] = request.response_format
 
     try:
         async with httpx.AsyncClient(base_url=provider["base_url"], timeout=30.0) as client:
@@ -90,7 +102,10 @@ async def chat(request: ChatRequest, http_request: Request) -> object:
                 headers={"Authorization": f"Bearer {provider['api_key']}"},
             )
         if response.status_code >= 400:
-            raise HTTPException(status_code=502, detail="Provider request failed")
+            upstream_body = response.text
+            truncated_body = upstream_body[:1500] if len(upstream_body) > 1500 else upstream_body
+            detail = f"Provider returned {response.status_code}: {truncated_body}"
+            raise HTTPException(status_code=502, detail=detail)
         try:
             return response.json()
         except ValueError:
