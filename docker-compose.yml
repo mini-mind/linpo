@@ -89,6 +89,12 @@ services:
       - DISPATCH_DEAD_STREAM=${DISPATCH_DEAD_STREAM:-queue:dispatch:dead}
       - DISPATCH_GROUP=${DISPATCH_GROUP:-agent-manager}
       - DISPATCH_MAX_ATTEMPTS=${DISPATCH_MAX_ATTEMPTS:-3}
+      - A2A_STREAM=${A2A_STREAM:-queue:a2a}
+      - A2A_DEAD_STREAM=${A2A_DEAD_STREAM:-queue:a2a:dead}
+      - A2A_GROUP=${A2A_GROUP:-agent-manager-a2a}
+      - A2A_CONSUMER=${A2A_CONSUMER:-}
+      - A2A_MAX_ATTEMPTS=${A2A_MAX_ATTEMPTS:-3}
+      - LLM_GATEWAY_URL=${LLM_GATEWAY_URL:-http://llm-gateway:7300}
     depends_on:
       - api-backend
       - redis
