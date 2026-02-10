@@ -628,6 +628,18 @@ class A2AThreadOut(BaseModel):
     messages: list[A2AMessageOut] = Field(default_factory=list)
 
 
+class A2ASendIn(BaseModel):
+    tenant_id: str = Field(..., min_length=1)
+    from_agent_id: str = Field(..., min_length=1)
+    to_agent_id: str = Field(..., min_length=1)
+    message: str = Field(..., min_length=1)
+    parent_thread_id: str | None = None
+
+
+class A2ASendOut(BaseModel):
+    a2a_thread_id: str
+
+
 class ConnectionManager:
     def __init__(self) -> None:
         self._lock: asyncio.Lock = asyncio.Lock()
@@ -1109,6 +1121,54 @@ def get_a2a_thread(
         created_at=_dt_to_iso(thread_created_at),
         messages=message_outs,
     )
+
+
+@app.post("/internal/a2a/send", response_model=A2ASendOut, status_code=201)
+def a2a_send(
+    body: A2ASendIn,
+    session: DbSessionDep,
+    x_internal_key: InternalKeyHeader = None,
+) -> A2ASendOut:
+    auth.require_internal_key(x_internal_key, APP_SETTINGS)
+    
+    tenant_id_int = _parse_int_id(body.tenant_id, "tenant_id")
+    tenant = session.query(models.Tenant).filter(models.Tenant.id == tenant_id_int).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    TENANT_ID_CONTEXT.set(str(tenant_id_int))
+    
+    parent_thread_id_int = None
+    if body.parent_thread_id:
+        parent_thread_id_int = _parse_int_id(body.parent_thread_id, "parent_thread_id")
+        parent_thread = (
+            session.query(models.A2AThread)
+            .filter(models.A2AThread.id == parent_thread_id_int, models.A2AThread.tenant_id == tenant_id_int)
+            .first()
+        )
+        if not parent_thread:
+            raise HTTPException(status_code=404, 
+                detail="Parent thread not found")
+    
+    if parent_thread_id_int:
+        thread_id_int = parent_thread_id_int
+    else:
+        thread = models.A2AThread()
+        setattr(thread, "tenant_id", tenant_id_int)
+        session.add(thread)
+        session.flush()
+        thread_id_int = cast(int, getattr(thread, "id"))
+    
+    msg = models.A2AMessage()
+    setattr(msg, "tenant_id", tenant_id_int)
+    setattr(msg, "thread_id", thread_id_int)
+    setattr(msg, "role", "agent")
+    setattr(msg, "agent_id", body.from_agent_id)
+    setattr(msg, "content", body.message)
+    session.add(msg)
+    
+    session.commit()
+    
+    return A2ASendOut(a2a_thread_id=str(thread_id_int))
 
 
 @app.post("/api/agents/{agent_type}/chat", response_model=AgentChatOut, status_code=200)
