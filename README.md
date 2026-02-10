@@ -1,5 +1,10 @@
 # Search Infrastructure
 
+## Documentation / 文档
+
+- [文档中心 (Docs Hub)](docs/README.md) - 完整的项目文档入口
+- [Sisyphus 工作流](docs/process/sisyphus-workflow.md) - `.sisyphus` 进程文档
+
 ## 服务架构
 
 ### 服务组件

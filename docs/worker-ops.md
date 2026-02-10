@@ -1,5 +1,9 @@
 # Worker Operations Manual
 
+[← 文档中心](README.md) | [Worker 部署指南](worker-deployment.md)
+
+本指南适用于部署后的运维工作。首次部署请参考 [Worker 部署指南](worker-deployment.md)。
+
 This document provides operational guidance for maintaining the Tencent worker host `175.178.213.10`.
 
 ## Host Identity

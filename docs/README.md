@@ -1,0 +1,51 @@
+# 文档中心
+
+[← 返回根 README](../README.md)
+
+本文档是项目文档的导航中心，按渐进式分层结构组织。
+
+## L0: 这是什么？从哪里开始
+
+**项目简介**: 多服务搜索基础设施，包含 Agent 框架、A2A 通信、浏览器自动化等组件。
+
+**快速启动**:
+- [Quick Start - 本地运行所有服务](../README.md#quick-start)
+
+## L1: 本地运行与快速验证
+
+**端到端验证**:
+- [快速验证 - 租户创建、任务执行、WebSocket 连接](../README.md#快速验证)
+- [Quick QA (Local) - CEO 聊天测试](../README.md#quick-qa-local)
+
+**服务组件概述**: 参考 [README.md 服务架构](../README.md#服务架构)
+
+## L2: 架构与 Agent 机制
+
+- [Agent Framework](agent-framework.md) - LLM Gateway、配置分离、安全指南
+  - A2A (Agent-to-Agent) 通信流程
+  - CEO 委托（Tool-Calling Flow）
+  - 配置示例与常见错误
+
+**核心机制**（根 README）:
+- [A2A Communication](../README.md#a2a-agent-to-agent-communication) - Redis Stream 通信
+- [CEO Delegation](../README.md#ceo-delegation-tool-calling-flow) - 工具调用与非阻塞流程
+
+## L3: 部署与运维
+
+**Worker 部署**:
+- [Worker Deployment Guide](worker-deployment.md) - 镜像构建、ACR 推送、远程部署
+- [Worker Operations Manual](worker-ops.md) - 运维手册、故障排查、磁盘回滚
+
+**部署脚本**:
+- `scripts/push_worker_images.sh` - 推送 worker 镜像到 Aliyun ACR
+- `scripts/deploy_worker.sh` - 在 worker 主机上部署服务
+- `scripts/pg_backup.sh` / `scripts/pg_restore.sh` - 数据库备份与恢复
+
+**生产配置**（根 README）:
+- [生产配置建议 - Secrets 管理、限流、邮件配置](../README.md#生产配置建议)
+- [HTTPS 配置 - Caddy + Let's Encrypt](../README.md#https-配置)
+- [数据备份与恢复](../README.md#数据备份与恢复)
+
+## L4: 流程与决策记录
+
+- [Sisyphus 工作流](process/sisyphus-workflow.md) - 计划、草稿、决策记录系统

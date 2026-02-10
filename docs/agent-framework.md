@@ -1,5 +1,10 @@
 # Agent Framework Documentation
 
+## 文档导航
+
+- [文档中心](README.md) - 返回文档中心
+- [Sisyphus 工作流](process/sisyphus-workflow.md) - 查看工作流文档
+
 ## Key Rules and Guidelines
 
 ### Configuration Separation

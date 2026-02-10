@@ -1,5 +1,9 @@
 # Worker Deployment Guide
 
+**相关文档**:
+- [文档中心](README.md) - 项目文档导航
+- [Worker Operations Manual](worker-ops.md) - 部署后运维手册（故障排查、磁盘清理、日志回滚等）
+
 This guide explains how to build and push worker Docker images to Aliyun ACR, and deploy the worker stack to the remote worker host.
 
 ## Overview
