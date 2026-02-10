@@ -592,6 +592,8 @@ class AgentChatOut(BaseModel):
     reply: str
     tool: str | None = None
     citations: list[dict[str, str]] = Field(default_factory=list)
+    a2a_thread_id: str | None = None
+    a2a_summary: str | None = None
 
 
 class MeOut(BaseModel):
@@ -610,6 +612,20 @@ class TaskResultOut(BaseModel):
     summary: str | None = None
     artifacts: list[dict[str, object]] = Field(default_factory=list)
     structured_output: dict[str, object] | None = None
+
+
+class A2AMessageOut(BaseModel):
+    role: str
+    agent_id: str | None = None
+    content: str
+    created_at: str
+
+
+class A2AThreadOut(BaseModel):
+    thread_id: str
+    tenant_id: str
+    created_at: str
+    messages: list[A2AMessageOut] = Field(default_factory=list)
 
 
 class ConnectionManager:
@@ -1073,6 +1089,60 @@ def get_me(
     return MeOut(id=str(user_id), email=email, created_at=_dt_to_iso(created_at))
 
 
+@app.get("/api/a2a/threads/{thread_id}", response_model=A2AThreadOut, status_code=200)
+def get_a2a_thread(
+    thread_id: str,
+    session: DbSessionDep,
+    x_session_token: SessionTokenHeader = None,
+) -> A2AThreadOut:
+    user = _require_session_user(session, x_session_token)
+    user_tenant_id = getattr(user, "tenant_id")
+
+    if user_tenant_id is None:
+        raise HTTPException(status_code=404, detail="Thread not found")
+
+    tenant_id_int = cast(int, user_tenant_id)
+    thread_id_int = _parse_int_id(thread_id, "thread_id")
+
+    thread = (
+        session.query(models.A2AThread)
+        .filter(models.A2AThread.id == thread_id_int, models.A2AThread.tenant_id == tenant_id_int)
+        .first()
+    )
+    if not thread:
+        raise HTTPException(status_code=404, detail="Thread not found")
+
+    messages = (
+        session.query(models.A2AMessage)
+        .filter(models.A2AMessage.thread_id == thread_id_int, models.A2AMessage.tenant_id == tenant_id_int)
+        .order_by(models.A2AMessage.id.asc())
+        .all()
+    )
+
+    thread_created_at = cast(datetime, getattr(thread, "created_at"))
+    message_outs = []
+    for msg in messages:
+        msg_role = cast(str, getattr(msg, "role"))
+        msg_agent_id = getattr(msg, "agent_id")
+        msg_content = cast(str, getattr(msg, "content"))
+        msg_created_at = cast(datetime, getattr(msg, "created_at"))
+        message_outs.append(
+            A2AMessageOut(
+                role=msg_role,
+                agent_id=msg_agent_id,
+                content=msg_content,
+                created_at=_dt_to_iso(msg_created_at),
+            )
+        )
+
+    return A2AThreadOut(
+        thread_id=str(thread_id_int),
+        tenant_id=str(tenant_id_int),
+        created_at=_dt_to_iso(thread_created_at),
+        messages=message_outs,
+    )
+
+
 @app.post("/api/agents/{agent_type}/chat", response_model=AgentChatOut, status_code=200)
 async def agent_chat(
     agent_type: str,
@@ -1080,7 +1150,184 @@ async def agent_chat(
     session: DbSessionDep,
     x_session_token: SessionTokenHeader = None,
 ) -> AgentChatOut:
-    _ = _require_session_user(session, x_session_token)
+    user = _require_session_user(session, x_session_token)
+    user_id = cast(int, getattr(user, "id"))
+    user_tenant_id = getattr(user, "tenant_id")
+
+    if agent_type == "ceo":
+        if user_tenant_id is None:
+            tenant = models.Tenant()
+            setattr(tenant, "name", f"User {user_id}")
+            raw_api_key = secrets.token_urlsafe(32)
+            setattr(tenant, "api_key_hash", auth.hash_api_key(raw_api_key))
+            session.add(tenant)
+            session.commit()
+            tenant_id_int = cast(int, getattr(tenant, "id"))
+            setattr(user, "tenant_id", tenant_id_int)
+            session.commit()
+        else:
+            tenant_id_int = cast(int, user_tenant_id)
+            tenant = session.query(models.Tenant).filter(models.Tenant.id == tenant_id_int).first()
+            if not tenant:
+                raise HTTPException(status_code=404, detail="Tenant not found")
+
+        message_lower = body.message.lower()
+        trending_keywords = [
+            "github trending", "github trend", "top repo", "popular repo",
+            "github 热门", "github 趋势", "热门仓库", "流行仓库", "今日热门", "今日趋势"
+        ]
+        is_github_trending = any(keyword in message_lower for keyword in trending_keywords)
+        if not is_github_trending and "github" in message_lower:
+            growth_indicators = ["trending", "热门", "趋势", "增长", "stars", "star"]
+            is_github_trending = any(indicator in message_lower for indicator in growth_indicators)
+
+        if is_github_trending:
+            task_input = {
+                "job": {
+                    "url": "https://github.com/trending?since=daily",
+                    "actions": [
+                        {
+                            "type": "wait_for_selector",
+                            "selector": "article.Box-row"
+                        },
+                        {
+                            "type": "screenshot"
+                        },
+                        {
+                            "type": "extract",
+                            "kind": "text",
+                            "selector": "article.Box-row:nth-of-type(1) h2 a",
+                            "as": "top_repo"
+                        },
+                        {
+                            "type": "extract",
+                            "kind": "text",
+                            "selector": "article.Box-row:nth-of-type(1) span:has-text(\"stars today\")",
+                            "as": "top_stars_today"
+                        }
+                    ]
+                }
+            }
+
+            task = models.Task()
+            setattr(task, "tenant_id", tenant_id_int)
+            setattr(task, "status", "queued")
+            setattr(task, "input_json", json.dumps(task_input))
+            session.add(task)
+            session.flush()
+
+            task_id_int = cast(int, getattr(task, "id"))
+
+            created_event = models.Event()
+            setattr(created_event, "task_id", task_id_int)
+            setattr(created_event, "tenant_id", tenant_id_int)
+            setattr(created_event, "type", "task.created")
+            setattr(created_event, "data_json", json.dumps({}))
+            setattr(created_event, "status", "queued")
+            setattr(created_event, "timestamp", _utcnow_naive())
+            session.add(created_event)
+            session.commit()
+
+            redis_client = getattr(app.state, "redis_client", None)
+            if redis_client is not None and getattr(app.state, "redis_ok", False):
+                try:
+                    trace_id = TRACE_ID_CONTEXT.get() or ""
+                    dispatch_msg = {
+                        "task_id": str(task_id_int),
+                        "tenant_id": str(tenant_id_int),
+                        "input_json": json.dumps(task_input),
+                        "attempt": "1",
+                        "enqueued_at": utcnow_iso(),
+                        "trace_id": trace_id,
+                    }
+                    await redis_client.xadd("queue:dispatch", dispatch_msg)
+                    logger.info("CEO enqueued dispatch for task %s tenant %s", task_id_int, tenant_id_int)
+                except Exception as exc:
+                    logger.warning("CEO failed to enqueue dispatch for task %s tenant %s: %s", task_id_int, tenant_id_int, exc)
+
+            top_repo = None
+            top_stars_today = None
+            poll_start = time.time()
+            while time.time() - poll_start < 60:
+                session.expire_all()
+                task = session.query(models.Task).filter(
+                    models.Task.id == task_id_int,
+                    models.Task.tenant_id == tenant_id_int
+                ).first()
+                if not task:
+                    break
+
+                task_status = cast(str, getattr(task, "status"))
+                if task_status == "completed":
+                    artifact_event = session.query(models.Event).filter(
+                        models.Event.task_id == task_id_int,
+                        models.Event.tenant_id == tenant_id_int,
+                        models.Event.type == "task.step.artifact"
+                    ).first()
+
+                    if artifact_event:
+                        artifact_data_json = getattr(artifact_event, "data_json")
+                        artifact_data = _json_loads_or_empty(artifact_data_json)
+                        artifact = artifact_data.get("artifact", {})
+                        if isinstance(artifact, dict):
+                            fields = artifact.get("fields", {})
+                            if isinstance(fields, dict):
+                                top_repo = fields.get("top_repo")
+                                top_stars_today = fields.get("top_stars_today")
+                    break
+                elif task_status == "failed":
+                    break
+                else:
+                    await asyncio.sleep(1)
+
+            # Create A2A thread and messages
+            a2a_thread = models.A2AThread()
+            setattr(a2a_thread, "tenant_id", tenant_id_int)
+            session.add(a2a_thread)
+            session.flush()
+            a2a_thread_id_int = cast(int, getattr(a2a_thread, "id"))
+
+            # CEO -> Browser message
+            msg1 = models.A2AMessage()
+            setattr(msg1, "tenant_id", tenant_id_int)
+            setattr(msg1, "thread_id", a2a_thread_id_int)
+            setattr(msg1, "role", "agent")
+            setattr(msg1, "agent_id", "ceo")
+            setattr(msg1, "content", body.message)
+            session.add(msg1)
+
+            if top_repo:
+                browser_reply = f"Top trending repository today: {top_repo}"
+                if top_stars_today:
+                    browser_reply += f" with {top_stars_today} stars today."
+                else:
+                    browser_reply += "."
+            else:
+                browser_reply = "Failed to retrieve trending data. Please try again."
+
+            msg2 = models.A2AMessage()
+            setattr(msg2, "tenant_id", tenant_id_int)
+            setattr(msg2, "thread_id", a2a_thread_id_int)
+            setattr(msg2, "role", "agent")
+            setattr(msg2, "agent_id", "browser")
+            setattr(msg2, "content", browser_reply)
+            session.add(msg2)
+            session.commit()
+
+            reply = browser_reply
+            citations = [{"title": "GitHub Trending (Daily)", "url": "https://github.com/trending?since=daily"}]
+            a2a_summary = f"CEO requested GitHub trending. Browser found: {top_repo if top_repo else 'N/A'}"
+            return AgentChatOut(
+                reply=reply,
+                tool="browser",
+                citations=citations,
+                a2a_thread_id=str(a2a_thread_id_int),
+                a2a_summary=a2a_summary
+            )
+        else:
+            reply = "I can help you find GitHub trending repositories. Just ask about GitHub trending or popular repositories."
+            return AgentChatOut(reply=reply, tool=None, citations=[])
+
     if agent_type not in {"pm", "engineer"}:
         raise HTTPException(status_code=404, detail="Agent not found")
 

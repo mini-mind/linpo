@@ -26,6 +26,7 @@
  *   "task_id": "...",
  *   "ok": true|false,
  *   "artifacts": ["relative/path/1", ...],  // On success
+ *   "fields": {},                           // On success
  *   "meta": {},                             // On success
  *   "error": "..."                          // On failure
  * }
@@ -73,7 +74,11 @@ async function runJob() {
   const page = await context.newPage();
   
   const artifacts = [];
+  const fields = {};
   const meta = {};
+  const maxActions = (job.limits && Number.isInteger(job.limits.max_actions)) ? job.limits.max_actions : 25;
+  const hasActions = Array.isArray(job.actions) && job.actions.length > 0;
+  let actionsExecuted = 0;
   
   try {
     if (job.viewport) {
@@ -82,23 +87,106 @@ async function runJob() {
     }
     
     await page.goto(job.url);
-    
-    if (job.wait_ms) {
-      await page.waitForTimeout(job.wait_ms);
-      meta.wait_ms = job.wait_ms;
-    }
-    
-    if (job.screenshot) {
-      const taskArtifactDir = path.join(ARTIFACT_DIR, TASK_ID);
-      if (!fs.existsSync(taskArtifactDir)) {
-        fs.mkdirSync(taskArtifactDir, { recursive: true });
+
+    if (hasActions) {
+      if (job.actions.length > maxActions) {
+        throw new Error(`Action limit exceeded: ${job.actions.length} > ${maxActions}`);
       }
-      
-      const screenshotPath = path.join(taskArtifactDir, 'screenshot.png');
-      await page.screenshot({ path: screenshotPath });
-      
-      const relativePath = path.join(TASK_ID, 'screenshot.png');
-      artifacts.push(relativePath);
+
+      for (const action of job.actions) {
+        actionsExecuted += 1;
+        if (actionsExecuted > maxActions) {
+          throw new Error(`Action limit exceeded: ${actionsExecuted} > ${maxActions}`);
+        }
+
+        if (!action || typeof action !== 'object') {
+          throw new Error('Invalid action: expected object');
+        }
+
+        switch (action.type) {
+          case 'wait_for_load_state':
+            await page.waitForLoadState(action.state);
+            break;
+          case 'wait_for_selector':
+            await page.waitForSelector(action.selector);
+            break;
+          case 'click':
+            await page.click(action.selector);
+            break;
+          case 'fill':
+            await page.fill(action.selector, action.value);
+            break;
+          case 'press':
+            await page.press(action.selector, action.key);
+            break;
+          case 'scroll':
+            await page.mouse.wheel(0, action.deltaY || 0);
+            break;
+          case 'screenshot': {
+            const taskArtifactDir = path.join(ARTIFACT_DIR, TASK_ID);
+            if (!fs.existsSync(taskArtifactDir)) {
+              fs.mkdirSync(taskArtifactDir, { recursive: true });
+            }
+
+            const requestedPath = action.path || 'screenshot.png';
+            if (path.isAbsolute(requestedPath)) {
+              throw new Error('Screenshot path must be relative');
+            }
+            const normalizedPath = path.normalize(requestedPath);
+            if (normalizedPath.startsWith('..')) {
+              throw new Error('Screenshot path must not escape task directory');
+            }
+
+            const screenshotPath = path.join(taskArtifactDir, normalizedPath);
+            await page.screenshot({ path: screenshotPath, fullPage: Boolean(action.full_page) });
+
+            const relativePath = path.join(TASK_ID, normalizedPath);
+            artifacts.push(relativePath);
+            break;
+          }
+          case 'extract': {
+            if (typeof action.as !== 'string' || action.as.trim() === '') {
+              throw new Error('Extract action requires "as" string');
+            }
+            if (action.kind === 'text') {
+              const value = await page.$eval(action.selector, (el) => (el.innerText || '').trim());
+              fields[action.as] = value;
+            } else if (action.kind === 'attr') {
+              const value = await page.$eval(
+                action.selector,
+                (el, attr) => el.getAttribute(attr),
+                action.attr
+              );
+              fields[action.as] = value;
+            } else {
+              throw new Error(`Unsupported extract kind: ${action.kind}`);
+            }
+            break;
+          }
+          default:
+            throw new Error(`Unsupported action type: ${action.type}`);
+        }
+      }
+
+      meta.actions_executed = actionsExecuted;
+    } else {
+      if (job.wait_ms) {
+        await page.waitForTimeout(job.wait_ms);
+        meta.wait_ms = job.wait_ms;
+      }
+
+      if (job.screenshot) {
+        const taskArtifactDir = path.join(ARTIFACT_DIR, TASK_ID);
+        if (!fs.existsSync(taskArtifactDir)) {
+          fs.mkdirSync(taskArtifactDir, { recursive: true });
+        }
+
+        const screenshotPath = path.join(taskArtifactDir, 'screenshot.png');
+        await page.screenshot({ path: screenshotPath });
+
+        const relativePath = path.join(TASK_ID, 'screenshot.png');
+        artifacts.push(relativePath);
+      }
     }
     
     await browser.close();
@@ -108,6 +196,7 @@ async function runJob() {
       task_id: TASK_ID,
       ok: true,
       artifacts: artifacts,
+      fields: fields,
       meta: meta
     };
     

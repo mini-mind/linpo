@@ -94,3 +94,32 @@ class Notification(Base):
         Index('ix_notifications_tenant_id', 'tenant_id'),
         Index('ix_notifications_task_id', 'task_id'),
     )
+
+
+class A2AThread(Base):
+    __tablename__ = 'a2a_threads'
+
+    id = Column(Integer, primary_key=True)
+    tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index('ix_a2a_threads_tenant_id', 'tenant_id'),
+    )
+
+
+class A2AMessage(Base):
+    __tablename__ = 'a2a_messages'
+
+    id = Column(Integer, primary_key=True)
+    tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
+    thread_id = Column(Integer, ForeignKey('a2a_threads.id'), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    role = Column(String(20), nullable=False)
+    agent_id = Column(String(255), nullable=True)
+    content = Column(Text, nullable=False)
+
+    __table_args__ = (
+        Index('ix_a2a_messages_tenant_id', 'tenant_id'),
+        Index('ix_a2a_messages_thread_id', 'thread_id'),
+    )

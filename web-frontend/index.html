@@ -360,6 +360,7 @@
             "chat.titleWith": "Chat with {label}",
             "chat.agent.pm": "PM",
             "chat.agent.engineer": "Engineer",
+            "chat.agent.ceo": "CEO",
             "chat.close": "Close",
             "chat.message": "Message",
             "chat.placeholder": "Message...",
@@ -369,6 +370,10 @@
             "chat.errorWithStatus": "Error talking to agent ({status}).",
             "chat.emptyReply": "(empty reply)",
             "chat.citations": "Citations:",
+            "chat.internal": "Internal",
+            "chat.view": "View",
+            "chat.hide": "Hide",
+            "chat.a2aError": "Failed to load details.",
 
             "world.missingWsUrl": "Missing WebSocket URL.",
             "world.connected": "Connected.",
@@ -428,6 +433,7 @@
             "chat.titleWith": "\u4e0e {label} \u804a\u5929",
             "chat.agent.pm": "PM",
             "chat.agent.engineer": "\u5de5\u7a0b\u5e08",
+            "chat.agent.ceo": "CEO",
             "chat.close": "\u5173\u95ed",
             "chat.message": "\u6d88\u606f",
             "chat.placeholder": "\u8bf7\u8f93\u5165\u6d88\u606f\u2026\u2026",
@@ -437,6 +443,10 @@
             "chat.errorWithStatus": "\u4e0e\u4ee3\u7406\u901a\u4fe1\u5931\u8d25\uff08{status}\uff09\u3002",
             "chat.emptyReply": "\uff08\u7a7a\u56de\u590d\uff09",
             "chat.citations": "\u5f15\u7528\uff1a",
+            "chat.internal": "\u5185\u90e8",
+            "chat.view": "\u67e5\u770b",
+            "chat.hide": "\u9690\u85cf",
+            "chat.a2aError": "\u52a0\u8f7d\u8be6\u60c5\u5931\u8d25\u3002",
 
             "world.missingWsUrl": "\u7f3a\u5c11 WebSocket \u5730\u5740\u3002",
             "world.connected": "\u5df2\u8fde\u63a5\u3002",
@@ -485,10 +495,26 @@
             return raw;
           }
           return raw.replace(/\{(\w+)\}/g, (match, name) => {
-            if (!Object.prototype.hasOwnProperty.call(vars, name)) return match;
+            if (!Object.hasOwn(vars, name)) return match;
             const value = vars[name];
             return value == null ? "" : String(value);
           });
+        };
+
+        const parseChatAgentType = (raw) => {
+          const type = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+          if (type === "pm" || type === "engineer" || type === "ceo") {
+            return type;
+          }
+          return null;
+        };
+
+        const normalizeChatAgentType = (raw) => parseChatAgentType(raw) || "pm";
+
+        const getChatAgentLabel = (agentType) => {
+          const type = normalizeChatAgentType(agentType);
+          const key = type === "engineer" ? "chat.agent.engineer" : type === "ceo" ? "chat.agent.ceo" : "chat.agent.pm";
+          return t(key);
         };
 
         const applyI18n = () => {
@@ -599,9 +625,9 @@
           }
           const chatTitle = document.getElementById("chat-title");
           if (chatTitle) {
-            const agentType = String(chatTitle.getAttribute("data-chat-agent") || "").toLowerCase();
+            const agentType = parseChatAgentType(chatTitle.getAttribute("data-chat-agent"));
             if (agentType) {
-              const label = agentType === "engineer" ? t("chat.agent.engineer") : t("chat.agent.pm");
+              const label = getChatAgentLabel(agentType);
               chatTitle.textContent = t("chat.titleWith", { label });
             } else {
               chatTitle.textContent = t("chat.title");
@@ -1082,9 +1108,8 @@
               return;
             }
 
-            const type = String(agentType || "").toLowerCase();
-            const label = type === "engineer" ? t("chat.agent.engineer") : t("chat.agent.pm");
-            activeChatAgentType = type === "engineer" ? "engineer" : "pm";
+            activeChatAgentType = normalizeChatAgentType(agentType);
+            const label = getChatAgentLabel(activeChatAgentType);
             chatTitle.setAttribute("data-chat-agent", activeChatAgentType);
             chatTitle.textContent = t("chat.titleWith", { label });
             chatPanel.hidden = false;
@@ -1158,6 +1183,139 @@
 
                 node.appendChild(citeWrap);
               }
+
+              const a2aSummary = msg.a2aSummary;
+              const a2aThreadId = msg.a2aThreadId;
+              if (a2aSummary && a2aThreadId) {
+                const a2aRow = document.createElement("div");
+                a2aRow.style.marginTop = "6px";
+                a2aRow.style.fontSize = "0.8rem";
+                a2aRow.style.opacity = "0.7";
+                a2aRow.style.display = "flex";
+                a2aRow.style.gap = "8px";
+                a2aRow.style.alignItems = "center";
+
+                const a2aLabel = document.createElement("span");
+                a2aLabel.textContent = t("chat.internal") + ": " + a2aSummary;
+                a2aRow.appendChild(a2aLabel);
+
+                const a2aViewBtn = document.createElement("button");
+                a2aViewBtn.type = "button";
+                a2aViewBtn.textContent = t("chat.view");
+                a2aViewBtn.style.background = "transparent";
+                a2aViewBtn.style.border = "1px solid rgba(255, 255, 255, 0.3)";
+                a2aViewBtn.style.color = "rgba(255, 255, 255, 0.8)";
+                a2aViewBtn.style.padding = "2px 8px";
+                a2aViewBtn.style.borderRadius = "4px";
+                a2aViewBtn.style.cursor = "pointer";
+                a2aViewBtn.style.fontSize = "0.75rem";
+
+                const a2aDetailsDiv = document.createElement("div");
+                a2aDetailsDiv.style.marginTop = "8px";
+                a2aDetailsDiv.style.padding = "8px 10px";
+                a2aDetailsDiv.style.background = "rgba(0, 0, 0, 0.2)";
+                a2aDetailsDiv.style.borderRadius = "8px";
+                a2aDetailsDiv.style.fontSize = "0.85rem";
+                a2aDetailsDiv.style.display = "none";
+
+                a2aViewBtn.addEventListener("click", async () => {
+                  if (msg.a2aExpanded) {
+                    msg.a2aExpanded = false;
+                    a2aViewBtn.textContent = t("chat.view");
+                    a2aDetailsDiv.style.display = "none";
+                    return;
+                  }
+
+                  if (msg.a2aLoading) return;
+
+                  if (!msg.a2aDetails && !msg.a2aError) {
+                    msg.a2aLoading = true;
+                    a2aViewBtn.textContent = "...";
+
+                    const sessionToken = localStorage.getItem("roboard_session_token");
+                    if (!sessionToken) {
+                      msg.a2aError = t("chat.signIn");
+                      msg.a2aLoading = false;
+                      a2aViewBtn.textContent = t("chat.view");
+                      renderA2aDetails();
+                      return;
+                    }
+
+                    try {
+                      const resp = await fetch(`/api/a2a/threads/${encodeURIComponent(a2aThreadId)}`, {
+                        headers: {
+                          "X-Session-Token": sessionToken
+                        }
+                      });
+
+                      if (!resp.ok) {
+                        msg.a2aError = t("chat.errorWithStatus", { status: resp.status });
+                      } else {
+                        const data = await resp.json().catch(() => null);
+                        msg.a2aDetails = data && Array.isArray(data.messages) ? data.messages : [];
+                      }
+                    } catch {
+                      msg.a2aError = t("chat.a2aError");
+                    } finally {
+                      msg.a2aLoading = false;
+                    }
+                  }
+
+                  msg.a2aExpanded = true;
+                  a2aViewBtn.textContent = t("chat.hide");
+                  a2aDetailsDiv.style.display = "block";
+                  renderA2aDetails();
+                });
+
+                const renderA2aDetails = () => {
+                  a2aDetailsDiv.innerHTML = "";
+                  if (msg.a2aError) {
+                    const errEl = document.createElement("div");
+                    errEl.textContent = msg.a2aError;
+                    errEl.style.color = "rgba(255, 150, 150, 0.9)";
+                    a2aDetailsDiv.appendChild(errEl);
+                    return;
+                  }
+                  if (!msg.a2aDetails || !msg.a2aDetails.length) {
+                    const emptyEl = document.createElement("div");
+                    emptyEl.textContent = "(no details)";
+                    emptyEl.style.opacity = "0.5";
+                    a2aDetailsDiv.appendChild(emptyEl);
+                    return;
+                  }
+                  msg.a2aDetails.forEach((detailMsg, idx) => {
+                    const detailItem = document.createElement("div");
+                    detailItem.style.marginBottom = idx < msg.a2aDetails.length - 1 ? "8px" : "0";
+
+                    const agentId = detailMsg.agent_id ? String(detailMsg.agent_id) : "";
+                    const content = detailMsg.content ? String(detailMsg.content) : "";
+                    const role = detailMsg.role ? String(detailMsg.role) : "";
+
+                    if (agentId || role) {
+                      const detailLabel = document.createElement("div");
+                      detailLabel.style.fontWeight = "500";
+                      detailLabel.style.color = "rgba(255, 255, 255, 0.9)";
+                      detailLabel.textContent = (agentId || role) + ":";
+                      detailItem.appendChild(detailLabel);
+                    }
+
+                    if (content) {
+                      const detailContent = document.createElement("div");
+                      detailContent.style.marginTop = "2px";
+                      detailContent.style.opacity = "0.85";
+                      detailContent.textContent = content;
+                      detailItem.appendChild(detailContent);
+                    }
+
+                    a2aDetailsDiv.appendChild(detailItem);
+                  });
+                };
+
+                a2aRow.appendChild(a2aViewBtn);
+                node.appendChild(a2aRow);
+                node.appendChild(a2aDetailsDiv);
+              }
+
               chatMessages.appendChild(node);
             });
 
@@ -1279,11 +1437,19 @@
               const data = await resp.json().catch(() => null);
               const reply = data && typeof data.reply === "string" ? data.reply : "";
               const citations = data ? normalizeCitations(data.citations) : [];
+              const a2aSummary = data && typeof data.a2a_summary === "string" ? data.a2a_summary : null;
+              const a2aThreadId = data && typeof data.a2a_thread_id === "string" ? data.a2a_thread_id : null;
 
               if (placeholder) {
                 placeholder.text = reply || t("chat.emptyReply");
                 placeholder.citations = citations;
                 placeholder.tool = data && typeof data.tool === "string" ? data.tool : null;
+                placeholder.a2aSummary = a2aSummary;
+                placeholder.a2aThreadId = a2aThreadId;
+                placeholder.a2aDetails = null;
+                placeholder.a2aExpanded = false;
+                placeholder.a2aLoading = false;
+                placeholder.a2aError = null;
               }
             } catch {
               if (placeholder) {
@@ -1823,6 +1989,17 @@
                 accentHex: "#49e3b9",
                 position: new THREE.Vector3(1.05, GROUND_Y, 1.55),
                 lookTarget: new THREE.Vector3(1.05, GROUND_Y + 0.8, -0.15)
+              })
+            );
+
+            agents.push(
+              createAgent({
+                name: "CEO",
+                agentType: "ceo",
+                color: 0xd6b45b,
+                accentHex: "#d6b45b",
+                position: new THREE.Vector3(0.0, GROUND_Y, 1.55),
+                lookTarget: new THREE.Vector3(0.0, GROUND_Y + 0.8, -0.15)
               })
             );
 
