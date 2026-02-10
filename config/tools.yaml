@@ -1,0 +1,119 @@
+# Tools configuration for agent-framework
+# Each tool defines its implementation method, endpoints, and authentication
+
+tools:
+  web.search:
+    type: http
+    method: POST
+    # MCP server endpoint for web search
+    url_env: MCP_URL
+    path: /search
+    headers:
+      X-Internal-Key:
+        env: INTERNAL_API_KEY
+    parameters:
+      query:
+        type: string
+        required: true
+      limit:
+        type: integer
+        required: false
+    output_schema:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              title:
+                type: string
+              url:
+                type: string
+              content:
+                type: string
+
+  browser.run:
+    type: http
+    method: POST
+    # Playwright worker gateway endpoint
+    url_env: PLAYWRIGHT_GATEWAY_URL
+    path: /run
+    headers:
+      X-Internal-Key:
+        env: INTERNAL_API_KEY
+    parameters:
+      tenant_id:
+        type: string
+        required: true
+      task_id:
+        type: string
+        required: true
+      job:
+        type: object
+        required: true
+    output_schema:
+      type: object
+      properties:
+        success:
+          type: boolean
+        result:
+          type: any
+        error:
+          type: string
+        logs:
+          type: array
+
+  a2a.send:
+    type: internal
+    # Agent-to-agent communication (to be implemented)
+    parameters:
+      target_agent:
+        type: string
+        required: true
+      message:
+        type: string
+        required: true
+      thread_id:
+        type: string
+        required: false
+      context:
+        type: object
+        default: {}
+    output_schema:
+      type: object
+      properties:
+        thread_id:
+          type: string
+        message_id:
+          type: string
+        status:
+          type: string
+          enum: [queued, processing, completed, failed]
+
+  a2a.fetch_thread:
+    type: internal
+    # Fetch agent-to-agent thread details (to be implemented)
+    parameters:
+      thread_id:
+        type: string
+        required: true
+      include_messages:
+        type: boolean
+        default: true
+      since_message_id:
+        type: string
+        required: false
+    output_schema:
+      type: object
+      properties:
+        thread_id:
+          type: string
+        participants:
+          type: array
+          items:
+            type: string
+        messages:
+          type: array
+        summary:
+          type: string

@@ -1,0 +1,55 @@
+# Agents configuration for agent-framework
+# Each agent references its prompt file, model, and allowed skills
+
+agents:
+  ceo:
+    prompt_file: prompts/agents/ceo.md
+    model: ark-code-latest
+    allowed_skills:
+      - chat_user
+      - a2a_consult
+    description: Chief Executive Officer - orchestrates tasks across agents
+    default_agent: true
+
+  pm:
+    prompt_file: prompts/agents/pm.md
+    model: ark-code-latest
+    allowed_skills:
+      - chat_user
+      - search_web
+      - a2a_consult
+      - citation_minify
+    description: Project Manager - plans and coordinates work
+
+  engineer:
+    prompt_file: prompts/agents/engineer.md
+    model: ark-code-latest
+    allowed_skills:
+      - chat_user
+      - a2a_consult
+    description: Software Engineer - implements code solutions
+
+  researcher:
+    prompt_file: prompts/agents/researcher.md
+    model: ark-code-latest
+    allowed_skills:
+      - chat_user
+      - search_web
+      - citation_minify
+    description: Researcher - gathers and analyzes information
+
+  browser:
+    prompt_file: prompts/agents/browser.md
+    model: ark-code-latest
+    allowed_skills:
+      - chat_user
+      - browser_run
+    description: Browser Agent - executes web automation tasks
+
+  reviewer:
+    prompt_file: prompts/agents/reviewer.md
+    model: ark-code-latest
+    allowed_skills:
+      - chat_user
+      - a2a_consult
+    description: Code Reviewer - reviews and validates work

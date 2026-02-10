@@ -1,0 +1,80 @@
+# Skills configuration for agent-framework
+# Each skill references its prompt file, allowed tools, and output contract
+
+skills:
+  chat_user:
+    prompt_file: prompts/skills/chat_user.md
+    allowed_tools: []
+    output_contract:
+      type: string
+    description: Direct chat response to user without external tools
+
+  search_web:
+    prompt_file: prompts/skills/search_web.md
+    allowed_tools:
+      - web.search
+    output_contract:
+      type: object
+      properties:
+        answer:
+          type: string
+        citations:
+          type: array
+          items:
+            type: object
+            properties:
+              url:
+                type: string
+              title:
+                type: string
+              snippet:
+                type: string
+    description: Search web and provide answer with citations
+
+  browser_run:
+    prompt_file: prompts/skills/browser_run.md
+    allowed_tools:
+      - browser.run
+    output_contract:
+      type: object
+      properties:
+        result:
+          type: any
+        summary:
+          type: string
+        error:
+          type: string
+    description: Execute browser automation via Playwright
+
+  a2a_consult:
+    prompt_file: prompts/skills/a2a_consult.md
+    allowed_tools:
+      - a2a.send
+      - a2a.fetch_thread
+    output_contract:
+      type: object
+      properties:
+        thread_id:
+          type: string
+        summary:
+          type: string
+        response:
+          type: string
+    description: Agent-to-agent consultation for cross-agent collaboration
+
+  citation_minify:
+    prompt_file: prompts/skills/citation_minify.md
+    allowed_tools: []
+    output_contract:
+      type: object
+      properties:
+        minified_citations:
+          type: array
+          items:
+            type: object
+            properties:
+              url:
+                type: string
+              title:
+                type: string
+    description: Minify and deduplicate citations
