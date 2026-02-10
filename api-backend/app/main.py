@@ -951,6 +951,13 @@ def _build_agent_prompt(agent_type: str) -> str:
     return f"{agent_prompt}\n\n---\n\n{user_prompt}"
 
 
+def _build_ceo_prompt_with_a2a_skills() -> str:
+    """Build CEO prompt with a2a_consult skill for tool-calling."""
+    agent_prompt = _load_prompt_file("/app/prompts/agents/ceo.md")
+    a2a_consult_prompt = _load_prompt_file("/app/prompts/skills/a2a_consult.md")
+    return f"{agent_prompt}\n\n---\n\n{a2a_consult_prompt}"
+
+
 def _resolve_internal_key() -> str:
     internal_keys = [k.strip() for k in APP_SETTINGS.INTERNAL_API_KEY.split(",") if k.strip()]
     if not internal_keys:
@@ -1223,13 +1230,313 @@ async def _enqueue_a2a_request(
         "trace_id": trace_id,
     }
     try:
-        await redis_client.xadd("queue:a2a", enqueue_payload)
+        await redis_client.xadd(os.getenv("A2A_STREAM", "queue:a2a"), enqueue_payload)
     except Exception as exc:
         logger.warning("A2A enqueue failed for tenant %s thread %s: %s", tenant_id_int, thread_id_int, exc)
         raise HTTPException(status_code=503, detail="Redis unavailable")
 
     session.commit()
     return thread_id_int
+
+
+def _build_a2a_tools_schema() -> list[dict[str, object]]:
+    """Build OpenAI-compatible tools schema for A2A delegation."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "a2a.send",
+                "description": "Send a message to another agent for consultation and collaboration",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "target_agent": {
+                            "type": "string",
+                            "description": "ID of target agent to send message to (e.g., 'researcher', 'browser', 'engineer')"
+                        },
+                        "message": {
+                            "type": "string",
+                            "description": "Message to send to target agent"
+                        },
+                        "thread_id": {
+                            "type": "string",
+                            "description": "Optional thread ID to continue existing conversation"
+                        },
+                        "context": {
+                            "type": "object",
+                            "description": "Optional context metadata"
+                        }
+                    },
+                    "required": ["target_agent", "message"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "a2a.fetch_thread",
+                "description": "Fetch details of an agent-to-agent conversation thread including participants and messages",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "thread_id": {
+                            "type": "string",
+                            "description": "Thread ID to fetch"
+                        },
+                        "include_messages": {
+                            "type": "boolean",
+                            "description": "Whether to include messages in the response (default: true)"
+                        },
+                        "since_message_id": {
+                            "type": "string",
+                            "description": "Optional message ID to fetch messages after (for pagination)"
+                        }
+                    },
+                    "required": ["thread_id"]
+                }
+            }
+        }
+    ]
+
+
+async def _execute_a2a_send_tool(
+    session: Session,
+    tenant_id_int: int,
+    args: dict[str, object],
+    parent_thread_id_int: int | None = None,
+) -> dict[str, object]:
+    """Execute a2a.send tool by enqueuing to Redis."""
+    target_agent = args.get("target_agent")
+    message = args.get("message")
+    thread_id = args.get("thread_id")
+    
+    if not isinstance(target_agent, str) or not target_agent.strip():
+        raise ValueError("target_agent is required and must be a non-empty string")
+    if not isinstance(message, str) or not message.strip():
+        raise ValueError("message is required and must be a non-empty string")
+    
+    target_agent = target_agent.strip()
+    message = message.strip()
+    
+    effective_parent_thread_id = parent_thread_id_int
+    if thread_id:
+        try:
+            if not isinstance(thread_id, (str, int)):
+                raise ValueError("thread_id must be a string or integer")
+            thread_id_int = int(thread_id)
+            thread = (
+                session.query(models.A2AThread)
+                .filter(models.A2AThread.id == thread_id_int, models.A2AThread.tenant_id == tenant_id_int)
+                .first()
+            )
+            if not thread:
+                raise ValueError(f"Thread {thread_id} not found")
+            effective_parent_thread_id = thread_id_int
+        except ValueError:
+            raise ValueError("thread_id must be a valid integer")
+    
+    thread_id_int = await _enqueue_a2a_request(
+        session,
+        tenant_id_int,
+        "ceo",
+        target_agent,
+        message,
+        effective_parent_thread_id,
+    )
+    
+    return {
+        "thread_id": str(thread_id_int),
+        "status": "queued"
+    }
+
+
+async def _execute_a2a_fetch_thread_tool(
+    session: Session,
+    tenant_id_int: int,
+    args: dict[str, object],
+) -> dict[str, object]:
+    """Execute a2a.fetch_thread tool by querying A2AThread + A2AMessage."""
+    thread_id = args.get("thread_id")
+    include_messages = args.get("include_messages", True)
+    since_message_id = args.get("since_message_id")
+    
+    if not isinstance(thread_id, str) or not thread_id.strip():
+        raise ValueError("thread_id is required and must be a non-empty string")
+    
+    thread_id = thread_id.strip()
+    
+    try:
+        thread_id_int = int(thread_id)
+    except ValueError:
+        raise ValueError("thread_id must be a valid integer")
+    
+    thread = (
+        session.query(models.A2AThread)
+        .filter(models.A2AThread.id == thread_id_int, models.A2AThread.tenant_id == tenant_id_int)
+        .first()
+    )
+    if not thread:
+        raise ValueError(f"Thread {thread_id} not found")
+    
+    participants_set: set[str] = set()
+    messages_list: list[dict[str, object]] = []
+    
+    if include_messages:
+        messages_query = (
+            session.query(models.A2AMessage)
+            .filter(
+                models.A2AMessage.thread_id == thread_id_int,
+                models.A2AMessage.tenant_id == tenant_id_int,
+            )
+            .order_by(models.A2AMessage.id.asc())
+        )
+        
+        if since_message_id and isinstance(since_message_id, str):
+            try:
+                since_message_id_int = int(since_message_id)
+                messages_query = messages_query.filter(models.A2AMessage.id > since_message_id_int)
+            except ValueError:
+                pass
+        
+        messages = messages_query.all()
+        
+        for msg in messages:
+            agent_id = getattr(msg, "agent_id")
+            if agent_id and isinstance(agent_id, str):
+                participants_set.add(agent_id)
+            
+            message_dict: dict[str, object] = {
+                "id": str(getattr(msg, "id")),
+                "role": cast(str, getattr(msg, "role")),
+                "agent_id": agent_id,
+                "content": cast(str, getattr(msg, "content")),
+                "created_at": _dt_to_iso(cast(datetime, getattr(msg, "created_at"))),
+            }
+            messages_list.append(message_dict)
+    
+    return {
+        "thread_id": str(thread_id_int),
+        "participants": list(participants_set),
+        "messages": messages_list,
+        "summary": f"Thread with {len(participants_set)} participants and {len(messages_list)} messages"
+    }
+
+
+async def _call_llm_gateway_with_tools(
+    session: Session,
+    tenant_id_int: int,
+    messages: list[dict[str, object]],
+    tools: list[dict[str, object]],
+    max_steps: int = 5,
+) -> dict[str, object]:
+    """Call LLM gateway with OpenAI-style tool-calling loop.
+    
+    Returns:
+        dict with keys:
+        - "final_message": str - LLM's final response
+        - "thread_id": int | None - A2A thread ID if tools were called
+        - "delegated_agents": list[str] - List of agents delegated to
+    """
+    tools_schema = tools if tools else _build_a2a_tools_schema()
+    current_messages = messages.copy()
+    delegated_agents: list[str] = []
+    thread_id_int: int | None = None
+    
+    for step in range(max_steps):
+        llm_gateway_url = (os.getenv("LLM_GATEWAY_URL") or "http://llm-gateway:7300").strip()
+        if not llm_gateway_url:
+            llm_gateway_url = "http://llm-gateway:7300"
+        
+        payload = {
+            "model": "ark-code-latest",
+            "messages": current_messages,
+            "tools": tools_schema,
+            "tool_choice": "auto",
+        }
+        
+        async with httpx.AsyncClient(base_url=llm_gateway_url, timeout=30.0) as client:
+            response = await client.post(
+                "/internal/llm/chat",
+                json=payload,
+                headers={"X-Internal-Key": _resolve_internal_key()},
+            )
+        response.raise_for_status()
+        data = response.json()
+        
+        choices = data.get("choices") if isinstance(data, dict) else None
+        if not isinstance(choices, list) or not choices:
+            raise ValueError("LLM response missing choices")
+        
+        message = choices[0].get("message") if isinstance(choices[0], dict) else None
+        if not isinstance(message, dict):
+            raise ValueError("LLM response missing message")
+        
+        tool_calls = message.get("tool_calls")
+        
+        if not tool_calls:
+            content = message.get("content")
+            if not isinstance(content, str) or not content.strip():
+                raise ValueError("LLM response missing content")
+            return {"final_message": content.strip(), "thread_id": thread_id_int, "delegated_agents": delegated_agents}
+        
+        assistant_message: dict[str, object] = {"role": "assistant", "content": message.get("content", ""), "tool_calls": tool_calls}
+        current_messages.append(assistant_message)
+        
+        for tool_call in tool_calls if isinstance(tool_calls, list) else []:
+            if not isinstance(tool_call, dict):
+                continue
+            
+            function = tool_call.get("function")
+            if not isinstance(function, dict):
+                continue
+            
+            tool_name = function.get("name")
+            tool_args_str = function.get("arguments", "{}")
+            
+            tool_args: dict[str, object] = {}
+            try:
+                tool_args = json.loads(tool_args_str) if isinstance(tool_args_str, str) else {}
+            except Exception:
+                tool_args = {}
+            
+            tool_result = ""
+            try:
+                if tool_name == "a2a.send":
+                    result = await _execute_a2a_send_tool(
+                        session,
+                        tenant_id_int,
+                        tool_args,
+                        thread_id_int,
+                    )
+                    result_thread_id = result.get("thread_id")
+                    if isinstance(result_thread_id, str):
+                        thread_id_int = int(result_thread_id)
+                    elif isinstance(result_thread_id, int):
+                        thread_id_int = result_thread_id
+                    target_agent = tool_args.get("target_agent")
+                    if target_agent and isinstance(target_agent, str) and target_agent not in delegated_agents:
+                        delegated_agents.append(target_agent)
+                    tool_result = json.dumps(result)
+                elif tool_name == "a2a.fetch_thread":
+                    result = await _execute_a2a_fetch_thread_tool(
+                        session,
+                        tenant_id_int,
+                        tool_args,
+                    )
+                    tool_result = json.dumps(result)
+                else:
+                    tool_result = f"Error: Unsupported tool '{tool_name}'"
+            except Exception as exc:
+                tool_result = f"Error: {str(exc)}"
+            
+            tool_message: dict[str, object] = {
+                "role": "tool",
+                "tool_call_id": tool_call.get("id", ""),
+                "content": tool_result
+            }
+            current_messages.append(tool_message)
+    
+    return {"final_message": "", "thread_id": thread_id_int, "delegated_agents": delegated_agents}
 
 
 async def _wait_for_a2a_replies(
@@ -1540,120 +1847,53 @@ async def agent_chat(
             is_github_trending = any(indicator in message_lower for indicator in growth_indicators)
 
         if is_github_trending:
-            plan = None
+            system_prompt = _build_ceo_prompt_with_a2a_skills()
+            messages: list[dict[str, object]] = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": body.message}
+            ]
+            
             try:
-                plan = await _generate_delegation_plan(body.message)
-            except Exception as exc:
-                logger.warning("CEO planning failed: %s", exc)
-
-            if plan is None:
-                failure_message = "规划失败，未能进行任务委派。"
-                thread_id_int = _create_a2a_thread(session, tenant_id_int)
-                _append_a2a_message(session, tenant_id_int, thread_id_int, "ceo", failure_message)
-                session.commit()
-                return AgentChatOut(
-                    reply=failure_message,
-                    tool=None,
-                    citations=[],
-                    a2a_thread_id=str(thread_id_int),
-                    a2a_summary="CEO 规划失败"
+                result = await _call_llm_gateway_with_tools(
+                    session,
+                    tenant_id_int,
+                    messages=messages,
+                    tools=_build_a2a_tools_schema(),
                 )
-
-            delegations = cast(list[dict[str, object]], plan["delegations"])
-            wait_for = cast(list[str], plan["wait_for"])
-            summary_goal = cast(str, plan["summary_goal"])
-
-            thread_id_int = None
-            delegated_agents: list[str] = []
-            try:
-                for idx, delegation in enumerate(delegations):
-                    to_agent_id = cast(str, delegation["to_agent_id"])
-                    message = cast(str, delegation["message"])
-                    depends_on = cast(list[str], delegation.get("depends_on", []))
-                    if depends_on:
-                        if thread_id_int is None:
-                            thread_id_int = _create_a2a_thread(session, tenant_id_int)
-                        dep_replies = await _wait_for_a2a_replies(
-                            session,
-                            tenant_id_int,
-                            thread_id_int,
-                            depends_on,
-                            timeout_sec=_A2A_DEPENDENCY_TIMEOUT_SEC,
-                        )
-                        if len(dep_replies) != len(depends_on):
-                            skipped_agents = [to_agent_id]
-                            skipped_agents.extend(
-                                [cast(str, item["to_agent_id"]) for item in delegations[idx + 1:]]
-                            )
-                            enqueued_unique = list(dict.fromkeys(delegated_agents))
-                            skipped_unique = list(dict.fromkeys(skipped_agents))
-                            if enqueued_unique:
-                                enqueued_text = f"已委派给 {', '.join(enqueued_unique)}。"
-                            else:
-                                enqueued_text = "尚未委派任何任务。"
-                            skipped_text = f"以下委派因依赖等待超时未执行：{', '.join(skipped_unique)}。"
-                            timeout_message = f"{enqueued_text}{skipped_text}"
-                            _append_a2a_message(session, tenant_id_int, thread_id_int, "ceo", timeout_message)
-                            session.commit()
-                            return AgentChatOut(
-                                reply=timeout_message,
-                                tool=None,
-                                citations=[],
-                                a2a_thread_id=str(thread_id_int),
-                                a2a_summary="CEO 依赖等待超时",
-                            )
-                    thread_id_int = await _enqueue_a2a_request(
-                        session,
-                        tenant_id_int,
-                        "ceo",
-                        to_agent_id,
-                        message,
-                        thread_id_int,
-                    )
-                    delegated_agents.append(to_agent_id)
-            except HTTPException:
-                session.rollback()
-                raise
-            except Exception as exc:
-                session.rollback()
-                logger.warning("CEO delegation enqueue failed: %s", exc)
-                failure_message = "委派失败，请稍后再试。"
-                if thread_id_int is None:
+                
+                final_message = cast(str, result["final_message"])
+                tool_thread_id = result.get("thread_id")
+                delegated_agents = cast(list[str], result["delegated_agents"])
+                
+                if tool_thread_id is None:
                     thread_id_int = _create_a2a_thread(session, tenant_id_int)
-                _append_a2a_message(session, tenant_id_int, thread_id_int, "ceo", failure_message)
-                session.commit()
-                return AgentChatOut(
-                    reply=failure_message,
-                    tool=None,
-                    citations=[],
-                    a2a_thread_id=str(thread_id_int),
-                    a2a_summary="CEO 委派失败"
-                )
-
-            if thread_id_int is None:
-                failure_message = "规划失败，未能进行任务委派。"
-                thread_id_int = _create_a2a_thread(session, tenant_id_int)
-                _append_a2a_message(session, tenant_id_int, thread_id_int, "ceo", failure_message)
-                session.commit()
-                return AgentChatOut(
-                    reply=failure_message,
-                    tool=None,
-                    citations=[],
-                    a2a_thread_id=str(thread_id_int),
-                    a2a_summary="CEO 规划失败"
-                )
-
-            replies = await _wait_for_a2a_replies(
-                session,
-                tenant_id_int,
-                thread_id_int,
-                wait_for,
-                timeout_sec=_A2A_REPLY_TIMEOUT_SEC,
-            )
-            if not replies:
+                    _append_a2a_message(session, tenant_id_int, thread_id_int, "ceo", f"CEO responded: {final_message}")
+                    session.commit()
+                    return AgentChatOut(
+                        reply=final_message,
+                        tool=None,
+                        citations=[],
+                        a2a_thread_id=str(thread_id_int),
+                        a2a_summary="No delegation - CEO responded directly"
+                    )
+                
+                if not isinstance(tool_thread_id, int):
+                    thread_id_int = _create_a2a_thread(session, tenant_id_int)
+                    _append_a2a_message(session, tenant_id_int, thread_id_int, "ceo", "Error: Invalid thread ID from tool result")
+                    session.commit()
+                    return AgentChatOut(
+                        reply="委派过程出现错误，请稍后再试。",
+                        tool=None,
+                        citations=[],
+                        a2a_thread_id=str(thread_id_int),
+                        a2a_summary="CEO 委派失败"
+                    )
+                
+                thread_id_int = tool_thread_id
                 unique_agents = list(dict.fromkeys(delegated_agents))
-                agent_list = ", ".join(unique_agents)
-                progress_message = f"已委派给 {agent_list}，正在处理中，请稍后查看。"
+                agent_list = ", ".join(unique_agents) if unique_agents else "agents"
+                thread_id_str = str(thread_id_int)
+                progress_message = f"已委派给 {agent_list}，正在处理中。可通过 GET /api/a2a/threads/{thread_id_str} 查看进度。"
                 _append_a2a_message(session, tenant_id_int, thread_id_int, "ceo", progress_message)
                 session.commit()
                 return AgentChatOut(
@@ -1663,32 +1903,23 @@ async def agent_chat(
                     a2a_thread_id=str(thread_id_int),
                     a2a_summary=f"CEO 委派给 {agent_list}"
                 )
-
-            replies_block = "\n".join(
-                [f"{agent_id}: {content}" for agent_id, content in replies.items()]
-            )
-            system_prompt = "You are the CEO. Synthesize a final answer in Chinese based on agent replies."
-            user_prompt = (
-                f"用户问题：{body.message}\n"
-                f"总结目标：{summary_goal}\n"
-                f"子代理回复：\n{replies_block}\n"
-                "请综合给出最终答案。"
-            )
-            try:
-                final_reply = await _call_llm_gateway(system_prompt, user_prompt)
+            except HTTPException:
+                session.rollback()
+                raise
             except Exception as exc:
-                logger.warning("CEO synthesis failed: %s", exc)
-                final_reply = "综合失败，请稍后再试。"
-
-            _append_a2a_message(session, tenant_id_int, thread_id_int, "ceo", final_reply)
-            session.commit()
-            return AgentChatOut(
-                reply=final_reply,
-                tool=None,
-                citations=[],
-                a2a_thread_id=str(thread_id_int),
-                a2a_summary=f"CEO 完成总结：{summary_goal}"
-            )
+                session.rollback()
+                logger.warning("CEO tool calling failed: %s", exc)
+                failure_message = "委派失败，请稍后再试。"
+                thread_id_int = _create_a2a_thread(session, tenant_id_int)
+                _append_a2a_message(session, tenant_id_int, thread_id_int, "ceo", failure_message)
+                session.commit()
+                return AgentChatOut(
+                    reply=failure_message,
+                    tool=None,
+                    citations=[],
+                    a2a_thread_id=str(thread_id_int),
+                    a2a_summary="CEO 委派失败"
+                )
 
     if agent_type not in {"pm", "engineer", "ceo"}:
         raise HTTPException(status_code=404, detail="Agent not found")

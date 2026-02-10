@@ -7,7 +7,7 @@ from typing import cast
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 app = FastAPI(title="LLM Gateway", version="0.1.0")
 
@@ -16,8 +16,9 @@ LLM_PROVIDERS_PATH = os.getenv("LLM_PROVIDERS_PATH", "/run/secrets/llm-providers
 
 
 class ChatMessage(BaseModel):
+    model_config = ConfigDict(extra="allow")
     role: str
-    content: str
+    content: str | None = None
 
 
 class ChatRequest(BaseModel):
@@ -79,7 +80,7 @@ async def chat(request: ChatRequest, http_request: Request) -> object:
 
     payload: dict[str, object] = {
         "model": request.model,
-        "messages": [message.model_dump() for message in request.messages],
+        "messages": [message.model_dump(exclude_none=True) for message in request.messages],
     }
     if request.temperature is not None:
         payload["temperature"] = request.temperature

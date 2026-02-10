@@ -78,6 +78,70 @@ The system supports async agent-to-agent communication via Redis streams:
   - HK dev path: `/home/ravin/.web3d-secrets/llm-providers.json`
   - Without a real providers file, LLM calls will return 502 errors
 
+## CEO Delegation (Tool-Calling Flow)
+
+The CEO agent uses native tool calling to delegate work to sub-agents. This is a **non-blocking** flow:
+- The HTTP request returns immediately with an `a2a_thread_id`
+- Agent execution continues in the background via `agent-manager`
+- Progress can be tracked via A2A thread endpoints
+
+### Flow
+1. `POST /api/agents/ceo/chat` creates a chat request for the CEO agent
+2. CEO LLM receives tools (`a2a.send`, `a2a.fetch_thread`) and decides to call them
+3. API backend executes tool loop:
+   - If tool calls exist: execute them (e.g., `a2a.send` to enqueue sub-agent work)
+   - Pass tool responses back to LLM for further processing
+4. HTTP response returns immediately with `{"a2a_thread_id": "..."}` (non-blocking)
+5. Use `GET /api/a2a/threads/{id}` to poll agent messages and replies
+
+### Tool Schema Requirements
+For tool-calling to work, `llm-gateway` must pass through OpenAI-compatible message fields:
+- `tool_calls`: Array of tool call objects (from LLM response)
+- `tool_call_id`: String identifier for tool response messages
+- **Gotcha**: Ensure `llm-gateway` message schema does not strip extra fields like `tool_call_id`
+
+### Quick QA (Local)
+
+```bash
+docker compose exec -T api-backend python3 - <<'PY'
+import urllib.request, json, time
+
+BASE = "http://localhost:8000"
+
+# 1. Register
+email = f"qa_{int(time.time())}@example.com"
+req = urllib.request.Request(
+    f"{BASE}/api/auth/register",
+    data=json.dumps({"email": email, "password": "testpass"}).encode(),
+    headers={"Content-Type": "application/json"}
+)
+with urllib.request.urlopen(req) as resp:
+    token = json.load(resp)["session_token"]
+print(f"Session Token: {token}")
+
+# 2. CEO chat
+req = urllib.request.Request(
+    f"{BASE}/api/agents/ceo/chat",
+    data=json.dumps({"message": "Get top 3 trending repos on GitHub"}).encode(),
+    headers={"Content-Type": "application/json", "X-Session-Token": token}
+)
+with urllib.request.urlopen(req) as resp:
+    chat = json.load(resp)
+thread_id = chat["a2a_thread_id"]
+print(f"A2A Thread ID: {thread_id}")
+
+# 3. Poll thread (wait a bit for processing)
+time.sleep(5)
+req = urllib.request.Request(
+    f"{BASE}/api/a2a/threads/{thread_id}",
+    headers={"X-Session-Token": token}
+)
+with urllib.request.urlopen(req) as resp:
+    thread = json.load(resp)
+print(json.dumps(thread, indent=2))
+PY
+```
+
 ## Environment Variables
 
 ### 必填环境变量
