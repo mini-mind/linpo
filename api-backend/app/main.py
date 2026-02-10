@@ -628,6 +628,18 @@ class A2AThreadOut(BaseModel):
     messages: list[A2AMessageOut] = Field(default_factory=list)
 
 
+class A2AAskIn(BaseModel):
+    tenant_id: str = Field(..., min_length=1)
+    from_agent_id: str = Field(..., min_length=1)
+    to_agent_id: str = Field(..., min_length=1)
+    message: str = Field(..., min_length=1)
+    parent_thread_id: str | None = None
+
+
+class A2AAskOut(BaseModel):
+    a2a_thread_id: str
+
+
 class A2ASendIn(BaseModel):
     tenant_id: str = Field(..., min_length=1)
     from_agent_id: str = Field(..., min_length=1)
@@ -975,6 +987,287 @@ async def _call_llm_gateway(system_prompt: str, user_message: str) -> str:
     return content.strip()
 
 
+_A2A_PLAN_MAX_DELEGATIONS = 4
+_A2A_PLAN_MAX_MESSAGE_CHARS = 800
+_A2A_PLAN_MAX_SUMMARY_CHARS = 200
+_A2A_REPLY_TIMEOUT_SEC = 20
+_A2A_DEPENDENCY_TIMEOUT_SEC = 20
+_A2A_REPLY_POLL_SEC = 0.5
+
+
+def _extract_json_from_raw(raw: str) -> str:
+    cleaned = raw.strip()
+    fences = [
+        "```json",
+        "```JSON",
+        "```",
+        "'''json",
+        "'''JSON",
+        "'''",
+        '"""json',
+        '"""JSON',
+        '"""',
+    ]
+    for fence in fences:
+        if cleaned.startswith(fence):
+            cleaned = cleaned[len(fence):].strip()
+        if cleaned.endswith(fence):
+            cleaned = cleaned[:-len(fence)].strip()
+
+    first_brace = cleaned.find("{")
+    if first_brace == -1:
+        return cleaned
+    last_brace = cleaned.rfind("}")
+    if last_brace == -1 or last_brace <= first_brace:
+        return cleaned[first_brace:]
+    return cleaned[first_brace:last_brace + 1]
+
+
+def _parse_delegation_plan(raw: str) -> dict[str, object] | None:
+    parsed = None
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        extracted = _extract_json_from_raw(raw)
+        try:
+            parsed = json.loads(extracted)
+        except Exception:
+            return None
+
+    if not isinstance(parsed, dict):
+        return None
+
+    delegations = parsed.get("delegations")
+    wait_for = parsed.get("wait_for")
+    summary_goal = parsed.get("summary_goal")
+
+    if not isinstance(delegations, list) or not delegations:
+        return None
+    if len(delegations) > _A2A_PLAN_MAX_DELEGATIONS:
+        return None
+
+    normalized_delegations: list[dict[str, object]] = []
+    delegated_ids: set[str] = set()
+    for item in delegations:
+        if not isinstance(item, dict):
+            return None
+        to_agent_id = item.get("to_agent_id")
+        message = item.get("message")
+        depends_on = item.get("depends_on")
+        if not isinstance(to_agent_id, str) or not to_agent_id.strip():
+            return None
+        if not isinstance(message, str) or not message.strip():
+            return None
+        to_agent_id = to_agent_id.strip()
+        message = message.strip()
+        if len(message) > _A2A_PLAN_MAX_MESSAGE_CHARS:
+            return None
+        normalized_depends_on: list[str] = []
+        if depends_on is not None:
+            if not isinstance(depends_on, list):
+                return None
+            for agent_id in depends_on:
+                if not isinstance(agent_id, str):
+                    return None
+                agent_id = agent_id.strip()
+                if not agent_id:
+                    return None
+                if agent_id not in normalized_depends_on:
+                    normalized_depends_on.append(agent_id)
+        normalized_delegations.append(
+            {
+                "to_agent_id": to_agent_id,
+                "message": message,
+                "depends_on": normalized_depends_on,
+            }
+        )
+        delegated_ids.add(to_agent_id)
+
+    if not delegated_ids:
+        return None
+
+    # Depend on agents within the same plan to avoid waiting on undelegated work.
+    for item in normalized_delegations:
+        depends_on = cast(list[str], item.get("depends_on", []))
+        for agent_id in depends_on:
+            if agent_id not in delegated_ids:
+                return None
+
+    normalized_wait_for: list[str] = []
+    if isinstance(wait_for, list):
+        for agent_id in wait_for:
+            if not isinstance(agent_id, str) or not agent_id.strip():
+                continue
+            agent_id = agent_id.strip()
+            if agent_id in delegated_ids and agent_id not in normalized_wait_for:
+                normalized_wait_for.append(agent_id)
+
+    if not normalized_wait_for:
+        normalized_wait_for = list(delegated_ids)
+
+    normalized_summary_goal = "回答用户问题"
+    if isinstance(summary_goal, str) and summary_goal.strip():
+        normalized_summary_goal = summary_goal.strip()
+    if len(normalized_summary_goal) > _A2A_PLAN_MAX_SUMMARY_CHARS:
+        normalized_summary_goal = normalized_summary_goal[:_A2A_PLAN_MAX_SUMMARY_CHARS]
+
+    return {
+        "delegations": normalized_delegations,
+        "wait_for": normalized_wait_for,
+        "summary_goal": normalized_summary_goal,
+    }
+
+
+async def _generate_delegation_plan(user_message: str) -> dict[str, object] | None:
+    example_json = """{
+  "delegations": [
+    {"to_agent_id": "researcher", "message": "搜索相关信息"},
+    {"to_agent_id": "browser", "message": "访问目标网站", "depends_on": ["researcher"]}
+  ],
+  "wait_for": ["researcher", "browser"],
+  "summary_goal": "整合研究结果"
+}"""
+    
+    system_prompt = (
+        "You are the CEO orchestrator. "
+        "只输出 JSON，不要输出任何其他文字。只输出 JSON。Output ONLY JSON and nothing else. "
+        "JSON schema: {\"delegations\": [{\"to_agent_id\": \"...\", \"message\": \"...\", "
+        "\"depends_on\": [\"agent_id\"]}], "
+        "\"wait_for\": [\"agent_id\"], \"summary_goal\": \"...\"}. "
+        "Copy this structure: " + example_json + " "
+        "No markdown code fences, no extra keys, no explanations. "
+        "delegations: 最多4个任务。depends_on: 可选依赖的agent_id列表。wait_for: 等待的agent_id列表。summary_goal: 摘要目标。"
+    )
+    first_output = await _call_llm_gateway(system_prompt, user_message)
+    plan = _parse_delegation_plan(first_output)
+    if plan is not None:
+        return plan
+
+    repair_message = (
+        "Your previous output was invalid JSON or did not match the schema. "
+        "只输出 JSON，不要输出任何其他文字。只输出 JSON。Output ONLY corrected JSON that matches the schema. "
+        "Copy this structure: " + example_json + " "
+        f"Previous output:\n{first_output}"
+    )
+    second_output = await _call_llm_gateway(
+        system_prompt,
+        f"{user_message}\n\n{repair_message}",
+    )
+    return _parse_delegation_plan(second_output)
+
+
+def _create_a2a_thread(session: Session, tenant_id_int: int) -> int:
+    thread = models.A2AThread()
+    setattr(thread, "tenant_id", tenant_id_int)
+    session.add(thread)
+    session.flush()
+    return cast(int, getattr(thread, "id"))
+
+
+def _append_a2a_message(
+    session: Session,
+    tenant_id_int: int,
+    thread_id_int: int,
+    agent_id: str,
+    content: str,
+) -> None:
+    msg = models.A2AMessage()
+    setattr(msg, "tenant_id", tenant_id_int)
+    setattr(msg, "thread_id", thread_id_int)
+    setattr(msg, "role", "agent")
+    setattr(msg, "agent_id", agent_id)
+    setattr(msg, "content", content)
+    session.add(msg)
+
+
+async def _enqueue_a2a_request(
+    session: Session,
+    tenant_id_int: int,
+    from_agent_id: str,
+    to_agent_id: str,
+    message: str,
+    parent_thread_id_int: int | None,
+) -> int:
+    redis_client = getattr(app.state, "redis_client", None)
+    if redis_client is None or not getattr(app.state, "redis_ok", False):
+        raise HTTPException(status_code=503, detail="Redis unavailable")
+
+    if parent_thread_id_int:
+        parent_thread = (
+            session.query(models.A2AThread)
+            .filter(models.A2AThread.id == parent_thread_id_int, models.A2AThread.tenant_id == tenant_id_int)
+            .first()
+        )
+        if not parent_thread:
+            raise HTTPException(status_code=404, detail="Parent thread not found")
+        thread_id_int = parent_thread_id_int
+    else:
+        thread_id_int = _create_a2a_thread(session, tenant_id_int)
+
+    msg = models.A2AMessage()
+    setattr(msg, "tenant_id", tenant_id_int)
+    setattr(msg, "thread_id", thread_id_int)
+    setattr(msg, "role", "agent")
+    setattr(msg, "agent_id", from_agent_id)
+    setattr(msg, "content", message)
+    session.add(msg)
+
+    trace_id = TRACE_ID_CONTEXT.get() or ""
+    enqueue_payload = {
+        "tenant_id": str(tenant_id_int),
+        "a2a_thread_id": str(thread_id_int),
+        "from_agent_id": from_agent_id,
+        "to_agent_id": to_agent_id,
+        "message": message,
+        "enqueued_at": utcnow_iso(),
+        "trace_id": trace_id,
+    }
+    try:
+        await redis_client.xadd("queue:a2a", enqueue_payload)
+    except Exception as exc:
+        logger.warning("A2A enqueue failed for tenant %s thread %s: %s", tenant_id_int, thread_id_int, exc)
+        raise HTTPException(status_code=503, detail="Redis unavailable")
+
+    session.commit()
+    return thread_id_int
+
+
+async def _wait_for_a2a_replies(
+    session: Session,
+    tenant_id_int: int,
+    thread_id_int: int,
+    agent_ids: list[str],
+    timeout_sec: int = _A2A_REPLY_TIMEOUT_SEC,
+) -> dict[str, str]:
+    if not agent_ids:
+        return {}
+    wait_for_set = set(agent_ids)
+    start = time.monotonic()
+    while time.monotonic() - start < timeout_sec:
+        session.expire_all()
+        messages = (
+            session.query(models.A2AMessage)
+            .filter(
+                models.A2AMessage.thread_id == thread_id_int,
+                models.A2AMessage.tenant_id == tenant_id_int,
+                models.A2AMessage.agent_id.in_(list(wait_for_set)),
+                models.A2AMessage.role == "agent",
+            )
+            .order_by(models.A2AMessage.id.desc())
+            .all()
+        )
+        replies: dict[str, str] = {}
+        for msg in messages:
+            agent_id = getattr(msg, "agent_id")
+            if agent_id in wait_for_set and agent_id not in replies:
+                content = cast(str, getattr(msg, "content"))
+                replies[cast(str, agent_id)] = content
+            if len(replies) == len(wait_for_set):
+                return replies
+        await asyncio.sleep(_A2A_REPLY_POLL_SEC)
+    return {}
+
+
 @app.get("/health", response_model=HealthOut)
 async def health() -> HealthOut:
     return HealthOut(status="ok")
@@ -1167,8 +1460,45 @@ def a2a_send(
     session.add(msg)
     
     session.commit()
-    
+
     return A2ASendOut(a2a_thread_id=str(thread_id_int))
+
+
+@app.post("/internal/a2a/ask", response_model=A2AAskOut, status_code=201)
+async def a2a_ask(
+    body: A2AAskIn,
+    session: DbSessionDep,
+    x_internal_key: InternalKeyHeader = None,
+) -> A2AAskOut:
+    auth.require_internal_key(x_internal_key, APP_SETTINGS)
+
+    tenant_id_int = _parse_int_id(body.tenant_id, "tenant_id")
+    tenant = session.query(models.Tenant).filter(models.Tenant.id == tenant_id_int).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    TENANT_ID_CONTEXT.set(str(tenant_id_int))
+
+    parent_thread_id_int = None
+    if body.parent_thread_id:
+        parent_thread_id_int = _parse_int_id(body.parent_thread_id, "parent_thread_id")
+
+    try:
+        thread_id_int = await _enqueue_a2a_request(
+            session,
+            tenant_id_int,
+            body.from_agent_id,
+            body.to_agent_id,
+            body.message,
+            parent_thread_id_int,
+        )
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception:
+        session.rollback()
+        raise
+
+    return A2AAskOut(a2a_thread_id=str(thread_id_int))
 
 
 @app.post("/api/agents/{agent_type}/chat", response_model=AgentChatOut, status_code=200)
@@ -1210,147 +1540,154 @@ async def agent_chat(
             is_github_trending = any(indicator in message_lower for indicator in growth_indicators)
 
         if is_github_trending:
-            task_input = {
-                "job": {
-                    "url": "https://github.com/trending?since=daily",
-                    "actions": [
-                        {
-                            "type": "wait_for_selector",
-                            "selector": "article.Box-row"
-                        },
-                        {
-                            "type": "screenshot"
-                        },
-                        {
-                            "type": "extract",
-                            "kind": "text",
-                            "selector": "article.Box-row:nth-of-type(1) h2 a",
-                            "as": "top_repo"
-                        },
-                        {
-                            "type": "extract",
-                            "kind": "text",
-                            "selector": "article.Box-row:nth-of-type(1) span:has-text(\"stars today\")",
-                            "as": "top_stars_today"
-                        }
-                    ]
-                }
-            }
+            plan = None
+            try:
+                plan = await _generate_delegation_plan(body.message)
+            except Exception as exc:
+                logger.warning("CEO planning failed: %s", exc)
 
-            task = models.Task()
-            setattr(task, "tenant_id", tenant_id_int)
-            setattr(task, "status", "queued")
-            setattr(task, "input_json", json.dumps(task_input))
-            session.add(task)
-            session.flush()
+            if plan is None:
+                failure_message = "规划失败，未能进行任务委派。"
+                thread_id_int = _create_a2a_thread(session, tenant_id_int)
+                _append_a2a_message(session, tenant_id_int, thread_id_int, "ceo", failure_message)
+                session.commit()
+                return AgentChatOut(
+                    reply=failure_message,
+                    tool=None,
+                    citations=[],
+                    a2a_thread_id=str(thread_id_int),
+                    a2a_summary="CEO 规划失败"
+                )
 
-            task_id_int = cast(int, getattr(task, "id"))
+            delegations = cast(list[dict[str, object]], plan["delegations"])
+            wait_for = cast(list[str], plan["wait_for"])
+            summary_goal = cast(str, plan["summary_goal"])
 
-            created_event = models.Event()
-            setattr(created_event, "task_id", task_id_int)
-            setattr(created_event, "tenant_id", tenant_id_int)
-            setattr(created_event, "type", "task.created")
-            setattr(created_event, "data_json", json.dumps({}))
-            setattr(created_event, "status", "queued")
-            setattr(created_event, "timestamp", _utcnow_naive())
-            session.add(created_event)
+            thread_id_int = None
+            delegated_agents: list[str] = []
+            try:
+                for idx, delegation in enumerate(delegations):
+                    to_agent_id = cast(str, delegation["to_agent_id"])
+                    message = cast(str, delegation["message"])
+                    depends_on = cast(list[str], delegation.get("depends_on", []))
+                    if depends_on:
+                        if thread_id_int is None:
+                            thread_id_int = _create_a2a_thread(session, tenant_id_int)
+                        dep_replies = await _wait_for_a2a_replies(
+                            session,
+                            tenant_id_int,
+                            thread_id_int,
+                            depends_on,
+                            timeout_sec=_A2A_DEPENDENCY_TIMEOUT_SEC,
+                        )
+                        if len(dep_replies) != len(depends_on):
+                            skipped_agents = [to_agent_id]
+                            skipped_agents.extend(
+                                [cast(str, item["to_agent_id"]) for item in delegations[idx + 1:]]
+                            )
+                            enqueued_unique = list(dict.fromkeys(delegated_agents))
+                            skipped_unique = list(dict.fromkeys(skipped_agents))
+                            if enqueued_unique:
+                                enqueued_text = f"已委派给 {', '.join(enqueued_unique)}。"
+                            else:
+                                enqueued_text = "尚未委派任何任务。"
+                            skipped_text = f"以下委派因依赖等待超时未执行：{', '.join(skipped_unique)}。"
+                            timeout_message = f"{enqueued_text}{skipped_text}"
+                            _append_a2a_message(session, tenant_id_int, thread_id_int, "ceo", timeout_message)
+                            session.commit()
+                            return AgentChatOut(
+                                reply=timeout_message,
+                                tool=None,
+                                citations=[],
+                                a2a_thread_id=str(thread_id_int),
+                                a2a_summary="CEO 依赖等待超时",
+                            )
+                    thread_id_int = await _enqueue_a2a_request(
+                        session,
+                        tenant_id_int,
+                        "ceo",
+                        to_agent_id,
+                        message,
+                        thread_id_int,
+                    )
+                    delegated_agents.append(to_agent_id)
+            except HTTPException:
+                session.rollback()
+                raise
+            except Exception as exc:
+                session.rollback()
+                logger.warning("CEO delegation enqueue failed: %s", exc)
+                failure_message = "委派失败，请稍后再试。"
+                if thread_id_int is None:
+                    thread_id_int = _create_a2a_thread(session, tenant_id_int)
+                _append_a2a_message(session, tenant_id_int, thread_id_int, "ceo", failure_message)
+                session.commit()
+                return AgentChatOut(
+                    reply=failure_message,
+                    tool=None,
+                    citations=[],
+                    a2a_thread_id=str(thread_id_int),
+                    a2a_summary="CEO 委派失败"
+                )
+
+            if thread_id_int is None:
+                failure_message = "规划失败，未能进行任务委派。"
+                thread_id_int = _create_a2a_thread(session, tenant_id_int)
+                _append_a2a_message(session, tenant_id_int, thread_id_int, "ceo", failure_message)
+                session.commit()
+                return AgentChatOut(
+                    reply=failure_message,
+                    tool=None,
+                    citations=[],
+                    a2a_thread_id=str(thread_id_int),
+                    a2a_summary="CEO 规划失败"
+                )
+
+            replies = await _wait_for_a2a_replies(
+                session,
+                tenant_id_int,
+                thread_id_int,
+                wait_for,
+                timeout_sec=_A2A_REPLY_TIMEOUT_SEC,
+            )
+            if not replies:
+                unique_agents = list(dict.fromkeys(delegated_agents))
+                agent_list = ", ".join(unique_agents)
+                progress_message = f"已委派给 {agent_list}，正在处理中，请稍后查看。"
+                _append_a2a_message(session, tenant_id_int, thread_id_int, "ceo", progress_message)
+                session.commit()
+                return AgentChatOut(
+                    reply=progress_message,
+                    tool=None,
+                    citations=[],
+                    a2a_thread_id=str(thread_id_int),
+                    a2a_summary=f"CEO 委派给 {agent_list}"
+                )
+
+            replies_block = "\n".join(
+                [f"{agent_id}: {content}" for agent_id, content in replies.items()]
+            )
+            system_prompt = "You are the CEO. Synthesize a final answer in Chinese based on agent replies."
+            user_prompt = (
+                f"用户问题：{body.message}\n"
+                f"总结目标：{summary_goal}\n"
+                f"子代理回复：\n{replies_block}\n"
+                "请综合给出最终答案。"
+            )
+            try:
+                final_reply = await _call_llm_gateway(system_prompt, user_prompt)
+            except Exception as exc:
+                logger.warning("CEO synthesis failed: %s", exc)
+                final_reply = "综合失败，请稍后再试。"
+
+            _append_a2a_message(session, tenant_id_int, thread_id_int, "ceo", final_reply)
             session.commit()
-
-            redis_client = getattr(app.state, "redis_client", None)
-            if redis_client is not None and getattr(app.state, "redis_ok", False):
-                try:
-                    trace_id = TRACE_ID_CONTEXT.get() or ""
-                    dispatch_msg = {
-                        "task_id": str(task_id_int),
-                        "tenant_id": str(tenant_id_int),
-                        "input_json": json.dumps(task_input),
-                        "attempt": "1",
-                        "enqueued_at": utcnow_iso(),
-                        "trace_id": trace_id,
-                    }
-                    await redis_client.xadd("queue:dispatch", dispatch_msg)
-                    logger.info("CEO enqueued dispatch for task %s tenant %s", task_id_int, tenant_id_int)
-                except Exception as exc:
-                    logger.warning("CEO failed to enqueue dispatch for task %s tenant %s: %s", task_id_int, tenant_id_int, exc)
-
-            top_repo = None
-            top_stars_today = None
-            poll_start = time.time()
-            while time.time() - poll_start < 60:
-                session.expire_all()
-                task = session.query(models.Task).filter(
-                    models.Task.id == task_id_int,
-                    models.Task.tenant_id == tenant_id_int
-                ).first()
-                if not task:
-                    break
-
-                task_status = cast(str, getattr(task, "status"))
-                if task_status == "completed":
-                    artifact_event = session.query(models.Event).filter(
-                        models.Event.task_id == task_id_int,
-                        models.Event.tenant_id == tenant_id_int,
-                        models.Event.type == "task.step.artifact"
-                    ).first()
-
-                    if artifact_event:
-                        artifact_data_json = getattr(artifact_event, "data_json")
-                        artifact_data = _json_loads_or_empty(artifact_data_json)
-                        artifact = artifact_data.get("artifact", {})
-                        if isinstance(artifact, dict):
-                            fields = artifact.get("fields", {})
-                            if isinstance(fields, dict):
-                                top_repo = fields.get("top_repo")
-                                top_stars_today = fields.get("top_stars_today")
-                    break
-                elif task_status == "failed":
-                    break
-                else:
-                    await asyncio.sleep(1)
-
-            # Create A2A thread and messages
-            a2a_thread = models.A2AThread()
-            setattr(a2a_thread, "tenant_id", tenant_id_int)
-            session.add(a2a_thread)
-            session.flush()
-            a2a_thread_id_int = cast(int, getattr(a2a_thread, "id"))
-
-            # CEO -> Browser message
-            msg1 = models.A2AMessage()
-            setattr(msg1, "tenant_id", tenant_id_int)
-            setattr(msg1, "thread_id", a2a_thread_id_int)
-            setattr(msg1, "role", "agent")
-            setattr(msg1, "agent_id", "ceo")
-            setattr(msg1, "content", body.message)
-            session.add(msg1)
-
-            if top_repo:
-                browser_reply = f"Top trending repository today: {top_repo}"
-                if top_stars_today:
-                    browser_reply += f" with {top_stars_today} stars today."
-                else:
-                    browser_reply += "."
-            else:
-                browser_reply = "Failed to retrieve trending data. Please try again."
-
-            msg2 = models.A2AMessage()
-            setattr(msg2, "tenant_id", tenant_id_int)
-            setattr(msg2, "thread_id", a2a_thread_id_int)
-            setattr(msg2, "role", "agent")
-            setattr(msg2, "agent_id", "browser")
-            setattr(msg2, "content", browser_reply)
-            session.add(msg2)
-            session.commit()
-
-            reply = browser_reply
-            citations = [{"title": "GitHub Trending (Daily)", "url": "https://github.com/trending?since=daily"}]
-            a2a_summary = f"CEO requested GitHub trending. Browser found: {top_repo if top_repo else 'N/A'}"
             return AgentChatOut(
-                reply=reply,
-                tool="browser",
-                citations=citations,
-                a2a_thread_id=str(a2a_thread_id_int),
-                a2a_summary=a2a_summary
+                reply=final_reply,
+                tool=None,
+                citations=[],
+                a2a_thread_id=str(thread_id_int),
+                a2a_summary=f"CEO 完成总结：{summary_goal}"
             )
 
     if agent_type not in {"pm", "engineer", "ceo"}:
