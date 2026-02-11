@@ -948,14 +948,16 @@ def _load_prompt_file(path: str) -> str:
 def _build_agent_prompt(agent_type: str) -> str:
     agent_prompt = _load_prompt_file(f"/app/prompts/agents/{agent_type}.md")
     user_prompt = _load_prompt_file("/app/prompts/skills/chat_user.md")
-    return f"{agent_prompt}\n\n---\n\n{user_prompt}"
+    local_deploy_prompt = _load_prompt_file("/app/prompts/skills/local_deploy.md")
+    return f"{agent_prompt}\n\n---\n\n{user_prompt}\n\n---\n\n{local_deploy_prompt}"
 
 
 def _build_ceo_prompt_with_a2a_skills() -> str:
     """Build CEO prompt with a2a_consult skill for tool-calling."""
     agent_prompt = _load_prompt_file("/app/prompts/agents/ceo.md")
     a2a_consult_prompt = _load_prompt_file("/app/prompts/skills/a2a_consult.md")
-    return f"{agent_prompt}\n\n---\n\n{a2a_consult_prompt}"
+    local_deploy_prompt = _load_prompt_file("/app/prompts/skills/local_deploy.md")
+    return f"{agent_prompt}\n\n---\n\n{a2a_consult_prompt}\n\n---\n\n{local_deploy_prompt}"
 
 
 def _resolve_internal_key() -> str:
@@ -963,6 +965,23 @@ def _resolve_internal_key() -> str:
     if not internal_keys:
         raise HTTPException(status_code=500, detail="Internal key not available")
     return internal_keys[0]
+
+
+def _get_llm_config_error_message() -> str:
+    """Return Chinese message for LLM gateway misconfiguration."""
+    return (
+        "LLM 服务未配置。请设置环境变量 LLM_PROVIDERS_HOST_PATH 指向 llm-providers.json 文件，"
+        "文件格式示例：\n"
+        '{\n'
+        '  "providers": {\n'
+        '    "ark-code-latest": {\n'
+        '      "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",\n'
+        '      "api_key": "YOUR_REAL_API_KEY_HERE"\n'
+        '    }\n'
+        '  }\n'
+        '}\n'
+        "配置后重启服务：docker compose restart llm-gateway"
+    )
 
 
 async def _call_llm_gateway(system_prompt: str, user_message: str) -> str:
@@ -976,13 +995,24 @@ async def _call_llm_gateway(system_prompt: str, user_message: str) -> str:
             {"role": "user", "content": user_message},
         ],
     }
-    async with httpx.AsyncClient(base_url=llm_gateway_url, timeout=30.0) as client:
-        response = await client.post(
-            "/internal/llm/chat",
-            json=payload,
-            headers={"X-Internal-Key": _resolve_internal_key()},
-        )
-    response.raise_for_status()
+    try:
+        async with httpx.AsyncClient(base_url=llm_gateway_url, timeout=30.0) as client:
+            response = await client.post(
+                "/internal/llm/chat",
+                json=payload,
+                headers={"X-Internal-Key": _resolve_internal_key()},
+            )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        logger.warning("LLM gateway HTTP error: %s (status %s)", type(exc).__name__, exc.response.status_code)
+        if exc.response.status_code in {401, 403}:
+            raise ValueError(_get_llm_config_error_message()) from None
+        if exc.response.status_code in {500, 502}:
+            raise ValueError(_get_llm_config_error_message()) from None
+        raise
+    except httpx.RequestError as exc:
+        logger.warning("LLM gateway request error: %s", type(exc).__name__)
+        raise
     data = response.json()
     choices = data.get("choices") if isinstance(data, dict) else None
     if not isinstance(choices, list) or not choices:
@@ -1454,13 +1484,24 @@ async def _call_llm_gateway_with_tools(
             "tool_choice": "auto",
         }
         
-        async with httpx.AsyncClient(base_url=llm_gateway_url, timeout=30.0) as client:
-            response = await client.post(
-                "/internal/llm/chat",
-                json=payload,
-                headers={"X-Internal-Key": _resolve_internal_key()},
-            )
-        response.raise_for_status()
+        try:
+            async with httpx.AsyncClient(base_url=llm_gateway_url, timeout=30.0) as client:
+                response = await client.post(
+                    "/internal/llm/chat",
+                    json=payload,
+                    headers={"X-Internal-Key": _resolve_internal_key()},
+                )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            logger.warning("LLM gateway HTTP error: %s (status %s)", type(exc).__name__, exc.response.status_code)
+            if exc.response.status_code in {401, 403}:
+                raise ValueError(_get_llm_config_error_message()) from None
+            if exc.response.status_code in {500, 502}:
+                raise ValueError(_get_llm_config_error_message()) from None
+            raise
+        except httpx.RequestError as exc:
+            logger.warning("LLM gateway request error: %s", type(exc).__name__)
+            raise
         data = response.json()
         
         choices = data.get("choices") if isinstance(data, dict) else None
@@ -1906,6 +1947,20 @@ async def agent_chat(
             except HTTPException:
                 session.rollback()
                 raise
+            except ValueError as exc:
+                session.rollback()
+                logger.warning("CEO LLM config error: %s", exc)
+                failure_message = str(exc)
+                thread_id_int = _create_a2a_thread(session, tenant_id_int)
+                _append_a2a_message(session, tenant_id_int, thread_id_int, "ceo", failure_message)
+                session.commit()
+                return AgentChatOut(
+                    reply=failure_message,
+                    tool=None,
+                    citations=[],
+                    a2a_thread_id=str(thread_id_int),
+                    a2a_summary="CEO 委派失败 - 配置错误"
+                )
             except Exception as exc:
                 session.rollback()
                 logger.warning("CEO tool calling failed: %s", exc)
@@ -1929,6 +1984,9 @@ async def agent_chat(
         reply = await _call_llm_gateway(system_prompt, body.message)
     except HTTPException:
         raise
+    except ValueError as exc:
+        logger.warning("LLM gateway config error: %s", exc)
+        reply = str(exc)
     except Exception as exc:
         logger.warning("LLM gateway call failed: %s", exc)
         reply = "I'm having trouble reaching the language model right now. Please try again in a moment."

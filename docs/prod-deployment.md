@@ -249,6 +249,8 @@ docker compose -f deploy/prod/docker-compose.yml up -d
 
 **适用场景**: 在同一台机器（roboard.duckdns.org 服务器）上开发并部署，无需 ACR 推送。
 
+**📚 官方文档**: 本流程的完整说明和最佳实践请参考 [本地部署 Skill 文档](../prompts/skills/local_deploy.md)。该文档是维护的知识来源。
+
 当 `roboard.duckdns.org` 域名指向开发机器时，使用以下流程快速部署：
 
 ```bash
@@ -257,18 +259,18 @@ git add .
 git commit -m "your change"
 git push
 
-# 2. 立即在服务器上部署
-./scripts/deploy_local.sh
+# 2. 立即在服务器上部署（使用默认服务）
+export SERVICES="edge gateway web-frontend api-backend agent-manager llm-gateway mcp-server"
+docker compose up -d --build $SERVICES
 ```
 
-### 脚本行为
+### 部署行为
 
 - **Compose 文件**: 使用 repo-root `docker-compose.yml`（非 `deploy/prod/docker-compose.yml`）
 - **默认服务**: `edge gateway web-frontend api-backend agent-manager llm-gateway mcp-server`
-  - 可通过 `SERVICES` 环境变量覆盖：`SERVICES="edge gateway api-backend" ./scripts/deploy_local.sh`
+  - 可通过 `SERVICES` 环境变量覆盖：`SERVICES="edge gateway api-backend" docker compose up -d --build $SERVICES`
 - **构建选项**: `docker compose up -d --build`（强制重新构建）
 - **验证前检查**: 执行 `docker compose config -q` 确保配置有效
-- **失败处理**: 任何步骤失败时返回非零退出码
 
 ### 验证部署
 
@@ -280,15 +282,6 @@ docker compose ps
 curl https://roboard.duckdns.org/
 curl https://roboard.duckdns.org/api/health
 ```
-
-### 与 ACR 部署的区别
-
-| 维度 | 本地部署 (deploy_local.sh) | ACR 部署 (push_core_images.sh) |
-|------|---------------------------|--------------------------------|
-| 镜像来源 | 本地构建 (`build:` context) | ACR 仓库 (`image:`) |
-| Compose 文件 | repo-root `docker-compose.yml` | `deploy/prod/docker-compose.yml` |
-| 适用场景 | 同机开发 + 部署 | 生产环境（多机/分离构建） |
-| 回滚 | git checkout + re-deploy | 指定旧 TAG |
 
 ## 回滚流程
 

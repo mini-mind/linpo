@@ -18,6 +18,19 @@
         gap: 8px;
       }
 
+      .world-menu-bar {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px;
+        border-radius: 999px;
+        background: rgba(10, 12, 16, 0.56);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        box-shadow: 0 18px 54px rgba(0, 0, 0, 0.34);
+        backdrop-filter: blur(10px) saturate(1.25);
+        -webkit-backdrop-filter: blur(10px) saturate(1.25);
+      }
+
       .world-menu-trigger {
         display: inline-flex;
         align-items: center;
@@ -25,12 +38,63 @@
         white-space: nowrap;
       }
 
+      .world-menu-bar .world-menu-trigger {
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: transparent;
+        border: 1px solid transparent;
+        color: rgba(255, 255, 255, 0.92);
+      }
+
+      .world-menu-bar .world-menu-trigger:hover {
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 255, 255, 0.12);
+      }
+
+      .world-menu-bar .world-menu-trigger:active {
+        transform: translateY(1px);
+      }
+
+      .world-menu-connection {
+        appearance: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.06);
+        color: rgba(255, 255, 255, 0.84);
+        font-family: var(--font-display);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        cursor: pointer;
+      }
+
+      .world-menu-connection:hover {
+        background: rgba(255, 255, 255, 0.1);
+      }
+
+      .world-menu-connection:active {
+        transform: translateY(1px);
+      }
+
+      .world-menu-connection:focus-visible {
+        outline: 2px solid rgba(255, 255, 255, 0.35);
+        outline-offset: 2px;
+      }
+
       .world-menu-status-dot {
         width: 10px;
         height: 10px;
         border-radius: 999px;
-        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18);
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22);
         background: rgba(255, 255, 255, 0.28);
+      }
+
+      .world-menu-status-text {
+        line-height: 1;
       }
 
       .world-menu-status-dot[data-status="connected"] {
@@ -151,18 +215,24 @@
 
         <div class="world-ui" aria-label="World controls">
           <div id="world-menu" class="world-menu" aria-label="World menu">
-            <button
-              id="world-menu-button"
-              type="button"
-              class="btn btn-ghost world-menu-trigger"
-              aria-label="Menu"
-              aria-haspopup="menu"
-              aria-expanded="false"
-              aria-controls="world-menu-dropdown"
-            >
-              <span id="world-menu-button-label">Menu</span>
-              <span id="menu-status-dot" class="world-menu-status-dot" data-status="idle" aria-hidden="true"></span>
-            </button>
+            <div class="world-menu-bar" role="group" aria-label="World menu and status">
+              <button
+                id="world-menu-button"
+                type="button"
+                class="btn btn-ghost world-menu-trigger"
+                aria-label="Menu"
+                aria-haspopup="menu"
+                aria-expanded="false"
+                aria-controls="world-menu-dropdown"
+              >
+                <span id="world-menu-button-label">Menu</span>
+              </button>
+
+              <button id="world-status-button" type="button" class="world-menu-connection" aria-label="Connection status">
+                <span id="menu-status-dot" class="world-menu-status-dot" data-status="idle" aria-hidden="true"></span>
+                <span id="menu-status-pill-value" class="world-menu-status-text" data-status="idle">Idle</span>
+              </button>
+            </div>
 
             <div id="world-menu-dropdown" class="panel world-menu-dropdown" role="menu" hidden>
               <button id="menu-lang-toggle" type="button" class="world-menu-item" role="menuitem">
@@ -921,6 +991,8 @@
           let menuConnection;
           let menuStatusValue;
           let menuStatusDot;
+          let menuStatusPillValue;
+          let menuStatusButton;
 
           let statusLegendModal;
           let statusLegendDialog;
@@ -993,7 +1065,7 @@
             statusLower === "error";
 
           const updateConnectionStatus = (status) => {
-            if (!status || !menuStatusValue) {
+            if (!status || (!menuStatusValue && !menuStatusPillValue)) {
               return;
             }
 
@@ -1002,7 +1074,9 @@
               return;
             }
 
-            menuStatusValue.setAttribute("data-status", statusLower);
+            if (menuStatusValue) {
+              menuStatusValue.setAttribute("data-status", statusLower);
+            }
             const labelKey =
               statusLower === "connected"
                 ? "status.connected"
@@ -1015,7 +1089,14 @@
                       : statusLower === "idle"
                         ? "status.idle"
                         : null;
-            menuStatusValue.textContent = labelKey ? t(labelKey) : statusLower;
+            const nextLabel = labelKey ? t(labelKey) : statusLower;
+            if (menuStatusValue) {
+              menuStatusValue.textContent = nextLabel;
+            }
+            if (menuStatusPillValue) {
+              menuStatusPillValue.setAttribute("data-status", statusLower);
+              menuStatusPillValue.textContent = nextLabel;
+            }
 
             if (menuStatusDot) {
               menuStatusDot.setAttribute("data-status", statusLower);
@@ -1762,6 +1843,8 @@
             menuConnection = document.getElementById("menu-connection");
             menuStatusValue = document.getElementById("menu-status-value");
             menuStatusDot = document.getElementById("menu-status-dot");
+            menuStatusPillValue = document.getElementById("menu-status-pill-value");
+            menuStatusButton = document.getElementById("world-status-button");
 
             statusLegendModal = document.getElementById("status-legend-modal");
             statusLegendDialog = statusLegendModal ? statusLegendModal.querySelector(".modal-dialog") : null;
@@ -1808,6 +1891,15 @@
             if (menuConnection && !menuConnection.hasAttribute("data-legend-bound")) {
               menuConnection.setAttribute("data-legend-bound", "");
               menuConnection.addEventListener("click", (evt) => {
+                evt.preventDefault();
+                closeMenu();
+                openStatusLegend();
+              });
+            }
+
+            if (menuStatusButton && !menuStatusButton.hasAttribute("data-legend-bound")) {
+              menuStatusButton.setAttribute("data-legend-bound", "");
+              menuStatusButton.addEventListener("click", (evt) => {
                 evt.preventDefault();
                 closeMenu();
                 openStatusLegend();
@@ -2617,6 +2709,9 @@
 
           const start = () => {
             init();
+            // Route transitions can re-enter the world without a full reload.
+            // Ensure the dropdown is always closed until explicitly toggled.
+            setMenuOpen(false);
             if (!initialized || running) {
               resizeRenderer();
               return;
