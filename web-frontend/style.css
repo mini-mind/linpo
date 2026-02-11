@@ -49,8 +49,12 @@ body {
 }
 
 body[data-route="world"] {
-  background-color: #0a0b0f;
-  background-image: none;
+  background-color: var(--paper);
+  background-image:
+    radial-gradient(1100px 800px at 14% 12%, rgba(196, 106, 42, 0.2), transparent 62%),
+    radial-gradient(900px 700px at 88% 8%, rgba(59, 110, 122, 0.14), transparent 58%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0));
+  background-position: center;
 }
 
 body.modal-open {
@@ -70,8 +74,11 @@ body::before {
 }
 
 body[data-route="world"]::before {
-  opacity: 0.06;
-  mix-blend-mode: overlay;
+  opacity: 0.12;
+  background-image:
+    repeating-radial-gradient(circle at 18% 22%, rgba(196, 106, 42, 0.08) 0 1px, transparent 1px 4px),
+    repeating-radial-gradient(circle at 82% 78%, rgba(20, 19, 18, 0.08) 0 1px, transparent 1px 5px);
+  mix-blend-mode: multiply;
 }
 
 a {

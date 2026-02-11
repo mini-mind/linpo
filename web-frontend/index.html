@@ -7,75 +7,100 @@
     <link rel="stylesheet" href="style.css" />
     <style>
       /* World-only layout tweaks (keep style.css intact). */
-      .world-hud {
+      .world-menu {
         position: absolute;
         top: clamp(14px, 2.6vw, 28px);
-        left: clamp(14px, 2.6vw, 28px);
         right: clamp(14px, 2.6vw, 28px);
-        padding: 12px 14px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        z-index: 3;
+        z-index: 4;
+        pointer-events: auto;
+        display: grid;
+        justify-items: end;
+        gap: 8px;
       }
 
-      .world-hud-left {
-        display: inline-flex;
-        align-items: center;
-        gap: 12px;
-        min-width: 0;
-      }
-
-      .world-hud-left .brand-name {
-        font-size: 16px;
-      }
-
-      .world-hud-actions {
+      .world-menu-trigger {
         display: inline-flex;
         align-items: center;
         gap: 10px;
-        flex-wrap: nowrap;
+        white-space: nowrap;
       }
 
-      .event-drawer {
-        position: absolute;
-        top: calc(clamp(14px, 2.6vw, 28px) + 58px);
-        right: clamp(14px, 2.6vw, 28px);
-        bottom: clamp(14px, 2.6vw, 28px);
-        width: min(420px, calc(100vw - 28px));
-        max-height: none;
-        padding: var(--space-5);
+      .world-menu-status-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18);
+        background: rgba(255, 255, 255, 0.28);
+      }
+
+      .world-menu-status-dot[data-status="connected"] {
+        background: rgba(120, 255, 192, 0.85);
+      }
+
+      .world-menu-status-dot[data-status="connecting"] {
+        background: rgba(255, 220, 140, 0.9);
+      }
+
+      .world-menu-status-dot[data-status="closed"] {
+        background: rgba(255, 190, 120, 0.9);
+      }
+
+      .world-menu-status-dot[data-status="error"] {
+        background: rgba(255, 120, 120, 0.9);
+      }
+
+      .world-menu-dropdown {
+        width: min(320px, calc(100vw - 28px));
+        padding: 10px;
         display: grid;
-        grid-template-rows: auto 1fr;
-        gap: var(--space-4);
-        overflow: hidden;
-        transform: translateX(calc(100% + 18px));
-        opacity: 0;
-        pointer-events: none;
-        transition: transform 0.24s ease, opacity 0.22s ease;
-        z-index: 3;
+        gap: 6px;
       }
 
-      .event-drawer.is-open {
-        transform: translateX(0);
-        opacity: 1;
-        pointer-events: auto;
+      .world-menu-item {
+        appearance: none;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 14px;
+        color: rgba(255, 255, 255, 0.92);
+        padding: 10px 12px;
+        display: grid;
+        grid-template-columns: 1fr auto;
+        align-items: center;
+        gap: 12px;
+        font-family: var(--font-body);
+        cursor: pointer;
+        text-align: left;
+      }
+
+      .world-menu-item:focus-visible {
+        outline: 2px solid rgba(255, 255, 255, 0.35);
+        outline-offset: 2px;
+      }
+
+      .world-menu-value {
+        font-family: var(--font-display);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.16em;
+        color: rgba(255, 255, 255, 0.7);
+      }
+
+      .world-menu-sep {
+        height: 1px;
+        margin: 4px 2px;
+        background: rgba(255, 255, 255, 0.12);
+      }
+
+      .world-menu-item--danger {
+        grid-template-columns: 1fr;
+        justify-items: start;
+        border-color: rgba(255, 120, 120, 0.28);
+        background: rgba(255, 120, 120, 0.06);
       }
 
       @media (max-width: 600px) {
-        .world-hud {
-          padding: 10px 12px;
-        }
-
-        .world-hud-left .brand-name {
-          font-size: 15px;
-        }
-      }
-
-      @media (prefers-reduced-motion: reduce) {
-        .event-drawer {
-          transition: none;
+        .world-menu-dropdown {
+          width: min(340px, calc(100vw - 28px));
         }
       }
     </style>
@@ -136,104 +161,145 @@
             Back
           </button>
 
-          <header class="panel world-hud" aria-label="World HUD">
-            <div class="world-hud-left">
-              <a class="brand" href="/#/" aria-label="Roboard home">
-                <span class="brand-mark" aria-hidden="true"></span>
-                <span class="brand-name">Roboard</span>
-              </a>
-              <span id="status-pill" class="status-pill neutral" aria-live="polite" data-status="idle">Idle</span>
-            </div>
+          <div id="world-menu" class="world-menu" aria-label="World menu">
+            <button
+              id="world-menu-button"
+              type="button"
+              class="btn btn-ghost world-menu-trigger"
+              aria-label="Menu"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="world-menu-dropdown"
+            >
+              <span id="world-menu-button-label">Menu</span>
+              <span id="menu-status-dot" class="world-menu-status-dot" data-status="idle" aria-hidden="true"></span>
+            </button>
 
-            <div class="world-hud-actions" aria-label="World HUD actions">
-              <button
-                id="hud-events-button"
-                type="button"
-                class="btn btn-ghost"
-                aria-label="Toggle events drawer"
-                aria-expanded="false"
-                aria-controls="event-drawer"
-              >
-                Events
+            <div id="world-menu-dropdown" class="panel world-menu-dropdown" role="menu" hidden>
+              <button id="menu-lang-toggle" type="button" class="world-menu-item" role="menuitem">
+                <span id="menu-lang-label">Language</span>
+                <span id="menu-lang-value" class="world-menu-value">EN</span>
               </button>
-              <button
-                id="hud-lang-button"
-                type="button"
-                class="btn btn-ghost"
-                aria-label="Language"
-              >
-                Lang
+
+              <button id="menu-connection" type="button" class="world-menu-item" role="menuitem">
+                <span id="menu-connection-label">Connection</span>
+                <span id="menu-status-value" class="world-menu-value" data-status="idle">Idle</span>
               </button>
+
+              <div class="world-menu-sep" role="separator" aria-hidden="true"></div>
+
               <button
-                id="hud-signout-button"
+                id="menu-signout"
                 type="button"
-                class="btn btn-ghost"
+                class="world-menu-item world-menu-item--danger"
+                role="menuitem"
                 aria-label="Sign out"
                 data-auth-sign-out
               >
-                Sign out
+                <span id="menu-signout-label">Sign out</span>
               </button>
             </div>
-          </header>
+          </div>
 
-          <aside
-            class="panel event-log event-drawer"
-            aria-label="Event log"
-            id="event-drawer"
-            role="complementary"
-            aria-hidden="true"
-          >
-            <div class="event-log-head">
-              <h2 id="event-drawer-title">Event Log</h2>
-              <button type="button" class="btn btn-ghost" id="event-drawer-close" aria-label="Close events drawer">Close</button>
-            </div>
-            <ul id="event-log-list">
-              <li data-event-empty>Awaiting connection...</li>
-            </ul>
-          </aside>
-
-          <section
-            id="chat-panel"
-            class="panel"
-            aria-label="Chat panel"
-            hidden
-            style="position: absolute; top: calc(clamp(14px, 2.6vw, 28px) + 54px); right: clamp(14px, 2.6vw, 28px); width: min(460px, calc(100vw - 28px)); max-height: min(70vh, 620px); padding: var(--space-5); display: grid; grid-template-rows: auto 1fr auto; gap: var(--space-4); overflow: hidden; z-index: 3"
-          >
-            <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px">
-              <h2
-                id="chat-title"
-                style="margin: 0; font-family: var(--font-display); font-size: 14px; text-transform: uppercase; letter-spacing: 0.22em; color: rgba(255, 255, 255, 0.78)"
-              >
-                Chat
-              </h2>
-              <button id="chat-close" type="button" class="btn btn-ghost" aria-label="Close chat panel">Close</button>
-            </div>
-
+          <div id="chat-panel" class="modal" hidden>
+            <div class="modal-backdrop" id="chat-backdrop" data-chat-close aria-hidden="true"></div>
             <div
-              id="chat-messages"
-              role="log"
-              aria-label="Chat messages"
-              aria-live="polite"
-              style="overflow: auto; padding-right: 6px; display: flex; flex-direction: column; gap: 10px"
-            ></div>
-
-            <form
-              id="chat-form"
-              aria-label="Send message"
-              style="display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center"
+              class="modal-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="chat-title"
+              style="width: min(640px, 100%); max-height: min(78vh, 720px); padding: var(--space-5); display: grid; grid-template-rows: auto 1fr auto; gap: var(--space-4); overflow: hidden"
             >
-              <label for="chat-input" style="position: absolute; left: -10000px; top: auto; width: 1px; height: 1px; overflow: hidden">Message</label>
-              <input
-                id="chat-input"
-                type="text"
-                autocomplete="off"
-                aria-label="Message"
-                placeholder="Message..."
-                style="width: 100%; padding: 12px 14px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.16); background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.92); font-family: var(--font-body)"
-              />
-              <button id="chat-send" type="submit" class="btn btn-primary" aria-label="Send message">Send</button>
-            </form>
-          </section>
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px">
+                <h2
+                  id="chat-title"
+                  style="margin: 0; font-family: var(--font-display); font-size: 14px; text-transform: uppercase; letter-spacing: 0.22em; color: rgba(255, 255, 255, 0.78)"
+                >
+                  Chat
+                </h2>
+                <button id="chat-close" type="button" class="btn btn-ghost" aria-label="Close chat panel">Close</button>
+              </div>
+
+              <div
+                id="chat-messages"
+                role="log"
+                aria-label="Chat messages"
+                aria-live="polite"
+                style="overflow: auto; padding-right: 6px; display: flex; flex-direction: column; gap: 10px"
+              ></div>
+
+              <form
+                id="chat-form"
+                aria-label="Send message"
+                style="display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center"
+              >
+                <label for="chat-input" style="position: absolute; left: -10000px; top: auto; width: 1px; height: 1px; overflow: hidden">Message</label>
+                <input
+                  id="chat-input"
+                  type="text"
+                  autocomplete="off"
+                  aria-label="Message"
+                  placeholder="Message..."
+                  style="width: 100%; padding: 12px 14px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.16); background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.92); font-family: var(--font-body)"
+                />
+                <button id="chat-send" type="submit" class="btn btn-primary" aria-label="Send message">Send</button>
+              </form>
+            </div>
+          </div>
+
+          <div id="status-legend-modal" class="modal" hidden>
+            <div class="modal-backdrop" data-status-legend-close aria-hidden="true"></div>
+            <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="status-legend-title" aria-describedby="status-legend-desc">
+              <button class="modal-close" type="button" aria-label="Close dialog" data-status-legend-close>
+                <span aria-hidden="true">×</span>
+              </button>
+              <h2 id="status-legend-title">Connection status</h2>
+              <p id="status-legend-desc" class="modal-subtitle">What each status means.</p>
+
+              <dl style="margin: 0; display: grid; gap: 10px">
+                <div style="display: grid; grid-template-columns: 110px 1fr; gap: 10px">
+                  <dt id="status-legend-idle-label" style="margin: 0; font-family: var(--font-display); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(255, 255, 255, 0.78)">
+                    Idle
+                  </dt>
+                  <dd id="status-legend-idle-desc" style="margin: 0; color: rgba(255, 255, 255, 0.82); line-height: 1.4">
+                    Not connected yet.
+                  </dd>
+                </div>
+                <div style="display: grid; grid-template-columns: 110px 1fr; gap: 10px">
+                  <dt id="status-legend-connecting-label" style="margin: 0; font-family: var(--font-display); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(255, 255, 255, 0.78)">
+                    Connecting
+                  </dt>
+                  <dd id="status-legend-connecting-desc" style="margin: 0; color: rgba(255, 255, 255, 0.82); line-height: 1.4">
+                    Attempting to open the WebSocket.
+                  </dd>
+                </div>
+                <div style="display: grid; grid-template-columns: 110px 1fr; gap: 10px">
+                  <dt id="status-legend-connected-label" style="margin: 0; font-family: var(--font-display); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(255, 255, 255, 0.78)">
+                    Connected
+                  </dt>
+                  <dd id="status-legend-connected-desc" style="margin: 0; color: rgba(255, 255, 255, 0.82); line-height: 1.4">
+                    Live updates are flowing.
+                  </dd>
+                </div>
+                <div style="display: grid; grid-template-columns: 110px 1fr; gap: 10px">
+                  <dt id="status-legend-closed-label" style="margin: 0; font-family: var(--font-display); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(255, 255, 255, 0.78)">
+                    Closed
+                  </dt>
+                  <dd id="status-legend-closed-desc" style="margin: 0; color: rgba(255, 255, 255, 0.82); line-height: 1.4">
+                    Connection ended or you are signed out.
+                  </dd>
+                </div>
+                <div style="display: grid; grid-template-columns: 110px 1fr; gap: 10px">
+                  <dt id="status-legend-error-label" style="margin: 0; font-family: var(--font-display); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(255, 255, 255, 0.78)">
+                    Error
+                  </dt>
+                  <dd id="status-legend-error-desc" style="margin: 0; color: rgba(255, 255, 255, 0.82); line-height: 1.4">
+                    Something went wrong; retry by re-entering the world.
+                  </dd>
+                </div>
+              </dl>
+            </div>
+          </div>
         </div>
       </section>
     </div>
@@ -346,6 +412,24 @@
             "hud.langLabel.zh": "\u4e2d\u6587",
             "hud.signout": "Sign out",
 
+            "menu.button": "Menu",
+            "menu.lang": "Language",
+            "menu.connection": "Connection",
+            "menu.signout": "Sign out",
+
+            "legend.title": "Connection status",
+            "legend.desc": "What each status means.",
+            "legend.idle.label": "Idle",
+            "legend.idle.desc": "Not connected yet.",
+            "legend.connecting.label": "Connecting",
+            "legend.connecting.desc": "Attempting to open the WebSocket.",
+            "legend.connected.label": "Connected",
+            "legend.connected.desc": "Live updates are flowing.",
+            "legend.closed.label": "Closed",
+            "legend.closed.desc": "Connection ended or you are signed out.",
+            "legend.error.label": "Error",
+            "legend.error.desc": "Something went wrong; retry by re-entering the world.",
+
             "status.idle": "Idle",
             "status.connecting": "Connecting",
             "status.connected": "Connected",
@@ -418,6 +502,24 @@
             "hud.langLabel.en": "EN",
             "hud.langLabel.zh": "\u4e2d\u6587",
             "hud.signout": "\u9000\u51fa\u767b\u5f55",
+
+            "menu.button": "\u83dc\u5355",
+            "menu.lang": "\u8bed\u8a00",
+            "menu.connection": "\u8fde\u63a5",
+            "menu.signout": "\u9000\u51fa\u767b\u5f55",
+
+            "legend.title": "\u8fde\u63a5\u72b6\u6001",
+            "legend.desc": "\u5404\u72b6\u6001\u7684\u542b\u4e49\u3002",
+            "legend.idle.label": "\u7a7a\u95f2",
+            "legend.idle.desc": "\u5c1a\u672a\u5efa\u7acb\u8fde\u63a5\u3002",
+            "legend.connecting.label": "\u8fde\u63a5\u4e2d",
+            "legend.connecting.desc": "\u6b63\u5728\u6253\u5f00 WebSocket \u8fde\u63a5\u3002",
+            "legend.connected.label": "\u5df2\u8fde\u63a5",
+            "legend.connected.desc": "\u6b63\u5728\u63a5\u6536\u5b9e\u65f6\u66f4\u65b0\u3002",
+            "legend.closed.label": "\u5df2\u5173\u95ed",
+            "legend.closed.desc": "\u8fde\u63a5\u5df2\u7ed3\u675f\uff0c\u6216\u8005\u60a8\u5df2\u9000\u51fa\u767b\u5f55\u3002",
+            "legend.error.label": "\u9519\u8bef",
+            "legend.error.desc": "\u53d1\u751f\u5f02\u5e38\uff1b\u53ef\u901a\u8fc7\u91cd\u65b0\u8fdb\u5165\u4e16\u754c\u91cd\u8bd5\u3002",
 
             "status.idle": "\u7a7a\u95f2",
             "status.connecting": "\u8fde\u63a5\u4e2d",
@@ -552,41 +654,26 @@
           setText("#register-form button[type=\"submit\"]", "auth.submit.register");
           setText(".modal-note", "auth.note");
 
-          const eventsBtn = document.getElementById("hud-events-button");
-          if (eventsBtn) {
-            eventsBtn.textContent = t("hud.events");
-            eventsBtn.setAttribute("aria-label", t("hud.events"));
+          const menuBtnLabel = document.getElementById("world-menu-button-label");
+          const menuBtn = document.getElementById("world-menu-button");
+          if (menuBtnLabel) {
+            menuBtnLabel.textContent = t("menu.button");
+          }
+          if (menuBtn) {
+            menuBtn.setAttribute("aria-label", t("menu.button"));
           }
 
-          const langBtn = document.getElementById("hud-lang-button");
-          if (langBtn) {
+          setText("#menu-lang-label", "menu.lang");
+          const menuLangValue = document.getElementById("menu-lang-value");
+          if (menuLangValue) {
             const labelKey = activeLanguage === "zh" ? "hud.langLabel.zh" : "hud.langLabel.en";
-            langBtn.textContent = t(labelKey);
-            langBtn.setAttribute("aria-label", t("hud.lang"));
-            langBtn.removeAttribute("title");
+            menuLangValue.textContent = t(labelKey);
           }
 
-          const signOutBtn = document.getElementById("hud-signout-button");
-          if (signOutBtn) {
-            signOutBtn.textContent = t("hud.signout");
-            signOutBtn.setAttribute("aria-label", t("hud.signout"));
-          }
-
-          setText("#event-drawer-title", "events.title");
-          const closeDrawer = document.getElementById("event-drawer-close");
-          if (closeDrawer) {
-            closeDrawer.textContent = t("events.close");
-            closeDrawer.setAttribute("aria-label", t("events.close"));
-          }
-
-          const empty = document.querySelector("#event-log-list [data-event-empty]");
-          if (empty) {
-            empty.textContent = t("events.empty");
-          }
-
-          const statusPill = document.getElementById("status-pill");
-          if (statusPill) {
-            const raw = String(statusPill.getAttribute("data-status") || statusPill.textContent || "").trim().toLowerCase();
+          setText("#menu-connection-label", "menu.connection");
+          const menuStatusValue = document.getElementById("menu-status-value");
+          if (menuStatusValue) {
+            const raw = String(menuStatusValue.getAttribute("data-status") || menuStatusValue.textContent || "").trim().toLowerCase();
             const key =
               raw === "connected"
                 ? "status.connected"
@@ -600,9 +687,31 @@
                         ? "status.idle"
                         : null;
             if (key) {
-              statusPill.textContent = t(key);
+              menuStatusValue.textContent = t(key);
             }
           }
+
+          const signOutBtn = document.getElementById("menu-signout");
+          const signOutLabel = document.getElementById("menu-signout-label");
+          if (signOutLabel) {
+            signOutLabel.textContent = t("menu.signout");
+          }
+          if (signOutBtn) {
+            signOutBtn.setAttribute("aria-label", t("menu.signout"));
+          }
+
+          setText("#status-legend-title", "legend.title");
+          setText("#status-legend-desc", "legend.desc");
+          setText("#status-legend-idle-label", "legend.idle.label");
+          setText("#status-legend-idle-desc", "legend.idle.desc");
+          setText("#status-legend-connecting-label", "legend.connecting.label");
+          setText("#status-legend-connecting-desc", "legend.connecting.desc");
+          setText("#status-legend-connected-label", "legend.connected.label");
+          setText("#status-legend-connected-desc", "legend.connected.desc");
+          setText("#status-legend-closed-label", "legend.closed.label");
+          setText("#status-legend-closed-desc", "legend.closed.desc");
+          setText("#status-legend-error-label", "legend.error.label");
+          setText("#status-legend-error-desc", "legend.error.desc");
 
           const chatInput = document.getElementById("chat-input");
           if (chatInput) {
@@ -816,13 +925,18 @@
           let socket = null;
 
           let canvas;
-          let eventLogList;
-          let statusPill;
-          let eventsButton;
-          let langButton;
-          let eventDrawer;
-          let eventDrawerClose;
-          let signOutButton;
+          let menuRoot;
+          let menuButton;
+          let menuDropdown;
+          let menuLangToggle;
+          let menuConnection;
+          let menuStatusValue;
+          let menuStatusDot;
+
+          let statusLegendModal;
+          let statusLegendDialog;
+          let statusLegendCloseTargets;
+          let statusLegendLastFocused = null;
 
           let scene;
           let camera;
@@ -843,12 +957,16 @@
           let kanbanZoomed = false;
           let kanbanBack;
 
-          let chatPanel;
-          let chatTitle;
-          let chatMessages;
-          let chatForm;
-          let chatInput;
-          let chatClose;
+           let chatPanel;
+           let chatDialog;
+           let chatBackdrop;
+           let chatTitle;
+           let chatMessages;
+           let chatForm;
+           let chatInput;
+           let chatClose;
+
+           let chatLastFocused = null;
 
           const chatHistory = new Map();
           let activeChatAgentType = null;
@@ -873,12 +991,24 @@
           const tmpBox = new THREE.Box3();
           const tmpSize = new THREE.Vector3();
 
-          const updateStatusPill = (status) => {
-            if (!statusPill || !status) {
+          const isRecognizedConnectionStatus = (statusLower) =>
+            statusLower === "idle" ||
+            statusLower === "connecting" ||
+            statusLower === "connected" ||
+            statusLower === "closed" ||
+            statusLower === "error";
+
+          const updateConnectionStatus = (status) => {
+            if (!status || !menuStatusValue) {
               return;
             }
-            const statusLower = String(status).toLowerCase();
-            statusPill.setAttribute("data-status", statusLower);
+
+            const statusLower = String(status).trim().toLowerCase();
+            if (!isRecognizedConnectionStatus(statusLower)) {
+              return;
+            }
+
+            menuStatusValue.setAttribute("data-status", statusLower);
             const labelKey =
               statusLower === "connected"
                 ? "status.connected"
@@ -891,49 +1021,75 @@
                       : statusLower === "idle"
                         ? "status.idle"
                         : null;
-            statusPill.textContent = labelKey ? t(labelKey) : String(status);
-            statusPill.classList.remove("success", "error", "warning", "neutral");
-            const statusClass =
-              statusLower === "connected"
-                ? "success"
-                : statusLower === "error"
-                  ? "error"
-                  : statusLower === "closed"
-                    ? "warning"
-                    : "neutral";
-            statusPill.classList.add(statusClass);
-          };
+            menuStatusValue.textContent = labelKey ? t(labelKey) : statusLower;
 
-          const appendEvent = (message, status) => {
-            const msg = message == null ? "" : String(message);
-            if (eventLogList && msg.trim()) {
-              eventLogList.querySelectorAll("[data-event-empty]").forEach((node) => {
-                node.remove();
-              });
-              const item = document.createElement("li");
-              item.textContent = msg;
-              eventLogList.prepend(item);
+            if (menuStatusDot) {
+              menuStatusDot.setAttribute("data-status", statusLower);
             }
-            updateStatusPill(status);
           };
 
-          const setDrawerOpen = (open, opts = {}) => {
+          const noteStatus = (message, status) => {
+            // Intentionally keep UI minimal: show status only (no event drawer).
+            updateConnectionStatus(status);
+            void message;
+          };
+
+          const setMenuOpen = (open) => {
             const next = Boolean(open);
-            if (eventDrawer) {
-              eventDrawer.classList.toggle("is-open", next);
-              eventDrawer.setAttribute("aria-hidden", String(!next));
+            if (menuDropdown) {
+              menuDropdown.hidden = !next;
             }
-            if (eventsButton) {
-              eventsButton.setAttribute("aria-expanded", String(next));
-            }
-            if (next && opts.focus && eventDrawerClose) {
-              window.setTimeout(() => eventDrawerClose.focus(), 0);
+            if (menuButton) {
+              menuButton.setAttribute("aria-expanded", String(next));
             }
           };
 
-          const toggleDrawer = () => {
-            const isOpen = eventsButton?.getAttribute("aria-expanded") === "true";
-            setDrawerOpen(!isOpen, { focus: !isOpen });
+          const toggleMenu = () => {
+            const isOpen = menuDropdown ? !menuDropdown.hidden : false;
+            setMenuOpen(!isOpen);
+            if (!isOpen && menuDropdown) {
+              const firstItem = menuDropdown.querySelector("button, [role='menuitem']");
+              if (firstItem && typeof firstItem.focus === "function") {
+                window.setTimeout(() => firstItem.focus(), 0);
+              }
+            }
+          };
+
+          const closeMenu = (opts = {}) => {
+            const isOpen = menuDropdown ? !menuDropdown.hidden : false;
+            if (!isOpen) return;
+            setMenuOpen(false);
+            if (opts.focusButton && menuButton && typeof menuButton.focus === "function") {
+              window.setTimeout(() => menuButton.focus(), 0);
+            }
+          };
+
+          const openStatusLegend = () => {
+            if (!statusLegendModal || !statusLegendDialog) {
+              return;
+            }
+            if (statusLegendModal.hidden) {
+              statusLegendLastFocused = document.activeElement;
+            }
+            statusLegendModal.hidden = false;
+            document.body.classList.add("modal-open");
+
+            const focusTarget = statusLegendDialog.querySelector("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])");
+            if (focusTarget && typeof focusTarget.focus === "function") {
+              window.setTimeout(() => focusTarget.focus(), 0);
+            }
+          };
+
+          const closeStatusLegend = () => {
+            if (!statusLegendModal || statusLegendModal.hidden) {
+              return;
+            }
+            statusLegendModal.hidden = true;
+            document.body.classList.remove("modal-open");
+            if (statusLegendLastFocused && typeof statusLegendLastFocused.focus === "function") {
+              statusLegendLastFocused.focus();
+            }
+            statusLegendLastFocused = null;
           };
 
           const getSessionToken = () => localStorage.getItem("roboard_session_token");
@@ -1103,16 +1259,21 @@
             }
           };
 
-          const openChat = (agentType) => {
-            if (!chatPanel || !chatTitle || !chatMessages) {
-              return;
-            }
+           const openChat = (agentType) => {
+             if (!chatPanel || !chatTitle || !chatMessages) {
+               return;
+             }
 
-            activeChatAgentType = normalizeChatAgentType(agentType);
-            const label = getChatAgentLabel(activeChatAgentType);
-            chatTitle.setAttribute("data-chat-agent", activeChatAgentType);
-            chatTitle.textContent = t("chat.titleWith", { label });
-            chatPanel.hidden = false;
+             if (chatPanel.hidden) {
+               chatLastFocused = document.activeElement;
+             }
+
+             activeChatAgentType = normalizeChatAgentType(agentType);
+             const label = getChatAgentLabel(activeChatAgentType);
+             chatTitle.setAttribute("data-chat-agent", activeChatAgentType);
+             chatTitle.textContent = t("chat.titleWith", { label });
+             chatPanel.hidden = false;
+             document.body.classList.add("modal-open");
 
             if (!chatHistory.has(activeChatAgentType)) {
               chatHistory.set(activeChatAgentType, []);
@@ -1196,7 +1357,7 @@
                 a2aRow.style.alignItems = "center";
 
                 const a2aLabel = document.createElement("span");
-                a2aLabel.textContent = t("chat.internal") + ": " + a2aSummary;
+                a2aLabel.textContent = `${t("chat.internal")}: ${a2aSummary}`;
                 a2aRow.appendChild(a2aLabel);
 
                 const a2aViewBtn = document.createElement("button");
@@ -1295,7 +1456,7 @@
                       const detailLabel = document.createElement("div");
                       detailLabel.style.fontWeight = "500";
                       detailLabel.style.color = "rgba(255, 255, 255, 0.9)";
-                      detailLabel.textContent = (agentId || role) + ":";
+                      detailLabel.textContent = `${agentId || role}:`;
                       detailItem.appendChild(detailLabel);
                     }
 
@@ -1319,18 +1480,28 @@
               chatMessages.appendChild(node);
             });
 
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-            if (chatInput) {
-              window.setTimeout(() => chatInput.focus(), 0);
-            }
-          };
+             chatMessages.scrollTop = chatMessages.scrollHeight;
+             if (chatInput) {
+               window.setTimeout(() => chatInput.focus(), 0);
+             }
+           };
 
-          const closeChat = () => {
-            if (chatPanel) {
-              chatPanel.hidden = true;
-            }
-            activeChatAgentType = null;
-          };
+           const closeChat = () => {
+             if (chatPanel) {
+               chatPanel.hidden = true;
+             }
+             activeChatAgentType = null;
+
+             // Only remove scroll lock if no other modal is open.
+             const authModal = document.getElementById("auth-modal");
+             if (!authModal || authModal.hidden) {
+               document.body.classList.remove("modal-open");
+             }
+
+             if (chatLastFocused && typeof chatLastFocused.focus === "function") {
+               chatLastFocused.focus();
+             }
+           };
 
           const pushChatMessage = (from, text) => {
             if (!activeChatAgentType) {
@@ -1497,7 +1668,7 @@
 
           const connectWorldSocket = (wsUrl) => {
             if (!wsUrl) {
-              appendEvent(t("world.missingWsUrl"), "error");
+              noteStatus(t("world.missingWsUrl"), "error");
               return;
             }
 
@@ -1505,11 +1676,11 @@
               socket.close();
             }
 
-            updateStatusPill("connecting");
+            updateConnectionStatus("connecting");
             socket = new WebSocket(wsUrl);
 
             socket.addEventListener("open", () => {
-              appendEvent(t("world.connected"), "connected");
+              noteStatus(t("world.connected"), "connected");
             });
 
             socket.addEventListener("message", (event) => {
@@ -1527,26 +1698,26 @@
                 status = "event";
               }
 
-              appendEvent(String(payload), String(status));
+              noteStatus(String(payload), String(status));
             });
 
             socket.addEventListener("close", () => {
-              appendEvent(t("world.disconnected"), "closed");
+              noteStatus(t("world.disconnected"), "closed");
             });
 
             socket.addEventListener("error", () => {
-              appendEvent(t("world.socketError"), "error");
+              noteStatus(t("world.socketError"), "error");
             });
           };
 
           const bootstrapAndConnect = async () => {
             const sessionToken = getSessionToken();
             if (!sessionToken) {
-              appendEvent(t("world.signInToConnect"), "closed");
+              noteStatus(t("world.signInToConnect"), "closed");
               return;
             }
 
-            updateStatusPill("connecting");
+            updateConnectionStatus("connecting");
 
             try {
               const resp = await fetch("/api/world/bootstrap", {
@@ -1557,12 +1728,12 @@
               });
 
               if (resp.status === 401 || resp.status === 403) {
-                appendEvent(t("world.sessionExpired"), "error");
+                noteStatus(t("world.sessionExpired"), "error");
                 return;
               }
 
               if (!resp.ok) {
-                appendEvent(t("world.bootstrapFailed", { status: resp.status }), "error");
+                noteStatus(t("world.bootstrapFailed", { status: resp.status }), "error");
                 return;
               }
 
@@ -1570,77 +1741,137 @@
               const wsUrl = normalizeWsUrl(data?.ws_url, sessionToken);
               connectWorldSocket(wsUrl);
             } catch {
-              appendEvent(t("world.netErrorConnecting"), "error");
+              noteStatus(t("world.netErrorConnecting"), "error");
             }
           };
 
-          const init = () => {
-            if (initialized) {
-              return;
-            }
+           const init = () => {
+             if (initialized) {
+               return;
+             }
 
             canvas = document.getElementById("scene-canvas");
-            eventLogList = document.getElementById("event-log-list");
-            statusPill = document.getElementById("status-pill");
-            eventsButton = document.getElementById("hud-events-button");
-            langButton = document.getElementById("hud-lang-button");
-            eventDrawer = document.getElementById("event-drawer");
-            eventDrawerClose = document.getElementById("event-drawer-close");
-            signOutButton = document.getElementById("hud-signout-button");
 
-            chatPanel = document.getElementById("chat-panel");
-            chatTitle = document.getElementById("chat-title");
-            chatMessages = document.getElementById("chat-messages");
-            chatForm = document.getElementById("chat-form");
-            chatInput = document.getElementById("chat-input");
-            chatClose = document.getElementById("chat-close");
-            kanbanBack = document.getElementById("kanban-back");
+            menuRoot = document.getElementById("world-menu");
+            menuButton = document.getElementById("world-menu-button");
+            menuDropdown = document.getElementById("world-menu-dropdown");
+            menuLangToggle = document.getElementById("menu-lang-toggle");
+            menuConnection = document.getElementById("menu-connection");
+            menuStatusValue = document.getElementById("menu-status-value");
+            menuStatusDot = document.getElementById("menu-status-dot");
 
-            if (!canvas || !window.THREE) {
-              return;
+            statusLegendModal = document.getElementById("status-legend-modal");
+            statusLegendDialog = statusLegendModal ? statusLegendModal.querySelector(".modal-dialog") : null;
+            statusLegendCloseTargets = statusLegendModal ? statusLegendModal.querySelectorAll("[data-status-legend-close]") : null;
+
+             chatPanel = document.getElementById("chat-panel");
+             chatDialog = chatPanel ? chatPanel.querySelector(".modal-dialog") : null;
+             chatBackdrop = document.getElementById("chat-backdrop");
+             chatTitle = document.getElementById("chat-title");
+             chatMessages = document.getElementById("chat-messages");
+             chatForm = document.getElementById("chat-form");
+             chatInput = document.getElementById("chat-input");
+             chatClose = document.getElementById("chat-close");
+             kanbanBack = document.getElementById("kanban-back");
+
+             if (!canvas || !window.THREE) {
+               return;
+             }
+
+             // Ground plane for both scene placement and camera panning math.
+             const GROUND_Y = -0.5;
+
+            setMenuOpen(false);
+            updateConnectionStatus("idle");
+
+            if (menuButton && !menuButton.hasAttribute("data-menu-bound")) {
+              menuButton.setAttribute("data-menu-bound", "");
+              menuButton.addEventListener("click", (evt) => {
+                evt.preventDefault();
+                toggleMenu();
+              });
             }
 
-            // Drawer: closed by default on small screens.
-            const openByDefault = !window.matchMedia("(max-width: 600px)").matches;
-            setDrawerOpen(openByDefault);
-
-            if (eventsButton) {
-              eventsButton.addEventListener("click", toggleDrawer);
-            }
-
-            if (langButton && !langButton.hasAttribute("data-lang-bound")) {
-              langButton.setAttribute("data-lang-bound", "");
-              langButton.addEventListener("click", () => {
+            if (menuLangToggle && !menuLangToggle.hasAttribute("data-lang-bound")) {
+              menuLangToggle.setAttribute("data-lang-bound", "");
+              menuLangToggle.addEventListener("click", (evt) => {
+                evt.preventDefault();
                 const next = getLanguage() === "zh" ? "en" : "zh";
                 setLanguage(next);
                 applyI18n();
+                closeMenu({ focusButton: true });
               });
             }
 
-            if (eventDrawerClose) {
-              eventDrawerClose.addEventListener("click", () => setDrawerOpen(false));
+            if (menuConnection && !menuConnection.hasAttribute("data-legend-bound")) {
+              menuConnection.setAttribute("data-legend-bound", "");
+              menuConnection.addEventListener("click", (evt) => {
+                evt.preventDefault();
+                closeMenu();
+                openStatusLegend();
+              });
             }
 
-            if (signOutButton) {
-              signOutButton.addEventListener("click", (event) => {
-                event.preventDefault();
-                localStorage.removeItem("roboard_session_token");
-                localStorage.removeItem("roboard_session_expires_at");
-                if (socket) {
-                  socket.close();
+            if (statusLegendCloseTargets) {
+              statusLegendCloseTargets.forEach((node) => {
+                node.addEventListener("click", (evt) => {
+                  evt.preventDefault();
+                  closeStatusLegend();
+                });
+              });
+            }
+
+            if (statusLegendModal && !statusLegendModal.hasAttribute("data-legend-esc")) {
+              statusLegendModal.setAttribute("data-legend-esc", "");
+              statusLegendModal.addEventListener("keydown", (evt) => {
+                if (evt.key === "Escape") {
+                  evt.preventDefault();
+                  closeStatusLegend();
                 }
-                window.location.hash = "#/";
               });
             }
 
-            scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x0b0d10);
-            scene.fog = new THREE.Fog(0x0b0d10, 9, 24);
+            if (!document.documentElement.hasAttribute("data-world-menu-global")) {
+              document.documentElement.setAttribute("data-world-menu-global", "");
+              document.addEventListener("pointerdown", (evt) => {
+                const target = evt.target;
+                if (!menuRoot || !target || !(target instanceof Element)) {
+                  return;
+                }
+                const isOpen = menuDropdown ? !menuDropdown.hidden : false;
+                if (!isOpen) return;
+                if (!menuRoot.contains(target)) {
+                  closeMenu();
+                }
+              });
+              document.addEventListener("keydown", (evt) => {
+                if (evt.key !== "Escape") return;
+                const isOpen = menuDropdown ? !menuDropdown.hidden : false;
+                const legendOpen = statusLegendModal ? !statusLegendModal.hidden : false;
+                if (!isOpen && !legendOpen) return;
 
-            camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
-            camera.position.set(0, 2.7, 7.8);
-            cameraTarget.set(0, 1.1, -2.4);
-            camera.lookAt(cameraTarget);
+                evt.preventDefault();
+                if (legendOpen) {
+                  closeStatusLegend();
+                }
+                if (isOpen) {
+                  closeMenu({ focusButton: true });
+                }
+              });
+            }
+
+              scene = new THREE.Scene();
+              // Warm, bright office atmosphere (avoid near-black defaults).
+              scene.background = new THREE.Color(0xf3efe6);
+              scene.fog = new THREE.Fog(0xf3efe6, 18, 62);
+
+              camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+              // Default camera: pulled-back top-down view (俯视).
+              // If the view gets close to straight-down, keep a non-collinear up-vector.
+              camera.up.set(0, 0, -1);
+              camera.position.set(0, GROUND_Y + 20.0, 3.6);
+              cameraTarget.set(0, GROUND_Y + 0.7, -1.0);
+              camera.lookAt(cameraTarget);
 
             renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
             renderer.setPixelRatio(window.devicePixelRatio || 1);
@@ -1653,15 +1884,42 @@
             if ("outputColorSpace" in renderer && THREE.SRGBColorSpace) {
               renderer.outputColorSpace = THREE.SRGBColorSpace;
             }
-            renderer.toneMapping = THREE.ACESFilmicToneMapping;
-            renderer.toneMappingExposure = 1.12;
+             renderer.toneMapping = THREE.ACESFilmicToneMapping;
+             renderer.toneMappingExposure = 1.12;
 
-            const GROUND_Y = -0.5;
+             // Camera controls (pan + wheel zoom). Keep cameraTarget stable and move it with the camera.
+             const PAN_PLANE = new THREE.Plane(new THREE.Vector3(0, 1, 0), -GROUND_Y); // y = GROUND_Y
+             const panStartHit = new THREE.Vector3();
+             const panNowHit = new THREE.Vector3();
+             const panStartCamPos = new THREE.Vector3();
+             const panStartTarget = new THREE.Vector3();
+             let panPointerId = null;
+             let panArmed = false;
+             let panActive = false;
 
-            const makeCanvasLabelTexture = (text, accentHex) => {
-              const canvasEl = document.createElement("canvas");
-              canvasEl.width = 384;
-              canvasEl.height = 192;
+             const CAMERA_MIN_Y = GROUND_Y + 2.2;
+             const CAMERA_MAX_Y = GROUND_Y + 28.0;
+
+             const setPointerNdcFromClient = (clientX, clientY) => {
+               if (!canvas || !pointerNdc) return false;
+               const rect = canvas.getBoundingClientRect();
+               if (!rect.width || !rect.height) return false;
+               pointerNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+               pointerNdc.y = -(((clientY - rect.top) / rect.height) * 2 - 1);
+               return true;
+             };
+
+             const rayToGround = (clientX, clientY, outVec3) => {
+               if (!camera || !raycaster) return false;
+               if (!setPointerNdcFromClient(clientX, clientY)) return false;
+               raycaster.setFromCamera(pointerNdc, camera);
+               return Boolean(raycaster.ray.intersectPlane(PAN_PLANE, outVec3));
+             };
+
+             const makeCanvasLabelTexture = (text, accentHex) => {
+               const canvasEl = document.createElement("canvas");
+               canvasEl.width = 384;
+               canvasEl.height = 192;
               const ctx = canvasEl.getContext("2d");
               if (!ctx) {
                 return new THREE.Texture();
@@ -1717,186 +1975,209 @@
             const makeStandard = (color, roughness, metalness) =>
               new THREE.MeshStandardMaterial({ color, roughness, metalness });
 
-            // Lighting: key + fill + rim + a soft ceiling bounce.
-            const hemi = new THREE.HemisphereLight(0xbfd6ff, 0x171014, 0.55);
-            scene.add(hemi);
+             // Lighting: warm + bright + cozy (no moody near-black ambience).
+             const hemi = new THREE.HemisphereLight(0xfff2d6, 0xd7b48a, 0.68);
+             scene.add(hemi);
 
-            const keyLight = new THREE.DirectionalLight(0xfff1d6, 1.05);
-            keyLight.position.set(5.2, 7.4, 4.4);
-            scene.add(keyLight);
+             const ambient = new THREE.AmbientLight(0xfff6ea, 0.22);
+             scene.add(ambient);
 
-            const fillLight = new THREE.DirectionalLight(0x9ec7ff, 0.33);
-            fillLight.position.set(-6.6, 3.9, 4.0);
-            scene.add(fillLight);
+             const keyLight = new THREE.DirectionalLight(0xffe8c6, 1.18);
+             keyLight.position.set(6.8, 9.4, 6.2);
+             scene.add(keyLight);
 
-            const rimLight = new THREE.DirectionalLight(0xffffff, 0.38);
-            rimLight.position.set(0.0, 4.8, -8.5);
-            scene.add(rimLight);
+             const fillLight = new THREE.DirectionalLight(0xfff0dc, 0.42);
+             fillLight.position.set(-7.2, 5.6, 2.6);
+             scene.add(fillLight);
+
+             const rimLight = new THREE.DirectionalLight(0xf4f7ff, 0.22);
+             rimLight.position.set(0.0, 6.8, -9.2);
+             scene.add(rimLight);
+
+             // A couple of soft practicals to keep corners readable.
+             const lampA = new THREE.PointLight(0xffd9b0, 0.7, 32, 2.0);
+             lampA.position.set(-5.6, GROUND_Y + 3.0, 3.8);
+             scene.add(lampA);
+             const lampB = new THREE.PointLight(0xffd9b0, 0.7, 32, 2.0);
+             lampB.position.set(5.6, GROUND_Y + 3.0, 3.8);
+             scene.add(lampB);
 
             // Room shell.
             const room = new THREE.Group();
             scene.add(room);
 
-            const floor = new THREE.Mesh(
-              new THREE.PlaneGeometry(14, 10),
-              makeStandard(0x1b2028, 0.96, 0.0)
-            );
-            floor.rotation.x = -Math.PI / 2;
-            floor.position.y = GROUND_Y;
-            room.add(floor);
+             const floor = new THREE.Mesh(
+               new THREE.PlaneGeometry(14, 10),
+               makeStandard(0xe3c9a5, 0.94, 0.02)
+             );
+             floor.rotation.x = -Math.PI / 2;
+             floor.position.y = GROUND_Y;
+             room.add(floor);
 
-            const grid = new THREE.GridHelper(14, 28, 0x2b3a54, 0x202b3e);
-            grid.position.y = GROUND_Y + 0.01;
-            const gridMat = grid.material;
-            if (Array.isArray(gridMat)) {
-              gridMat.forEach((mat) => {
-                mat.transparent = true;
-                mat.opacity = 0.22;
-              });
-            } else {
-              gridMat.transparent = true;
-              gridMat.opacity = 0.22;
-            }
-            room.add(grid);
+             const grid = new THREE.GridHelper(14, 28, 0xbca787, 0xd7c2a6);
+             grid.position.y = GROUND_Y + 0.01;
+             const gridMat = grid.material;
+             if (Array.isArray(gridMat)) {
+               gridMat.forEach((mat) => {
+                 mat.transparent = true;
+                 mat.opacity = 0.14;
+               });
+             } else {
+               gridMat.transparent = true;
+               gridMat.opacity = 0.14;
+             }
+             room.add(grid);
 
-            const wallMat = makeStandard(0x2a2f38, 0.92, 0.0);
-            wallMat.color.offsetHSL(0.0, -0.1, 0.08);
+             const wallMat = new THREE.MeshStandardMaterial({ color: 0xf6efe4, roughness: 0.96, metalness: 0.0, side: THREE.DoubleSide });
 
-            const backWall = new THREE.Mesh(new THREE.PlaneGeometry(14, 4.2), wallMat);
-            backWall.position.set(0, GROUND_Y + 2.1, -5.0);
-            room.add(backWall);
+             const backWall = new THREE.Mesh(new THREE.PlaneGeometry(14, 4.2), wallMat);
+             backWall.position.set(0, GROUND_Y + 2.1, -5.0);
+             room.add(backWall);
 
-            const leftWall = new THREE.Mesh(new THREE.PlaneGeometry(10, 4.2), wallMat);
-            leftWall.rotation.y = Math.PI / 2;
-            leftWall.position.set(-7.0, GROUND_Y + 2.1, 0);
-            room.add(leftWall);
+             const leftWall = new THREE.Mesh(new THREE.PlaneGeometry(10, 4.2), wallMat);
+             leftWall.rotation.y = Math.PI / 2;
+             leftWall.position.set(-7.0, GROUND_Y + 2.1, 0);
+             room.add(leftWall);
 
-            const ceilingMat = makeStandard(0x1a1f29, 0.96, 0.0);
-            ceilingMat.emissive = new THREE.Color(0x06080d);
-            ceilingMat.emissiveIntensity = 0.35;
-            const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(14, 10), ceilingMat);
-            ceiling.rotation.x = Math.PI / 2;
-            ceiling.position.y = GROUND_Y + 3.25;
-            room.add(ceiling);
+             const rightWall = new THREE.Mesh(new THREE.PlaneGeometry(10, 4.2), wallMat);
+             rightWall.rotation.y = -Math.PI / 2;
+             rightWall.position.set(7.0, GROUND_Y + 2.1, 0);
+             room.add(rightWall);
 
-            const ceilingPanel = new THREE.Mesh(
-              new THREE.PlaneGeometry(3.0, 1.25),
-              new THREE.MeshStandardMaterial({
-                color: 0xfff6e2,
-                emissive: new THREE.Color(0xfff1cf),
-                emissiveIntensity: 1.25,
-                roughness: 0.5,
-                metalness: 0.0,
-                side: THREE.DoubleSide
-              })
-            );
-            ceilingPanel.rotation.x = Math.PI / 2;
-            ceilingPanel.position.set(0.0, GROUND_Y + 3.22, -1.4);
-            room.add(ceilingPanel);
+             // Front wall: split into two panels to suggest a doorway opening.
+             const frontWallL = new THREE.Mesh(new THREE.PlaneGeometry(5.2, 4.2), wallMat);
+             frontWallL.rotation.y = Math.PI;
+             frontWallL.position.set(-4.4, GROUND_Y + 2.1, 5.0);
+             room.add(frontWallL);
+             const frontWallR = new THREE.Mesh(new THREE.PlaneGeometry(5.2, 4.2), wallMat);
+             frontWallR.rotation.y = Math.PI;
+             frontWallR.position.set(4.4, GROUND_Y + 2.1, 5.0);
+             room.add(frontWallR);
 
-            // Desk.
-            const desk = new THREE.Group();
-            desk.position.set(0, 0, 0);
-            scene.add(desk);
+             // Baseboards: quick depth cue + cozy contrast.
+             const baseboardMat = makeStandard(0xc9b193, 0.92, 0.02);
+             const baseBack = new THREE.Mesh(new THREE.BoxGeometry(14.0, 0.12, 0.06), baseboardMat);
+             baseBack.position.set(0, GROUND_Y + 0.06, -4.97);
+             room.add(baseBack);
+             const baseFrontL = new THREE.Mesh(new THREE.BoxGeometry(5.2, 0.12, 0.06), baseboardMat);
+             baseFrontL.position.set(-4.4, GROUND_Y + 0.06, 4.97);
+             room.add(baseFrontL);
+             const baseFrontR = new THREE.Mesh(new THREE.BoxGeometry(5.2, 0.12, 0.06), baseboardMat);
+             baseFrontR.position.set(4.4, GROUND_Y + 0.06, 4.97);
+             room.add(baseFrontR);
+             const baseLeft = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.12, 10.0), baseboardMat);
+             baseLeft.position.set(-6.97, GROUND_Y + 0.06, 0);
+             room.add(baseLeft);
+             const baseRight = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.12, 10.0), baseboardMat);
+             baseRight.position.set(6.97, GROUND_Y + 0.06, 0);
+             room.add(baseRight);
 
-            const deskTop = new THREE.Mesh(
-              new THREE.BoxGeometry(3.9, 0.12, 1.85),
-              makeStandard(0x6a4b2f, 0.58, 0.05)
-            );
-            deskTop.position.set(0, GROUND_Y + 0.78, 0);
-            desk.add(deskTop);
+             // Workstations: each agent gets a dedicated desk + monitor.
+             monitorScreens = [];
+             const createMonitor = (accent) => {
+               const g = new THREE.Group();
 
-            const legMat = makeStandard(0x1a1d24, 0.72, 0.15);
-            const legGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.72, 12);
-            const legPos = [
-              [-1.78, GROUND_Y + 0.42, -0.78],
-              [1.78, GROUND_Y + 0.42, -0.78],
-              [-1.78, GROUND_Y + 0.42, 0.78],
-              [1.78, GROUND_Y + 0.42, 0.78]
-            ];
-            legPos.forEach(([x, y, z]) => {
-              const leg = new THREE.Mesh(legGeo, legMat);
-              leg.position.set(x, y, z);
-              desk.add(leg);
-            });
+               const base = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.06, 0.28), makeStandard(0x11141a, 0.75, 0.25));
+               base.position.set(0, 0.03, 0);
+               g.add(base);
 
-            const deskInset = new THREE.Mesh(
-              new THREE.BoxGeometry(3.5, 0.06, 1.55),
-              makeStandard(0x2a2020, 0.85, 0.0)
-            );
-            deskInset.position.set(0, GROUND_Y + 0.73, 0);
-            desk.add(deskInset);
+               const stem = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.22, 0.08), makeStandard(0x151922, 0.62, 0.25));
+               stem.position.set(0, 0.16, -0.02);
+               g.add(stem);
 
-            // Monitors / laptops.
-            monitorScreens = [];
-            const createMonitor = (accent) => {
-              const g = new THREE.Group();
+               const frame = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.44, 0.05), makeStandard(0x0e1016, 0.5, 0.3));
+               frame.position.set(0, 0.41, 0);
+               g.add(frame);
 
-              const base = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.06, 0.28), makeStandard(0x11141a, 0.75, 0.25));
-              base.position.set(0, 0.03, 0);
-              g.add(base);
+               const screenMat = new THREE.MeshStandardMaterial({
+                 color: 0x091219,
+                 emissive: new THREE.Color(accent),
+                 emissiveIntensity: 0.75,
+                 roughness: 0.35,
+                 metalness: 0.0
+               });
+               const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.64, 0.36), screenMat);
+               screen.position.set(0, 0.41, 0.028);
+               screen.rotation.x = -0.1;
+               g.add(screen);
+               monitorScreens.push(screenMat);
 
-              const stem = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.22, 0.08), makeStandard(0x151922, 0.62, 0.25));
-              stem.position.set(0, 0.16, -0.02);
-              g.add(stem);
+               const keyboard = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.03, 0.22), makeStandard(0x0f1218, 0.92, 0.05));
+               keyboard.position.set(0, 0.045, 0.30);
+               g.add(keyboard);
 
-              const frame = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.44, 0.05), makeStandard(0x0e1016, 0.5, 0.3));
-              frame.position.set(0, 0.41, 0);
-              g.add(frame);
+               return g;
+             };
 
-              const screenMat = new THREE.MeshStandardMaterial({
-                color: 0x091219,
-                emissive: new THREE.Color(accent),
-                emissiveIntensity: 0.75,
-                roughness: 0.35,
-                metalness: 0.0
-              });
-              const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.64, 0.36), screenMat);
-              screen.position.set(0, 0.41, 0.028);
-              screen.rotation.x = -0.1;
-              g.add(screen);
-              monitorScreens.push(screenMat);
+             // Chairs (simple, but adds instant "office").
+             const chairMat = makeStandard(0x262c36, 0.85, 0.06);
+             const createChair = () => {
+               const chair = new THREE.Group();
+               const seat = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.08, 0.55), chairMat);
+               seat.position.set(0, GROUND_Y + 0.46, 0);
+               chair.add(seat);
+               const back = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.6, 0.08), chairMat);
+               back.position.set(0, GROUND_Y + 0.78, -0.24);
+               chair.add(back);
+               const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.42, 10), chairMat);
+               post.position.set(0, GROUND_Y + 0.22, 0);
+               chair.add(post);
+               return chair;
+             };
 
-              const keyboard = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.03, 0.22), makeStandard(0x0f1218, 0.92, 0.05));
-              keyboard.position.set(0, 0.045, 0.30);
-              g.add(keyboard);
+             const stations = new THREE.Group();
+             scene.add(stations);
 
-              return g;
-            };
+             const createDeskStation = ({ x, z, topColor, insetColor, accent }) => {
+               const station = new THREE.Group();
+               station.position.set(x, 0, z);
+               stations.add(station);
 
-            const pmMonitor = createMonitor(0x39b8ff);
-            pmMonitor.position.set(-1.05, GROUND_Y + 0.79, -0.15);
-            desk.add(pmMonitor);
+               const deskTop = new THREE.Mesh(
+                 new THREE.BoxGeometry(2.25, 0.12, 1.55),
+                 makeStandard(topColor, 0.58, 0.05)
+               );
+               deskTop.position.set(0, GROUND_Y + 0.78, 0);
+               station.add(deskTop);
 
-            const engMonitor = createMonitor(0x49e3b9);
-            engMonitor.position.set(1.05, GROUND_Y + 0.79, -0.15);
-            desk.add(engMonitor);
+               const legMat = makeStandard(0x20242c, 0.72, 0.12);
+               const legGeo = new THREE.CylinderGeometry(0.055, 0.055, 0.72, 12);
+               const legPos = [
+                 [-1.02, GROUND_Y + 0.42, -0.66],
+                 [1.02, GROUND_Y + 0.42, -0.66],
+                 [-1.02, GROUND_Y + 0.42, 0.66],
+                 [1.02, GROUND_Y + 0.42, 0.66]
+               ];
+               legPos.forEach(([lx, ly, lz]) => {
+                 const leg = new THREE.Mesh(legGeo, legMat);
+                 leg.position.set(lx, ly, lz);
+                 station.add(leg);
+               });
 
-            // Chairs (simple, but adds instant "office").
-            const chairMat = makeStandard(0x161a22, 0.85, 0.1);
-            const createChair = () => {
-              const chair = new THREE.Group();
-              const seat = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.08, 0.55), chairMat);
-              seat.position.set(0, GROUND_Y + 0.46, 0);
-              chair.add(seat);
-              const back = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.6, 0.08), chairMat);
-              back.position.set(0, GROUND_Y + 0.78, -0.24);
-              chair.add(back);
-              const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.42, 10), chairMat);
-              post.position.set(0, GROUND_Y + 0.22, 0);
-              chair.add(post);
-              return chair;
-            };
+               const deskInset = new THREE.Mesh(
+                 new THREE.BoxGeometry(1.98, 0.06, 1.25),
+                 makeStandard(insetColor, 0.88, 0.0)
+               );
+               deskInset.position.set(0, GROUND_Y + 0.73, 0);
+               station.add(deskInset);
 
-            const pmChair = createChair();
-            pmChair.position.set(-1.05, 0, 1.35);
-            pmChair.rotation.y = Math.PI;
-            scene.add(pmChair);
+               const monitor = createMonitor(accent);
+               monitor.position.set(0, GROUND_Y + 0.79, -0.28);
+               station.add(monitor);
 
-            const engChair = createChair();
-            engChair.position.set(1.05, 0, 1.35);
-            engChair.rotation.y = Math.PI;
-            scene.add(engChair);
+               const chair = createChair();
+               chair.position.set(0, 0, 1.32);
+               chair.rotation.y = Math.PI;
+               station.add(chair);
+
+               return {
+                 lookTarget: new THREE.Vector3(x, GROUND_Y + 0.8, z - 0.22)
+               };
+             };
+
+             const pmStation = createDeskStation({ x: -3.2, z: 0.2, topColor: 0x7a5432, insetColor: 0x2b2421, accent: 0x39b8ff });
+             const ceoStation = createDeskStation({ x: 0.0, z: 0.2, topColor: 0x7b5230, insetColor: 0x2a2320, accent: 0xd6b45b });
+             const engStation = createDeskStation({ x: 3.2, z: 0.2, topColor: 0x75502f, insetColor: 0x25211f, accent: 0x49e3b9 });
 
             // Agents.
             labelPlanes = [];
@@ -1970,38 +2251,38 @@
             };
 
             agents = [];
-            agents.push(
-              createAgent({
-                name: "PM",
-                agentType: "pm",
-                color: 0xffa14b,
-                accentHex: "#ffa14b",
-                position: new THREE.Vector3(-1.05, GROUND_Y, 1.55),
-                lookTarget: new THREE.Vector3(-1.05, GROUND_Y + 0.8, -0.15)
-              })
-            );
+             agents.push(
+               createAgent({
+                 name: "PM",
+                 agentType: "pm",
+                 color: 0xffa14b,
+                 accentHex: "#ffa14b",
+                 position: new THREE.Vector3(-3.2, GROUND_Y, 1.65),
+                 lookTarget: pmStation.lookTarget
+               })
+             );
 
-            agents.push(
-              createAgent({
-                name: "Engineer",
-                agentType: "engineer",
-                color: 0x49e3b9,
-                accentHex: "#49e3b9",
-                position: new THREE.Vector3(1.05, GROUND_Y, 1.55),
-                lookTarget: new THREE.Vector3(1.05, GROUND_Y + 0.8, -0.15)
-              })
-            );
+             agents.push(
+               createAgent({
+                 name: "Engineer",
+                 agentType: "engineer",
+                 color: 0x49e3b9,
+                 accentHex: "#49e3b9",
+                 position: new THREE.Vector3(3.2, GROUND_Y, 1.65),
+                 lookTarget: engStation.lookTarget
+               })
+             );
 
-            agents.push(
-              createAgent({
-                name: "CEO",
-                agentType: "ceo",
-                color: 0xd6b45b,
-                accentHex: "#d6b45b",
-                position: new THREE.Vector3(0.0, GROUND_Y, 1.55),
-                lookTarget: new THREE.Vector3(0.0, GROUND_Y + 0.8, -0.15)
-              })
-            );
+             agents.push(
+               createAgent({
+                 name: "CEO",
+                 agentType: "ceo",
+                 color: 0xd6b45b,
+                 accentHex: "#d6b45b",
+                 position: new THREE.Vector3(0.0, GROUND_Y, 1.65),
+                 lookTarget: ceoStation.lookTarget
+               })
+             );
 
             // Kanban board on the back wall (faces camera).
             const kanban = new THREE.Group();
@@ -2068,9 +2349,49 @@
 
             clock = new THREE.Clock();
 
-            if (chatClose) {
-              chatClose.addEventListener("click", closeChat);
-            }
+             if (chatClose) {
+               chatClose.addEventListener("click", closeChat);
+             }
+
+             if (chatBackdrop) {
+               chatBackdrop.addEventListener("click", closeChat);
+             }
+
+             if (chatPanel) {
+               chatPanel.addEventListener("keydown", (event) => {
+                 if (event.key === "Escape") {
+                   event.preventDefault();
+                   closeChat();
+                   return;
+                 }
+
+                 if (event.key !== "Tab" || !chatDialog) {
+                   return;
+                 }
+
+                 const focusables = chatDialog.querySelectorAll(
+                   "a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])"
+                 );
+
+                 if (!focusables.length) {
+                   return;
+                 }
+
+                 const first = focusables[0];
+                 const last = focusables[focusables.length - 1];
+
+                 if (event.shiftKey && document.activeElement === first) {
+                   event.preventDefault();
+                   last.focus();
+                   return;
+                 }
+
+                 if (!event.shiftKey && document.activeElement === last) {
+                   event.preventDefault();
+                   first.focus();
+                 }
+               });
+             }
 
             if (chatForm) {
               chatForm.addEventListener("submit", (event) => {
@@ -2083,39 +2404,147 @@
               kanbanBack.addEventListener("click", () => setKanbanZoomed(false));
             }
 
-            const TAP_SLOP_PX = 7;
-            canvas.addEventListener(
-              "pointerdown",
-              (event) => {
-                if (!running) {
-                  return;
-                }
-                pointerDownId = event.pointerId;
-                pointerDownX = event.clientX;
-                pointerDownY = event.clientY;
-              },
-              { passive: true }
-            );
+             const TAP_SLOP_PX = 7;
+              canvas.addEventListener(
+                "pointerdown",
+                (event) => {
+                  if (!running) {
+                    return;
+                  }
+                  pointerDownId = event.pointerId;
+                  pointerDownX = event.clientX;
+                  pointerDownY = event.clientY;
 
-            canvas.addEventListener(
-              "pointerup",
-              (event) => {
-                if (!running) {
-                  return;
-                }
-                if (pointerDownId == null || event.pointerId !== pointerDownId) {
-                  return;
-                }
-                const dx = event.clientX - pointerDownX;
-                const dy = event.clientY - pointerDownY;
-                pointerDownId = null;
-                if (dx * dx + dy * dy > TAP_SLOP_PX * TAP_SLOP_PX) {
-                  return;
-                }
-                handleSceneTap(event.clientX, event.clientY);
-              },
-              { passive: true }
-            );
+                  // Reset any stale drag state so a previous pan can't suppress taps.
+                  panActive = false;
+
+                  // Only mouse-left drag pans the camera. Touch remains tap-to-select.
+                  if (event.pointerType === "mouse" && event.button === 0) {
+                    // Manual input cancels any camera tweening (kanban zoom, etc.).
+                    cameraTween.active = false;
+                   panPointerId = event.pointerId;
+                   panArmed = rayToGround(event.clientX, event.clientY, panStartHit);
+                   panActive = false;
+                   panStartCamPos.copy(camera.position);
+                   panStartTarget.copy(cameraTarget);
+                   try {
+                     canvas.setPointerCapture(event.pointerId);
+                   } catch {
+                     // Pointer capture can fail in some edge cases; panning will just be less robust.
+                   }
+                 }
+               },
+               { passive: true }
+             );
+
+              canvas.addEventListener(
+                "pointermove",
+                (event) => {
+                  if (!running) return;
+                  if (panPointerId == null || event.pointerId !== panPointerId) return;
+
+                  // If the primary button is no longer held, stop panning.
+                  if (typeof event.buttons === "number" && (event.buttons & 1) === 0) {
+                    try {
+                      canvas.releasePointerCapture(event.pointerId);
+                    } catch {
+                      // Ignore.
+                    }
+                    panPointerId = null;
+                    panArmed = false;
+                    panActive = false;
+                    return;
+                  }
+
+                 const dx = event.clientX - pointerDownX;
+                 const dy = event.clientY - pointerDownY;
+                 if (!panActive) {
+                   if (dx * dx + dy * dy <= TAP_SLOP_PX * TAP_SLOP_PX) {
+                     return;
+                   }
+                   panActive = true;
+                 }
+
+                 if (!panArmed) return;
+                 if (!rayToGround(event.clientX, event.clientY, panNowHit)) return;
+
+                 const deltaX = panNowHit.x - panStartHit.x;
+                 const deltaZ = panNowHit.z - panStartHit.z;
+                 camera.position.set(panStartCamPos.x - deltaX, panStartCamPos.y, panStartCamPos.z - deltaZ);
+                 cameraTarget.set(panStartTarget.x - deltaX, panStartTarget.y, panStartTarget.z - deltaZ);
+               },
+               { passive: true }
+             );
+
+             canvas.addEventListener(
+               "pointercancel",
+               (event) => {
+                 if (panPointerId != null && event.pointerId === panPointerId) {
+                   panPointerId = null;
+                   panArmed = false;
+                   panActive = false;
+                 }
+                 if (pointerDownId != null && event.pointerId === pointerDownId) {
+                   pointerDownId = null;
+                 }
+               },
+               { passive: true }
+             );
+
+             canvas.addEventListener(
+               "wheel",
+               (event) => {
+                 if (!running || !camera) return;
+                 // Keep scroll gestures scoped to the canvas.
+                 event.preventDefault();
+                 cameraTween.active = false;
+
+                 const baseDelta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
+                 const zoomFactor = Math.exp(baseDelta * 0.0015);
+                 const nextY = Math.min(CAMERA_MAX_Y, Math.max(CAMERA_MIN_Y, camera.position.y * zoomFactor));
+                 camera.position.y = nextY;
+               },
+               { passive: false }
+             );
+
+             canvas.addEventListener(
+               "pointerup",
+               (event) => {
+                 if (!running) {
+                   return;
+                 }
+
+                 if (panPointerId != null && event.pointerId === panPointerId) {
+                   panPointerId = null;
+                   panArmed = false;
+                   // Leave panActive set for the click suppression check below.
+                   try {
+                     canvas.releasePointerCapture(event.pointerId);
+                   } catch {
+                     // Ignore.
+                   }
+                 }
+
+                 if (pointerDownId == null || event.pointerId !== pointerDownId) {
+                   return;
+                 }
+                 const dx = event.clientX - pointerDownX;
+                 const dy = event.clientY - pointerDownY;
+                 pointerDownId = null;
+
+                 // If we panned, do not trigger click-to-select.
+                 if (panActive) {
+                   panActive = false;
+                   return;
+                 }
+
+                 if (dx * dx + dy * dy > TAP_SLOP_PX * TAP_SLOP_PX) {
+                   return;
+                 }
+                 handleSceneTap(event.clientX, event.clientY);
+               },
+               { passive: true }
+             );
 
             window.addEventListener("resize", resizeRenderer);
             // No manual connect panel; the world bootstraps the WS stream.
