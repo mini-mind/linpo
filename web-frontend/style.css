@@ -462,6 +462,9 @@ kbd {
   inset: 0;
   pointer-events: none;
 }
+.world-ui .modal {
+  pointer-events: auto;
+}
 
 .world-ui .panel {
   pointer-events: auto;

@@ -15,7 +15,7 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ../../edge/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${ROBOARD_ROOT:?set}/edge/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
     environment:
@@ -51,10 +51,8 @@ services:
       - EMAIL_MAX_ATTEMPTS=${EMAIL_MAX_ATTEMPTS:-3}
       - LLM_GATEWAY_URL=${LLM_GATEWAY_URL:-http://llm-gateway:7300}
     volumes:
-      # NOTE: These host directories should match the ${TAG} commit/VERSION being deployed.
-      # Future version: pin config/prompts by copying to immutable location or version them in the image.
-      - ../../config:/app/config:ro
-      - ../../prompts:/app/prompts:ro
+      - ${ROBOARD_ROOT:?set}/config:/app/config:ro
+      - ${ROBOARD_ROOT:?set}/prompts:/app/prompts:ro
     depends_on:
       - postgres
       - redis
@@ -175,8 +173,8 @@ services:
       # Prefer IP-based access (no domain allowlist). Example: http://127.0.0.1:8081/
       - SEARXNG_BASE_URL=http://127.0.0.1:8081/
     volumes:
-      - ../../searxng/config:/etc/searxng
-      - ../../searxng/data:/var/cache/searxng
+      - ${ROBOARD_ROOT:?set}/searxng/config:/etc/searxng
+      - ${ROBOARD_ROOT:?set}/searxng/data:/var/cache/searxng
     ports:
       - "127.0.0.1:8081:8080"
     depends_on:
@@ -199,7 +197,7 @@ services:
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:?set}
       - LLM_PROVIDERS_PATH=/run/secrets/llm-providers.json
     volumes:
-      - ${LLM_PROVIDERS_HOST_PATH:-../../config/llm-providers.example.json}:/run/secrets/llm-providers.json:ro
+      - ${ROBOARD_ROOT:?set}/secrets/llm-providers.json:/run/secrets/llm-providers.json:ro
     expose:
       - "7300"
     networks:

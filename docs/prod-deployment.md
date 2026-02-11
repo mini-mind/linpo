@@ -24,7 +24,7 @@
 
 **本地机器**: Docker 已安装，已登录 ACR `docker login registry.cn-hangzhou.aliyuncs.com`
 
-**生产主机**: Docker/Compose 已安装，已登录 ACR，仓库布局完整 (config/, prompts/, edge/Caddyfile, searxng/)
+**生产主机**: Docker/Compose 已安装，已登录 ACR
 
 ## ACR 仓库
 
@@ -45,10 +45,10 @@ TAG=20260211-a1b2c3d ./scripts/push_core_images.sh
 
 ```bash
 export TAG=20260211-a1b2c3d
+export ROBOARD_ROOT="/opt/roboard"
 export ADMIN_API_KEY="..."
 export INTERNAL_API_KEY="..."
 export SEARXNG_SECRET_KEY="..."
-export LLM_PROVIDERS_HOST_PATH="/path/to/llm-providers.json"
 export CADDY_EMAIL="admin@example.com"  # 可选
 
 docker compose -f deploy/prod/docker-compose.yml pull
@@ -102,19 +102,148 @@ PY
 
 ## 环境变量
 
-**必填**: `ADMIN_API_KEY`, `INTERNAL_API_KEY`, `SEARXNG_SECRET_KEY`, `LLM_PROVIDERS_HOST_PATH`
+**必填**: `ROBOARD_ROOT`, `ADMIN_API_KEY`, `INTERNAL_API_KEY`, `SEARXNG_SECRET_KEY`
 
 **可选**: `CADDY_EMAIL` (Let's Encrypt), `DATABASE_URL`, `REDIS_URL`
 
-## Bind Mounts 注意事项
+## ROBOARD_ROOT 目录结构
 
-`deploy/prod/docker-compose.yml` 使用相对于 compose 文件的 bind mounts:
+`deploy/prod/docker-compose.yml` 使用 `ROBOARD_ROOT` 环境变量指定生产文件根目录（通常为 `/opt/roboard`）。
 
-- `../../config:/app/config:ro` → 仓库根目录 `config/`
-- `../../prompts:/app/prompts:ro` → 仓库根目录 `prompts/`
-- `../../edge/Caddyfile:/etc/caddy/Caddyfile:ro` → 仓库根目录 `edge/Caddyfile`
+必需的目录结构：
 
-**确保生产主机上存在这些目录和文件**。
+```
+/opt/roboard/
+├── config/
+│   ├── agent-config.yml      # Agent 配置
+│   └── llm-providers.example.json
+├── prompts/
+│   └── *.yml                 # Agent 提示词文件
+├── edge/
+│   └── Caddyfile             # Caddy 反向代理配置
+├── searxng/
+│   ├── config/
+│   │   └── settings.yml      # SearXNG 配置
+│   └── data/                 # SearXNG 缓存目录 (自动创建)
+└── secrets/
+    └── llm-providers.json    # LLM 提供商配置 (包含 API 密钥)
+```
+
+### 准备 ROBOARD_ROOT 目录
+
+**方法 1: 从仓库发布包复制**
+
+```bash
+# 1. 创建目标目录
+sudo mkdir -p /opt/roboard/{config,prompts,edge,searxng/config,searxng/data,secrets}
+
+# 2. 从仓库发布包复制 (假设已下载发布 tarball 到 /tmp)
+tar -xzf /tmp/roboard-release-20260211.tar.gz -C /tmp/roboard-release
+
+# 3. 复制必要文件
+sudo cp -r /tmp/roboard-release/config/* /opt/roboard/config/
+sudo cp -r /tmp/roboard-release/prompts/* /opt/roboard/prompts/
+sudo cp /tmp/roboard-release/edge/Caddyfile /opt/roboard/edge/
+
+# 4. 设置 SearXNG 配置 (使用仓库中的示例或自定义配置)
+sudo cp /tmp/roboard-release/searxng/config/settings.yml /opt/roboard/searxng/config/
+
+# 5. 创建 LLM 提供商配置 (必须包含真实的 API 密钥)
+sudo tee /opt/roboard/secrets/llm-providers.json > /dev/null <<'EOF'
+{
+  "providers": [
+    {
+      "name": "openai",
+      "type": "openai",
+      "base_url": "https://api.openai.com/v1",
+      "api_key": "sk-your-actual-api-key"
+    }
+  ]
+}
+EOF
+
+# 6. 设置权限
+sudo chown -R root:root /opt/roboard
+sudo chmod -R 755 /opt/roboard
+sudo chmod 600 /opt/roboard/secrets/llm-providers.json
+```
+
+**方法 2: 从 Git 仓库直接克隆 (仅用于初始设置)**
+
+```bash
+sudo mkdir -p /opt/roboard
+
+# 克隆仓库到临时目录
+git clone https://github.com/your-org/roboard.git /tmp/roboard-repo
+
+# 复制必要文件
+sudo cp -r /tmp/roboard-repo/config/* /opt/roboard/config/
+sudo cp -r /tmp/roboard-repo/prompts/* /opt/roboard/prompts/
+sudo cp /tmp/roboard-repo/edge/Caddyfile /opt/roboard/edge/
+sudo cp -r /tmp/roboard-repo/searxng/config/* /opt/roboard/searxng/config/
+
+# 创建 secrets 目录并配置 LLM 提供商
+sudo mkdir -p /opt/roboard/secrets
+sudo tee /opt/roboard/secrets/llm-providers.json > /dev/null <<'EOF'
+{
+  "providers": [
+    {
+      "name": "openai",
+      "type": "openai",
+      "base_url": "https://api.openai.com/v1",
+      "api_key": "sk-your-actual-api-key"
+    }
+  ]
+}
+EOF
+
+# 清理临时目录
+rm -rf /tmp/roboard-repo
+
+# 设置权限
+sudo chown -R root:root /opt/roboard
+sudo chmod -R 755 /opt/roboard
+sudo chmod 600 /opt/roboard/secrets/llm-providers.json
+```
+
+### 验证目录结构
+
+部署前验证 `ROBOARD_ROOT` 目录完整：
+
+```bash
+export ROBOARD_ROOT="/opt/roboard"
+
+# 检查必需文件和目录
+for path in \
+  "$ROBOARD_ROOT/config" \
+  "$ROBOARD_ROOT/config/agent-config.yml" \
+  "$ROBOARD_ROOT/prompts" \
+  "$ROBOARD_ROOT/edge/Caddyfile" \
+  "$ROBOARD_ROOT/searxng/config/settings.yml" \
+  "$ROBOARD_ROOT/secrets/llm-providers.json"
+do
+  if [ ! -e "$path" ]; then
+    echo "Missing: $path"
+    exit 1
+  fi
+done
+
+echo "ROBOARD_ROOT structure OK"
+```
+
+### 更新配置文件
+
+部署新版本时，仅需要更新相应文件：
+
+```bash
+# 更新 config/prompts (例如: 新版本提示词)
+tar -xzf /tmp/roboard-release-20260212.tar.gz -C /tmp/roboard-release
+sudo cp -r /tmp/roboard-release/config/* /opt/roboard/config/
+sudo cp -r /tmp/roboard-release/prompts/* /opt/roboard/prompts/
+
+# 重启服务以应用新配置
+docker compose -f deploy/prod/docker-compose.yml up -d
+```
 
 ## 回滚流程
 
@@ -127,14 +256,15 @@ docker compose -f deploy/prod/docker-compose.yml up -d
 ## 完整部署示例
 
 ```bash
+# 本地构建并推送镜像
 TAG=20260211-a1b2c3d ./scripts/push_core_images.sh
 
 # 在生产主机上
 export TAG=20260211-a1b2c3d
+export ROBOARD_ROOT="/opt/roboard"
 export ADMIN_API_KEY="..."
 export INTERNAL_API_KEY="..."
 export SEARXNG_SECRET_KEY="..."
-export LLM_PROVIDERS_HOST_PATH="/path/to/llm-providers.json"
 
 docker compose -f deploy/prod/docker-compose.yml pull && \
 docker compose -f deploy/prod/docker-compose.yml up -d
@@ -144,9 +274,13 @@ docker compose -f deploy/prod/docker-compose.yml up -d
 
 **"Unable to pull image"**: 生产主机未登录 ACR，执行 `docker login registry.cn-hangzhou.aliyuncs.com`
 
-**"Bind mount path does not exist"**: 检查仓库目录是否存在 (config/, prompts/, edge/Caddyfile)
+**"ROBOARD_ROOT: parameter not set"**: 未设置 `ROBOARD_ROOT` 环境变量，执行 `export ROBOARD_ROOT="/opt/roboard"`
 
-**"llm-gateway 502"**: 检查 `LLM_PROVIDERS_HOST_PATH` 指向的文件是否存在
+**"Bind mount path does not exist"**: 检查 `ROBOARD_ROOT` 目录下是否存在必需的文件和目录 (config/, prompts/, edge/Caddyfile, searxng/, secrets/llm-providers.json)
+
+**"llm-gateway 502"**: 检查 `ROBOARD_ROOT/secrets/llm-providers.json` 是否存在且包含有效的 LLM 提供商配置
+
+**"Permission denied" accessing ROBOARD_ROOT**: 检查目录权限，确保 Docker 可以读取 (建议权限: 755 for directories, 644 for files, 600 for secrets)
 
 ## 安全建议
 

@@ -150,17 +150,6 @@
         </div>
 
         <div class="world-ui" aria-label="World controls">
-          <button
-            id="kanban-back"
-            type="button"
-            class="btn btn-ghost"
-            aria-label="Back from kanban zoom"
-            hidden
-            style="position: absolute; top: clamp(14px, 2.6vw, 28px); right: clamp(14px, 2.6vw, 28px); pointer-events: auto; z-index: 4"
-          >
-            Back
-          </button>
-
           <div id="world-menu" class="world-menu" aria-label="World menu">
             <button
               id="world-menu-button"
@@ -955,7 +944,6 @@
           let interactiveRoots;
           let kanbanRoot;
           let kanbanZoomed = false;
-          let kanbanBack;
 
            let chatPanel;
            let chatDialog;
@@ -990,6 +978,12 @@
           const tmpQuat = new THREE.Quaternion();
           const tmpBox = new THREE.Box3();
           const tmpSize = new THREE.Vector3();
+
+          // Label billboarding: labels are children of rotated agent roots (root.lookAt(...)),
+          // so we must convert the desired WORLD quaternion into the label's LOCAL quaternion.
+          const tmpLabelWorldQuat = new THREE.Quaternion();
+          const tmpLabelParentWorldQuat = new THREE.Quaternion();
+          const LABEL_FACING_FIX_QUAT = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
 
           const isRecognizedConnectionStatus = (statusLower) =>
             statusLower === "idle" ||
@@ -1189,9 +1183,21 @@
             }
 
             if (labelPlanes && camera) {
+              // Ensure matrices are current before reading world-space quaternions.
+              camera.updateMatrixWorld();
+              scene.updateMatrixWorld();
+
+              // Desired label orientation in WORLD space.
+              camera.getWorldQuaternion(tmpLabelWorldQuat);
+              tmpLabelWorldQuat.multiply(LABEL_FACING_FIX_QUAT);
+
               labelPlanes.forEach((label) => {
-                // Billboard toward camera without altering the agent orientation.
-                label.quaternion.copy(camera.quaternion);
+                // Convert desired world quaternion -> local quaternion.
+                // qLocal = inverse(qParentWorld) * qDesiredWorld
+                const parent = label.parent;
+                if (!parent) return;
+                parent.getWorldQuaternion(tmpLabelParentWorldQuat);
+                label.quaternion.copy(tmpLabelParentWorldQuat.invert()).multiply(tmpLabelWorldQuat);
               });
             }
 
@@ -1254,9 +1260,6 @@
             }
 
             kanbanZoomed = next;
-            if (kanbanBack) {
-              kanbanBack.hidden = !kanbanZoomed;
-            }
           };
 
            const openChat = (agentType) => {
@@ -1769,10 +1772,9 @@
              chatBackdrop = document.getElementById("chat-backdrop");
              chatTitle = document.getElementById("chat-title");
              chatMessages = document.getElementById("chat-messages");
-             chatForm = document.getElementById("chat-form");
-             chatInput = document.getElementById("chat-input");
-             chatClose = document.getElementById("chat-close");
-             kanbanBack = document.getElementById("kanban-back");
+              chatForm = document.getElementById("chat-form");
+              chatInput = document.getElementById("chat-input");
+              chatClose = document.getElementById("chat-close");
 
              if (!canvas || !window.THREE) {
                return;
@@ -1844,21 +1846,29 @@
                   closeMenu();
                 }
               });
-              document.addEventListener("keydown", (evt) => {
-                if (evt.key !== "Escape") return;
-                const isOpen = menuDropdown ? !menuDropdown.hidden : false;
-                const legendOpen = statusLegendModal ? !statusLegendModal.hidden : false;
-                if (!isOpen && !legendOpen) return;
+               document.addEventListener("keydown", (evt) => {
+                 if (evt.key !== "Escape") return;
+                 const isOpen = menuDropdown ? !menuDropdown.hidden : false;
+                 const legendOpen = statusLegendModal ? !statusLegendModal.hidden : false;
+                 if (!isOpen && !legendOpen && !kanbanZoomed) return;
 
-                evt.preventDefault();
-                if (legendOpen) {
-                  closeStatusLegend();
-                }
-                if (isOpen) {
-                  closeMenu({ focusButton: true });
-                }
-              });
-            }
+                 // Chat modal owns Escape; don't double-handle even if it already closed.
+                 if (chatPanel && evt.target instanceof Node && chatPanel.contains(evt.target)) {
+                   return;
+                 }
+
+                 evt.preventDefault();
+                 if (legendOpen) {
+                   closeStatusLegend();
+                 }
+                 if (isOpen) {
+                   closeMenu({ focusButton: true });
+                 }
+                 if (!legendOpen && !isOpen && kanbanZoomed) {
+                   setKanbanZoomed(false);
+                 }
+               });
+             }
 
               scene = new THREE.Scene();
               // Warm, bright office atmosphere (avoid near-black defaults).
@@ -1887,15 +1897,17 @@
              renderer.toneMapping = THREE.ACESFilmicToneMapping;
              renderer.toneMappingExposure = 1.12;
 
-             // Camera controls (pan + wheel zoom). Keep cameraTarget stable and move it with the camera.
-             const PAN_PLANE = new THREE.Plane(new THREE.Vector3(0, 1, 0), -GROUND_Y); // y = GROUND_Y
-             const panStartHit = new THREE.Vector3();
-             const panNowHit = new THREE.Vector3();
-             const panStartCamPos = new THREE.Vector3();
-             const panStartTarget = new THREE.Vector3();
-             let panPointerId = null;
-             let panArmed = false;
-             let panActive = false;
+              // Camera controls (pan + wheel zoom). Keep cameraTarget stable and move it with the camera.
+              const PAN_PLANE = new THREE.Plane(new THREE.Vector3(0, 1, 0), -GROUND_Y); // y = GROUND_Y
+              const panStartHit = new THREE.Vector3();
+              const panNowHit = new THREE.Vector3();
+              const panStartCamPos = new THREE.Vector3();
+              const panStartTarget = new THREE.Vector3();
+              const dollyDir = new THREE.Vector3();
+              let panRayCamera = null;
+              let panPointerId = null;
+              let panArmed = false;
+              let panActive = false;
 
              const CAMERA_MIN_Y = GROUND_Y + 2.2;
              const CAMERA_MAX_Y = GROUND_Y + 28.0;
@@ -1909,12 +1921,15 @@
                return true;
              };
 
-             const rayToGround = (clientX, clientY, outVec3) => {
-               if (!camera || !raycaster) return false;
-               if (!setPointerNdcFromClient(clientX, clientY)) return false;
-               raycaster.setFromCamera(pointerNdc, camera);
-               return Boolean(raycaster.ray.intersectPlane(PAN_PLANE, outVec3));
-             };
+              // Compute screen-ray -> ground-plane intersection.
+              // Important: allow using a frozen camera snapshot so panning math doesn't
+              // feed back on itself (camera moves mid-drag -> different ray -> jitter).
+              const rayToGround = (clientX, clientY, outVec3, fromCamera = camera) => {
+                if (!fromCamera || !raycaster) return false;
+                if (!setPointerNdcFromClient(clientX, clientY)) return false;
+                raycaster.setFromCamera(pointerNdc, fromCamera);
+                return Boolean(raycaster.ray.intersectPlane(PAN_PLANE, outVec3));
+              };
 
              const makeCanvasLabelTexture = (text, accentHex) => {
                const canvasEl = document.createElement("canvas");
@@ -1967,6 +1982,9 @@
               const tex = makeCanvasLabelTexture(text, accentHex);
               const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false });
               const geo = new THREE.PlaneGeometry(0.85, 0.42);
+              // PlaneGeometry front faces +Z; rotate once so our billboard math shows the
+              // intended front face (prevents reversed/mirrored nameplates when panning).
+              geo.rotateY(Math.PI);
               const mesh = new THREE.Mesh(geo, mat);
               mesh.renderOrder = 5;
               return mesh;
@@ -2251,38 +2269,39 @@
             };
 
             agents = [];
-             agents.push(
-               createAgent({
-                 name: "PM",
-                 agentType: "pm",
-                 color: 0xffa14b,
-                 accentHex: "#ffa14b",
-                 position: new THREE.Vector3(-3.2, GROUND_Y, 1.65),
-                 lookTarget: pmStation.lookTarget
-               })
-             );
+              agents.push(
+                createAgent({
+                  name: "PM",
+                  agentType: "pm",
+                  color: 0xffa14b,
+                  accentHex: "#ffa14b",
+                  // Stand between desk (local z=0) and chair (local z=1.32) within the station.
+                  position: new THREE.Vector3(-3.2, GROUND_Y, 1.10),
+                  lookTarget: pmStation.lookTarget
+                })
+              );
 
-             agents.push(
-               createAgent({
-                 name: "Engineer",
-                 agentType: "engineer",
-                 color: 0x49e3b9,
-                 accentHex: "#49e3b9",
-                 position: new THREE.Vector3(3.2, GROUND_Y, 1.65),
-                 lookTarget: engStation.lookTarget
-               })
-             );
+              agents.push(
+                createAgent({
+                  name: "Engineer",
+                  agentType: "engineer",
+                  color: 0x49e3b9,
+                  accentHex: "#49e3b9",
+                  position: new THREE.Vector3(3.2, GROUND_Y, 1.10),
+                  lookTarget: engStation.lookTarget
+                })
+              );
 
-             agents.push(
-               createAgent({
-                 name: "CEO",
-                 agentType: "ceo",
-                 color: 0xd6b45b,
-                 accentHex: "#d6b45b",
-                 position: new THREE.Vector3(0.0, GROUND_Y, 1.65),
-                 lookTarget: ceoStation.lookTarget
-               })
-             );
+              agents.push(
+                createAgent({
+                  name: "CEO",
+                  agentType: "ceo",
+                  color: 0xd6b45b,
+                  accentHex: "#d6b45b",
+                  position: new THREE.Vector3(0.0, GROUND_Y, 1.10),
+                  lookTarget: ceoStation.lookTarget
+                })
+              );
 
             // Kanban board on the back wall (faces camera).
             const kanban = new THREE.Group();
@@ -2400,13 +2419,9 @@
               });
             }
 
-            if (kanbanBack) {
-              kanbanBack.addEventListener("click", () => setKanbanZoomed(false));
-            }
-
-             const TAP_SLOP_PX = 7;
-              canvas.addEventListener(
-                "pointerdown",
+              const TAP_SLOP_PX = 7;
+               canvas.addEventListener(
+                 "pointerdown",
                 (event) => {
                   if (!running) {
                     return;
@@ -2422,13 +2437,19 @@
                   if (event.pointerType === "mouse" && event.button === 0) {
                     // Manual input cancels any camera tweening (kanban zoom, etc.).
                     cameraTween.active = false;
-                   panPointerId = event.pointerId;
-                   panArmed = rayToGround(event.clientX, event.clientY, panStartHit);
-                   panActive = false;
-                   panStartCamPos.copy(camera.position);
-                   panStartTarget.copy(cameraTarget);
-                   try {
-                     canvas.setPointerCapture(event.pointerId);
+                    panPointerId = event.pointerId;
+                    // Freeze the camera used for ray-plane intersections during this drag.
+                    // Using the live camera creates a feedback loop (camera moves -> ray changes
+                    // -> intersection changes), visible as jitter/shake.
+                    panRayCamera = camera.clone();
+                    panRayCamera.updateProjectionMatrix();
+                    panRayCamera.updateMatrixWorld(true);
+                    panArmed = rayToGround(event.clientX, event.clientY, panStartHit, panRayCamera);
+                    panActive = false;
+                    panStartCamPos.copy(camera.position);
+                    panStartTarget.copy(cameraTarget);
+                    try {
+                      canvas.setPointerCapture(event.pointerId);
                    } catch {
                      // Pointer capture can fail in some edge cases; panning will just be less robust.
                    }
@@ -2444,17 +2465,18 @@
                   if (panPointerId == null || event.pointerId !== panPointerId) return;
 
                   // If the primary button is no longer held, stop panning.
-                  if (typeof event.buttons === "number" && (event.buttons & 1) === 0) {
-                    try {
-                      canvas.releasePointerCapture(event.pointerId);
-                    } catch {
-                      // Ignore.
-                    }
-                    panPointerId = null;
-                    panArmed = false;
-                    panActive = false;
-                    return;
-                  }
+                   if (typeof event.buttons === "number" && (event.buttons & 1) === 0) {
+                     try {
+                       canvas.releasePointerCapture(event.pointerId);
+                     } catch {
+                       // Ignore.
+                     }
+                     panPointerId = null;
+                     panArmed = false;
+                     panActive = false;
+                     panRayCamera = null;
+                     return;
+                   }
 
                  const dx = event.clientX - pointerDownX;
                  const dy = event.clientY - pointerDownY;
@@ -2465,8 +2487,9 @@
                    panActive = true;
                  }
 
-                 if (!panArmed) return;
-                 if (!rayToGround(event.clientX, event.clientY, panNowHit)) return;
+                  if (!panArmed) return;
+                  if (!panRayCamera) return;
+                  if (!rayToGround(event.clientX, event.clientY, panNowHit, panRayCamera)) return;
 
                  const deltaX = panNowHit.x - panStartHit.x;
                  const deltaZ = panNowHit.z - panStartHit.z;
@@ -2478,34 +2501,61 @@
 
              canvas.addEventListener(
                "pointercancel",
-               (event) => {
-                 if (panPointerId != null && event.pointerId === panPointerId) {
-                   panPointerId = null;
-                   panArmed = false;
-                   panActive = false;
-                 }
-                 if (pointerDownId != null && event.pointerId === pointerDownId) {
-                   pointerDownId = null;
-                 }
-               },
+                (event) => {
+                  if (panPointerId != null && event.pointerId === panPointerId) {
+                    panPointerId = null;
+                    panArmed = false;
+                    panActive = false;
+                    panRayCamera = null;
+                  }
+                  if (pointerDownId != null && event.pointerId === pointerDownId) {
+                    pointerDownId = null;
+                  }
+                },
                { passive: true }
              );
 
-             canvas.addEventListener(
-               "wheel",
-               (event) => {
-                 if (!running || !camera) return;
-                 // Keep scroll gestures scoped to the canvas.
-                 event.preventDefault();
-                 cameraTween.active = false;
+              canvas.addEventListener(
+                "wheel",
+                (event) => {
+                  if (!running || !camera) return;
+                  // Keep scroll gestures scoped to the canvas.
+                  event.preventDefault();
+                  cameraTween.active = false;
 
-                 const baseDelta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
-                 const zoomFactor = Math.exp(baseDelta * 0.0015);
-                 const nextY = Math.min(CAMERA_MAX_Y, Math.max(CAMERA_MIN_Y, camera.position.y * zoomFactor));
-                 camera.position.y = nextY;
-               },
-               { passive: false }
-             );
+                  const baseDelta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
+                  const zoomFactor = Math.exp(baseDelta * 0.0015);
+
+                  // Wheel zoom = dolly in/out only.
+                  // Move the camera along its current view direction so pitch/yaw stays constant.
+                  dollyDir.copy(camera.position).sub(cameraTarget);
+                  const dist = dollyDir.length();
+                  if (dist < 1e-6) return;
+                  dollyDir.multiplyScalar(1 / dist);
+
+                  // Preserve the existing min/max Y clamp, but apply it to distance along the view ray.
+                  // If cameraTarget stays fixed and we dolly along dollyDir, then:
+                  //   cameraY = cameraTarget.y + dollyDir.y * distance
+                  // So we can derive distance bounds from the old Y bounds.
+                  let minDist = 0.2;
+                  let maxDist = 200.0;
+                  if (Math.abs(dollyDir.y) > 1e-5) {
+                    minDist = (CAMERA_MIN_Y - cameraTarget.y) / dollyDir.y;
+                    maxDist = (CAMERA_MAX_Y - cameraTarget.y) / dollyDir.y;
+                    if (minDist > maxDist) {
+                      const tmp = minDist;
+                      minDist = maxDist;
+                      maxDist = tmp;
+                    }
+                    minDist = Math.max(0.2, minDist);
+                    maxDist = Math.max(minDist + 0.01, maxDist);
+                  }
+
+                  const nextDist = Math.min(maxDist, Math.max(minDist, dist * zoomFactor));
+                  camera.position.copy(cameraTarget).addScaledVector(dollyDir, nextDist);
+                },
+                { passive: false }
+              );
 
              canvas.addEventListener(
                "pointerup",
@@ -2514,16 +2564,17 @@
                    return;
                  }
 
-                 if (panPointerId != null && event.pointerId === panPointerId) {
-                   panPointerId = null;
-                   panArmed = false;
-                   // Leave panActive set for the click suppression check below.
-                   try {
-                     canvas.releasePointerCapture(event.pointerId);
-                   } catch {
-                     // Ignore.
-                   }
-                 }
+                  if (panPointerId != null && event.pointerId === panPointerId) {
+                    panPointerId = null;
+                    panArmed = false;
+                    // Leave panActive set for the click suppression check below.
+                    panRayCamera = null;
+                    try {
+                      canvas.releasePointerCapture(event.pointerId);
+                    } catch {
+                      // Ignore.
+                    }
+                  }
 
                  if (pointerDownId == null || event.pointerId !== pointerDownId) {
                    return;
