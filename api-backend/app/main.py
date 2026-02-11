@@ -948,16 +948,14 @@ def _load_prompt_file(path: str) -> str:
 def _build_agent_prompt(agent_type: str) -> str:
     agent_prompt = _load_prompt_file(f"/app/prompts/agents/{agent_type}.md")
     user_prompt = _load_prompt_file("/app/prompts/skills/chat_user.md")
-    local_deploy_prompt = _load_prompt_file("/app/prompts/skills/local_deploy.md")
-    return f"{agent_prompt}\n\n---\n\n{user_prompt}\n\n---\n\n{local_deploy_prompt}"
+    return f"{agent_prompt}\n\n---\n\n{user_prompt}"
 
 
 def _build_ceo_prompt_with_a2a_skills() -> str:
     """Build CEO prompt with a2a_consult skill for tool-calling."""
     agent_prompt = _load_prompt_file("/app/prompts/agents/ceo.md")
     a2a_consult_prompt = _load_prompt_file("/app/prompts/skills/a2a_consult.md")
-    local_deploy_prompt = _load_prompt_file("/app/prompts/skills/local_deploy.md")
-    return f"{agent_prompt}\n\n---\n\n{a2a_consult_prompt}\n\n---\n\n{local_deploy_prompt}"
+    return f"{agent_prompt}\n\n---\n\n{a2a_consult_prompt}"
 
 
 def _resolve_internal_key() -> str:

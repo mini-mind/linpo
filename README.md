@@ -1,9 +1,19 @@
 # Search Infrastructure
 
-## Documentation / 文档
+## 文档目录结构
 
-- [文档中心 (Docs Hub)](docs/README.md) - 完整的项目文档入口
-- [Sisyphus 工作流](docs/process/sisyphus-workflow.md) - `.sisyphus` 进程文档
+本项目明确分离人类文档与运行时角色提示词：
+
+- **`docs/`** - 人类/操作员/开发者文档
+  - [本地部署指南](docs/deployment/local.md) - Docker Compose 本地部署流程
+  - [生产部署指南](docs/prod-deployment.md) - 生产环境部署配置
+  - [文档中心](docs/README.md) - 完整的项目文档入口
+  - [Sisyphus 工作流](docs/process/sisyphus-workflow.md) - `.sisyphus` 进程文档
+
+- **`prompts/`** - 运行时角色提示词（仅供应用内 Agent 使用）
+  - `prompts/agents/*.md` - Agent 角色定义
+  - `prompts/skills/*.md` - Agent 技能提示词（如 `chat_user.md`, `search_web.md`, `browser_run.md`, `a2a_consult.md` 等）
+  - 这些文件仅供 LLM 在运行时使用，不包含人类操作手册或部署指南
 
 ## 服务架构
 

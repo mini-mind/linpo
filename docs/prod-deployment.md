@@ -249,7 +249,7 @@ docker compose -f deploy/prod/docker-compose.yml up -d
 
 **适用场景**: 在同一台机器（roboard.duckdns.org 服务器）上开发并部署，无需 ACR 推送。
 
-**📚 官方文档**: 本流程的完整说明和最佳实践请参考 [本地部署 Skill 文档](../prompts/skills/local_deploy.md)。该文档是维护的知识来源。
+**📚 官方文档**: 本流程的完整说明和最佳实践请参考 [本地部署指南](deployment/local.md)。
 
 当 `roboard.duckdns.org` 域名指向开发机器时，使用以下流程快速部署：
 

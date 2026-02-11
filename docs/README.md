@@ -38,6 +38,7 @@
 
 **生产部署**:
 - [Production Deployment Guide](prod-deployment.md) - 生产环境部署配置、镜像备份策略
+- [Local Deployment Guide](deployment/local.md) - Docker Compose 本地部署快速指南
 
 **部署脚本**:
 - `scripts/push_worker_images.sh` - 推送 worker 镜像到 Aliyun ACR

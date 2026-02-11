@@ -78,21 +78,3 @@ skills:
               title:
                 type: string
     description: Minify and deduplicate citations
-
-  local_deploy:
-    prompt_file: prompts/skills/local_deploy.md
-    allowed_tools: []
-    output_contract:
-      type: object
-      properties:
-        commands:
-          type: array
-          items:
-            type: string
-        verification:
-          type: array
-          items:
-            type: string
-        notes:
-          type: string
-    description: Generate Docker Compose deployment commands and verification steps for local deployment
