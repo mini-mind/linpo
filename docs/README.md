@@ -36,6 +36,9 @@
 - [Worker Deployment Guide](worker-deployment.md) - 镜像构建、ACR 推送、远程部署
 - [Worker Operations Manual](worker-ops.md) - 运维手册、故障排查、磁盘回滚
 
+**生产部署**:
+- [Production Deployment Guide](prod-deployment.md) - 生产环境部署配置、镜像备份策略
+
 **部署脚本**:
 - `scripts/push_worker_images.sh` - 推送 worker 镜像到 Aliyun ACR
 - `scripts/deploy_worker.sh` - 在 worker 主机上部署服务

@@ -1,0 +1,217 @@
+# Run with: docker compose -f deploy/prod/docker-compose.yml up -d
+services:
+  gateway:
+    image: registry.cn-hangzhou.aliyuncs.com/ravin/web3d-gateway:${TAG:-latest}
+    depends_on:
+      - web-frontend
+      - api-backend
+    networks:
+      - app-net
+    restart: unless-stopped
+
+  edge:
+    image: caddy:2.8-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../../edge/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      - CADDY_EMAIL=${CADDY_EMAIL:-}
+    networks:
+      - app-net
+    depends_on:
+      - gateway
+    restart: unless-stopped
+
+  web-frontend:
+    image: registry.cn-hangzhou.aliyuncs.com/ravin/web3d-web-frontend:${TAG:-latest}
+    networks:
+      - app-net
+    restart: unless-stopped
+
+  api-backend:
+    image: registry.cn-hangzhou.aliyuncs.com/ravin/web3d-api-backend:${TAG:-latest}
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/web3d}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - ADMIN_API_KEY=${ADMIN_API_KEY:?set}
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:?set}
+      - ALLOW_ORIGINS=${ALLOW_ORIGINS:-*}
+      - RATE_LIMIT=${RATE_LIMIT:-100/minute}
+      - AGENT_MANAGER_URL=${AGENT_MANAGER_URL:-http://agent-manager:7000}
+      - SMTP_HOST=${SMTP_HOST:-mailhog}
+      - SMTP_PORT=${SMTP_PORT:-1025}
+      - SMTP_USE_TLS=${SMTP_USE_TLS:-false}
+      - SMTP_FROM=${SMTP_FROM:-no-reply@localhost}
+      - DEFAULT_NOTIFICATION_EMAIL=${DEFAULT_NOTIFICATION_EMAIL:-demo@example.com}
+      - EMAIL_POLL_INTERVAL_SEC=${EMAIL_POLL_INTERVAL_SEC:-2}
+      - EMAIL_MAX_ATTEMPTS=${EMAIL_MAX_ATTEMPTS:-3}
+      - LLM_GATEWAY_URL=${LLM_GATEWAY_URL:-http://llm-gateway:7300}
+    volumes:
+      # NOTE: These host directories should match the ${TAG} commit/VERSION being deployed.
+      # Future version: pin config/prompts by copying to immutable location or version them in the image.
+      - ../../config:/app/config:ro
+      - ../../prompts:/app/prompts:ro
+    depends_on:
+      - postgres
+      - redis
+      - mcp-server
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          (command -v curl >/dev/null 2>&1 && curl -fsS http://localhost:8000/health >/dev/null)
+          || (command -v wget >/dev/null 2>&1 && wget -qO- http://localhost:8000/health >/dev/null)
+          || (python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()" >/dev/null 2>&1)
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - app-net
+    restart: unless-stopped
+
+  agent-manager:
+    image: registry.cn-hangzhou.aliyuncs.com/ravin/web3d-agent-manager:${TAG:-latest}
+    environment:
+      # MVP guardrail: per-tenant concurrent runs cap (reserved for future wiring).
+      - TENANT_CONCURRENCY_LIMIT=2
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:?set}
+      - WORKER_URL=${WORKER_URL:-http://worker-playwright:7100}
+      - API_BACKEND_URL=${API_BACKEND_URL:-http://api-backend:8000}
+      # Redis Streams consumer configuration
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - DISPATCH_STREAM=${DISPATCH_STREAM:-queue:dispatch}
+      - DISPATCH_DEAD_STREAM=${DISPATCH_DEAD_STREAM:-queue:dispatch:dead}
+      - DISPATCH_GROUP=${DISPATCH_GROUP:-agent-manager}
+      - DISPATCH_MAX_ATTEMPTS=${DISPATCH_MAX_ATTEMPTS:-3}
+      - A2A_STREAM=${A2A_STREAM:-queue:a2a}
+      - A2A_DEAD_STREAM=${A2A_DEAD_STREAM:-queue:a2a:dead}
+      - A2A_GROUP=${A2A_GROUP:-agent-manager-a2a}
+      - A2A_CONSUMER=${A2A_CONSUMER:-}
+      - A2A_MAX_ATTEMPTS=${A2A_MAX_ATTEMPTS:-3}
+      - LLM_GATEWAY_URL=${LLM_GATEWAY_URL:-http://llm-gateway:7300}
+    depends_on:
+      - api-backend
+      - redis
+    networks:
+      - app-net
+    restart: unless-stopped
+
+  worker-playwright:
+    image: registry.cn-hangzhou.aliyuncs.com/ravin/web3d-worker-playwright:${TAG:-latest}
+    environment:
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:?set}
+      - WORKER_URL=${WORKER_URL:-http://worker-playwright:7100}
+      - API_BACKEND_URL=${API_BACKEND_URL:-http://api-backend:8000}
+      - MCP_URL=${MCP_URL:-http://mcp-server:9000}
+      - PLAYWRIGHT_GATEWAY_URL=${PLAYWRIGHT_GATEWAY_URL:-}
+    depends_on:
+      - agent-manager
+      - redis
+      - mcp-server
+    networks:
+      - app-net
+    restart: unless-stopped
+
+  mcp-server:
+    image: registry.cn-hangzhou.aliyuncs.com/ravin/web3d-mcp-server:${TAG:-latest}
+    environment:
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:?set}
+      - WORKER_URL=${WORKER_URL:-http://worker-playwright:7100}
+      - API_BACKEND_URL=${API_BACKEND_URL:-http://api-backend:8000}
+      - MCP_URL=${MCP_URL:-http://mcp-server:9000}
+      - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
+    depends_on:
+      - redis
+      - searxng
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          (command -v curl >/dev/null 2>&1 && curl -fsS http://localhost:9000/health >/dev/null)
+          || (command -v wget >/dev/null 2>&1 && wget -qO- http://localhost:9000/health >/dev/null)
+          || (python -c "import urllib.request; urllib.request.urlopen('http://localhost:9000/health').read()" >/dev/null 2>&1)
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - app-net
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_DB=web3d
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - app-net
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - app-net
+    restart: unless-stopped
+
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    environment:
+      - SEARXNG_SETTINGS_PATH=/etc/searxng/settings.yml
+      - SEARXNG_SECRET_KEY=${SEARXNG_SECRET_KEY:?set}
+      # Prefer IP-based access (no domain allowlist). Example: http://127.0.0.1:8081/
+      - SEARXNG_BASE_URL=http://127.0.0.1:8081/
+    volumes:
+      - ../../searxng/config:/etc/searxng
+      - ../../searxng/data:/var/cache/searxng
+    ports:
+      - "127.0.0.1:8081:8080"
+    depends_on:
+      - redis
+    networks:
+      - app-net
+    restart: unless-stopped
+
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    ports:
+      - "127.0.0.1:8025:8025"
+    networks:
+      - app-net
+    restart: unless-stopped
+
+  llm-gateway:
+    image: registry.cn-hangzhou.aliyuncs.com/ravin/web3d-llm-gateway:${TAG:-latest}
+    environment:
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:?set}
+      - LLM_PROVIDERS_PATH=/run/secrets/llm-providers.json
+    volumes:
+      - ${LLM_PROVIDERS_HOST_PATH:-../../config/llm-providers.example.json}:/run/secrets/llm-providers.json:ro
+    expose:
+      - "7300"
+    networks:
+      - app-net
+    restart: unless-stopped
+
+networks:
+  app-net:
+    driver: bridge
+
+volumes:
+  redis-data:
+  postgres-data:
+  caddy-data:
+  caddy-config:
