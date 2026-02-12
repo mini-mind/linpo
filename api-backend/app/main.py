@@ -2009,13 +2009,12 @@ async def agent_chat_stream(
     user_id = cast(int, getattr(user, "id"))
     user_tenant_id = getattr(user, "tenant_id")
 
+    # CEO streaming is not supported yet - return 501 to trigger frontend fallback
+    if agent_type == "ceo":
+        raise HTTPException(status_code=501, detail="CEO streaming not supported yet")
+
     async def generate_stream():
         try:
-            # For CEO agent with tool-calling - return error for now
-            if agent_type == "ceo":
-                yield f"event: error\ndata: {json.dumps({'detail': 'CEO streaming not supported yet'})}\n\n"
-                return
-
             # Validate agent type
             if agent_type not in {"pm", "engineer", "ceo"}:
                 yield f"event: error\ndata: {json.dumps({'detail': 'Agent not found'})}\n\n"
