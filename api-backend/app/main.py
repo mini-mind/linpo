@@ -31,6 +31,7 @@ from typing import Annotated, cast
 from pythonjsonlogger import jsonlogger  # type: ignore[import-not-found]
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, WebSocket
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.websockets import WebSocketDisconnect
 import httpx
@@ -1483,7 +1484,9 @@ async def _call_llm_gateway_with_tools(
         }
         
         try:
-            async with httpx.AsyncClient(base_url=llm_gateway_url, timeout=30.0) as client:
+            # Use unlimited read timeout for streaming to avoid cutting off long responses
+            timeout = httpx.Timeout(None)
+            async with httpx.AsyncClient(base_url=llm_gateway_url, timeout=timeout) as client:
                 response = await client.post(
                     "/internal/llm/chat",
                     json=payload,
@@ -1990,6 +1993,83 @@ async def agent_chat(
         reply = "I'm having trouble reaching the language model right now. Please try again in a moment."
     return AgentChatOut(reply=reply, tool=None, citations=[])
 
+
+
+
+
+@app.post("/api/agents/{agent_type}/chat/stream")
+async def agent_chat_stream(
+    agent_type: str,
+    body: AgentChatIn,
+    session: DbSessionDep,
+    x_session_token: SessionTokenHeader = None,
+) -> StreamingResponse:
+    """Stream chat responses from LLM gateway."""
+    user = _require_session_user(session, x_session_token)
+    user_id = cast(int, getattr(user, "id"))
+    user_tenant_id = getattr(user, "tenant_id")
+
+    async def generate_stream():
+        try:
+            # For CEO agent with tool-calling - return error for now
+            if agent_type == "ceo":
+                yield f"event: error\ndata: {json.dumps({'detail': 'CEO streaming not supported yet'})}\n\n"
+                return
+
+            # Validate agent type
+            if agent_type not in {"pm", "engineer", "ceo"}:
+                yield f"event: error\ndata: {json.dumps({'detail': 'Agent not found'})}\n\n"
+                return
+
+            # Build prompt and call LLM gateway with streaming
+            system_prompt = _build_agent_prompt(agent_type)
+            llm_gateway_url = (os.getenv("LLM_GATEWAY_URL") or "http://llm-gateway:7300").strip()
+            
+            payload = {
+                "model": "ark-code-latest",
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": body.message},
+                ],
+                "stream": True,
+            }
+            
+            # Use unlimited read timeout for streaming to avoid cutting off long responses
+            timeout = httpx.Timeout(None)
+            async with httpx.AsyncClient(base_url=llm_gateway_url, timeout=timeout) as client:
+                async with client.stream(
+                    "POST",
+                    "/internal/llm/chat",
+                    json=payload,
+                    headers={"X-Internal-Key": _resolve_internal_key()},
+                ) as response:
+                    if response.status_code >= 400:
+                        error_detail = f"LLM gateway error: {response.status_code}"
+                        yield f"event: error\ndata: {json.dumps({'detail': error_detail})}\n\n"
+                        return
+                    
+                    async for chunk in response.aiter_text():
+                        if chunk:
+                            # Forward the chunk directly
+                            yield chunk
+            
+        except HTTPException as e:
+            yield f"event: error\ndata: {json.dumps({'detail': e.detail})}\n\n"
+        except ValueError as e:
+            # LLM config error
+            yield f"event: error\ndata: {json.dumps({'detail': str(e)})}\n\n"
+        except Exception as e:
+            logger.warning("Streaming chat error: %s", e)
+            yield f"event: error\ndata: {json.dumps({'detail': 'Streaming failed'})}\n\n"
+
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 @app.post("/api/world/bootstrap", response_model=WorldBootstrapOut, status_code=200)
 async def world_bootstrap(

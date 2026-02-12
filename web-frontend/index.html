@@ -1600,10 +1600,10 @@
             return entry;
           };
 
-          const normalizeCitations = (raw) => {
-            if (!raw) {
-              return [];
-            }
+           const normalizeCitations = (raw) => {
+             if (!raw) {
+               return [];
+             }
             const items = Array.isArray(raw) ? raw : [raw];
             const out = [];
 
@@ -1629,13 +1629,97 @@
               }
             });
 
-            return out;
-          };
+             return out;
+           };
 
-          const submitChat = async () => {
-            if (!chatInput || !chatMessages || !chatPanel || chatPanel.hidden) {
-              return;
-            }
+           const scheduleChatRender = (agentType) => {
+             if (!agentType) {
+               return;
+             }
+
+             if (scheduleChatRender.rafPending) {
+               return;
+             }
+
+             scheduleChatRender.rafPending = true;
+             requestAnimationFrame(() => {
+               scheduleChatRender.rafPending = false;
+               if (chatPanel && !chatPanel.hidden && activeChatAgentType === agentType) {
+                 openChat(agentType);
+               }
+             });
+           };
+
+           // Robust SSE parser for fetch() ReadableStream.
+           const streamSseFrames = async ({ resp, onEvent }) => {
+             if (!resp || !resp.body || typeof resp.body.getReader !== "function") {
+               const err = new Error("Streaming body unsupported");
+               err.code = "UNSUPPORTED_STREAM";
+               throw err;
+             }
+
+             const reader = resp.body.getReader();
+             const decoder = new TextDecoder("utf-8");
+             let buffer = "";
+
+             const findSeparator = (text) => {
+               const lf = text.indexOf("\n\n");
+               const crlf = text.indexOf("\r\n\r\n");
+               if (lf === -1 && crlf === -1) {
+                 return null;
+               }
+               if (lf === -1) {
+                 return { idx: crlf, len: 4 };
+               }
+               if (crlf === -1) {
+                 return { idx: lf, len: 2 };
+               }
+               return crlf < lf ? { idx: crlf, len: 4 } : { idx: lf, len: 2 };
+             };
+
+             try {
+               while (true) {
+                 const { value, done } = await reader.read();
+                 if (done) {
+                   break;
+                 }
+
+                 buffer += decoder.decode(value, { stream: true });
+
+                 while (true) {
+                   const sep = findSeparator(buffer);
+                   if (!sep) {
+                     break;
+                   }
+
+                   const frame = buffer.slice(0, sep.idx);
+                   buffer = buffer.slice(sep.idx + sep.len);
+                   await onEvent(frame);
+                 }
+               }
+             } catch (err) {
+               if (err && typeof err === "object" && err.code === "SSE_DONE") {
+                 try {
+                   await reader.cancel();
+                 } catch {
+                   // ignore
+                 }
+               } else {
+                 throw err;
+               }
+             } finally {
+               try {
+                 reader.releaseLock();
+               } catch {
+                 // ignore
+               }
+              }
+           };
+
+           const submitChat = async () => {
+             if (!chatInput || !chatMessages || !chatPanel || chatPanel.hidden) {
+               return;
+             }
             const raw = chatInput.value;
             const text = typeof raw === "string" ? raw.trim() : "";
             if (!text) {
@@ -1654,68 +1738,260 @@
             }
 
             const sessionToken = localStorage.getItem("roboard_session_token");
-            if (!sessionToken) {
-              if (placeholder) {
-                placeholder.text = t("chat.signIn");
-              }
+             if (!sessionToken) {
+               if (placeholder) {
+                 placeholder.text = t("chat.signIn");
+               }
               if (chatPanel && !chatPanel.hidden && activeChatAgentType === agentTypeAtSend) {
                 openChat(agentTypeAtSend);
               }
-              return;
-            }
+               return;
+             }
 
-            try {
-              const endpoint = `/api/agents/${encodeURIComponent(agentTypeAtSend)}/chat`;
-              const resp = await fetch(endpoint, {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  "X-Session-Token": sessionToken
-                },
-                body: JSON.stringify({ message: text })
-              });
+             try {
+               const postJsonChat = async () => {
+                 const endpoint = `/api/agents/${encodeURIComponent(agentTypeAtSend)}/chat`;
+                 const resp = await fetch(endpoint, {
+                   method: "POST",
+                   headers: {
+                     "Content-Type": "application/json",
+                     "X-Session-Token": sessionToken
+                   },
+                   body: JSON.stringify({ message: text })
+                 });
 
-              if (resp.status === 401 || resp.status === 403) {
-                if (placeholder) {
-                  placeholder.text = t("chat.signIn");
-                }
-                return;
-              }
+                 if (resp.status === 401 || resp.status === 403) {
+                   if (placeholder) {
+                     placeholder.text = t("chat.signIn");
+                   }
+                   return;
+                 }
 
-              if (!resp.ok) {
-                if (placeholder) {
-                  placeholder.text = t("chat.errorWithStatus", { status: resp.status });
-                }
-                return;
-              }
+                 if (!resp.ok) {
+                   if (placeholder) {
+                     placeholder.text = t("chat.errorWithStatus", { status: resp.status });
+                   }
+                   return;
+                 }
 
-              const data = await resp.json().catch(() => null);
-              const reply = data && typeof data.reply === "string" ? data.reply : "";
-              const citations = data ? normalizeCitations(data.citations) : [];
-              const a2aSummary = data && typeof data.a2a_summary === "string" ? data.a2a_summary : null;
-              const a2aThreadId = data && typeof data.a2a_thread_id === "string" ? data.a2a_thread_id : null;
+                 const data = await resp.json().catch(() => null);
+                 const reply = data && typeof data.reply === "string" ? data.reply : "";
+                 const citations = data ? normalizeCitations(data.citations) : [];
+                 const a2aSummary = data && typeof data.a2a_summary === "string" ? data.a2a_summary : null;
+                 const a2aThreadId = data && typeof data.a2a_thread_id === "string" ? data.a2a_thread_id : null;
 
-              if (placeholder) {
-                placeholder.text = reply || t("chat.emptyReply");
-                placeholder.citations = citations;
-                placeholder.tool = data && typeof data.tool === "string" ? data.tool : null;
-                placeholder.a2aSummary = a2aSummary;
-                placeholder.a2aThreadId = a2aThreadId;
-                placeholder.a2aDetails = null;
-                placeholder.a2aExpanded = false;
-                placeholder.a2aLoading = false;
-                placeholder.a2aError = null;
-              }
-            } catch {
-              if (placeholder) {
-                placeholder.text = t("chat.netError");
-              }
-            } finally {
-              if (chatPanel && !chatPanel.hidden && activeChatAgentType === agentTypeAtSend) {
-                openChat(agentTypeAtSend);
-              }
-            }
-          };
+                 if (placeholder) {
+                   placeholder.text = reply || t("chat.emptyReply");
+                   placeholder.citations = citations;
+                   placeholder.tool = data && typeof data.tool === "string" ? data.tool : null;
+                   placeholder.a2aSummary = a2aSummary;
+                   placeholder.a2aThreadId = a2aThreadId;
+                   placeholder.a2aDetails = null;
+                   placeholder.a2aExpanded = false;
+                   placeholder.a2aLoading = false;
+                   placeholder.a2aError = null;
+                 }
+               };
+
+               const postStreamChat = async () => {
+                 const endpoint = `/api/agents/${encodeURIComponent(agentTypeAtSend)}/chat/stream`;
+                 const resp = await fetch(endpoint, {
+                   method: "POST",
+                   headers: {
+                     "Content-Type": "application/json",
+                     "Accept": "text/event-stream",
+                     "X-Session-Token": sessionToken
+                   },
+                   body: JSON.stringify({ message: text })
+                 });
+
+                 if (resp.status === 401 || resp.status === 403) {
+                   if (placeholder) {
+                     placeholder.text = t("chat.signIn");
+                   }
+                   return { ok: true, finished: true, fallback: false };
+                 }
+
+                 if (!resp.ok) {
+                   const err = new Error(`Stream endpoint error: ${resp.status}`);
+                   err.code = "STREAM_HTTP_ERROR";
+                   err.status = resp.status;
+                   err.fallback = true;
+                   throw err;
+                 }
+
+                 const contentType = String(resp.headers.get("content-type") || "").toLowerCase();
+                 if (contentType && !contentType.includes("text/event-stream")) {
+                   const err = new Error("Stream endpoint returned non-SSE response");
+                   err.code = "STREAM_NOT_SSE";
+                   err.fallback = true;
+                   throw err;
+                 }
+
+                 let fullText = "";
+                 let gotAny = false;
+                 let sawDone = false;
+                 let streamMeta = null;
+
+                 const append = (delta) => {
+                   if (!delta) {
+                     return;
+                   }
+                   gotAny = true;
+                   fullText += delta;
+                   if (placeholder) {
+                     placeholder.text = fullText;
+                   }
+                   scheduleChatRender(agentTypeAtSend);
+                 };
+
+                 const formatStreamError = (msg) => {
+                   const trimmed = typeof msg === "string" ? msg.trim() : "";
+                   if (!trimmed) {
+                     return t("chat.netError");
+                   }
+                   return `${t("chat.netError")} (${trimmed})`;
+                 };
+
+                 await streamSseFrames({
+                   resp,
+                   onEvent: async (frameText) => {
+                     const frame = typeof frameText === "string" ? frameText : "";
+                     if (!frame.trim()) {
+                       return;
+                     }
+
+                     let eventName = null;
+                     const dataLines = [];
+                     frame.split(/\r?\n/).forEach((line) => {
+                       if (!line || line.startsWith(":")) {
+                         return;
+                       }
+                       if (line.startsWith("event:")) {
+                         eventName = line.slice("event:".length).trim();
+                         return;
+                       }
+                       if (line.startsWith("data:")) {
+                         let piece = line.slice("data:".length);
+                         if (piece.startsWith(" ")) {
+                           piece = piece.slice(1);
+                         }
+                         dataLines.push(piece);
+                       }
+                     });
+
+                     const data = dataLines.join("\n");
+                     if (!data) {
+                       return;
+                     }
+
+                     if (data === "[DONE]") {
+                       sawDone = true;
+                       const doneErr = new Error("SSE done");
+                       doneErr.code = "SSE_DONE";
+                       throw doneErr;
+                     }
+
+                     const maybeJson = (() => {
+                       const first = data.trim().charAt(0);
+                       if (first !== "{" && first !== "[") {
+                         return null;
+                       }
+                       try {
+                         return JSON.parse(data);
+                       } catch {
+                         return null;
+                       }
+                     })();
+
+                     if (eventName === "error") {
+                       const msg =
+                         maybeJson && typeof maybeJson === "object"
+                           ? maybeJson.message || maybeJson.detail || maybeJson.error?.message
+                           : data;
+                       const err = new Error("SSE error event");
+                       err.code = "STREAM_EVENT_ERROR";
+                       err.userMessage = formatStreamError(String(msg || ""));
+                       throw err;
+                     }
+
+                      if (maybeJson && typeof maybeJson === "object") {
+                        const contentDelta = maybeJson?.choices?.[0]?.delta?.content;
+                        if (typeof contentDelta === "string" && contentDelta) {
+                          append(contentDelta);
+                        } else {
+                          // Some providers stream thinking text via reasoning_content.
+                          const reasoningDelta = maybeJson?.choices?.[0]?.delta?.reasoning_content;
+                          if (typeof reasoningDelta === "string" && reasoningDelta) {
+                            append(reasoningDelta);
+                          }
+                        }
+
+                       // Some backends may send final metadata alongside chunks.
+                       if (maybeJson.citations || maybeJson.tool || maybeJson.a2a_summary || maybeJson.a2a_thread_id) {
+                         streamMeta = maybeJson;
+                       }
+
+                       const errMsg = maybeJson?.error?.message;
+                       if (typeof errMsg === "string" && errMsg.trim()) {
+                         const err = new Error("Stream payload error");
+                         err.code = "STREAM_PAYLOAD_ERROR";
+                         err.userMessage = formatStreamError(errMsg);
+                         throw err;
+                       }
+                       return;
+                     }
+
+                     // Plain string tokens/phrases.
+                     append(data);
+                   }
+                 });
+
+                 if (placeholder) {
+                   if (!gotAny) {
+                     placeholder.text = t("chat.emptyReply");
+                   }
+
+                   if (streamMeta && typeof streamMeta === "object") {
+                     placeholder.citations = normalizeCitations(streamMeta.citations);
+                     placeholder.tool = typeof streamMeta.tool === "string" ? streamMeta.tool : null;
+                     placeholder.a2aSummary = typeof streamMeta.a2a_summary === "string" ? streamMeta.a2a_summary : null;
+                     placeholder.a2aThreadId = typeof streamMeta.a2a_thread_id === "string" ? streamMeta.a2a_thread_id : null;
+                     placeholder.a2aDetails = null;
+                     placeholder.a2aExpanded = false;
+                     placeholder.a2aLoading = false;
+                     placeholder.a2aError = null;
+                   }
+                 }
+
+                 return { ok: true, finished: sawDone, fallback: false };
+               };
+
+               // Prefer streaming endpoint; fallback to JSON endpoint when unsupported / non-200.
+               try {
+                 await postStreamChat();
+               } catch (err) {
+                 const code = err && typeof err === "object" ? err.code : null;
+                 const wantsFallback = !!(err && typeof err === "object" && err.fallback);
+
+                 if (code === "UNSUPPORTED_STREAM" || wantsFallback) {
+                   await postJsonChat();
+                 } else if (err && typeof err === "object" && err.userMessage && placeholder) {
+                   placeholder.text = String(err.userMessage);
+                 } else {
+                   throw err;
+                 }
+               }
+             } catch {
+               if (placeholder) {
+                 placeholder.text = t("chat.netError");
+               }
+             } finally {
+               if (chatPanel && !chatPanel.hidden && activeChatAgentType === agentTypeAtSend) {
+                 openChat(agentTypeAtSend);
+               }
+             }
+           };
 
           const handleSceneTap = (clientX, clientY) => {
             if (!canvas || !camera || !raycaster || !pointerNdc || !interactiveRoots || !interactiveRoots.length) {

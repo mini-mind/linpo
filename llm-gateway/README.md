@@ -17,12 +17,16 @@ Platform-level LLM gateway for internal services.
     "ark-code-latest": {
       "base_url": "https://example-ark-host/v3",
       "api_key": "YOUR_ARK_API_KEY"
+    },
+    "right-code/gpt-5.2-codex": {
+      "base_url": "https://right.codes/codex/v1",
+      "api_key": "YOUR_RIGHT_CODE_API_KEY"
     }
   }
 }
 ```
 
-Only `ark-code-latest` is supported for now.
+The gateway accepts any model name that exists as a key in the `providers` map.
 
 ## API Endpoints
 
