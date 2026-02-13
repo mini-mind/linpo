@@ -211,6 +211,12 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _resolve_default_llm_model() -> str:
+    # Allow switching providers/models without code changes.
+    model = (os.getenv("LLM_DEFAULT_MODEL") or "").strip()
+    return model if model else "ark-code-latest"
+
+
 def _parse_int_id(value: str, label: str) -> int:
     try:
         parsed = int(value)
@@ -988,7 +994,7 @@ async def _call_llm_gateway(system_prompt: str, user_message: str) -> str:
     if not llm_gateway_url:
         llm_gateway_url = "http://llm-gateway:7300"
     payload = {
-        "model": "ark-code-latest",
+        "model": _resolve_default_llm_model(),
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
@@ -1470,6 +1476,35 @@ async def _call_llm_gateway_with_tools(
     current_messages = messages.copy()
     delegated_agents: list[str] = []
     thread_id_int: int | None = None
+
+    model_name = _resolve_default_llm_model()
+
+    def _provider_tool_name(name: str) -> str:
+        if model_name.startswith("right-code/") and "." in name:
+            return name.replace(".", "_")
+        return name
+
+    def _internal_tool_name(name: str) -> str:
+        if model_name.startswith("right-code/"):
+            if name == "a2a_send":
+                return "a2a.send"
+            if name == "a2a_fetch_thread":
+                return "a2a.fetch_thread"
+        return name
+
+    provider_tools_schema: list[dict[str, object]] = []
+    for tool in tools_schema if isinstance(tools_schema, list) else []:
+        if not isinstance(tool, dict):
+            continue
+        tool_copy = dict(tool)
+        fn = tool_copy.get("function")
+        if isinstance(fn, dict):
+            fn_copy = dict(fn)
+            raw_name = fn_copy.get("name")
+            if isinstance(raw_name, str):
+                fn_copy["name"] = _provider_tool_name(raw_name)
+            tool_copy["function"] = fn_copy
+        provider_tools_schema.append(tool_copy)
     
     for step in range(max_steps):
         llm_gateway_url = (os.getenv("LLM_GATEWAY_URL") or "http://llm-gateway:7300").strip()
@@ -1477,9 +1512,9 @@ async def _call_llm_gateway_with_tools(
             llm_gateway_url = "http://llm-gateway:7300"
         
         payload = {
-            "model": "ark-code-latest",
+            "model": model_name,
             "messages": current_messages,
-            "tools": tools_schema,
+            "tools": provider_tools_schema,
             "tool_choice": "auto",
         }
         
@@ -1533,6 +1568,8 @@ async def _call_llm_gateway_with_tools(
                 continue
             
             tool_name = function.get("name")
+            if isinstance(tool_name, str):
+                tool_name = _internal_tool_name(tool_name)
             tool_args_str = function.get("arguments", "{}")
             
             tool_args: dict[str, object] = {}
@@ -2014,10 +2051,15 @@ async def agent_chat_stream(
             payload = {"choices": [{"delta": {"content": content}, "index": 0}]}
             return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
+        def _format_sse_error(message: str) -> str:
+            payload = {"error": {"message": message}}
+            return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
         try:
             # Validate agent type
             if agent_type not in {"pm", "engineer", "ceo"}:
-                yield f"event: error\ndata: {json.dumps({'detail': 'Agent not found'})}\n\n"
+                yield _format_sse_error("Agent not found")
+                yield "data: [DONE]\n\n"
                 return
 
             if agent_type == "ceo":
@@ -2035,7 +2077,8 @@ async def agent_chat_stream(
                     tenant_id_int = cast(int, user_tenant_id)
                     tenant = session.query(models.Tenant).filter(models.Tenant.id == tenant_id_int).first()
                     if not tenant:
-                        yield f"event: error\ndata: {json.dumps({'detail': 'Tenant not found'})}\n\n"
+                        yield _format_sse_error("Tenant not found")
+                        yield "data: [DONE]\n\n"
                         return
 
                 message_lower = body.message.lower()
@@ -2063,14 +2106,17 @@ async def agent_chat_stream(
                             tools=_build_a2a_tools_schema(),
                         )
                     except HTTPException:
-                        yield f"event: error\ndata: {json.dumps({'detail': 'Streaming failed'})}\n\n"
+                        yield _format_sse_error("Streaming failed")
+                        yield "data: [DONE]\n\n"
                         return
                     except ValueError:
-                        yield f"event: error\ndata: {json.dumps({'detail': 'LLM gateway error'})}\n\n"
+                        yield _format_sse_error("LLM gateway error")
+                        yield "data: [DONE]\n\n"
                         return
                     except Exception as exc:
                         logger.warning("CEO streaming tool call failed: %s", exc)
-                        yield f"event: error\ndata: {json.dumps({'detail': 'Streaming failed'})}\n\n"
+                        yield _format_sse_error("Streaming failed")
+                        yield "data: [DONE]\n\n"
                         return
 
                     final_message = cast(str, result.get("final_message", ""))
@@ -2084,7 +2130,8 @@ async def agent_chat_stream(
                         return
 
                     if not isinstance(tool_thread_id, int):
-                        yield f"event: error\ndata: {json.dumps({'detail': 'Streaming failed'})}\n\n"
+                        yield _format_sse_error("Streaming failed")
+                        yield "data: [DONE]\n\n"
                         return
 
                     yield _format_sse_chunk("【调用工具】正在委派任务...")
@@ -2137,7 +2184,7 @@ async def agent_chat_stream(
             llm_gateway_url = (os.getenv("LLM_GATEWAY_URL") or "http://llm-gateway:7300").strip()
             
             payload = {
-                "model": "ark-code-latest",
+                "model": _resolve_default_llm_model(),
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": body.message},
@@ -2156,7 +2203,8 @@ async def agent_chat_stream(
                 ) as response:
                     if response.status_code >= 400:
                         error_detail = f"LLM gateway error: {response.status_code}"
-                        yield f"event: error\ndata: {json.dumps({'detail': error_detail})}\n\n"
+                        yield _format_sse_error(error_detail)
+                        yield "data: [DONE]\n\n"
                         return
                     
                     async for chunk in response.aiter_text():
@@ -2165,13 +2213,16 @@ async def agent_chat_stream(
                             yield chunk
             
         except HTTPException as e:
-            yield f"event: error\ndata: {json.dumps({'detail': e.detail})}\n\n"
+            yield _format_sse_error(str(e.detail))
+            yield "data: [DONE]\n\n"
         except ValueError as e:
             # LLM config error
-            yield f"event: error\ndata: {json.dumps({'detail': str(e)})}\n\n"
+            yield _format_sse_error(str(e))
+            yield "data: [DONE]\n\n"
         except Exception as e:
             logger.warning("Streaming chat error: %s", e)
-            yield f"event: error\ndata: {json.dumps({'detail': 'Streaming failed'})}\n\n"
+            yield _format_sse_error("Streaming failed")
+            yield "data: [DONE]\n\n"
 
     return StreamingResponse(
         generate_stream(),

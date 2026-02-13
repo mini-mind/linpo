@@ -330,8 +330,9 @@ def build_internal_headers() -> dict[str, str]:
 
 
 def call_llm_gateway(system_prompt: str, user_message: str) -> str:
+    default_model = (os.getenv("LLM_DEFAULT_MODEL") or "ark-code-latest").strip() or "ark-code-latest"
     payload = {
-        "model": "ark-code-latest",
+        "model": default_model,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
