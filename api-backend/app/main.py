@@ -2009,16 +2009,128 @@ async def agent_chat_stream(
     user_id = cast(int, getattr(user, "id"))
     user_tenant_id = getattr(user, "tenant_id")
 
-    # CEO streaming is not supported yet - return 501 to trigger frontend fallback
-    if agent_type == "ceo":
-        raise HTTPException(status_code=501, detail="CEO streaming not supported yet")
-
     async def generate_stream():
+        def _format_sse_chunk(content: str) -> str:
+            payload = {"choices": [{"delta": {"content": content}, "index": 0}]}
+            return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
         try:
             # Validate agent type
             if agent_type not in {"pm", "engineer", "ceo"}:
                 yield f"event: error\ndata: {json.dumps({'detail': 'Agent not found'})}\n\n"
                 return
+
+            if agent_type == "ceo":
+                if user_tenant_id is None:
+                    tenant = models.Tenant()
+                    setattr(tenant, "name", f"User {user_id}")
+                    raw_api_key = secrets.token_urlsafe(32)
+                    setattr(tenant, "api_key_hash", auth.hash_api_key(raw_api_key))
+                    session.add(tenant)
+                    session.commit()
+                    tenant_id_int = cast(int, getattr(tenant, "id"))
+                    setattr(user, "tenant_id", tenant_id_int)
+                    session.commit()
+                else:
+                    tenant_id_int = cast(int, user_tenant_id)
+                    tenant = session.query(models.Tenant).filter(models.Tenant.id == tenant_id_int).first()
+                    if not tenant:
+                        yield f"event: error\ndata: {json.dumps({'detail': 'Tenant not found'})}\n\n"
+                        return
+
+                message_lower = body.message.lower()
+                trending_keywords = [
+                    "github trending", "github trend", "top repo", "popular repo",
+                    "github 热门", "github 趋势", "热门仓库", "流行仓库", "今日热门", "今日趋势"
+                ]
+                is_github_trending = any(keyword in message_lower for keyword in trending_keywords)
+                if not is_github_trending and "github" in message_lower:
+                    growth_indicators = ["trending", "热门", "趋势", "增长", "stars", "star"]
+                    is_github_trending = any(indicator in message_lower for indicator in growth_indicators)
+
+                if is_github_trending:
+                    system_prompt = _build_ceo_prompt_with_a2a_skills()
+                    tool_messages: list[dict[str, object]] = [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": body.message}
+                    ]
+
+                    try:
+                        result = await _call_llm_gateway_with_tools(
+                            session,
+                            tenant_id_int,
+                            messages=tool_messages,
+                            tools=_build_a2a_tools_schema(),
+                        )
+                    except HTTPException:
+                        yield f"event: error\ndata: {json.dumps({'detail': 'Streaming failed'})}\n\n"
+                        return
+                    except ValueError:
+                        yield f"event: error\ndata: {json.dumps({'detail': 'LLM gateway error'})}\n\n"
+                        return
+                    except Exception as exc:
+                        logger.warning("CEO streaming tool call failed: %s", exc)
+                        yield f"event: error\ndata: {json.dumps({'detail': 'Streaming failed'})}\n\n"
+                        return
+
+                    final_message = cast(str, result.get("final_message", ""))
+                    tool_thread_id = result.get("thread_id")
+                    delegated_agents = cast(list[str], result.get("delegated_agents", []))
+
+                    if tool_thread_id is None:
+                        if final_message:
+                            yield _format_sse_chunk(final_message)
+                        yield "data: [DONE]\n\n"
+                        return
+
+                    if not isinstance(tool_thread_id, int):
+                        yield f"event: error\ndata: {json.dumps({'detail': 'Streaming failed'})}\n\n"
+                        return
+
+                    yield _format_sse_chunk("【调用工具】正在委派任务...")
+
+                    wait_for_agents = {
+                        agent_id.strip()
+                        for agent_id in delegated_agents
+                        if isinstance(agent_id, str) and agent_id.strip()
+                    }
+                    seen_agents: set[str] = set()
+                    seen_message_ids: set[int] = set()
+                    start = time.monotonic()
+                    poll_interval = 0.5
+                    timeout_sec = 60
+                    while time.monotonic() - start < timeout_sec:
+                        session.expire_all()
+                        query = session.query(models.A2AMessage).filter(
+                            models.A2AMessage.thread_id == tool_thread_id,
+                            models.A2AMessage.tenant_id == tenant_id_int,
+                            models.A2AMessage.role == "agent",
+                        )
+                        if wait_for_agents:
+                            query = query.filter(models.A2AMessage.agent_id.in_(list(wait_for_agents)))
+                        a2a_messages = query.order_by(models.A2AMessage.id.asc()).all()
+
+                        for msg in a2a_messages:
+                            msg_id = getattr(msg, "id")
+                            if not isinstance(msg_id, int) or msg_id in seen_message_ids:
+                                continue
+                            seen_message_ids.add(msg_id)
+                            agent_id = getattr(msg, "agent_id")
+                            if isinstance(agent_id, str) and agent_id.strip():
+                                seen_agents.add(agent_id)
+                            content = cast(str, getattr(msg, "content"))
+                            if content:
+                                yield _format_sse_chunk(content)
+
+                        if wait_for_agents and wait_for_agents.issubset(seen_agents):
+                            break
+                        if not wait_for_agents and seen_message_ids:
+                            break
+
+                        await asyncio.sleep(poll_interval)
+
+                    yield "data: [DONE]\n\n"
+                    return
 
             # Build prompt and call LLM gateway with streaming
             system_prompt = _build_agent_prompt(agent_type)

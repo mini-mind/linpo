@@ -18,71 +18,11 @@
         gap: 8px;
       }
 
-      .world-menu-bar {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        padding: 6px;
-        border-radius: 999px;
-        background: rgba(10, 12, 16, 0.56);
-        border: 1px solid rgba(255, 255, 255, 0.14);
-        box-shadow: 0 18px 54px rgba(0, 0, 0, 0.34);
-        backdrop-filter: blur(10px) saturate(1.25);
-        -webkit-backdrop-filter: blur(10px) saturate(1.25);
-      }
-
       .world-menu-trigger {
         display: inline-flex;
         align-items: center;
         gap: 10px;
         white-space: nowrap;
-      }
-
-      .world-menu-bar .world-menu-trigger {
-        padding: 8px 12px;
-        border-radius: 999px;
-        background: transparent;
-        border: 1px solid transparent;
-        color: rgba(255, 255, 255, 0.92);
-      }
-
-      .world-menu-bar .world-menu-trigger:hover {
-        background: rgba(255, 255, 255, 0.08);
-        border-color: rgba(255, 255, 255, 0.12);
-      }
-
-      .world-menu-bar .world-menu-trigger:active {
-        transform: translateY(1px);
-      }
-
-      .world-menu-connection {
-        appearance: none;
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        padding: 8px 12px;
-        border-radius: 999px;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        background: rgba(255, 255, 255, 0.06);
-        color: rgba(255, 255, 255, 0.84);
-        font-family: var(--font-display);
-        font-size: 11px;
-        text-transform: uppercase;
-        letter-spacing: 0.14em;
-        cursor: pointer;
-      }
-
-      .world-menu-connection:hover {
-        background: rgba(255, 255, 255, 0.1);
-      }
-
-      .world-menu-connection:active {
-        transform: translateY(1px);
-      }
-
-      .world-menu-connection:focus-visible {
-        outline: 2px solid rgba(255, 255, 255, 0.35);
-        outline-offset: 2px;
       }
 
       .world-menu-status-dot {
@@ -93,8 +33,11 @@
         background: rgba(255, 255, 255, 0.28);
       }
 
-      .world-menu-status-text {
-        line-height: 1;
+      .world-menu-connection-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        justify-self: end;
       }
 
       .world-menu-status-dot[data-status="connected"] {
@@ -215,24 +158,17 @@
 
         <div class="world-ui" aria-label="World controls">
           <div id="world-menu" class="world-menu" aria-label="World menu">
-            <div class="world-menu-bar" role="group" aria-label="World menu and status">
-              <button
-                id="world-menu-button"
-                type="button"
-                class="btn btn-ghost world-menu-trigger"
-                aria-label="Menu"
-                aria-haspopup="menu"
-                aria-expanded="false"
-                aria-controls="world-menu-dropdown"
-              >
-                <span id="world-menu-button-label">Menu</span>
-              </button>
-
-              <button id="world-status-button" type="button" class="world-menu-connection" aria-label="Connection status">
-                <span id="menu-status-dot" class="world-menu-status-dot" data-status="idle" aria-hidden="true"></span>
-                <span id="menu-status-pill-value" class="world-menu-status-text" data-status="idle">Idle</span>
-              </button>
-            </div>
+            <button
+              id="world-menu-button"
+              type="button"
+              class="btn btn-ghost world-menu-trigger"
+              aria-label="Menu"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="world-menu-dropdown"
+            >
+              <span id="world-menu-button-label">Menu</span>
+            </button>
 
             <div id="world-menu-dropdown" class="panel world-menu-dropdown" role="menu" hidden>
               <button id="menu-lang-toggle" type="button" class="world-menu-item" role="menuitem">
@@ -242,7 +178,10 @@
 
               <button id="menu-connection" type="button" class="world-menu-item" role="menuitem">
                 <span id="menu-connection-label">Connection</span>
-                <span id="menu-status-value" class="world-menu-value" data-status="idle">Idle</span>
+                <span class="world-menu-connection-status" aria-label="Connection status">
+                  <span id="menu-status-dot" class="world-menu-status-dot" data-status="idle" aria-hidden="true"></span>
+                  <span id="menu-status-value" class="world-menu-value" data-status="idle">Idle</span>
+                </span>
               </button>
 
               <div class="world-menu-sep" role="separator" aria-hidden="true"></div>
@@ -518,6 +457,17 @@
             "chat.hide": "Hide",
             "chat.a2aError": "Failed to load details.",
 
+            "kanban.todo": "TODO",
+            "kanban.doing": "DOING",
+            "kanban.done": "DONE",
+            "kanban.failed": "FAILED",
+
+            "agentState.idle": "Idle",
+            "agentState.thinking": "Thinking",
+            "agentState.tooling": "Tooling",
+            "agentState.waiting": "Waiting",
+            "agentState.error": "Error",
+
             "world.missingWsUrl": "Missing WebSocket URL.",
             "world.connected": "Connected.",
             "world.disconnected": "Disconnected.",
@@ -608,6 +558,17 @@
             "chat.view": "\u67e5\u770b",
             "chat.hide": "\u9690\u85cf",
             "chat.a2aError": "\u52a0\u8f7d\u8be6\u60c5\u5931\u8d25\u3002",
+
+            "kanban.todo": "\u5f85\u529e",
+            "kanban.doing": "\u8fdb\u884c\u4e2d",
+            "kanban.done": "\u5b8c\u6210",
+            "kanban.failed": "\u5931\u8d25",
+
+            "agentState.idle": "\u7a7a\u95f2",
+            "agentState.thinking": "\u601d\u8003\u4e2d",
+            "agentState.tooling": "\u8c03\u7528\u5de5\u5177\u4e2d",
+            "agentState.waiting": "\u7b49\u5f85\u4e2d",
+            "agentState.error": "\u9519\u8bef",
 
             "world.missingWsUrl": "\u7f3a\u5c11 WebSocket \u5730\u5740\u3002",
             "world.connected": "\u5df2\u8fde\u63a5\u3002",
@@ -991,8 +952,6 @@
           let menuConnection;
           let menuStatusValue;
           let menuStatusDot;
-          let menuStatusPillValue;
-          let menuStatusButton;
 
           let statusLegendModal;
           let statusLegendDialog;
@@ -1002,6 +961,7 @@
           let scene;
           let camera;
           let renderer;
+          let makeCanvasLabelTexture;
           let agents;
           let labelPlanes;
           let monitorScreens;
@@ -1009,13 +969,14 @@
 
           let raycaster;
           let pointerNdc;
-          let pointerDownId = null;
-          let pointerDownX = 0;
-          let pointerDownY = 0;
+           let pointerDownId = null;
+           let pointerDownX = 0;
+           let pointerDownY = 0;
 
-          let interactiveRoots;
-          let kanbanRoot;
-          let kanbanZoomed = false;
+           let interactiveRoots;
+           let kanbanRoot;
+           let kanbanBoardMesh;
+           let kanbanZoomed = false;
 
            let chatPanel;
            let chatDialog;
@@ -1051,6 +1012,80 @@
           const tmpBox = new THREE.Box3();
           const tmpSize = new THREE.Vector3();
 
+          // Agent nameplates: keep stable mesh refs so we can update textures in place.
+          const agentNameplateByType = new Map();
+          const agentAccentByType = new Map();
+          const agentWorkStateByType = new Map();
+
+          // Per-agent task counters shown on the wall kanban board.
+          // Default to zeros until /ws/world sends agent.status frames with counts.
+          const kanbanCountsByType = new Map([
+            ["pm", { todo: 0, doing: 0, done: 0, failed: 0 }],
+            ["engineer", { todo: 0, doing: 0, done: 0, failed: 0 }],
+            ["ceo", { todo: 0, doing: 0, done: 0, failed: 0 }]
+          ]);
+
+          // Assigned during init once renderer/materials exist.
+          let makeKanbanStatusTexture = null;
+          let updateKanbanBoard = null;
+          let kanbanStatusTextureKey = "";
+
+          const normalizeAgentWorkState = (raw) => {
+            const s = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+            if (!s) return "idle";
+            if (s === "idle") return "idle";
+            if (s === "thinking" || s === "think") return "thinking";
+            if (
+              s === "tooling" ||
+              s === "tool" ||
+              s === "tool_call" ||
+              s === "tool-call" ||
+              s === "tool_calling" ||
+              s === "calling_tool" ||
+              s === "calling-tools" ||
+              s === "calling_tools"
+            ) {
+              return "tooling";
+            }
+            if (s === "waiting" || s === "wait" || s === "blocked") return "waiting";
+            if (s === "error" || s === "failed" || s === "failure") return "error";
+            return "idle";
+          };
+
+          const updateAgentNameplate = (agentType) => {
+            const type = parseChatAgentType(agentType);
+            if (!type) return;
+            const mesh = agentNameplateByType.get(type);
+            if (!mesh) return;
+            const mat = mesh.material;
+            if (!mat || typeof makeCanvasLabelTexture !== "function") return;
+
+            const name = getChatAgentLabel(type);
+            const accentHex = agentAccentByType.get(type) || "#ffffff";
+            const state = normalizeAgentWorkState(agentWorkStateByType.get(type));
+            const statusText = t(`agentState.${state}`);
+
+            const prev = mat.map;
+            mat.map = makeCanvasLabelTexture(name, statusText, accentHex);
+            mat.needsUpdate = true;
+            if (prev && prev !== mat.map && typeof prev.dispose === "function") {
+              prev.dispose();
+            }
+          };
+
+          const setAgentWorkState = (agentType, rawState) => {
+            const type = parseChatAgentType(agentType);
+            if (!type) return;
+            agentWorkStateByType.set(type, normalizeAgentWorkState(rawState));
+            updateAgentNameplate(type);
+          };
+
+          const refreshAgentNameplates = () => {
+            for (const type of agentNameplateByType.keys()) {
+              updateAgentNameplate(type);
+            }
+          };
+
           // Label billboarding: labels are children of rotated agent roots (root.lookAt(...)),
           // so we must convert the desired WORLD quaternion into the label's LOCAL quaternion.
           const tmpLabelWorldQuat = new THREE.Quaternion();
@@ -1065,9 +1100,7 @@
             statusLower === "error";
 
           const updateConnectionStatus = (status) => {
-            if (!status || (!menuStatusValue && !menuStatusPillValue)) {
-              return;
-            }
+            if (!status || (!menuStatusValue && !menuStatusDot)) return;
 
             const statusLower = String(status).trim().toLowerCase();
             if (!isRecognizedConnectionStatus(statusLower)) {
@@ -1090,13 +1123,7 @@
                         ? "status.idle"
                         : null;
             const nextLabel = labelKey ? t(labelKey) : statusLower;
-            if (menuStatusValue) {
-              menuStatusValue.textContent = nextLabel;
-            }
-            if (menuStatusPillValue) {
-              menuStatusPillValue.setAttribute("data-status", statusLower);
-              menuStatusPillValue.textContent = nextLabel;
-            }
+            if (menuStatusValue) menuStatusValue.textContent = nextLabel;
 
             if (menuStatusDot) {
               menuStatusDot.setAttribute("data-status", statusLower);
@@ -1107,6 +1134,190 @@
             // Intentionally keep UI minimal: show status only (no event drawer).
             updateConnectionStatus(status);
             void message;
+          };
+
+          const handleAgentStatusFrame = (payload) => {
+            const data = payload && typeof payload === "object" ? payload : null;
+            if (!data) return;
+
+            const applyOne = (agentType, entry) => {
+              const state =
+                typeof entry === "string"
+                  ? entry
+                  : entry && typeof entry === "object"
+                    ? entry.state ?? entry.status ?? entry.work_state ?? entry.workState
+                    : null;
+              setAgentWorkState(agentType, state);
+            };
+
+            const agentsPayload = data.agents;
+            if (Array.isArray(agentsPayload)) {
+              agentsPayload.forEach((entry) => {
+                if (!entry || typeof entry !== "object") return;
+                const type = entry.agent_type ?? entry.agentType ?? entry.type ?? entry.id ?? entry.name;
+                applyOne(type, entry);
+              });
+              return;
+            }
+
+            if (agentsPayload && typeof agentsPayload === "object") {
+              Object.entries(agentsPayload).forEach(([key, value]) => {
+                applyOne(key, value);
+              });
+              return;
+            }
+
+            // Some backends report a single agent status directly.
+            const directType = data.agent_type ?? data.agentType ?? data.type ?? data.id ?? data.name;
+            if (directType) {
+              applyOne(directType, data);
+              return;
+            }
+
+            // Or nested under `agent`.
+            if (data.agent && typeof data.agent === "object") {
+              const nestedType = data.agent.agent_type ?? data.agent.agentType ?? data.agent.type ?? data.agent.id ?? data.agent.name;
+              applyOne(nestedType, data.agent);
+            }
+          };
+
+          const normalizeKanbanBucket = (raw) => {
+            const s = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+            if (!s) return null;
+            if (s === "todo" || s === "to_do" || s === "to-do" || s === "backlog") return "todo";
+            if (s === "doing" || s === "in_progress" || s === "in-progress" || s === "inprogress" || s === "running") {
+              return "doing";
+            }
+            if (s === "done" || s === "completed" || s === "complete" || s === "success") return "done";
+            if (s === "failed" || s === "failure" || s === "error" || s === "errored") return "failed";
+            return null;
+          };
+
+          const coerceCount = (value) => {
+            if (typeof value === "number") return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+            if (typeof value === "string" && value.trim() && /^\d+$/.test(value.trim())) {
+              const n = Number(value.trim());
+              return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+            }
+            return 0;
+          };
+
+          const extractKanbanCounts = (raw) => {
+            if (!raw || typeof raw !== "object") return null;
+
+            // Direct counters.
+            const direct = {
+              todo: raw.todo ?? raw.to_do ?? raw.toDo,
+              doing: raw.doing ?? raw.in_progress ?? raw.inProgress,
+              done: raw.done ?? raw.completed,
+              failed: raw.failed ?? raw.error ?? raw.errors
+            };
+            if (Object.values(direct).some((v) => v != null)) {
+              return {
+                todo: coerceCount(direct.todo),
+                doing: coerceCount(direct.doing),
+                done: coerceCount(direct.done),
+                failed: coerceCount(direct.failed)
+              };
+            }
+
+            // Nested counters.
+            const nested =
+              raw.kanban ??
+              raw.kanban_counts ??
+              raw.kanbanCounts ??
+              raw.task_counts ??
+              raw.taskCounts ??
+              raw.counters ??
+              raw.counts;
+
+            if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+              const candidate = {
+                todo: nested.todo ?? nested.to_do ?? nested.toDo,
+                doing: nested.doing ?? nested.in_progress ?? nested.inProgress,
+                done: nested.done ?? nested.completed,
+                failed: nested.failed ?? nested.error ?? nested.errors
+              };
+              if (Object.values(candidate).some((v) => v != null)) {
+                return {
+                  todo: coerceCount(candidate.todo),
+                  doing: coerceCount(candidate.doing),
+                  done: coerceCount(candidate.done),
+                  failed: coerceCount(candidate.failed)
+                };
+              }
+            }
+
+            // Task list -> counts.
+            const maybeList =
+              (Array.isArray(raw.tasks) && raw.tasks) ||
+              (Array.isArray(raw.items) && raw.items) ||
+              (Array.isArray(raw.cards) && raw.cards) ||
+              (Array.isArray(raw.todos) && raw.todos);
+            if (Array.isArray(maybeList)) {
+              const out = { todo: 0, doing: 0, done: 0, failed: 0 };
+              maybeList.forEach((task) => {
+                if (!task) return;
+                const status =
+                  typeof task === "string"
+                    ? task
+                    : task && typeof task === "object"
+                      ? task.status ?? task.state ?? task.bucket ?? task.stage
+                      : null;
+                const bucket = normalizeKanbanBucket(status);
+                if (!bucket) return;
+                out[bucket] += 1;
+              });
+              return out;
+            }
+
+            return null;
+          };
+
+          // Hook point: consume /ws/world agent.status frames.
+          const applyAgentStatusUpdate = (data) => {
+            handleAgentStatusFrame(data);
+
+            const payload = data && typeof data === "object" ? data : null;
+            if (!payload) return;
+
+            const ingest = (agentType, rawAgentData) => {
+              const type = parseChatAgentType(agentType);
+              if (!type) return;
+              const counts = extractKanbanCounts(rawAgentData);
+              if (!counts) return;
+              kanbanCountsByType.set(type, {
+                todo: coerceCount(counts.todo),
+                doing: coerceCount(counts.doing),
+                done: coerceCount(counts.done),
+                failed: coerceCount(counts.failed)
+              });
+            };
+
+            const agentsPayload = payload.agents;
+            if (Array.isArray(agentsPayload)) {
+              agentsPayload.forEach((entry) => {
+                if (!entry || typeof entry !== "object") return;
+                const type = entry.agent_type ?? entry.agentType ?? entry.type ?? entry.id ?? entry.name;
+                ingest(type, entry);
+              });
+            } else if (agentsPayload && typeof agentsPayload === "object") {
+              Object.entries(agentsPayload).forEach(([type, value]) => {
+                ingest(type, value);
+              });
+            } else {
+              const type = payload.agent_type ?? payload.agentType ?? payload.type;
+              if (type) {
+                ingest(type, payload);
+              } else if (payload.agent && typeof payload.agent === "object") {
+                const nestedType = payload.agent.agent_type ?? payload.agent.agentType ?? payload.agent.type;
+                ingest(nestedType, payload.agent);
+              }
+            }
+
+            if (typeof updateKanbanBoard === "function") {
+              updateKanbanBoard();
+            }
           };
 
           const setMenuOpen = (open) => {
@@ -1915,6 +2126,7 @@
                        throw err;
                      }
 
+
                       if (maybeJson && typeof maybeJson === "object") {
                         const contentDelta = maybeJson?.choices?.[0]?.delta?.content;
                         if (typeof contentDelta === "string" && contentDelta) {
@@ -1927,20 +2139,20 @@
                           }
                         }
 
-                       // Some backends may send final metadata alongside chunks.
-                       if (maybeJson.citations || maybeJson.tool || maybeJson.a2a_summary || maybeJson.a2a_thread_id) {
-                         streamMeta = maybeJson;
-                       }
+                        // Some backends may send final metadata alongside chunks.
+                        if (maybeJson.citations || maybeJson.tool || maybeJson.a2a_summary || maybeJson.a2a_thread_id) {
+                          streamMeta = maybeJson;
+                        }
 
-                       const errMsg = maybeJson?.error?.message;
-                       if (typeof errMsg === "string" && errMsg.trim()) {
-                         const err = new Error("Stream payload error");
-                         err.code = "STREAM_PAYLOAD_ERROR";
-                         err.userMessage = formatStreamError(errMsg);
-                         throw err;
-                       }
-                       return;
-                     }
+                        const errMsg = maybeJson?.error?.message;
+                        if (typeof errMsg === "string" && errMsg.trim()) {
+                          const err = new Error("Stream payload error");
+                          err.code = "STREAM_PAYLOAD_ERROR";
+                          err.userMessage = formatStreamError(errMsg);
+                          throw err;
+                        }
+                        return;
+                      }
 
                      // Plain string tokens/phrases.
                      append(data);
@@ -2049,6 +2261,10 @@
 
               try {
                 const parsed = JSON.parse(event.data);
+                if (parsed && typeof parsed === "object" && parsed.type === "agent.status") {
+                  // Expected shape: {type:"agent.status", data:{...}}; tolerate top-level payloads too.
+                  applyAgentStatusUpdate(parsed.data ?? parsed);
+                }
                 status = parsed.status || parsed.state || parsed.type || status;
                 payload = parsed.message ?? parsed.event ?? parsed.data ?? event.data;
                 if (payload && typeof payload === "object") {
@@ -2110,30 +2326,28 @@
                return;
              }
 
-            canvas = document.getElementById("scene-canvas");
+             canvas = document.getElementById("scene-canvas");
 
-            menuRoot = document.getElementById("world-menu");
-            menuButton = document.getElementById("world-menu-button");
-            menuDropdown = document.getElementById("world-menu-dropdown");
-            menuLangToggle = document.getElementById("menu-lang-toggle");
-            menuConnection = document.getElementById("menu-connection");
-            menuStatusValue = document.getElementById("menu-status-value");
-            menuStatusDot = document.getElementById("menu-status-dot");
-            menuStatusPillValue = document.getElementById("menu-status-pill-value");
-            menuStatusButton = document.getElementById("world-status-button");
+             menuRoot = document.getElementById("world-menu");
+             menuButton = document.getElementById("world-menu-button");
+             menuDropdown = document.getElementById("world-menu-dropdown");
+             menuLangToggle = document.getElementById("menu-lang-toggle");
+             menuConnection = document.getElementById("menu-connection");
+             menuStatusValue = document.getElementById("menu-status-value");
+             menuStatusDot = document.getElementById("menu-status-dot");
 
-            statusLegendModal = document.getElementById("status-legend-modal");
-            statusLegendDialog = statusLegendModal ? statusLegendModal.querySelector(".modal-dialog") : null;
-            statusLegendCloseTargets = statusLegendModal ? statusLegendModal.querySelectorAll("[data-status-legend-close]") : null;
+             statusLegendModal = document.getElementById("status-legend-modal");
+             statusLegendDialog = statusLegendModal ? statusLegendModal.querySelector(".modal-dialog") : null;
+             statusLegendCloseTargets = statusLegendModal ? statusLegendModal.querySelectorAll("[data-status-legend-close]") : null;
 
              chatPanel = document.getElementById("chat-panel");
              chatDialog = chatPanel ? chatPanel.querySelector(".modal-dialog") : null;
              chatBackdrop = document.getElementById("chat-backdrop");
              chatTitle = document.getElementById("chat-title");
              chatMessages = document.getElementById("chat-messages");
-              chatForm = document.getElementById("chat-form");
-              chatInput = document.getElementById("chat-input");
-              chatClose = document.getElementById("chat-close");
+             chatForm = document.getElementById("chat-form");
+             chatInput = document.getElementById("chat-input");
+             chatClose = document.getElementById("chat-close");
 
              if (!canvas || !window.THREE) {
                return;
@@ -2142,45 +2356,40 @@
              // Ground plane for both scene placement and camera panning math.
              const GROUND_Y = -0.5;
 
-            setMenuOpen(false);
-            updateConnectionStatus("idle");
+             setMenuOpen(false);
+             updateConnectionStatus("idle");
 
-            if (menuButton && !menuButton.hasAttribute("data-menu-bound")) {
-              menuButton.setAttribute("data-menu-bound", "");
-              menuButton.addEventListener("click", (evt) => {
-                evt.preventDefault();
-                toggleMenu();
-              });
-            }
+             if (menuButton && !menuButton.hasAttribute("data-menu-bound")) {
+               menuButton.setAttribute("data-menu-bound", "");
+               menuButton.addEventListener("click", (evt) => {
+                 evt.preventDefault();
+                 toggleMenu();
+               });
+             }
 
-            if (menuLangToggle && !menuLangToggle.hasAttribute("data-lang-bound")) {
-              menuLangToggle.setAttribute("data-lang-bound", "");
-              menuLangToggle.addEventListener("click", (evt) => {
-                evt.preventDefault();
-                const next = getLanguage() === "zh" ? "en" : "zh";
-                setLanguage(next);
-                applyI18n();
-                closeMenu({ focusButton: true });
-              });
-            }
+             if (menuLangToggle && !menuLangToggle.hasAttribute("data-lang-bound")) {
+               menuLangToggle.setAttribute("data-lang-bound", "");
+               menuLangToggle.addEventListener("click", (evt) => {
+                 evt.preventDefault();
+                 const next = getLanguage() === "zh" ? "en" : "zh";
+                 setLanguage(next);
+                 applyI18n();
+                 refreshAgentNameplates();
+                 if (typeof updateKanbanBoard === "function") {
+                   updateKanbanBoard();
+                 }
+                 closeMenu({ focusButton: true });
+               });
+             }
 
-            if (menuConnection && !menuConnection.hasAttribute("data-legend-bound")) {
-              menuConnection.setAttribute("data-legend-bound", "");
-              menuConnection.addEventListener("click", (evt) => {
-                evt.preventDefault();
-                closeMenu();
-                openStatusLegend();
-              });
-            }
-
-            if (menuStatusButton && !menuStatusButton.hasAttribute("data-legend-bound")) {
-              menuStatusButton.setAttribute("data-legend-bound", "");
-              menuStatusButton.addEventListener("click", (evt) => {
-                evt.preventDefault();
-                closeMenu();
-                openStatusLegend();
-              });
-            }
+             if (menuConnection && !menuConnection.hasAttribute("data-legend-bound")) {
+               menuConnection.setAttribute("data-legend-bound", "");
+               menuConnection.addEventListener("click", (evt) => {
+                 evt.preventDefault();
+                 closeMenu();
+                 openStatusLegend();
+               });
+             }
 
             if (statusLegendCloseTargets) {
               statusLegendCloseTargets.forEach((node) => {
@@ -2238,18 +2447,18 @@
                });
              }
 
-              scene = new THREE.Scene();
-              // Warm, bright office atmosphere (avoid near-black defaults).
-              scene.background = new THREE.Color(0xf3efe6);
-              scene.fog = new THREE.Fog(0xf3efe6, 18, 62);
+             scene = new THREE.Scene();
+             // Warm, bright office atmosphere (avoid near-black defaults).
+             scene.background = new THREE.Color(0xf3efe6);
+             scene.fog = new THREE.Fog(0xf3efe6, 18, 62);
 
-              camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
-              // Default camera: pulled-back top-down view (俯视).
-              // If the view gets close to straight-down, keep a non-collinear up-vector.
-              camera.up.set(0, 0, -1);
-              camera.position.set(0, GROUND_Y + 20.0, 3.6);
-              cameraTarget.set(0, GROUND_Y + 0.7, -1.0);
-              camera.lookAt(cameraTarget);
+             camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+             // Default camera: pulled-back top-down view (俯视).
+             // If the view gets close to straight-down, keep a non-collinear up-vector.
+             camera.up.set(0, 0, -1);
+             camera.position.set(0, GROUND_Y + 18.0, 7.8);
+             cameraTarget.set(0, GROUND_Y + 0.7, -1.6);
+             camera.lookAt(cameraTarget);
 
             renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
             renderer.setPixelRatio(window.devicePixelRatio || 1);
@@ -2265,17 +2474,17 @@
              renderer.toneMapping = THREE.ACESFilmicToneMapping;
              renderer.toneMappingExposure = 1.12;
 
-              // Camera controls (pan + wheel zoom). Keep cameraTarget stable and move it with the camera.
-              const PAN_PLANE = new THREE.Plane(new THREE.Vector3(0, 1, 0), -GROUND_Y); // y = GROUND_Y
-              const panStartHit = new THREE.Vector3();
-              const panNowHit = new THREE.Vector3();
-              const panStartCamPos = new THREE.Vector3();
-              const panStartTarget = new THREE.Vector3();
-              const dollyDir = new THREE.Vector3();
-              let panRayCamera = null;
-              let panPointerId = null;
-              let panArmed = false;
-              let panActive = false;
+             // Camera controls (pan + wheel zoom). Keep cameraTarget stable and move it with the camera.
+             const PAN_PLANE = new THREE.Plane(new THREE.Vector3(0, 1, 0), -GROUND_Y); // y = GROUND_Y
+             const panStartHit = new THREE.Vector3();
+             const panNowHit = new THREE.Vector3();
+             const panStartCamPos = new THREE.Vector3();
+             const panStartTarget = new THREE.Vector3();
+             const dollyDir = new THREE.Vector3();
+             let panRayCamera = null;
+             let panPointerId = null;
+             let panArmed = false;
+             let panActive = false;
 
              const CAMERA_MIN_Y = GROUND_Y + 2.2;
              const CAMERA_MAX_Y = GROUND_Y + 28.0;
@@ -2299,55 +2508,266 @@
                 return Boolean(raycaster.ray.intersectPlane(PAN_PLANE, outVec3));
               };
 
-             const makeCanvasLabelTexture = (text, accentHex) => {
-               const canvasEl = document.createElement("canvas");
-               canvasEl.width = 384;
-               canvasEl.height = 192;
-              const ctx = canvasEl.getContext("2d");
-              if (!ctx) {
-                return new THREE.Texture();
-              }
+              makeCanvasLabelTexture = (name, statusTextOrAccent, maybeAccentHex) => {
+                const hasStatus = typeof maybeAccentHex === "string";
+                const statusText = hasStatus ? statusTextOrAccent : "";
+                const accentHex = hasStatus ? maybeAccentHex : statusTextOrAccent;
 
-              const w = canvasEl.width;
-              const h = canvasEl.height;
-              ctx.clearRect(0, 0, w, h);
+                const canvasEl = document.createElement("canvas");
+                const baseW = 384;
+                const baseH = 192;
+                const dpr = Math.min(2, window.devicePixelRatio || 1);
+                canvasEl.width = Math.round(baseW * dpr);
+                canvasEl.height = Math.round(baseH * dpr);
 
-              // Backplate with a subtle highlight strip.
-              ctx.fillStyle = "rgba(10, 12, 16, 0.80)";
-              ctx.strokeStyle = "rgba(255, 255, 255, 0.16)";
-              ctx.lineWidth = 6;
-              const r = 26;
-              ctx.beginPath();
-              ctx.moveTo(r, 10);
-              ctx.arcTo(w - 10, 10, w - 10, h - 10, r);
-              ctx.arcTo(w - 10, h - 10, 10, h - 10, r);
-              ctx.arcTo(10, h - 10, 10, 10, r);
-              ctx.arcTo(10, 10, w - 10, 10, r);
-              ctx.closePath();
-              ctx.fill();
-              ctx.stroke();
+                const ctx = canvasEl.getContext("2d");
+                if (!ctx) {
+                  return new THREE.Texture();
+                }
 
-              ctx.fillStyle = accentHex;
-              ctx.fillRect(18, 18, 12, h - 36);
+                // Draw in CSS-pixel space, but keep a higher-res backing store.
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-              ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
-              ctx.font = "700 56px system-ui, -apple-system, Segoe UI, sans-serif";
-              ctx.textBaseline = "middle";
-              ctx.fillText(String(text), 54, h / 2);
+                const w = baseW;
+                const h = baseH;
+                ctx.clearRect(0, 0, w, h);
 
-              const tex = new THREE.CanvasTexture(canvasEl);
-              if ("colorSpace" in tex && THREE.SRGBColorSpace) {
-                tex.colorSpace = THREE.SRGBColorSpace;
-              } else if ("encoding" in tex && THREE.sRGBEncoding) {
-                tex.encoding = THREE.sRGBEncoding;
-              }
-              tex.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
-              tex.needsUpdate = true;
-              return tex;
-            };
+                // Backplate with a subtle highlight strip.
+                ctx.fillStyle = "rgba(10, 12, 16, 0.80)";
+                ctx.strokeStyle = "rgba(255, 255, 255, 0.16)";
+                ctx.lineWidth = 6;
+                const r = 26;
+                ctx.beginPath();
+                ctx.moveTo(r, 10);
+                ctx.arcTo(w - 10, 10, w - 10, h - 10, r);
+                ctx.arcTo(w - 10, h - 10, 10, h - 10, r);
+                ctx.arcTo(10, h - 10, 10, 10, r);
+                ctx.arcTo(10, 10, w - 10, 10, r);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
 
-            const createLabelPlane = (text, accentHex) => {
-              const tex = makeCanvasLabelTexture(text, accentHex);
+                ctx.fillStyle = String(accentHex);
+                ctx.fillRect(18, 18, 12, h - 36);
+
+                const title = String(name ?? "");
+                const statusLine = typeof statusText === "string" ? statusText.trim() : String(statusText ?? "").trim();
+
+                if (statusLine) {
+                  // Two-line layout: name + work state.
+                  ctx.textBaseline = "alphabetic";
+                  ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
+                  ctx.font = "700 52px system-ui, -apple-system, Segoe UI, sans-serif";
+                  ctx.fillText(title, 54, 86);
+
+                  // Status line: smaller and slightly dimmer.
+                  ctx.fillStyle = "rgba(255, 255, 255, 0.72)";
+                  ctx.font = "600 36px system-ui, -apple-system, Segoe UI, sans-serif";
+                  ctx.fillText(statusLine, 54, 142);
+                } else {
+                  // Single line (used for kanban headers and other labels).
+                  ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
+                  ctx.font = "700 56px system-ui, -apple-system, Segoe UI, sans-serif";
+                  ctx.textBaseline = "middle";
+                  ctx.fillText(title, 54, h / 2);
+                }
+
+                const tex = new THREE.CanvasTexture(canvasEl);
+                if ("colorSpace" in tex && THREE.SRGBColorSpace) {
+                  tex.colorSpace = THREE.SRGBColorSpace;
+                } else if ("encoding" in tex && THREE.sRGBEncoding) {
+                  tex.encoding = THREE.sRGBEncoding;
+                }
+                tex.anisotropy = Math.min(4, renderer?.capabilities?.getMaxAnisotropy?.() ?? 1);
+                tex.needsUpdate = true;
+                return tex;
+              };
+
+              // Kanban board status grid (separate from nameplate textures).
+              makeKanbanStatusTexture = (statusByAgent) => {
+                const baseW = 1024;
+                const baseH = 520;
+                const dpr = Math.min(2, window.devicePixelRatio || 1);
+
+                if (!makeKanbanStatusTexture._canvas) {
+                  const canvasEl = document.createElement("canvas");
+                  canvasEl.width = Math.round(baseW * dpr);
+                  canvasEl.height = Math.round(baseH * dpr);
+                  const ctx = canvasEl.getContext("2d");
+                  makeKanbanStatusTexture._canvas = canvasEl;
+                  makeKanbanStatusTexture._ctx = ctx;
+
+                  const tex = new THREE.CanvasTexture(canvasEl);
+                  if ("colorSpace" in tex && THREE.SRGBColorSpace) {
+                    tex.colorSpace = THREE.SRGBColorSpace;
+                  } else if ("encoding" in tex && THREE.sRGBEncoding) {
+                    tex.encoding = THREE.sRGBEncoding;
+                  }
+                  tex.anisotropy = Math.min(4, renderer?.capabilities?.getMaxAnisotropy?.() ?? 1);
+                  tex.needsUpdate = true;
+                  makeKanbanStatusTexture._tex = tex;
+                }
+
+                const canvasEl = makeKanbanStatusTexture._canvas;
+                const ctx = makeKanbanStatusTexture._ctx;
+                const tex = makeKanbanStatusTexture._tex;
+                if (!canvasEl || !ctx || !tex) {
+                  return new THREE.Texture();
+                }
+
+                const getCounts = (agentType) => {
+                  if (statusByAgent instanceof Map) {
+                    return statusByAgent.get(agentType) || { todo: 0, doing: 0, done: 0, failed: 0 };
+                  }
+                  if (statusByAgent && typeof statusByAgent === "object") {
+                    return statusByAgent[agentType] || { todo: 0, doing: 0, done: 0, failed: 0 };
+                  }
+                  return { todo: 0, doing: 0, done: 0, failed: 0 };
+                };
+
+                const signature = [
+                  activeLanguage,
+                  ["pm", "engineer", "ceo"].map((type) => {
+                    const c = getCounts(type);
+                    return `${type}:${coerceCount(c.todo)}-${coerceCount(c.doing)}-${coerceCount(c.done)}-${coerceCount(c.failed)}`;
+                  })
+                ].join("|");
+                if (signature === kanbanStatusTextureKey) {
+                  return tex;
+                }
+                kanbanStatusTextureKey = signature;
+
+                // Draw in CSS-pixel space, but keep a higher-res backing store.
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                ctx.clearRect(0, 0, baseW, baseH);
+
+                // Backplate.
+                ctx.fillStyle = "rgba(10, 12, 16, 0.92)";
+                ctx.fillRect(0, 0, baseW, baseH);
+
+                // Subtle top gloss.
+                const gloss = ctx.createLinearGradient(0, 0, 0, 120);
+                gloss.addColorStop(0, "rgba(255, 255, 255, 0.10)");
+                gloss.addColorStop(1, "rgba(255, 255, 255, 0.00)");
+                ctx.fillStyle = gloss;
+                ctx.fillRect(0, 0, baseW, 140);
+
+                const pad = 44;
+                const w = baseW - pad * 2;
+                const h = baseH - pad * 2;
+
+                const headerH = 72;
+                const rowH = (h - headerH) / 3;
+                const agentColW = 220;
+                const colW = (w - agentColW) / 4;
+
+                const colKeys = ["todo", "doing", "done", "failed"];
+                const colLabels = [t("kanban.todo"), t("kanban.doing"), t("kanban.done"), t("kanban.failed")];
+                const colAccents = ["#39b8ff", "#ffa14b", "#49e3b9", "#ff6a6a"];
+
+                // Outer border.
+                ctx.strokeStyle = "rgba(255, 255, 255, 0.14)";
+                ctx.lineWidth = 2;
+                const rx = 18;
+                ctx.beginPath();
+                ctx.moveTo(pad + rx, pad);
+                ctx.arcTo(pad + w, pad, pad + w, pad + h, rx);
+                ctx.arcTo(pad + w, pad + h, pad, pad + h, rx);
+                ctx.arcTo(pad, pad + h, pad, pad, rx);
+                ctx.arcTo(pad, pad, pad + w, pad, rx);
+                ctx.closePath();
+                ctx.stroke();
+
+                // Header band.
+                ctx.fillStyle = "rgba(255, 255, 255, 0.05)";
+                ctx.fillRect(pad, pad, w, headerH);
+
+                // Separators.
+                ctx.strokeStyle = "rgba(255, 255, 255, 0.10)";
+                ctx.lineWidth = 1;
+                for (let i = 0; i <= 4; i += 1) {
+                  const x = pad + agentColW + i * colW;
+                  ctx.beginPath();
+                  ctx.moveTo(x, pad);
+                  ctx.lineTo(x, pad + h);
+                  ctx.stroke();
+                }
+                for (let r = 0; r <= 3; r += 1) {
+                  const y = pad + headerH + r * rowH;
+                  ctx.beginPath();
+                  ctx.moveTo(pad, y);
+                  ctx.lineTo(pad + w, y);
+                  ctx.stroke();
+                }
+
+                // Column headers.
+                ctx.textBaseline = "middle";
+                ctx.textAlign = "center";
+                ctx.font = "700 18px system-ui, -apple-system, Segoe UI, sans-serif";
+                colLabels.forEach((label, idx) => {
+                  const x0 = pad + agentColW + idx * colW;
+                  ctx.fillStyle = colAccents[idx];
+                  ctx.fillRect(x0 + 18, pad + headerH - 10, colW - 36, 3);
+
+                  ctx.fillStyle = "rgba(255, 255, 255, 0.82)";
+                  ctx.fillText(String(label || "").toUpperCase(), x0 + colW / 2, pad + headerH / 2 - 2);
+                });
+
+                const drawAgentRow = (agentType, rowIndex, labelKey, accentHex) => {
+                  const y0 = pad + headerH + rowIndex * rowH;
+                  ctx.fillStyle = accentHex;
+                  ctx.fillRect(pad, y0, 10, rowH);
+
+                  ctx.textAlign = "left";
+                  ctx.textBaseline = "middle";
+                  ctx.fillStyle = "rgba(255, 255, 255, 0.90)";
+                  ctx.font = "800 22px system-ui, -apple-system, Segoe UI, sans-serif";
+                  ctx.fillText(t(labelKey), pad + 24, y0 + rowH / 2);
+
+                  const counts = getCounts(agentType);
+                  ctx.textAlign = "center";
+                  ctx.font = "800 40px system-ui, -apple-system, Segoe UI, sans-serif";
+                  colKeys.forEach((key, idx) => {
+                    const x0 = pad + agentColW + idx * colW;
+                    const raw = coerceCount(counts[key]);
+                    const text = raw > 99 ? "99+" : String(raw);
+                    ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
+                    if (key === "failed" && raw > 0) {
+                      ctx.fillStyle = "rgba(255, 190, 190, 0.95)";
+                    }
+                    ctx.fillText(text, x0 + colW / 2, y0 + rowH / 2);
+                  });
+                };
+
+                drawAgentRow("pm", 0, "chat.agent.pm", agentAccentByType.get("pm") || "#ffa14b");
+                drawAgentRow("engineer", 1, "chat.agent.engineer", agentAccentByType.get("engineer") || "#49e3b9");
+                drawAgentRow("ceo", 2, "chat.agent.ceo", agentAccentByType.get("ceo") || "#d6b45b");
+
+                tex.needsUpdate = true;
+                return tex;
+              };
+
+              updateKanbanBoard = () => {
+                if (!kanbanBoardMesh || !makeKanbanStatusTexture) {
+                  return;
+                }
+
+                const tex = makeKanbanStatusTexture(kanbanCountsByType);
+                const mat = kanbanBoardMesh.material;
+                if (!mat) return;
+
+                if (mat.map !== tex) {
+                  mat.map = tex;
+                  // Keep this board readable regardless of room lighting.
+                  mat.emissive = new THREE.Color(0xffffff);
+                  mat.emissiveMap = tex;
+                  mat.emissiveIntensity = 0.92;
+                  mat.needsUpdate = true;
+                }
+              };
+
+            const createLabelPlane = (name, statusText, accentHex) => {
+              const tex = makeCanvasLabelTexture(name, statusText, accentHex);
               const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false });
               const geo = new THREE.PlaneGeometry(0.85, 0.42);
               // PlaneGeometry front faces +Z; rotate once so our billboard math shows the
@@ -2627,10 +3047,18 @@
               armR.rotation.x = -1.1;
               root.add(armR);
 
-              const label = createLabelPlane(name, accentHex);
+              agentAccentByType.set(agentType, accentHex);
+              if (!agentWorkStateByType.has(agentType)) {
+                agentWorkStateByType.set(agentType, "idle");
+              }
+              const displayName = parseChatAgentType(agentType) ? getChatAgentLabel(agentType) : String(name || agentType || "");
+              const statusText = t(`agentState.${normalizeAgentWorkState(agentWorkStateByType.get(agentType))}`);
+              const label = createLabelPlane(displayName, statusText, accentHex);
               label.position.set(0, 1.62, 0);
               labelPlanes.push(label);
               root.add(label);
+
+              agentNameplateByType.set(agentType, label);
 
               scene.add(root);
               return { root, head, armL, armR, baseY: position.y };
@@ -2685,6 +3113,10 @@
             );
             board.userData.kind = "kanban";
             kanban.add(board);
+            kanbanBoardMesh = board;
+            if (typeof updateKanbanBoard === "function") {
+              updateKanbanBoard();
+            }
 
             const frame = new THREE.Mesh(
               new THREE.BoxGeometry(5.12, 2.68, 0.06),
@@ -2693,46 +3125,7 @@
             frame.position.z = -0.03;
             kanban.add(frame);
 
-            const sepMat = makeStandard(0x2a3343, 0.8, 0.1);
-            const sepGeo = new THREE.BoxGeometry(0.04, 2.35, 0.02);
-            const sep1 = new THREE.Mesh(sepGeo, sepMat);
-            sep1.position.set(-5.0 / 6.0, 0, 0.02);
-            kanban.add(sep1);
-            const sep2 = new THREE.Mesh(sepGeo, sepMat);
-            sep2.position.set(5.0 / 6.0, 0, 0.02);
-            kanban.add(sep2);
-
-            const headerGeo = new THREE.PlaneGeometry(1.58, 0.36);
-            const mkHeader = (text, accentHex, x) => {
-              const header = new THREE.Mesh(headerGeo, new THREE.MeshBasicMaterial({ map: makeCanvasLabelTexture(text, accentHex), transparent: true }));
-              header.position.set(x, 1.0, 0.03);
-              kanban.add(header);
-            };
-            mkHeader("TODO", "#39b8ff", -1.66);
-            mkHeader("DOING", "#ffa14b", 0);
-            mkHeader("DONE", "#49e3b9", 1.66);
-
-            const cardGeo = new THREE.PlaneGeometry(1.42, 0.5);
-            const mkCard = (x, y, color, rot) => {
-              const card = new THREE.Mesh(
-                cardGeo,
-                new THREE.MeshStandardMaterial({ color, roughness: 0.9, metalness: 0.0 })
-              );
-              card.position.set(x, y, 0.035);
-              card.rotation.z = rot;
-              kanban.add(card);
-            };
-
-            // A few cards per column.
-            mkCard(-1.66, 0.46, 0x233a52, -0.03);
-            mkCard(-1.66, 0.10, 0x253a2e, 0.02);
-            mkCard(-1.66, -0.26, 0x3a2a2a, -0.015);
-
-            mkCard(0.0, 0.46, 0x3a2f1e, 0.02);
-            mkCard(0.0, 0.10, 0x2c2f3a, -0.02);
-
-            mkCard(1.66, 0.46, 0x1f3a36, -0.01);
-            mkCard(1.66, 0.10, 0x1f2e3a, 0.03);
+            // Decorative cards/headers removed: board map now renders the live status grid.
 
             clock = new THREE.Clock();
 
