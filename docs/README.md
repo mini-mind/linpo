@@ -50,6 +50,12 @@
 - [HTTPS 配置 - Caddy + Let's Encrypt](../README.md#https-配置)
 - [数据备份与恢复](../README.md#数据备份与恢复)
 
+## L3.5: 开发交接
+
+- [Worker 开发交接指南](handoff/worker-development.md) - 在 worker 上继续开发（不改变现网运行位置）
+
 ## L4: 流程与决策记录
 
 - [Sisyphus 工作流](process/sisyphus-workflow.md) - 计划、草稿、决策记录系统
+- [产品定位决策记录 (2026-02-13)](decisions/positioning-2026-02-13.md) - 业务专家构建权、长期服务与 P0 方向
+- [P0 开发规划 (2026-02-13)](plans/p0-development-plan-2026-02-13.md) - 状态协议、干预接口与轻量编排
