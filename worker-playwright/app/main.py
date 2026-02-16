@@ -145,3 +145,9 @@ async def run(body: RunRequest, x_internal_key: Annotated[str | None, Header(ali
     finally:
         tenant_id_var.reset(tenant_token)
         task_id_var.reset(task_token)
+
+
+@app.get("/health")
+async def health() -> dict[str, str]:
+    # Keep health checks trivial and dependency-free.
+    return {"status": "ok"}
