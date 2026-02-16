@@ -117,6 +117,21 @@ except Exception:  # pragma: no cover
 
 
 ALLOWED_EVENT_TYPES: set[str] = {
+    "run.created",
+    "run.admission.queued",
+    "agent.hired",
+    "agent.state.changed",
+    "agent.step.started",
+    "agent.step.progress",
+    "agent.step.artifact",
+    "agent.step.failed",
+    "agent.step.completed",
+    "sop.created",
+    "sop.updated",
+    "action.requested",
+    "action.applied",
+    "action.rejected",
+    "action.failed",
     "task.created",
     "task.step.started",
     "task.step.progress",
@@ -199,6 +214,46 @@ def _env_int(name: str, default: int) -> int:
         return int(raw)
     except ValueError:
         return default
+
+
+def _read_meminfo_bytes() -> tuple[int | None, int | None]:
+    mem_avail = None
+    swap_used = None
+    try:
+        mem_total_kb = None
+        mem_free_kb = None
+        mem_avail_kb = None
+        swap_total_kb = None
+        swap_free_kb = None
+        with open("/proc/meminfo", "r", encoding="utf-8") as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) < 2:
+                    continue
+                key = parts[0].rstrip(":")
+                try:
+                    value_kb = int(parts[1])
+                except ValueError:
+                    continue
+                if key == "MemTotal":
+                    mem_total_kb = value_kb
+                elif key == "MemFree":
+                    mem_free_kb = value_kb
+                elif key == "MemAvailable":
+                    mem_avail_kb = value_kb
+                elif key == "SwapTotal":
+                    swap_total_kb = value_kb
+                elif key == "SwapFree":
+                    swap_free_kb = value_kb
+        if mem_avail_kb is not None:
+            mem_avail = mem_avail_kb * 1024
+        elif mem_total_kb is not None and mem_free_kb is not None:
+            mem_avail = mem_free_kb * 1024
+        if swap_total_kb is not None and swap_free_kb is not None:
+            swap_used = (swap_total_kb - swap_free_kb) * 1024
+    except Exception:
+        return None, None
+    return mem_avail, swap_used
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -532,6 +587,11 @@ class TaskCreateIn(BaseModel):
     input: dict[str, object] = Field(default_factory=dict)
 
 
+class RunCreateIn(BaseModel):
+    input_nl: str = Field(..., min_length=1)
+    input: dict[str, object] = Field(default_factory=dict)
+
+
 class EventIn(BaseModel):
     type: str
     data: dict[str, object] = Field(default_factory=dict)
@@ -564,6 +624,60 @@ class TaskOut(BaseModel):
     created_at: str
     updated_at: str
     input: dict[str, object]
+
+
+class RunOut(BaseModel):
+    run_id: str
+    tenant_id: str
+    status: str
+    created_at: str
+    updated_at: str
+    kind: str | None = None
+    input_nl: str | None = None
+    root_agent_id: str | None = None
+    input: dict[str, object]
+
+
+class AgentInstanceOut(BaseModel):
+    id: str
+    parent_agent_id: str | None = None
+    role_label: str | None = None
+    state: str
+    current_sop_version_id: str | None = None
+
+
+class AgentEdgeOut(BaseModel):
+    parent: str
+    child: str
+
+
+class RunTreeOut(BaseModel):
+    run: RunOut
+    agents: list[AgentInstanceOut] = Field(default_factory=list)
+    edges: list[AgentEdgeOut] = Field(default_factory=list)
+
+
+class SopOut(BaseModel):
+    agent_id: str
+    sop_version_id: str
+    version: int
+    md_path: str
+    md_sha256: str
+    md_text: str
+
+
+class ActionCreateIn(BaseModel):
+    target_agent_id: str = Field(..., min_length=1)
+    action_type: str = Field(..., min_length=1)
+    md_text: str | None = None
+    expected_version: int | None = None
+    idempotency_key: str | None = None
+
+
+class ActionOut(BaseModel):
+    action_id: str
+    status: str
+    applied_sop_version_id: str | None = None
 
 
 class TenantCreateIn(BaseModel):
@@ -856,6 +970,29 @@ def _task_to_out(task: models.Task) -> TaskOut:
         status=status,
         created_at=_dt_to_iso(created_at),
         updated_at=_dt_to_iso(updated_at),
+        input=_json_loads_or_empty(input_json),
+    )
+
+
+def _run_to_out(task: models.Task) -> RunOut:
+    task_id = getattr(task, "id")
+    tenant_id = getattr(task, "tenant_id")
+    status = cast(str, getattr(task, "status"))
+    created_at = cast(datetime, getattr(task, "created_at"))
+    updated_at = cast(datetime, getattr(task, "updated_at"))
+    input_json = getattr(task, "input_json")
+    kind = getattr(task, "kind", None)
+    input_nl = getattr(task, "input_nl", None)
+    root_agent_id = getattr(task, "root_agent_id", None)
+    return RunOut(
+        run_id=str(task_id),
+        tenant_id=str(tenant_id),
+        status=status,
+        created_at=_dt_to_iso(created_at),
+        updated_at=_dt_to_iso(updated_at),
+        kind=cast(str | None, kind),
+        input_nl=cast(str | None, input_nl),
+        root_agent_id=str(root_agent_id) if root_agent_id is not None else None,
         input=_json_loads_or_empty(input_json),
     )
 
@@ -1341,6 +1478,8 @@ async def _execute_a2a_send_tool(
     parent_thread_id_int: int | None = None,
 ) -> dict[str, object]:
     """Execute a2a.send tool by enqueuing to Redis."""
+    from . import tool_permissions
+    tool_permissions.require_tool_allowed(session, tenant_id_int, "a2a.send")
     target_agent = args.get("target_agent")
     message = args.get("message")
     thread_id = args.get("thread_id")
@@ -1391,6 +1530,8 @@ async def _execute_a2a_fetch_thread_tool(
     args: dict[str, object],
 ) -> dict[str, object]:
     """Execute a2a.fetch_thread tool by querying A2AThread + A2AMessage."""
+    from . import tool_permissions
+    tool_permissions.require_tool_allowed(session, tenant_id_int, "a2a.fetch_thread")
     thread_id = args.get("thread_id")
     include_messages = args.get("include_messages", True)
     since_message_id = args.get("since_message_id")
@@ -2378,6 +2519,407 @@ async def create_task(
     return _task_to_out(task)
 
 
+@app.post("/api/runs", response_model=RunOut)
+async def create_run(
+    tenant: Annotated[models.Tenant, Depends(require_tenant)],
+    session: DbSessionDep,
+    body: RunCreateIn,
+) -> RunOut:
+    tenant_id = getattr(tenant, "id")
+
+    redis_client = getattr(app.state, "redis_client", None)
+    if getattr(app.state, "redis_ok", False) and redis_client is not None:
+        times, window_seconds = getattr(app.state, "rate_limit", (100, 60))
+        now_epoch = int(time.time())
+        window_start = now_epoch - (now_epoch % window_seconds)
+        key = f"rl:tenant:{tenant_id}:{window_start}"
+        try:
+            count = await redis_client.incr(key)
+            if count == 1:
+                await redis_client.expire(key, window_seconds + 5)
+            if int(count) > times:
+                raise HTTPException(status_code=429, detail="Rate limit exceeded")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning("Rate limiting failed (%s); continuing without rate limiting", exc)
+
+    run_input = {"input_nl": body.input_nl, "input": body.input}
+
+    should_queue = False
+    try:
+        max_active_users = int((os.getenv("MACHINE_MAX_ACTIVE_USERS") or "5").strip() or "5")
+    except ValueError:
+        max_active_users = 5
+    if max_active_users >= 0:
+        active_users = (
+            session.query(models.Task.tenant_id)
+            .filter(models.Task.status.in_(list(ACTIVE_STATUSES)))
+            .distinct()
+            .count()
+        )
+        if active_users >= max_active_users:
+            should_queue = True
+
+    mem_avail, swap_used = _read_meminfo_bytes()
+    swap_fuse = 4 * 1024 * 1024 * 1024
+    mem_fuse = 500 * 1024 * 1024
+    try:
+        swap_fuse = int((os.getenv("MACHINE_SWAP_FUSE_BYTES") or str(swap_fuse)).strip() or str(swap_fuse))
+    except ValueError:
+        pass
+    try:
+        mem_fuse = int((os.getenv("MACHINE_MEM_AVAILABLE_FUSE_BYTES") or str(mem_fuse)).strip() or str(mem_fuse))
+    except ValueError:
+        pass
+    if swap_used is not None and swap_used > swap_fuse:
+        should_queue = True
+    if mem_avail is not None and mem_avail < mem_fuse:
+        should_queue = True
+
+    try:
+        active = (
+            session.query(models.Task)
+            .filter(models.Task.tenant_id == tenant_id, models.Task.status.in_(list(ACTIVE_STATUSES)))
+            .count()
+        )
+        if active >= APP_SETTINGS.TENANT_CONCURRENCY_LIMIT:
+            raise HTTPException(status_code=429, detail="Tenant concurrency limit exceeded")
+
+        task = models.Task()
+        setattr(task, "tenant_id", tenant_id)
+        setattr(task, "status", "queued")
+        setattr(task, "kind", "run")
+        setattr(task, "input_nl", body.input_nl)
+        setattr(task, "input_json", json.dumps(run_input))
+        session.add(task)
+        session.flush()
+
+        run_id = getattr(task, "id")
+        TASK_ID_CONTEXT.set(str(run_id))
+
+        from . import agent_hiring
+
+        root_agent_id = agent_hiring.hire_default_team(
+            session,
+            tenant_id=int(tenant_id),
+            run_id=int(run_id),
+        )
+        setattr(task, "root_agent_id", root_agent_id)
+        session.add(task)
+
+        created_event = models.Event()
+        setattr(created_event, "task_id", run_id)
+        setattr(created_event, "run_id", run_id)
+        setattr(created_event, "tenant_id", tenant_id)
+        setattr(created_event, "type", "run.created")
+        setattr(created_event, "data_json", json.dumps({}))
+        setattr(created_event, "status", "queued")
+        setattr(created_event, "timestamp", _utcnow_naive())
+        session.add(created_event)
+        session.flush()
+        if should_queue:
+            admission_event = models.Event()
+            setattr(admission_event, "task_id", run_id)
+            setattr(admission_event, "run_id", run_id)
+            setattr(admission_event, "tenant_id", tenant_id)
+            setattr(admission_event, "type", "run.admission.queued")
+            setattr(admission_event, "data_json", json.dumps({"reason": "admission"}))
+            setattr(admission_event, "status", "queued")
+            setattr(admission_event, "timestamp", _utcnow_naive())
+            session.add(admission_event)
+            session.flush()
+
+        session.commit()
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception:
+        session.rollback()
+        raise
+
+    tenant_id_label = str(tenant_id)
+    TASKS_CREATED_TOTAL.labels(tenant_id=tenant_id_label).inc()
+    TASK_EVENTS_WRITTEN_TOTAL.labels(tenant_id=tenant_id_label).inc()
+
+    event_out = _event_to_out(created_event)
+    await WS_MANAGER.broadcast(str(tenant_id), str(getattr(task, "id")), event_out.model_dump())
+    if should_queue:
+        admission = (
+            session.query(models.Event)
+            .filter(
+                models.Event.task_id == int(run_id),
+                models.Event.tenant_id == int(tenant_id),
+                models.Event.type == "run.admission.queued",
+            )
+            .order_by(models.Event.id.desc())
+            .first()
+        )
+        if admission:
+            await WS_MANAGER.broadcast(str(tenant_id), str(getattr(task, "id")), _event_to_out(admission).model_dump())
+
+    # Enqueue dispatch message to Redis Streams (non-blocking)
+    if should_queue:
+        return _run_to_out(task)
+    redis_client = getattr(app.state, "redis_client", None)
+    if redis_client is not None and getattr(app.state, "redis_ok", False):
+        try:
+            trace_id = TRACE_ID_CONTEXT.get() or ""
+            dispatch_msg = {
+                "task_id": str(run_id),
+                "tenant_id": str(tenant_id),
+                "input_json": json.dumps(run_input),
+                "attempt": "1",
+                "enqueued_at": utcnow_iso(),
+                "trace_id": trace_id,
+            }
+            await redis_client.xadd("queue:dispatch", dispatch_msg)
+            logger.info("Enqueued dispatch for run %s tenant %s", run_id, tenant_id)
+            DISPATCH_ENQUEUED_TOTAL.labels(tenant_id=tenant_id_label).inc()
+        except Exception as exc:
+            logger.warning("Failed to enqueue dispatch for run %s tenant %s: %s", run_id, tenant_id, exc)
+            DISPATCH_ENQUEUE_FAILURES_TOTAL.labels(tenant_id=tenant_id_label).inc()
+
+    return _run_to_out(task)
+
+
+@app.get("/api/runs/{run_id}", response_model=RunOut)
+async def get_run(
+    run_id: str,
+    tenant: Annotated[models.Tenant, Depends(require_tenant)],
+    session: DbSessionDep,
+) -> RunOut:
+    TASK_ID_CONTEXT.set(run_id)
+    run_id_int = _parse_int_id(run_id, "run_id")
+    task = (
+        session.query(models.Task)
+        .filter(models.Task.id == run_id_int, models.Task.tenant_id == tenant.id)
+        .first()
+    )
+    if not task:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return _run_to_out(task)
+
+
+@app.get("/api/runs/{run_id}/tree", response_model=RunTreeOut)
+async def get_run_tree(
+    run_id: str,
+    tenant: Annotated[models.Tenant, Depends(require_tenant)],
+    session: DbSessionDep,
+) -> RunTreeOut:
+    TASK_ID_CONTEXT.set(run_id)
+    run_id_int = _parse_int_id(run_id, "run_id")
+    task = (
+        session.query(models.Task)
+        .filter(models.Task.id == run_id_int, models.Task.tenant_id == tenant.id)
+        .first()
+    )
+    if not task:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    agents = (
+        session.query(models.AgentInstance)
+        .filter(models.AgentInstance.run_id == run_id_int, models.AgentInstance.tenant_id == tenant.id)
+        .order_by(models.AgentInstance.id.asc())
+        .all()
+    )
+
+    agents_out: list[AgentInstanceOut] = []
+    edges_out: list[AgentEdgeOut] = []
+    for agent in agents:
+        agent_id = getattr(agent, "id")
+        parent_agent_id = getattr(agent, "parent_agent_id")
+        agents_out.append(
+            AgentInstanceOut(
+                id=str(agent_id),
+                parent_agent_id=str(parent_agent_id) if parent_agent_id is not None else None,
+                role_label=cast(str | None, getattr(agent, "role_label", None)),
+                state=cast(str, getattr(agent, "state")),
+                current_sop_version_id=(
+                    str(getattr(agent, "current_sop_version_id"))
+                    if getattr(agent, "current_sop_version_id") is not None
+                    else None
+                ),
+            )
+        )
+        if parent_agent_id is not None:
+            edges_out.append(AgentEdgeOut(parent=str(parent_agent_id), child=str(agent_id)))
+
+    return RunTreeOut(run=_run_to_out(task), agents=agents_out, edges=edges_out)
+
+
+@app.get("/api/agents/{agent_id}/sop", response_model=SopOut)
+async def get_agent_sop(
+    agent_id: str,
+    tenant: Annotated[models.Tenant, Depends(require_tenant)],
+    session: DbSessionDep,
+    version: str | None = None,
+) -> SopOut:
+    agent_id_int = _parse_int_id(agent_id, "agent_id")
+    agent = (
+        session.query(models.AgentInstance)
+        .filter(models.AgentInstance.id == agent_id_int, models.AgentInstance.tenant_id == tenant.id)
+        .first()
+    )
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    q = session.query(models.SopVersion).filter(
+        models.SopVersion.agent_id == agent_id_int,
+        models.SopVersion.tenant_id == tenant.id,
+    )
+    if version:
+        try:
+            version_int = int(version)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="version must be an integer")
+        q = q.filter(models.SopVersion.version == version_int)
+    else:
+        current_id = getattr(agent, "current_sop_version_id")
+        if current_id is not None:
+            q = q.filter(models.SopVersion.id == int(current_id))
+
+    sop = q.order_by(models.SopVersion.id.desc()).first()
+    if not sop:
+        raise HTTPException(status_code=404, detail="SOP not found")
+
+    from . import sop_store
+
+    md_path = cast(str, getattr(sop, "md_path"))
+    md_text = sop_store.read_sop_text(md_path)
+
+    return SopOut(
+        agent_id=str(agent_id_int),
+        sop_version_id=str(getattr(sop, "id")),
+        version=cast(int, getattr(sop, "version")),
+        md_path=md_path,
+        md_sha256=cast(str, getattr(sop, "md_sha256")),
+        md_text=md_text,
+    )
+
+
+@app.post("/api/runs/{run_id}/actions", response_model=ActionOut)
+async def create_action(
+    run_id: str,
+    tenant: Annotated[models.Tenant, Depends(require_tenant)],
+    session: DbSessionDep,
+    body: ActionCreateIn,
+) -> ActionOut:
+    run_id_int = _parse_int_id(run_id, "run_id")
+    task = (
+        session.query(models.Task)
+        .filter(models.Task.id == run_id_int, models.Task.tenant_id == tenant.id)
+        .first()
+    )
+    if not task:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    agent_id_int = _parse_int_id(body.target_agent_id, "target_agent_id")
+    agent = (
+        session.query(models.AgentInstance)
+        .filter(
+            models.AgentInstance.id == agent_id_int,
+            models.AgentInstance.tenant_id == tenant.id,
+            models.AgentInstance.run_id == run_id_int,
+        )
+        .first()
+    )
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    if body.idempotency_key:
+        existing = (
+            session.query(models.Action)
+            .filter(
+                models.Action.tenant_id == tenant.id,
+                models.Action.run_id == run_id_int,
+                models.Action.idempotency_key == body.idempotency_key,
+            )
+            .first()
+        )
+        if existing:
+            applied_id = getattr(existing, "applied_sop_version_id")
+            return ActionOut(
+                action_id=str(getattr(existing, "id")),
+                status=cast(str, getattr(existing, "status")),
+                applied_sop_version_id=str(applied_id) if applied_id is not None else None,
+            )
+
+    if body.action_type != "sop.replace":
+        raise HTTPException(status_code=400, detail="Unsupported action_type")
+    if not isinstance(body.md_text, str) or not body.md_text:
+        raise HTTPException(status_code=400, detail="md_text is required for sop.replace")
+
+    current_sop_id = getattr(agent, "current_sop_version_id")
+    current = None
+    if current_sop_id is not None:
+        current = (
+            session.query(models.SopVersion)
+            .filter(models.SopVersion.id == int(current_sop_id), models.SopVersion.tenant_id == tenant.id)
+            .first()
+        )
+    if current is None:
+        current = (
+            session.query(models.SopVersion)
+            .filter(models.SopVersion.agent_id == agent_id_int, models.SopVersion.tenant_id == tenant.id)
+            .order_by(models.SopVersion.version.desc())
+            .first()
+        )
+    if current is None:
+        raise HTTPException(status_code=404, detail="Current SOP not found")
+
+    current_version = cast(int, getattr(current, "version"))
+    if body.expected_version is not None and int(body.expected_version) != int(current_version):
+        raise HTTPException(status_code=409, detail="SOP version conflict")
+
+    action = models.Action()
+    setattr(action, "tenant_id", getattr(tenant, "id"))
+    setattr(action, "run_id", run_id_int)
+    setattr(action, "target_agent_id", agent_id_int)
+    setattr(action, "action_type", body.action_type)
+    setattr(action, "params_json", json.dumps({"md_text": body.md_text}))
+    setattr(action, "expected_head", body.expected_version)
+    setattr(action, "idempotency_key", body.idempotency_key)
+    setattr(action, "status", "requested")
+    session.add(action)
+    session.flush()
+
+    from . import sop_store
+    from .agent_hiring import _sha256_text
+
+    new_version = int(current_version) + 1
+    rel = sop_store.build_sop_relpath(str(getattr(tenant, "id")), str(run_id_int), str(agent_id_int), new_version)
+    sop_store.write_sop_text(rel, body.md_text)
+    sha = _sha256_text(body.md_text)
+
+    new_sop = models.SopVersion()
+    setattr(new_sop, "tenant_id", getattr(tenant, "id"))
+    setattr(new_sop, "agent_id", agent_id_int)
+    setattr(new_sop, "version", new_version)
+    setattr(new_sop, "md_path", rel)
+    setattr(new_sop, "md_sha256", sha)
+    setattr(new_sop, "base_sop_version_id", getattr(current, "id"))
+    session.add(new_sop)
+    session.flush()
+
+    new_sop_id = getattr(new_sop, "id")
+    setattr(agent, "current_sop_version_id", int(new_sop_id))
+    session.add(agent)
+
+    setattr(action, "status", "applied")
+    setattr(action, "applied_sop_version_id", int(new_sop_id))
+    setattr(action, "applied_at", _utcnow_naive())
+    session.add(action)
+
+    session.commit()
+
+    return ActionOut(
+        action_id=str(getattr(action, "id")),
+        status=cast(str, getattr(action, "status")),
+        applied_sop_version_id=str(new_sop_id),
+    )
+
+
 @app.get("/api/tasks/{task_id}", response_model=TaskOut)
 async def get_task(
     task_id: str,
@@ -2621,6 +3163,107 @@ async def ws_events(
             _ = await websocket.receive_text()
     except WebSocketDisconnect:
         await WS_MANAGER.remove(str(tenant_id_int), str(task_id_int), websocket)
+
+
+@app.websocket("/ws/runs/{run_id}")
+async def ws_runs(
+    websocket: WebSocket,
+    run_id: str,
+    api_key: Annotated[str | None, Query()] = None,
+    internal_key: Annotated[str | None, Query()] = None,
+    tenant_id: Annotated[str | None, Query()] = None,
+) -> None:
+    await websocket.accept()
+
+    session = db.SessionLocal()
+    try:
+        tenant_row: models.Tenant | None = None
+        if api_key:
+            api_key_hash = auth.hash_api_key(api_key)
+            tenant_row = session.query(models.Tenant).filter(models.Tenant.api_key_hash == api_key_hash).first()
+        elif internal_key and tenant_id:
+            try:
+                auth.require_internal_key(internal_key, APP_SETTINGS)
+                tenant_id_int = _parse_int_id(tenant_id, "tenant_id")
+            except HTTPException:
+                await websocket.close(code=1008)
+                return
+            tenant_row = session.query(models.Tenant).filter(models.Tenant.id == tenant_id_int).first()
+        else:
+            await websocket.close(code=1008)
+            return
+
+        if not tenant_row:
+            await websocket.close(code=1008)
+            return
+
+        try:
+            run_id_int = _parse_int_id(run_id, "run_id")
+        except HTTPException:
+            await websocket.close(code=1008)
+            return
+
+        tenant_id_int = cast(int, getattr(tenant_row, "id"))
+        task = (
+            session.query(models.Task)
+            .filter(models.Task.id == run_id_int, models.Task.tenant_id == tenant_id_int)
+            .first()
+        )
+        if not task:
+            await websocket.close(code=1008)
+            return
+
+        agents = (
+            session.query(models.AgentInstance)
+            .filter(models.AgentInstance.run_id == run_id_int, models.AgentInstance.tenant_id == tenant_id_int)
+            .order_by(models.AgentInstance.id.asc())
+            .all()
+        )
+        agents_out: list[dict[str, object]] = []
+        edges_out: list[dict[str, str]] = []
+        for agent in agents:
+            agent_id = getattr(agent, "id")
+            parent_agent_id = getattr(agent, "parent_agent_id")
+            agents_out.append(
+                AgentInstanceOut(
+                    id=str(agent_id),
+                    parent_agent_id=str(parent_agent_id) if parent_agent_id is not None else None,
+                    role_label=cast(str | None, getattr(agent, "role_label", None)),
+                    state=cast(str, getattr(agent, "state")),
+                    current_sop_version_id=(
+                        str(getattr(agent, "current_sop_version_id"))
+                        if getattr(agent, "current_sop_version_id") is not None
+                        else None
+                    ),
+                ).model_dump()
+            )
+            if parent_agent_id is not None:
+                edges_out.append(AgentEdgeOut(parent=str(parent_agent_id), child=str(agent_id)).model_dump())
+
+        events = (
+            session.query(models.Event)
+            .filter(models.Event.task_id == run_id_int, models.Event.tenant_id == tenant_id_int)
+            .order_by(models.Event.id.asc())
+            .all()
+        )
+
+        snapshot = {
+            "run": _run_to_out(task).model_dump(),
+            "agents": agents_out,
+            "edges": edges_out,
+            "events": [_event_to_out(e).model_dump() for e in events],
+        }
+    finally:
+        session.close()
+
+    await WS_MANAGER.add(str(tenant_id_int), str(run_id_int), websocket)
+    await websocket.send_json({"type": "snapshot", "data": snapshot})
+
+    try:
+        while True:
+            _ = await websocket.receive_text()
+    except WebSocketDisconnect:
+        await WS_MANAGER.remove(str(tenant_id_int), str(run_id_int), websocket)
 
 
 @app.websocket("/ws/world")
