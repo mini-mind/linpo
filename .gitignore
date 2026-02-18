@@ -11,6 +11,10 @@ searxng/.env
 *.dump
 backups/
 .sisyphus/notepads/
+.opencode/
+sops/
+.smoke/
+*.yml.new
 node_modules/
 package-lock.json
 package.json
