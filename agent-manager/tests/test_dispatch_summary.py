@@ -82,7 +82,7 @@ def test_dispatch_adds_summary_on_success(monkeypatch: MonkeyPatchLike) -> None:
     assert data.get("summary") == "short summary"
 
 
-def test_dispatch_skips_summary_on_llm_failure(monkeypatch: MonkeyPatchLike) -> None:
+def test_dispatch_falls_back_to_search_summary_on_llm_failure(monkeypatch: MonkeyPatchLike) -> None:
     monkeypatch.setenv("INTERNAL_API_KEY", "test-internal")
     monkeypatch.setenv("LLM_GATEWAY_URL", "http://llm-gateway:7300")
     main = importlib.import_module("app.main")
@@ -98,9 +98,20 @@ def test_dispatch_skips_summary_on_llm_failure(monkeypatch: MonkeyPatchLike) -> 
 
     def failing_llm_post(url: str, **_kwargs: object) -> DummyResponse:
         if url.endswith("/run"):
-            return DummyResponse({"result": "ok"})
+            return DummyResponse(
+                {
+                    "results": {
+                        "results": {
+                            "results": [
+                                {"title": "Alpha", "url": "https://example.com/a"},
+                                {"title": "Beta", "url": "https://example.com/b"},
+                            ]
+                        }
+                    }
+                }
+            )
         if url.endswith("/internal/llm/chat"):
-            return DummyResponse({"error": "nope"}, status_code=500)
+            return DummyResponse({"error": "nope"}, status_code=502)
         raise AssertionError(f"Unexpected URL: {url}")
 
     monkeypatch.setattr(main, "post_event", record_event)
@@ -119,4 +130,4 @@ def test_dispatch_skips_summary_on_llm_failure(monkeypatch: MonkeyPatchLike) -> 
     assert completed
     data = completed[0]["data"]
     assert isinstance(data, dict)
-    assert "summary" not in data
+    assert data.get("summary") == "我从搜索结果里找到了：Alpha（https://example.com/a）"

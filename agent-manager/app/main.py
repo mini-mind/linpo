@@ -438,6 +438,32 @@ def build_browser_reply(result: object) -> str:
     return "I checked GitHub Trending but couldn't extract the top repo details."
 
 
+def build_search_fallback_summary(worker_result: object) -> str | None:
+    if not isinstance(worker_result, dict):
+        return None
+    results_level = worker_result.get("results")
+    if not isinstance(results_level, dict):
+        return None
+    nested_level = results_level.get("results")
+    if not isinstance(nested_level, dict):
+        return None
+    items = nested_level.get("results")
+    if not isinstance(items, list):
+        return None
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        title = item.get("title")
+        url = item.get("url")
+        if isinstance(title, str) and isinstance(url, str):
+            title = title.strip()
+            url = url.strip()
+            if title and url:
+                prefix = "\u6211\u4ece\u641c\u7d22\u7ed3\u679c\u91cc\u627e\u5230\u4e86\uff1a"
+                return f"{prefix}{title}\uff08{url}\uff09"
+    return None
+
+
 def send_a2a_reply(
     tenant_id: str,
     from_agent_id: str,
@@ -935,6 +961,8 @@ async def dispatch_task(request: DispatchRequest, x_internal_key: Annotated[str 
                 summary_text = call_llm_gateway(system_prompt, user_message)
             except Exception as exc:
                 logger.warning("Summary generation failed: %s", exc)
+            if summary_text is None:
+                summary_text = build_search_fallback_summary(worker_result)
 
         # Post task.completed event with summary
         summary = {
