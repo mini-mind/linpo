@@ -891,10 +891,15 @@ async def dispatch_task(request: DispatchRequest, x_internal_key: Annotated[str 
         
         # Call worker-playwright
         worker_url = f"{WORKER_URL}/run"
+        input_nl = task_input.get("input_nl")
+        if isinstance(input_nl, str) and input_nl.strip():
+            worker_input = {"query": input_nl}
+        else:
+            worker_input = task_input
         worker_payload = {
             "task_id": task_id,
             "tenant_id": tenant_id,
-            "input": task_input
+            "input": worker_input
         }
         worker_headers = {"X-Internal-Key": INTERNAL_API_KEYS[0]}
         trace_id = current_trace_id()
