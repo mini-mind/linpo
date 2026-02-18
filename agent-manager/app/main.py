@@ -922,11 +922,27 @@ async def dispatch_task(request: DispatchRequest, x_internal_key: Annotated[str 
             }
         )
         
+        summary_text: str | None = None
+        if isinstance(input_nl, str) and input_nl.strip():
+            system_prompt = "Provide a short, direct summary of the task result."
+            user_message = (
+                "User request:\n"
+                f"{input_nl.strip()}\n\n"
+                "Task result:\n"
+                f"{json.dumps(worker_result)}"
+            )
+            try:
+                summary_text = call_llm_gateway(system_prompt, user_message)
+            except Exception as exc:
+                logger.warning("Summary generation failed: %s", exc)
+
         # Post task.completed event with summary
         summary = {
             "status": "success",
-            "worker_result": worker_result
+            "worker_result": worker_result,
         }
+        if summary_text is not None:
+            summary["summary"] = summary_text
         post_event(
             tenant_id=tenant_id,
             task_id=task_id,
