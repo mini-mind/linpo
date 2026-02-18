@@ -1,27 +1,23 @@
-# Run with: docker compose -f deploy/prod/docker-compose.yml up -d
 services:
   gateway:
     image: registry.cn-hangzhou.aliyuncs.com/ravin/web3d-gateway:${TAG:-latest}
     depends_on:
       - web-frontend
-      - api-backend
+    ports:
+      - "127.0.0.1:8082:80"
     networks:
       - app-net
     restart: unless-stopped
 
   edge:
     image: caddy:2.8-alpine
-    ports:
-      - "80:80"
-      - "443:443"
+    network_mode: host
     volumes:
       - ${ROBOARD_ROOT:?set}/edge/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
     environment:
       - CADDY_EMAIL=${CADDY_EMAIL:-}
-    networks:
-      - app-net
     depends_on:
       - gateway
     restart: unless-stopped
@@ -50,9 +46,11 @@ services:
       - EMAIL_POLL_INTERVAL_SEC=${EMAIL_POLL_INTERVAL_SEC:-2}
       - EMAIL_MAX_ATTEMPTS=${EMAIL_MAX_ATTEMPTS:-3}
       - LLM_GATEWAY_URL=${LLM_GATEWAY_URL:-http://llm-gateway:7300}
+      - ROBOARD_SOP_ROOT=${ROBOARD_SOP_ROOT:-/app/sops}
     volumes:
       - ${ROBOARD_ROOT:?set}/config:/app/config:ro
       - ${ROBOARD_ROOT:?set}/prompts:/app/prompts:ro
+      - ${ROBOARD_ROOT:?set}/sops:/app/sops
     depends_on:
       - postgres
       - redis

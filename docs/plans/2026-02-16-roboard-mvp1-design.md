@@ -66,16 +66,14 @@ Purpose: low-latency state, locks, counters, heartbeats.
 ## Current System Evidence (Existing Building Blocks)
 
 ### API Backend: tasks/events/chat/ws
-- File: `api-backend/app/main.py`
+  - File: `api-backend/app/main.py`
   - Existing endpoints:
     - `/api/tasks` (create)
     - `/api/tasks/{task_id}` (read)
     - `/api/tasks/{task_id}/events` (append event)
     - `/api/agents/{agent_type}/chat` and `/api/agents/{agent_type}/chat/stream`
-    - `/api/world/bootstrap` (returns ws_url)
   - Existing websockets:
     - `/ws/events` (task-scoped snapshot + stream)
-    - `/ws/world` (session-scoped snapshot + stream)
   - Existing event gate:
     - `ALLOWED_EVENT_TYPES` currently contains only task-level types (task.*)
 

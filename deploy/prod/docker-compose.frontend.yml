@@ -1,0 +1,53 @@
+services:
+  gateway:
+    image: registry.cn-hangzhou.aliyuncs.com/ravin/web3d-gateway:${TAG:-latest}
+    depends_on:
+      - web-frontend
+    ports:
+      - "127.0.0.1:8082:80"
+    networks:
+      - app-net
+    restart: unless-stopped
+
+  web-frontend:
+    image: registry.cn-hangzhou.aliyuncs.com/ravin/web3d-web-frontend:${TAG:-latest}
+    networks:
+      - app-net
+    restart: unless-stopped
+
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    env_file:
+      - ${ROBOARD_ROOT:?set}/searxng/.env
+    environment:
+      - SEARXNG_SETTINGS_PATH=/etc/searxng/settings.yml
+      - SEARXNG_BASE_URL=http://127.0.0.1:8081/
+    volumes:
+      - ${ROBOARD_ROOT:?set}/searxng/config:/etc/searxng
+      - ${ROBOARD_ROOT:?set}/searxng/data:/var/cache/searxng
+    ports:
+      - "127.0.0.1:8081:8080"
+    networks:
+      - app-net
+    restart: unless-stopped
+
+  edge:
+    image: caddy:2.8-alpine
+    network_mode: host
+    volumes:
+      - ${ROBOARD_ROOT:?set}/edge/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      - CADDY_EMAIL=${CADDY_EMAIL:-}
+    depends_on:
+      - gateway
+    restart: unless-stopped
+
+networks:
+  app-net:
+    driver: bridge
+
+volumes:
+  caddy-data:
+  caddy-config:
