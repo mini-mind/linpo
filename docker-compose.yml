@@ -53,9 +53,13 @@ services:
       - EMAIL_MAX_ATTEMPTS=${EMAIL_MAX_ATTEMPTS:-3}
       - LLM_GATEWAY_URL=${LLM_GATEWAY_URL:-http://llm-gateway:7300}
       - LLM_DEFAULT_MODEL=${LLM_DEFAULT_MODEL:-}
+      - ROBOARD_SOP_ROOT=${ROBOARD_SOP_ROOT:-/app/sops}
     volumes:
       - ./config:/app/config:ro
       - ./prompts:/app/prompts:ro
+      - ./sops:/app/sops
+    ports:
+      - "127.0.0.1:8005:8000"
     depends_on:
       - postgres
       - redis
@@ -129,10 +133,11 @@ services:
       - WORKER_URL=${WORKER_URL:-http://worker-playwright:7100}
       - API_BACKEND_URL=${API_BACKEND_URL:-http://api-backend:8000}
       - MCP_URL=${MCP_URL:-http://mcp-server:9000}
-      - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
+      - SEARXNG_URL=${SEARXNG_URL:-http://host.docker.internal:18081}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - redis
-      - searxng
     healthcheck:
       test:
         - CMD-SHELL
@@ -171,26 +176,6 @@ services:
     networks:
       - app-net
     restart: unless-stopped
-
-  searxng:
-    image: docker.io/searxng/searxng:latest
-    environment:
-      - SEARXNG_SETTINGS_PATH=/etc/searxng/settings.yml
-      - SEARXNG_SECRET_KEY=${SEARXNG_SECRET_KEY:?set}
-      # Prefer IP-based access (no domain allowlist). Example: http://127.0.0.1:8081/
-      - SEARXNG_BASE_URL=http://127.0.0.1:8081/
-    volumes:
-      - ./searxng/config:/etc/searxng
-      - ./searxng/data:/var/cache/searxng
-    ports:
-      - "127.0.0.1:8081:8080"
-    depends_on:
-      - redis
-    networks:
-      - app-net
-    restart: unless-stopped
-
-
 
   mailhog:
     image: mailhog/mailhog:v1.0.1
