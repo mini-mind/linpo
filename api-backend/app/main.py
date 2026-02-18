@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnusedCallResult=false, reportUntypedBaseClass=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnusedImport=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnusedCallResult=false, reportUntypedBaseClass=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnusedImport=false, reportInvalidTypeForm=false, reportUnboundVariable=false, reportAttributeAccessIssue=false, reportUntypedFunctionDecorator=false, reportUnusedFunction=false, reportImplicitStringConcatenation=false, reportUnnecessaryIsInstance=false, reportUnusedVariable=false
 
 """FastAPI app: multi-tenant tasks + event streaming.
 
@@ -40,7 +40,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from . import auth, db, models
+from . import admission, auth, db, models
 from .settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -214,46 +214,6 @@ def _env_int(name: str, default: int) -> int:
         return int(raw)
     except ValueError:
         return default
-
-
-def _read_meminfo_bytes() -> tuple[int | None, int | None]:
-    mem_avail = None
-    swap_used = None
-    try:
-        mem_total_kb = None
-        mem_free_kb = None
-        mem_avail_kb = None
-        swap_total_kb = None
-        swap_free_kb = None
-        with open("/proc/meminfo", "r", encoding="utf-8") as f:
-            for line in f:
-                parts = line.strip().split()
-                if len(parts) < 2:
-                    continue
-                key = parts[0].rstrip(":")
-                try:
-                    value_kb = int(parts[1])
-                except ValueError:
-                    continue
-                if key == "MemTotal":
-                    mem_total_kb = value_kb
-                elif key == "MemFree":
-                    mem_free_kb = value_kb
-                elif key == "MemAvailable":
-                    mem_avail_kb = value_kb
-                elif key == "SwapTotal":
-                    swap_total_kb = value_kb
-                elif key == "SwapFree":
-                    swap_free_kb = value_kb
-        if mem_avail_kb is not None:
-            mem_avail = mem_avail_kb * 1024
-        elif mem_total_kb is not None and mem_free_kb is not None:
-            mem_avail = mem_free_kb * 1024
-        if swap_total_kb is not None and swap_free_kb is not None:
-            swap_used = (swap_total_kb - swap_free_kb) * 1024
-    except Exception:
-        return None, None
-    return mem_avail, swap_used
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -693,6 +653,7 @@ class TenantCreateOut(BaseModel):
 class RegisterIn(BaseModel):
     email: str
     password: str
+    tenant_name: str | None = None
 
 
 class LoginIn(BaseModel):
@@ -718,15 +679,8 @@ class AgentChatOut(BaseModel):
 
 
 class MeOut(BaseModel):
-    id: str
-    email: str
-    created_at: str
-
-
-class WorldBootstrapOut(BaseModel):
-    status: str
-    task_id: str
-    ws_url: str
+    user: dict[str, str]
+    tenant: dict[str, str]
 
 
 class TaskResultOut(BaseModel):
@@ -892,12 +846,16 @@ TenantIdHeader = Annotated[str | None, Header(alias="X-Tenant-ID")]
 ApiKeyHeader = Annotated[str | None, Header(alias="X-API-Key")]
 SessionTokenHeader = Annotated[str | None, Header(alias="X-Session-Token")]
 
+SESSION_COOKIE_NAME = "roboard_session"
+
 
 def require_tenant(
+    request: Request,
     session: DbSessionDep,
     x_internal_key: InternalKeyHeader = None,
     x_tenant_id: TenantIdHeader = None,
     x_api_key: ApiKeyHeader = None,
+    x_session_token: SessionTokenHeader = None,
 ) -> models.Tenant:
     # Internal traffic can select tenant by header.
     if x_internal_key:
@@ -912,15 +870,46 @@ def require_tenant(
             TENANT_ID_CONTEXT.set(str(tenant_id))
             return tenant
 
-    # External traffic authenticates with API key -> tenant.
-    if not x_api_key:
-        raise HTTPException(status_code=401, detail="Missing X-API-Key header")
-    api_key_hash = auth.hash_api_key(x_api_key)
-    tenant = session.query(models.Tenant).filter(models.Tenant.api_key_hash == api_key_hash).first()
+    if x_api_key:
+        api_key_hash = auth.hash_api_key(x_api_key)
+        tenant = session.query(models.Tenant).filter(models.Tenant.api_key_hash == api_key_hash).first()
+        if not tenant:
+            raise HTTPException(status_code=401, detail="Invalid API key")
+        TENANT_ID_CONTEXT.set(str(getattr(tenant, "id")))
+        return tenant
+
+    token = x_session_token or request.cookies.get(SESSION_COOKIE_NAME)
+    user = _require_session_user(session, token)
+    user_tenant_id = getattr(user, "tenant_id")
+    if user_tenant_id is None:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    tenant_id_int = cast(int, user_tenant_id)
+    tenant = session.query(models.Tenant).filter(models.Tenant.id == tenant_id_int).first()
     if not tenant:
-        raise HTTPException(status_code=401, detail="Invalid API key")
+        raise HTTPException(status_code=401, detail="Invalid session")
     TENANT_ID_CONTEXT.set(str(getattr(tenant, "id")))
     return tenant
+
+
+def _cookie_secure() -> bool:
+    return _env_bool("ROBOARD_COOKIE_SECURE", True)
+
+
+def _set_session_cookie(response: Response, token: str, expires_at: datetime) -> None:
+    max_age = max(0, int((expires_at - _utcnow_naive()).total_seconds()))
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        token,
+        httponly=True,
+        secure=_cookie_secure(),
+        samesite="lax",
+        path="/",
+        max_age=max_age,
+    )
+
+
+def _clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
 
 
 def require_internal_tenant(
@@ -1836,11 +1825,29 @@ def create_tenant(
 
 
 @app.post("/api/auth/register", response_model=AuthOut, status_code=201)
-def register_user(body: RegisterIn, session: DbSessionDep) -> AuthOut:
+def register_user(body: RegisterIn, response: Response, session: DbSessionDep) -> AuthOut:
     user = models.User()
     setattr(user, "email", body.email)
     setattr(user, "password_hash", auth.hash_password(body.password))
     try:
+        tenant_name = (body.tenant_name or "").strip() or body.email.split("@", 1)[0]
+        for _ in range(5):
+            api_key = secrets.token_urlsafe(32)
+            api_key_hash = auth.hash_api_key(api_key)
+            tenant = models.Tenant()
+            setattr(tenant, "name", tenant_name)
+            setattr(tenant, "api_key_hash", api_key_hash)
+            try:
+                session.add(tenant)
+                session.flush()
+                break
+            except IntegrityError:
+                session.rollback()
+                continue
+        else:
+            raise HTTPException(status_code=500, detail="Failed to create tenant")
+
+        setattr(user, "tenant_id", getattr(tenant, "id"))
         session.add(user)
         session.flush()
         user_id = cast(int, getattr(user, "id"))
@@ -1853,11 +1860,12 @@ def register_user(body: RegisterIn, session: DbSessionDep) -> AuthOut:
         session.rollback()
         raise
 
+    _set_session_cookie(response, raw_token, expires_at)
     return AuthOut(session_token=raw_token, expires_at=_dt_to_iso(expires_at))
 
 
 @app.post("/api/auth/login", response_model=AuthOut, status_code=200)
-def login_user(body: LoginIn, session: DbSessionDep) -> AuthOut:
+def login_user(body: LoginIn, response: Response, session: DbSessionDep) -> AuthOut:
     user = session.query(models.User).filter(models.User.email == body.email).first()
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -1874,19 +1882,56 @@ def login_user(body: LoginIn, session: DbSessionDep) -> AuthOut:
         session.rollback()
         raise
 
+    _set_session_cookie(response, raw_token, expires_at)
     return AuthOut(session_token=raw_token, expires_at=_dt_to_iso(expires_at))
 
 
 @app.get("/api/auth/me", response_model=MeOut, status_code=200)
 def get_me(
+    request: Request,
     session: DbSessionDep,
     x_session_token: SessionTokenHeader = None,
 ) -> MeOut:
-    user = _require_session_user(session, x_session_token)
+    token = x_session_token or request.cookies.get(SESSION_COOKIE_NAME)
+    user = _require_session_user(session, token)
+
     user_id = getattr(user, "id")
     created_at = cast(datetime, getattr(user, "created_at"))
     email = cast(str, getattr(user, "email"))
-    return MeOut(id=str(user_id), email=email, created_at=_dt_to_iso(created_at))
+
+    tenant_id = getattr(user, "tenant_id")
+    tenant = None
+    if tenant_id is not None:
+        tenant = session.query(models.Tenant).filter(models.Tenant.id == int(tenant_id)).first()
+    if not tenant:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    tenant_name = cast(str, getattr(tenant, "name"))
+
+    return MeOut(
+        user={
+            "id": str(user_id),
+            "email": email,
+            "created_at": _dt_to_iso(created_at),
+        },
+        tenant={
+            "tenant_id": str(getattr(tenant, "id")),
+            "name": tenant_name,
+        },
+    )
+
+
+@app.post("/api/auth/logout", status_code=204)
+def logout_user(request: Request, response: Response, session: DbSessionDep, x_session_token: SessionTokenHeader = None) -> Response:
+    token = x_session_token or request.cookies.get(SESSION_COOKIE_NAME)
+    if token:
+        token_hash = auth.hash_session_token(token)
+        session_row = session.query(models.Session).filter(models.Session.token_hash == token_hash).first()
+        if session_row is not None:
+            setattr(session_row, "revoked_at", _utcnow_naive())
+            session.add(session_row)
+            session.commit()
+    _clear_session_cookie(response)
+    return Response(status_code=204)
 
 
 @app.get("/api/a2a/threads/{thread_id}", response_model=A2AThreadOut, status_code=200)
@@ -2374,60 +2419,6 @@ async def agent_chat_stream(
         },
     )
 
-@app.post("/api/world/bootstrap", response_model=WorldBootstrapOut, status_code=200)
-async def world_bootstrap(
-    request: Request,
-    session: DbSessionDep,
-    x_session_token: SessionTokenHeader = None,
-) -> WorldBootstrapOut:
-    user = _require_session_user(session, x_session_token)
-    user_id = cast(int, getattr(user, "id"))
-    user_tenant_id = getattr(user, "tenant_id")
-
-    if user_tenant_id is None:
-        tenant = models.Tenant()
-        setattr(tenant, "name", f"User {user_id}")
-        raw_api_key = secrets.token_urlsafe(32)
-        setattr(tenant, "api_key_hash", auth.hash_api_key(raw_api_key))
-        session.add(tenant)
-        session.commit()
-        tenant_id_int = cast(int, getattr(tenant, "id"))
-        setattr(user, "tenant_id", tenant_id_int)
-        session.commit()
-    else:
-        tenant_id_int = cast(int, user_tenant_id)
-        tenant = session.query(models.Tenant).filter(models.Tenant.id == tenant_id_int).first()
-        if not tenant:
-            raise HTTPException(status_code=404, detail="Tenant not found")
-
-    task = (
-        session.query(models.Task)
-        .filter(models.Task.tenant_id == tenant_id_int)
-        .order_by(models.Task.id.desc())
-        .first()
-    )
-    if not task:
-        task = models.Task()
-        setattr(task, "tenant_id", tenant_id_int)
-        setattr(task, "status", "idle")
-        setattr(task, "input_json", json.dumps({"bootstrap": True}))
-        session.add(task)
-        session.commit()
-
-    task_id_int = cast(int, getattr(task, "id"))
-
-    x_forwarded_proto = request.headers.get("x-forwarded-proto")
-    x_forwarded_host = request.headers.get("x-forwarded-host", request.headers.get("host"))
-
-    protocol = x_forwarded_proto if x_forwarded_proto else request.url.scheme
-    host = x_forwarded_host if x_forwarded_host else request.url.hostname
-    ws_scheme = "wss" if protocol == "https" else "ws"
-
-    ws_url = f"{ws_scheme}://{host}/ws/world?session_token={x_session_token}"
-
-    return WorldBootstrapOut(status="ok", task_id=str(task_id_int), ws_url=ws_url)
-
-
 @app.post("/api/tasks", response_model=TaskOut)
 async def create_task(
     tenant: Annotated[models.Tenant, Depends(require_tenant)],
@@ -2546,36 +2537,7 @@ async def create_run(
 
     run_input = {"input_nl": body.input_nl, "input": body.input}
 
-    should_queue = False
-    try:
-        max_active_users = int((os.getenv("MACHINE_MAX_ACTIVE_USERS") or "5").strip() or "5")
-    except ValueError:
-        max_active_users = 5
-    if max_active_users >= 0:
-        active_users = (
-            session.query(models.Task.tenant_id)
-            .filter(models.Task.status.in_(list(ACTIVE_STATUSES)))
-            .distinct()
-            .count()
-        )
-        if active_users >= max_active_users:
-            should_queue = True
-
-    mem_avail, swap_used = _read_meminfo_bytes()
-    swap_fuse = 4 * 1024 * 1024 * 1024
-    mem_fuse = 500 * 1024 * 1024
-    try:
-        swap_fuse = int((os.getenv("MACHINE_SWAP_FUSE_BYTES") or str(swap_fuse)).strip() or str(swap_fuse))
-    except ValueError:
-        pass
-    try:
-        mem_fuse = int((os.getenv("MACHINE_MEM_AVAILABLE_FUSE_BYTES") or str(mem_fuse)).strip() or str(mem_fuse))
-    except ValueError:
-        pass
-    if swap_used is not None and swap_used > swap_fuse:
-        should_queue = True
-    if mem_avail is not None and mem_avail < mem_fuse:
-        should_queue = True
+    should_queue, _admission_details = admission.should_queue_run(session, ACTIVE_STATUSES)
 
     try:
         active = (
@@ -2645,7 +2607,7 @@ async def create_run(
     event_out = _event_to_out(created_event)
     await WS_MANAGER.broadcast(str(tenant_id), str(getattr(task, "id")), event_out.model_dump())
     if should_queue:
-        admission = (
+        admission_event = (
             session.query(models.Event)
             .filter(
                 models.Event.task_id == int(run_id),
@@ -2655,8 +2617,12 @@ async def create_run(
             .order_by(models.Event.id.desc())
             .first()
         )
-        if admission:
-            await WS_MANAGER.broadcast(str(tenant_id), str(getattr(task, "id")), _event_to_out(admission).model_dump())
+        if admission_event:
+            await WS_MANAGER.broadcast(
+                str(tenant_id),
+                str(getattr(task, "id")),
+                _event_to_out(admission_event).model_dump(),
+            )
 
     # Enqueue dispatch message to Redis Streams (non-blocking)
     if should_queue:
@@ -2815,108 +2781,32 @@ async def create_action(
         raise HTTPException(status_code=404, detail="Run not found")
 
     agent_id_int = _parse_int_id(body.target_agent_id, "target_agent_id")
-    agent = (
-        session.query(models.AgentInstance)
-        .filter(
-            models.AgentInstance.id == agent_id_int,
-            models.AgentInstance.tenant_id == tenant.id,
-            models.AgentInstance.run_id == run_id_int,
-        )
-        .first()
+    from . import actions
+
+    action, _new_sop, events = actions.apply_sop_replace_action(
+        session,
+        tenant,
+        run_id_int,
+        agent_id_int,
+        body,
     )
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
 
-    if body.idempotency_key:
-        existing = (
-            session.query(models.Action)
-            .filter(
-                models.Action.tenant_id == tenant.id,
-                models.Action.run_id == run_id_int,
-                models.Action.idempotency_key == body.idempotency_key,
-            )
-            .first()
-        )
-        if existing:
-            applied_id = getattr(existing, "applied_sop_version_id")
-            return ActionOut(
-                action_id=str(getattr(existing, "id")),
-                status=cast(str, getattr(existing, "status")),
-                applied_sop_version_id=str(applied_id) if applied_id is not None else None,
+    if events:
+        tenant_id_str = str(getattr(tenant, "id"))
+        run_id_str = str(run_id_int)
+        for event in events:
+            TASK_EVENTS_WRITTEN_TOTAL.labels(tenant_id=tenant_id_str).inc()
+            await WS_MANAGER.broadcast(
+                tenant_id_str,
+                run_id_str,
+                _event_to_out(event).model_dump(),
             )
 
-    if body.action_type != "sop.replace":
-        raise HTTPException(status_code=400, detail="Unsupported action_type")
-    if not isinstance(body.md_text, str) or not body.md_text:
-        raise HTTPException(status_code=400, detail="md_text is required for sop.replace")
-
-    current_sop_id = getattr(agent, "current_sop_version_id")
-    current = None
-    if current_sop_id is not None:
-        current = (
-            session.query(models.SopVersion)
-            .filter(models.SopVersion.id == int(current_sop_id), models.SopVersion.tenant_id == tenant.id)
-            .first()
-        )
-    if current is None:
-        current = (
-            session.query(models.SopVersion)
-            .filter(models.SopVersion.agent_id == agent_id_int, models.SopVersion.tenant_id == tenant.id)
-            .order_by(models.SopVersion.version.desc())
-            .first()
-        )
-    if current is None:
-        raise HTTPException(status_code=404, detail="Current SOP not found")
-
-    current_version = cast(int, getattr(current, "version"))
-    if body.expected_version is not None and int(body.expected_version) != int(current_version):
-        raise HTTPException(status_code=409, detail="SOP version conflict")
-
-    action = models.Action()
-    setattr(action, "tenant_id", getattr(tenant, "id"))
-    setattr(action, "run_id", run_id_int)
-    setattr(action, "target_agent_id", agent_id_int)
-    setattr(action, "action_type", body.action_type)
-    setattr(action, "params_json", json.dumps({"md_text": body.md_text}))
-    setattr(action, "expected_head", body.expected_version)
-    setattr(action, "idempotency_key", body.idempotency_key)
-    setattr(action, "status", "requested")
-    session.add(action)
-    session.flush()
-
-    from . import sop_store
-    from .agent_hiring import _sha256_text
-
-    new_version = int(current_version) + 1
-    rel = sop_store.build_sop_relpath(str(getattr(tenant, "id")), str(run_id_int), str(agent_id_int), new_version)
-    sop_store.write_sop_text(rel, body.md_text)
-    sha = _sha256_text(body.md_text)
-
-    new_sop = models.SopVersion()
-    setattr(new_sop, "tenant_id", getattr(tenant, "id"))
-    setattr(new_sop, "agent_id", agent_id_int)
-    setattr(new_sop, "version", new_version)
-    setattr(new_sop, "md_path", rel)
-    setattr(new_sop, "md_sha256", sha)
-    setattr(new_sop, "base_sop_version_id", getattr(current, "id"))
-    session.add(new_sop)
-    session.flush()
-
-    new_sop_id = getattr(new_sop, "id")
-    setattr(agent, "current_sop_version_id", int(new_sop_id))
-    session.add(agent)
-
-    setattr(action, "status", "applied")
-    setattr(action, "applied_sop_version_id", int(new_sop_id))
-    setattr(action, "applied_at", _utcnow_naive())
-    session.add(action)
-
-    session.commit()
-
+    applied_id = getattr(action, "applied_sop_version_id")
     return ActionOut(
         action_id=str(getattr(action, "id")),
         status=cast(str, getattr(action, "status")),
-        applied_sop_version_id=str(new_sop_id),
+        applied_sop_version_id=str(applied_id) if applied_id is not None else None,
     )
 
 
@@ -3190,8 +3080,16 @@ async def ws_runs(
                 return
             tenant_row = session.query(models.Tenant).filter(models.Tenant.id == tenant_id_int).first()
         else:
-            await websocket.close(code=1008)
-            return
+            token = websocket.cookies.get(SESSION_COOKIE_NAME)
+            if token:
+                try:
+                    user = _require_session_user(session, token)
+                except HTTPException:
+                    await websocket.close(code=1008)
+                    return
+                user_tenant_id = getattr(user, "tenant_id")
+                if user_tenant_id is not None:
+                    tenant_row = session.query(models.Tenant).filter(models.Tenant.id == int(user_tenant_id)).first()
 
         if not tenant_row:
             await websocket.close(code=1008)
@@ -3265,83 +3163,3 @@ async def ws_runs(
     except WebSocketDisconnect:
         await WS_MANAGER.remove(str(tenant_id_int), str(run_id_int), websocket)
 
-
-@app.websocket("/ws/world")
-async def ws_world(
-    websocket: WebSocket,
-    session_token: Annotated[str | None, Query()] = None,
-) -> None:
-    await websocket.accept()
-
-    session = db.SessionLocal()
-    try:
-        if not session_token:
-            await websocket.close(code=1008)
-            return
-
-        try:
-            user = _require_session_user(session, session_token)
-        except HTTPException:
-            await websocket.close(code=1008)
-            return
-
-        user_id = cast(int, getattr(user, "id"))
-        user_tenant_id = getattr(user, "tenant_id")
-
-        # Auto-bootstrap tenant if user doesn't have one
-        if user_tenant_id is None:
-            tenant = models.Tenant()
-            setattr(tenant, "name", f"User {user_id}")
-            raw_api_key = secrets.token_urlsafe(32)
-            setattr(tenant, "api_key_hash", auth.hash_api_key(raw_api_key))
-            session.add(tenant)
-            session.commit()
-            tenant_id_int = cast(int, getattr(tenant, "id"))
-            setattr(user, "tenant_id", tenant_id_int)
-            session.commit()
-        else:
-            tenant_id_int = cast(int, user_tenant_id)
-            tenant = session.query(models.Tenant).filter(models.Tenant.id == tenant_id_int).first()
-            if not tenant:
-                await websocket.close(code=1008)
-                return
-
-        task = (
-            session.query(models.Task)
-            .filter(models.Task.tenant_id == tenant_id_int)
-            .order_by(models.Task.id.desc())
-            .first()
-        )
-        if not task:
-            task = models.Task()
-            setattr(task, "tenant_id", tenant_id_int)
-            setattr(task, "status", "idle")
-            setattr(task, "input_json", json.dumps({"bootstrap": True}))
-            session.add(task)
-            session.commit()
-
-        task_id_int = cast(int, getattr(task, "id"))
-
-        events = (
-            session.query(models.Event)
-            .filter(models.Event.task_id == task_id_int, models.Event.tenant_id == tenant_id_int)
-            .order_by(models.Event.id.asc())
-            .all()
-        )
-        snapshot = {
-            "task": _task_to_out(task).model_dump(),
-            "events": [_event_to_out(e).model_dump() for e in events],
-        }
-    finally:
-        session.close()
-
-    await WS_MANAGER.add(str(tenant_id_int), str(task_id_int), websocket)
-    await websocket.send_json({"type": "snapshot", "data": snapshot})
-
-    try:
-        while True:
-            # We don't require client messages; this keeps the connection open
-            # and lets us notice disconnects.
-            _ = await websocket.receive_text()
-    except WebSocketDisconnect:
-        await WS_MANAGER.remove(str(tenant_id_int), str(task_id_int), websocket)
