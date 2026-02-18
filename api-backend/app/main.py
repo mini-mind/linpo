@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnusedCallResult=false, reportUntypedBaseClass=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnusedImport=false, reportInvalidTypeForm=false, reportUnboundVariable=false, reportAttributeAccessIssue=false, reportUntypedFunctionDecorator=false, reportUnusedFunction=false, reportImplicitStringConcatenation=false, reportUnnecessaryIsInstance=false, reportUnusedVariable=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnusedCallResult=false, reportUntypedBaseClass=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnusedImport=false, reportInvalidTypeForm=false, reportUnboundVariable=false, reportAttributeAccessIssue=false, reportUntypedFunctionDecorator=false, reportUnusedFunction=false, reportImplicitStringConcatenation=false, reportUnnecessaryIsInstance=false, reportUnusedVariable=false, reportAny=false
 
 """FastAPI app: multi-tenant tasks + event streaming.
 
@@ -2625,8 +2625,6 @@ async def create_run(
             )
 
     # Enqueue dispatch message to Redis Streams (non-blocking)
-    if should_queue:
-        return _run_to_out(task)
     redis_client = getattr(app.state, "redis_client", None)
     if redis_client is not None and getattr(app.state, "redis_ok", False):
         try:
@@ -3162,4 +3160,3 @@ async def ws_runs(
             _ = await websocket.receive_text()
     except WebSocketDisconnect:
         await WS_MANAGER.remove(str(tenant_id_int), str(run_id_int), websocket)
-
