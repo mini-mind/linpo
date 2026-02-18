@@ -14,7 +14,7 @@
 
 默认部署目标（支持 `roboard.duckdns.org` 的服务）：
 - `edge` - Caddy 反向代理（端口 80/443）
-- `gateway` - 内部 Nginx 网关（端口 8082）
+- `gateway` - 内部 Nginx 网关（容器内监听 80；仅 compose 网络内访问）
 - `web-frontend` - 静态文件服务
 - `api-backend` - FastAPI 后端（端口 8000）
 - `agent-manager` - 任务调度器（端口 7000）
@@ -28,6 +28,18 @@
 - `mailhog` - 邮件测试（开发环境，端口 8025）
 
 ## 部署策略
+
+## 必需环境变量（.env）
+
+本项目的 `docker-compose.yml` 对部分环境变量使用了 `:?set` 约束（缺失会直接失败），本地部署前请在项目根目录准备 `.env`：
+
+```bash
+ADMIN_API_KEY=...
+INTERNAL_API_KEY=...
+SEARXNG_SECRET_KEY=...
+```
+
+SOP 存储默认挂载在宿主机目录 `./sops/`（容器内为 `/app/sops`）。如果你要自定义路径，可设置 `ROBOARD_SOP_ROOT`（默认 `/app/sops`）。
 
 ### 1. 验证 Compose 配置（快速失败）
 
@@ -148,8 +160,8 @@ curl https://roboard.duckdns.org/api/bootstrap
 **内部服务连接**（从 compose 网络内）：
 ```bash
 # 通过 docker compose exec 访问内部服务
-docker compose exec api-backend curl http://localhost:8000/internal/health
-docker compose exec gateway curl http://localhost:8082/health
+docker compose exec api-backend curl http://localhost:8000/health
+docker compose exec gateway curl http://localhost/api/health
 ```
 
 ### 5. 回滚
