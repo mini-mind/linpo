@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RoBoard Login</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body class="cockpit-shell">
+    <header class="topbar" aria-label="RoBoard login">
+      <a class="brand" href="/" aria-label="RoBoard">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">RoBoard</span>
+      </a>
+
+      <div class="topbar-kicker" data-i18n="login.kicker">Cockpit access</div>
+
+      <div class="topbar-actions" aria-label="Login controls">
+        <div class="lang-toggle" role="group" aria-label="Language">
+          <button id="lang-zh" class="btn btn-ghost" type="button">中文</button>
+          <button id="lang-en" class="btn btn-ghost" type="button">English</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="auth" aria-label="Authentication">
+      <section class="panel auth-card" aria-label="Login">
+        <div class="panel-head">
+          <h2 class="panel-title" data-i18n="login.title">Sign In</h2>
+          <span class="panel-meta" data-i18n="login.meta">Cookie auth</span>
+        </div>
+
+        <form id="login-form" class="ui-form" autocomplete="off">
+          <label for="login-email" data-i18n="login.email">Email</label>
+          <input
+            id="login-email"
+            name="email"
+            type="email"
+            inputmode="email"
+            placeholder="name@company.com"
+            autocomplete="username"
+            required
+          />
+
+          <label for="login-password" data-i18n="login.password">Password</label>
+          <input
+            id="login-password"
+            name="password"
+            type="password"
+            placeholder="Your password"
+            autocomplete="current-password"
+            required
+          />
+
+          <div class="ui-row">
+            <button id="login-btn" class="btn btn-primary" type="submit" data-i18n="login.loginBtn">Login</button>
+            <button id="register-btn" class="btn btn-ghost" type="button" data-i18n="login.registerBtn">Register</button>
+          </div>
+
+          <p id="login-message" class="panel-message" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+    </main>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>
