@@ -1,3 +1,5 @@
+# pyright: reportMissingImports=false, reportImplicitRelativeImport=false
+
 import pathlib
 import sys
 
@@ -38,6 +40,6 @@ def test_world_bootstrap_endpoint_is_removed(tmp_path, monkeypatch) -> None:
 def test_ws_world_endpoint_is_removed(tmp_path, monkeypatch) -> None:
     client = _bootstrap_client(tmp_path, monkeypatch)
 
-    with pytest.raises(Exception):
-        with client.websocket_connect("/ws/world"):
-            pass
+    with client.websocket_connect("/ws/world") as ws:
+        with pytest.raises(Exception):
+            ws.receive_json()

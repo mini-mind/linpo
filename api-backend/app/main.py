@@ -2909,6 +2909,16 @@ async def post_event(
     await WS_MANAGER.broadcast(str(tenant_id_db), str(task_id_db), event_out.model_dump())
     if getattr(task, "kind", None) == "run":
         await WS_MANAGER.broadcast(str(tenant_id_db), _run_ws_key(task_id_db), _run_delta_payload(event))
+        recent_runs = (
+            session.query(models.Task)
+            .filter(models.Task.tenant_id == tenant_id_db, models.Task.kind == "run")
+            .order_by(models.Task.id.desc())
+            .limit(5)
+            .all()
+        )
+        recent_run_ids = {getattr(r, "id") for r in recent_runs}
+        if task_id_db in recent_run_ids:
+            await WS_MANAGER.broadcast(str(tenant_id_db), "world", _run_delta_payload(event))
     return event_out
 
 
@@ -3104,6 +3114,119 @@ async def ws_runs(
             _ = await websocket.receive_text()
     except WebSocketDisconnect:
         await WS_MANAGER.remove(str(tenant_id_int), run_key, websocket)
+
+
+@app.websocket("/ws/world")
+async def ws_world(
+    websocket: WebSocket,
+    api_key: Annotated[str | None, Query()] = None,
+    internal_key: Annotated[str | None, Query()] = None,
+    tenant_id: Annotated[str | None, Query()] = None,
+) -> None:
+    await websocket.accept()
+
+    session = db.SessionLocal()
+    try:
+        tenant_row: models.Tenant | None = None
+        if api_key:
+            api_key_hash = auth.hash_api_key(api_key)
+            tenant_row = session.query(models.Tenant).filter(models.Tenant.api_key_hash == api_key_hash).first()
+        elif internal_key and tenant_id:
+            try:
+                auth.require_internal_key(internal_key, APP_SETTINGS)
+                tenant_id_int = _parse_int_id(tenant_id, "tenant_id")
+            except HTTPException:
+                await websocket.close(code=1008)
+                return
+            tenant_row = session.query(models.Tenant).filter(models.Tenant.id == tenant_id_int).first()
+        else:
+            token = websocket.cookies.get(SESSION_COOKIE_NAME)
+            if token:
+                try:
+                    user = _require_session_user(session, token)
+                except HTTPException:
+                    await websocket.close(code=1008)
+                    return
+                user_tenant_id = getattr(user, "tenant_id")
+                if user_tenant_id is not None:
+                    tenant_row = session.query(models.Tenant).filter(models.Tenant.id == int(user_tenant_id)).first()
+
+        if not tenant_row:
+            await websocket.close(code=1008)
+            return
+
+        tenant_id_int = cast(int, getattr(tenant_row, "id"))
+
+        recent_runs_rows = (
+            session.query(models.Task)
+            .filter(models.Task.tenant_id == tenant_id_int, models.Task.kind == "run")
+            .order_by(models.Task.id.desc())
+            .limit(5)
+            .all()
+        )
+        recent_runs = [_run_to_out(r).model_dump() for r in recent_runs_rows]
+        recent_run_ids = [int(getattr(r, "id")) for r in recent_runs_rows]
+
+        agents_out: list[dict[str, object]] = []
+        edges_out: list[dict[str, str]] = []
+        if recent_run_ids:
+            agents = (
+                session.query(models.AgentInstance)
+                .filter(models.AgentInstance.tenant_id == tenant_id_int, models.AgentInstance.run_id.in_(recent_run_ids))
+                .order_by(models.AgentInstance.id.asc())
+                .all()
+            )
+            for agent in agents:
+                agent_id = getattr(agent, "id")
+                parent_agent_id = getattr(agent, "parent_agent_id")
+                agents_out.append(
+                    AgentInstanceOut(
+                        id=str(agent_id),
+                        parent_agent_id=str(parent_agent_id) if parent_agent_id is not None else None,
+                        role_label=cast(str | None, getattr(agent, "role_label", None)),
+                        state=cast(str, getattr(agent, "state")),
+                        current_sop_version_id=(
+                            str(getattr(agent, "current_sop_version_id"))
+                            if getattr(agent, "current_sop_version_id") is not None
+                            else None
+                        ),
+                    ).model_dump()
+                )
+                if parent_agent_id is not None:
+                    edges_out.append(AgentEdgeOut(parent=str(parent_agent_id), child=str(agent_id)).model_dump())
+
+        recent_events_out: list[dict[str, object]] = []
+        cursor = None
+        if recent_run_ids:
+            recent_events = (
+                session.query(models.Event)
+                .filter(models.Event.tenant_id == tenant_id_int, models.Event.task_id.in_(recent_run_ids))
+                .order_by(models.Event.id.desc())
+                .limit(50)
+                .all()
+            )
+            recent_events.reverse()
+            recent_events_out = [_event_to_out(e).model_dump() for e in recent_events]
+            cursor = _event_cursor(recent_events[-1]) if recent_events else None
+
+        snapshot = {
+            "recent_runs": recent_runs,
+            "agents": agents_out,
+            "edges": edges_out,
+            "recent_events": recent_events_out,
+            "cursor": cursor,
+        }
+    finally:
+        session.close()
+
+    await WS_MANAGER.add(str(tenant_id_int), "world", websocket)
+    await websocket.send_json({"type": "snapshot", "data": snapshot})
+
+    try:
+        while True:
+            _ = await websocket.receive_text()
+    except WebSocketDisconnect:
+        await WS_MANAGER.remove(str(tenant_id_int), "world", websocket)
 
 
 from . import reporting_api, schedules_api, templates_api, tree_api
