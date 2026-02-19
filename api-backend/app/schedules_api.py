@@ -2,14 +2,15 @@
 
 from collections.abc import Generator
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from . import db, models
+from . import auth, db, models
 
 router = APIRouter()
 
@@ -36,6 +37,14 @@ class ScheduleOut(BaseModel):
     interval_sec: int
     params: dict[str, object] | None = None
     enabled: bool
+
+
+class ScheduleDueOut(BaseModel):
+    schedule_id: str
+    tenant_id: str
+    template_key: str
+    params_json: str | None = None
+    interval_sec: int
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -97,6 +106,21 @@ def _schedule_to_out(schedule: models.Schedule) -> ScheduleOut:
         interval_sec=int(interval_sec),
         params=_params_from_json(params_json),
         enabled=bool(enabled),
+    )
+
+
+def _schedule_to_due_out(schedule: models.Schedule) -> ScheduleDueOut:
+    schedule_id = getattr(schedule, "id")
+    tenant_id = getattr(schedule, "tenant_id")
+    template_key = getattr(schedule, "template_key")
+    params_json = getattr(schedule, "params_json")
+    interval_sec = getattr(schedule, "interval_sec")
+    return ScheduleDueOut(
+        schedule_id=str(schedule_id),
+        tenant_id=str(tenant_id),
+        template_key=str(template_key),
+        params_json=str(params_json) if params_json is not None else None,
+        interval_sec=int(interval_sec),
     )
 
 
@@ -183,3 +207,32 @@ async def disable_schedule(
     session: DbSessionDep,
 ) -> ScheduleOut:
     return _set_schedule_enabled(schedule_id, False, tenant, session)
+
+
+@router.post("/internal/schedules/claim_due", response_model=list[ScheduleDueOut])
+async def claim_due_schedules(
+    session: DbSessionDep,
+    x_internal_key: InternalKeyHeader = None,
+) -> list[ScheduleDueOut]:
+    from . import main as app_main
+
+    auth.require_internal_key(x_internal_key, app_main.APP_SETTINGS)
+    now = datetime.utcnow()
+    due_schedules = (
+        session.query(models.Schedule)
+        .filter(
+            models.Schedule.enabled.is_(True),
+            or_(models.Schedule.next_run_at.is_(None), models.Schedule.next_run_at <= now),
+        )
+        .order_by(models.Schedule.id.asc())
+        .all()
+    )
+    claimed: list[ScheduleDueOut] = []
+    for schedule in due_schedules:
+        interval_sec = int(getattr(schedule, "interval_sec"))
+        next_run_at = now + timedelta(seconds=interval_sec)
+        setattr(schedule, "next_run_at", next_run_at)
+        setattr(schedule, "updated_at", now)
+        claimed.append(_schedule_to_due_out(schedule))
+    session.commit()
+    return claimed
