@@ -70,7 +70,7 @@ def test_admission_queues_run_when_machine_cap_reached(tmp_path, monkeypatch) ->
     with client.websocket_connect(f"/ws/runs/{run_id}?api_key={api_key}") as ws:
         msg = ws.receive_json()
         assert msg["type"] == "snapshot"
-        events = msg["data"]["events"]
+        events = msg["data"]["recent_events"]
         types = [e["type"] for e in events]
         assert "run.admission.queued" in types
 

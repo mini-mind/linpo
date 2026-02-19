@@ -1008,6 +1008,34 @@ def _event_to_out(event: models.Event) -> EventOut:
     )
 
 
+def _event_cursor(event: models.Event) -> int | None:
+    cursor = getattr(event, "cursor", None)
+    if cursor is not None:
+        try:
+            return int(cursor)
+        except (TypeError, ValueError):
+            return None
+    event_id = getattr(event, "id", None)
+    if event_id is None:
+        return None
+    return int(event_id)
+
+
+def _run_ws_key(run_id: int | str) -> str:
+    return f"run:{run_id}"
+
+
+def _run_delta_payload(event: models.Event) -> dict[str, object]:
+    event_out = _event_to_out(event).model_dump()
+    return {
+        "type": "delta",
+        "data": {
+            "recent_events": [event_out],
+            "cursor": _event_cursor(event),
+        },
+    }
+
+
 def _notification_to_out(notification: models.Notification) -> NotificationOut:
     notification_id = getattr(notification, "id")
     channel = cast(str, getattr(notification, "channel"))
@@ -2665,101 +2693,6 @@ async def get_run(
     return _run_to_out(task)
 
 
-@app.get("/api/runs/{run_id}/tree", response_model=RunTreeOut)
-async def get_run_tree(
-    run_id: str,
-    tenant: Annotated[models.Tenant, Depends(require_tenant)],
-    session: DbSessionDep,
-) -> RunTreeOut:
-    TASK_ID_CONTEXT.set(run_id)
-    run_id_int = _parse_int_id(run_id, "run_id")
-    task = (
-        session.query(models.Task)
-        .filter(models.Task.id == run_id_int, models.Task.tenant_id == tenant.id)
-        .first()
-    )
-    if not task:
-        raise HTTPException(status_code=404, detail="Run not found")
-
-    agents = (
-        session.query(models.AgentInstance)
-        .filter(models.AgentInstance.run_id == run_id_int, models.AgentInstance.tenant_id == tenant.id)
-        .order_by(models.AgentInstance.id.asc())
-        .all()
-    )
-
-    agents_out: list[AgentInstanceOut] = []
-    edges_out: list[AgentEdgeOut] = []
-    for agent in agents:
-        agent_id = getattr(agent, "id")
-        parent_agent_id = getattr(agent, "parent_agent_id")
-        agents_out.append(
-            AgentInstanceOut(
-                id=str(agent_id),
-                parent_agent_id=str(parent_agent_id) if parent_agent_id is not None else None,
-                role_label=cast(str | None, getattr(agent, "role_label", None)),
-                state=cast(str, getattr(agent, "state")),
-                current_sop_version_id=(
-                    str(getattr(agent, "current_sop_version_id"))
-                    if getattr(agent, "current_sop_version_id") is not None
-                    else None
-                ),
-            )
-        )
-        if parent_agent_id is not None:
-            edges_out.append(AgentEdgeOut(parent=str(parent_agent_id), child=str(agent_id)))
-
-    return RunTreeOut(run=_run_to_out(task), agents=agents_out, edges=edges_out)
-
-
-@app.get("/api/agents/{agent_id}/sop", response_model=SopOut)
-async def get_agent_sop(
-    agent_id: str,
-    tenant: Annotated[models.Tenant, Depends(require_tenant)],
-    session: DbSessionDep,
-    version: str | None = None,
-) -> SopOut:
-    agent_id_int = _parse_int_id(agent_id, "agent_id")
-    agent = (
-        session.query(models.AgentInstance)
-        .filter(models.AgentInstance.id == agent_id_int, models.AgentInstance.tenant_id == tenant.id)
-        .first()
-    )
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
-
-    q = session.query(models.SopVersion).filter(
-        models.SopVersion.agent_id == agent_id_int,
-        models.SopVersion.tenant_id == tenant.id,
-    )
-    if version:
-        try:
-            version_int = int(version)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="version must be an integer")
-        q = q.filter(models.SopVersion.version == version_int)
-    else:
-        current_id = getattr(agent, "current_sop_version_id")
-        if current_id is not None:
-            q = q.filter(models.SopVersion.id == int(current_id))
-
-    sop = q.order_by(models.SopVersion.id.desc()).first()
-    if not sop:
-        raise HTTPException(status_code=404, detail="SOP not found")
-
-    from . import sop_store
-
-    md_path = cast(str, getattr(sop, "md_path"))
-    md_text = sop_store.read_sop_text(md_path)
-
-    return SopOut(
-        agent_id=str(agent_id_int),
-        sop_version_id=str(getattr(sop, "id")),
-        version=cast(int, getattr(sop, "version")),
-        md_path=md_path,
-        md_sha256=cast(str, getattr(sop, "md_sha256")),
-        md_text=md_text,
-    )
 
 
 @app.post("/api/runs/{run_id}/actions", response_model=ActionOut)
@@ -2798,6 +2731,11 @@ async def create_action(
                 tenant_id_str,
                 run_id_str,
                 _event_to_out(event).model_dump(),
+            )
+            await WS_MANAGER.broadcast(
+                tenant_id_str,
+                _run_ws_key(run_id_int),
+                _run_delta_payload(event),
             )
 
     applied_id = getattr(action, "applied_sop_version_id")
@@ -2970,6 +2908,8 @@ async def post_event(
 
     event_out = _event_to_out(event)
     await WS_MANAGER.broadcast(str(tenant_id_db), str(task_id_db), event_out.model_dump())
+    if getattr(task, "kind", None) == "run":
+        await WS_MANAGER.broadcast(str(tenant_id_db), _run_ws_key(task_id_db), _run_delta_payload(event))
     return event_out
 
 
@@ -3143,20 +3083,30 @@ async def ws_runs(
             .all()
         )
 
+        recent_events = [_event_to_out(e).model_dump() for e in events]
+        cursor = _event_cursor(events[-1]) if events else None
+
         snapshot = {
             "run": _run_to_out(task).model_dump(),
             "agents": agents_out,
             "edges": edges_out,
-            "events": [_event_to_out(e).model_dump() for e in events],
+            "recent_events": recent_events,
+            "cursor": cursor,
         }
     finally:
         session.close()
 
-    await WS_MANAGER.add(str(tenant_id_int), str(run_id_int), websocket)
+    run_key = _run_ws_key(run_id_int)
+    await WS_MANAGER.add(str(tenant_id_int), run_key, websocket)
     await websocket.send_json({"type": "snapshot", "data": snapshot})
 
     try:
         while True:
             _ = await websocket.receive_text()
     except WebSocketDisconnect:
-        await WS_MANAGER.remove(str(tenant_id_int), str(run_id_int), websocket)
+        await WS_MANAGER.remove(str(tenant_id_int), run_key, websocket)
+
+
+from . import tree_api
+
+app.include_router(tree_api.router)

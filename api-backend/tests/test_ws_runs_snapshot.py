@@ -30,7 +30,9 @@ def test_ws_runs_snapshot(tmp_path, monkeypatch) -> None:
         json={"name": "t1"},
         headers={"X-Admin-Key": "test-admin"},
     )
-    api_key = tenant_resp.json()["api_key"]
+    tenant_payload = tenant_resp.json()
+    api_key = tenant_payload["api_key"]
+    tenant_id = tenant_payload["tenant_id"]
 
     run_resp = client.post(
         "/api/runs",
@@ -46,3 +48,19 @@ def test_ws_runs_snapshot(tmp_path, monkeypatch) -> None:
         assert data["run"]["run_id"] == str(run_id)
         assert len(data["agents"]) >= 3
         assert len(data["edges"]) >= 2
+        assert data["recent_events"]
+        assert data["cursor"] == int(data["recent_events"][-1]["id"])
+
+        event_resp = client.post(
+            f"/api/tasks/{run_id}/events",
+            json={"type": "agent.step.progress", "data": {"progress": 0.5}},
+            headers={"X-Internal-Key": "test-internal", "X-Tenant-ID": tenant_id},
+        )
+        assert event_resp.status_code == 200
+
+        delta = ws.receive_json()
+        assert delta["type"] == "delta"
+        delta_data = delta["data"]
+        assert delta_data["recent_events"]
+        assert delta_data["recent_events"][0]["type"] == "agent.step.progress"
+        assert delta_data["cursor"] == int(delta_data["recent_events"][0]["id"])
