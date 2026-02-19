@@ -89,6 +89,38 @@ curl -fsS https://roboard.duckdns.org/ >/dev/null
 - 注册/登录后可创建 run 并连接 WS（不需要填写 API key）
 - Logout 正常清理会话
 
+## MVP2: Scheduling / Templates / Reporting
+
+MVP2 增加了三类能力：
+- Scheduling: 定时/周期性创建 run
+- Templates: 场景模板编译（当前至少包含 `supplier.monitoring`）
+- Reporting: run 的确定性报告（从 events 推导，不依赖 LLM）
+
+### 公网 API (tenant auth)
+
+- Schedules:
+  - `POST /api/schedules`
+  - `GET /api/schedules`
+  - `POST /api/schedules/{schedule_id}/enable`
+  - `POST /api/schedules/{schedule_id}/disable`
+- Templates:
+  - `GET /api/templates`
+  - `POST /api/templates/{template_key}/compile`
+- Reporting:
+  - `GET /api/runs/{run_id}/report`
+
+### 内部 API (internal auth)
+
+- `POST /internal/schedules/claim_due`
+  - 用途：scheduler 领取 due schedules，并推进 `next_run_at`
+  - 认证：`X-Internal-Key`
+
+### Scheduler 运行位置
+
+- `agent-manager` 在启动时会启动 scheduler loop（FastAPI lifespan）。
+- 通过环境变量控制轮询间隔：`SCHEDULER_POLL_INTERVAL` (seconds)
+  - `<= 0` 表示禁用
+
 ## Legacy
 
 单机全量部署（历史版本）已移至：

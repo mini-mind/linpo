@@ -74,6 +74,11 @@ docker compose up -d --build edge gateway web-frontend api-backend agent-manager
 docker compose ps
 ```
 
+MVP2 相关说明：
+- `agent-manager` 会启动 scheduler loop，用于周期性创建 run。
+- 轮询间隔通过 `SCHEDULER_POLL_INTERVAL` 控制（秒）。
+  - `SCHEDULER_POLL_INTERVAL<=0` 可禁用 scheduler。
+
 **最小化重部署**（服务子集）：
 
 当只有特定服务变更时，仅重部署这些服务：
@@ -143,6 +148,17 @@ curl -I https://roboard.duckdns.org/
 # 检查 API 健康端点
 curl https://roboard.duckdns.org/api/health
 # 预期：包含 status "ok" 的 JSON 响应
+
+# (MVP2) 检查模板列表
+curl https://roboard.duckdns.org/api/templates
+# 预期：包含 supplier.monitoring
+
+# (MVP2) 创建 schedule (示例；需要 tenant auth)
+# curl -X POST https://roboard.duckdns.org/api/schedules -H "X-API-Key: ..." -H "Content-Type: application/json" \
+#   -d '{"template_key":"supplier.monitoring","interval_sec":3600,"params":{"suppliers":["Acme"],"keywords":["fraud"]}}'
+
+# (MVP2) 查看 run report
+# curl https://roboard.duckdns.org/api/runs/<run_id>/report -H "X-API-Key: ..."
 
 # 检查 WebSocket 升级是否工作
 curl -I -H "Upgrade: websocket" -H "Connection: Upgrade" \
