@@ -1,3 +1,5 @@
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnannotatedClassAttribute=false, reportUntypedBaseClass=false, reportDeprecated=false
+
 from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Index, Boolean, Float
 from datetime import datetime
 
@@ -58,6 +60,24 @@ class Task(Base):
 
     __table_args__ = (
         Index('ix_tasks_tenant_id', 'tenant_id'),
+    )
+
+
+class Schedule(Base):
+    __tablename__ = 'schedules'
+
+    id = Column(Integer, primary_key=True)
+    tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
+    template_key = Column(String(255), nullable=False)
+    params_json = Column(Text, nullable=True)
+    interval_sec = Column(Integer, nullable=False)
+    next_run_at = Column(DateTime, nullable=True)
+    enabled = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index('ix_schedules_tenant_id', 'tenant_id'),
     )
 
 
