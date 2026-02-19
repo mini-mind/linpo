@@ -3106,7 +3106,8 @@ async def ws_runs(
         await WS_MANAGER.remove(str(tenant_id_int), run_key, websocket)
 
 
-from . import schedules_api, tree_api
+from . import schedules_api, templates_api, tree_api
 
 app.include_router(tree_api.router)
 app.include_router(schedules_api.router)
+app.include_router(templates_api.router)
