@@ -4,7 +4,7 @@
 
 ## 当前运行位置 (务必先确认)
 
-本仓库存在两种部署形态：
+本仓库存在两种部署形态。**当前我们只有两台机器：本机(开发) + ravin(生产)**。
 
 1) **单机全量部署 (single-host)**
    - 特征：同一台机器同时运行 edge/gateway/web-frontend/api-backend/agent-manager/postgres/redis/... 等。
@@ -15,6 +15,8 @@
    - 特征：frontend host 运行 edge/gateway/web-frontend/searxng；worker host 运行 api-backend/agent-manager/worker-playwright/...。
    - Compose：`deploy/prod/docker-compose.frontend.yml`（frontend）；worker 侧以 `docs/worker-deployment.md` / 实际运维 SOP 为准。
    - 适用：前后端分离、worker 资源隔离。
+
+备注：如果你只有一台生产机（ravin），则 split deployment 的 "worker host" 实际上与 ravin 可能是同一台机器；这种情况下优先按 single-host 或 prod compose 的实际落地为准。
 
 如果你不确定当前线上属于哪种形态，先在目标机器执行：
 
