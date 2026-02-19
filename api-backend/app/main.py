@@ -1,5 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnusedCallResult=false, reportUntypedBaseClass=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnusedImport=false, reportInvalidTypeForm=false, reportUnboundVariable=false, reportAttributeAccessIssue=false, reportUntypedFunctionDecorator=false, reportUnusedFunction=false, reportImplicitStringConcatenation=false, reportUnnecessaryIsInstance=false, reportUnusedVariable=false, reportAny=false
-
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnusedCallResult=false, reportUntypedBaseClass=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnusedImport=false, reportInvalidTypeForm=false, reportUnboundVariable=false, reportAttributeAccessIssue=false, reportUntypedFunctionDecorator=false, reportUnusedFunction=false, reportImplicitStringConcatenation=false, reportUnnecessaryIsInstance=false, reportUnusedVariable=false, reportImportCycles=false
 """FastAPI app: multi-tenant tasks + event streaming.
 
 Production behavior:
@@ -3107,6 +3106,7 @@ async def ws_runs(
         await WS_MANAGER.remove(str(tenant_id_int), run_key, websocket)
 
 
-from . import tree_api
+from . import schedules_api, tree_api
 
 app.include_router(tree_api.router)
+app.include_router(schedules_api.router)
