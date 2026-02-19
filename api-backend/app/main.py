@@ -3229,9 +3229,9 @@ async def ws_world(
         await WS_MANAGER.remove(str(tenant_id_int), "world", websocket)
 
 
-from . import reporting_api, schedules_api, templates_api, tree_api
+from . import reporting, schedules_api, templates_api, tree_api
 
 app.include_router(tree_api.router)
-app.include_router(reporting_api.router)
+app.include_router(reporting.router)
 app.include_router(schedules_api.router)
 app.include_router(templates_api.router)

@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportImplicitRelativeImport=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportPrivateLocalImportUsage=false, reportAny=false
+# pyright: reportMissingImports=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false
 
 import pathlib
 import sys
@@ -19,14 +19,14 @@ def test_run_report_endpoint_counts_and_last_event(tmp_path, monkeypatch) -> Non
     monkeypatch.setenv("MACHINE_MEM_AVAILABLE_FUSE_BYTES", "0")
     monkeypatch.setenv("MACHINE_SWAP_FUSE_BYTES", "999999999999")
 
-    import app.main as main
+    import app.main as main  # pyright: ignore[reportImplicitRelativeImport]
 
     from sqlalchemy import create_engine
 
     engine = create_engine(f"sqlite+pysqlite:///{db_path}")
     main.ENGINE = engine
     main.db.SessionLocal.configure(bind=engine)
-    main.models.Base.metadata.create_all(engine)
+    main.models.Base.metadata.create_all(engine)  # pyright: ignore[reportPrivateLocalImportUsage]
 
     client = TestClient(main.app)
 
@@ -78,6 +78,9 @@ def test_run_report_endpoint_counts_and_last_event(tmp_path, monkeypatch) -> Non
     assert set(report.keys()) == {"run", "counts", "last_event"}
     assert report["run"]["run_id"] == str(run_id)
     assert report["run"].get("status")
+    run_payload = run_resp.json()
+    assert report["run"]["created_at"] == run_payload["created_at"]
+    assert report["run"]["updated_at"] == run_payload["updated_at"]
 
     session = main.db.SessionLocal()
     try:
@@ -92,15 +95,16 @@ def test_run_report_endpoint_counts_and_last_event(tmp_path, monkeypatch) -> Non
         )
         counts: dict[str, int] = {}
         for event in events:
-            event_type = str(getattr(event, "type"))
+            event_type = str(getattr(event, "type"))  # pyright: ignore[reportAny]
             counts[event_type] = counts.get(event_type, 0) + 1
         assert report["counts"] == counts
 
         if events:
             last = events[-1]
             assert report["last_event"] == {
-                "id": str(getattr(last, "id")),
-                "type": str(getattr(last, "type")),
+                "id": str(getattr(last, "id")),  # pyright: ignore[reportAny]
+                "type": str(getattr(last, "type")),  # pyright: ignore[reportAny]
+                "timestamp": main._dt_to_iso(getattr(last, "timestamp")),  # pyright: ignore[reportPrivateUsage,reportAny]
             }
         else:
             assert report["last_event"] is None
