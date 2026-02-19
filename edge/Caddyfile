@@ -1,17 +1,4 @@
 roboard.duckdns.org {
-	@health path /api/health
-	handle @health {
-		uri replace /api/health /health
-		reverse_proxy 127.0.0.1:18000
-	}
-
-	# /api/* and /ws/* are bridged to a local backend via SSH reverse tunnel.
-	@backend path /api/* /ws/*
-	handle @backend {
-		reverse_proxy 127.0.0.1:18000
-	}
-
-	handle {
-		reverse_proxy 127.0.0.1:8082
-	}
+	# Proxy everything to gateway (which handles /api/* and /ws/*).
+	reverse_proxy gateway:80
 }
