@@ -2,7 +2,7 @@
 
 from collections.abc import Generator
 import json
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -152,7 +152,7 @@ def _set_schedule_enabled(
     if not schedule:
         raise HTTPException(status_code=404, detail="Schedule not found")
     setattr(schedule, "enabled", enabled)
-    setattr(schedule, "updated_at", datetime.utcnow())
+    setattr(schedule, "updated_at", models.utcnow_naive())
     session.commit()
     session.refresh(schedule)
     return _schedule_to_out(schedule)
@@ -217,7 +217,7 @@ async def claim_due_schedules(
     from . import main as app_main
 
     auth.require_internal_key(x_internal_key, app_main.APP_SETTINGS)
-    now = datetime.utcnow()
+    now = models.utcnow_naive()
     due_schedules = (
         session.query(models.Schedule)
         .filter(

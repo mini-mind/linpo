@@ -1,9 +1,13 @@
 # pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnannotatedClassAttribute=false, reportUntypedBaseClass=false, reportDeprecated=false
 
 from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Index, Boolean, Float
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .db import Base
+
+
+def utcnow_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class User(Base):
@@ -13,7 +17,7 @@ class User(Base):
     email = Column(String(255), nullable=False, unique=True)
     password_hash = Column(String(255), nullable=False)
     tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow_naive, nullable=False)
 
 
 class Session(Base):
@@ -22,7 +26,7 @@ class Session(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     token_hash = Column(String(255), nullable=False, unique=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow_naive, nullable=False)
     expires_at = Column(DateTime, nullable=False)
     revoked_at = Column(DateTime, nullable=True)
 
@@ -38,7 +42,7 @@ class Tenant(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String(255), nullable=False)
     api_key_hash = Column(String(255), nullable=False, unique=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow_naive, nullable=False)
     notification_email = Column(String(255), nullable=True)
 
 
@@ -55,8 +59,8 @@ class Task(Base):
     root_agent_id = Column(Integer, ForeignKey('agent_instances.id'), nullable=True)
     tree_revision = Column(Integer, nullable=False, default=0)
     resource_profile_json = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow_naive, nullable=False)
+    updated_at = Column(DateTime, default=utcnow_naive, onupdate=utcnow_naive, nullable=False)
 
     __table_args__ = (
         Index('ix_tasks_tenant_id', 'tenant_id'),
@@ -73,8 +77,8 @@ class Schedule(Base):
     interval_sec = Column(Integer, nullable=False)
     next_run_at = Column(DateTime, nullable=True)
     enabled = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow_naive, nullable=False)
+    updated_at = Column(DateTime, default=utcnow_naive, onupdate=utcnow_naive, nullable=False)
 
     __table_args__ = (
         Index('ix_schedules_tenant_id', 'tenant_id'),
@@ -94,7 +98,7 @@ class Event(Base):
     type = Column(String(100), nullable=False)
     data_json = Column(Text, nullable=True)
     status = Column(String(50), nullable=False)
-    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)
+    timestamp = Column(DateTime, default=utcnow_naive, nullable=False)
 
     __table_args__ = (
         Index('ix_events_tenant_id', 'tenant_id'),
@@ -110,7 +114,7 @@ class Notification(Base):
     tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
     channel = Column(String(100), nullable=False)
     status = Column(String(50), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow_naive, nullable=False)
     task_status = Column(String(50), nullable=False)
     email_to = Column(String(255), nullable=True)
     email_subject = Column(Text, nullable=True)
@@ -118,7 +122,7 @@ class Notification(Base):
     attempt = Column(Integer, nullable=False, default=0)
     last_error = Column(Text, nullable=True)
     sent_at = Column(DateTime, nullable=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow_naive, onupdate=utcnow_naive, nullable=False)
 
     __table_args__ = (
         Index('ix_notifications_tenant_id', 'tenant_id'),
@@ -131,7 +135,7 @@ class A2AThread(Base):
 
     id = Column(Integer, primary_key=True)
     tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow_naive, nullable=False)
 
     __table_args__ = (
         Index('ix_a2a_threads_tenant_id', 'tenant_id'),
@@ -144,7 +148,7 @@ class A2AMessage(Base):
     id = Column(Integer, primary_key=True)
     tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
     thread_id = Column(Integer, ForeignKey('a2a_threads.id'), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow_naive, nullable=False)
     role = Column(String(20), nullable=False)
     agent_id = Column(String(255), nullable=True)
     content = Column(Text, nullable=False)
@@ -167,7 +171,7 @@ class AgentInstance(Base):
     state = Column(String(50), nullable=False, default='queued')
     current_sop_version_id = Column(Integer, ForeignKey('sop_versions.id'), nullable=True)
     resource_allocation_json = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow_naive, nullable=False)
 
     __table_args__ = (
         Index('ix_agent_instances_tenant_id', 'tenant_id'),
@@ -188,7 +192,7 @@ class SopVersion(Base):
     base_sop_version_id = Column(Integer, ForeignKey('sop_versions.id'), nullable=True)
     created_by_user_id = Column(Integer, ForeignKey('users.id'), nullable=True)
     created_by_agent_id = Column(Integer, ForeignKey('agent_instances.id'), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow_naive, nullable=False)
 
     __table_args__ = (
         Index('ix_sop_versions_tenant_id', 'tenant_id'),
@@ -211,7 +215,7 @@ class Action(Base):
     status = Column(String(50), nullable=False, default='requested')
     applied_sop_version_id = Column(Integer, ForeignKey('sop_versions.id'), nullable=True)
     error = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow_naive, nullable=False)
     applied_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
@@ -230,7 +234,7 @@ class Tool(Base):
     description = Column(Text, nullable=True)
     schema_json = Column(Text, nullable=True)
     enabled = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow_naive, nullable=False)
 
 
 class ToolPermission(Base):
@@ -243,7 +247,7 @@ class ToolPermission(Base):
     agent_id = Column(Integer, ForeignKey('agent_instances.id'), nullable=True)
     effect = Column(String(20), nullable=False)
     constraints_json = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow_naive, nullable=False)
 
     __table_args__ = (
         Index('ix_tool_permissions_tenant_id', 'tenant_id'),
@@ -259,7 +263,7 @@ class MembershipTier(Base):
     id = Column(Integer, primary_key=True)
     key = Column(String(100), nullable=False, unique=True)
     name = Column(String(255), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow_naive, nullable=False)
 
 
 class ResourceProfile(Base):
@@ -271,7 +275,7 @@ class ResourceProfile(Base):
     mem_bytes = Column(Integer, nullable=False)
     disk_bytes = Column(Integer, nullable=False)
     max_active_users = Column(Integer, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow_naive, nullable=False)
 
     __table_args__ = (
         Index('ix_resource_profiles_tier_id', 'tier_id'),
