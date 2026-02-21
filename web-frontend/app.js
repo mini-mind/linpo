@@ -1269,9 +1269,26 @@
         connectWs();
         return true;
       } catch (err) {
-        if (handleAuthError(err)) return false;
         const status = err && typeof err === "object" ? err.status : null;
         const detail = err && typeof err === "object" ? err.detail : "";
+        
+        // Handle specific error codes with better feedback
+        if (status === 401 || status === 403) {
+          setMessage("登录已失效，请重新登录", "error");
+          return false;
+        }
+        
+        if (status === 429) {
+          const baseMessage = "触发并发/速率限制，请稍后再试";
+          const message = detail ? `${baseMessage}: ${safeText(detail)}` : baseMessage;
+          setMessage(message, "error");
+          return false;
+        }
+        
+        // For other auth errors, use the existing handler
+        if (handleAuthError(err)) return false;
+        
+        // Generic error message for other cases
         setMessage(`${t("taskTree.msg.createFailed")} (${status || "error"}). ${safeText(detail)}`.trim(), "error");
         return false;
       }
