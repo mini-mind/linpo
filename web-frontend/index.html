@@ -3,172 +3,111 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>RoBoard Cockpit</title>
+    <title>RoBoard Task Tree</title>
     <link rel="stylesheet" href="style.css" />
   </head>
-  <body class="cockpit-shell">
-    <header class="topbar" aria-label="RoBoard cockpit">
+  <body class="task-tree-shell">
+    <header class="topbar" aria-label="RoBoard Task Tree">
       <a class="brand" href="/" aria-label="RoBoard">
         <span class="brand-mark" aria-hidden="true"></span>
         <span class="brand-name">RoBoard</span>
       </a>
-      <div class="topbar-kicker" data-i18n="cockpit.kicker">MVP(1) cockpit: runs • agent tree • SOP intervention • event stream</div>
 
-      <div class="topbar-actions" aria-label="Session controls">
+      <div class="topbar-actions" aria-label="Task controls">
         <div class="lang-toggle" role="group" aria-label="Language">
           <button id="lang-zh" class="btn btn-ghost" type="button">中文</button>
           <button id="lang-en" class="btn btn-ghost" type="button">English</button>
         </div>
 
         <span id="session-label" class="session-label is-hidden" aria-live="polite"></span>
-        <button id="logout-btn" class="btn btn-ghost is-hidden" type="button" data-i18n="cockpit.logout">Logout</button>
+        <button id="logout-btn" class="btn btn-ghost is-hidden" type="button" data-i18n="taskTree.logout">Logout</button>
+        
+        <button id="add-task-btn" class="btn btn-primary add-task-btn" type="button" aria-label="Add new task" title="Add new task">
+          <span class="add-task-icon">+</span>
+        </button>
       </div>
     </header>
 
-    <main id="cockpit-view" class="cockpit" aria-label="Cockpit">
-      <div class="cockpit-grid">
-        <section id="run-panel" class="panel" aria-label="Create run">
+    <main id="task-tree-view" class="task-tree-main" aria-label="Task Tree">
+      <div class="task-tree-container">
+        <section id="task-tree-section" class="task-tree-panel" aria-label="Task Tree">
           <div class="panel-head">
-              <h2 class="panel-title" data-i18n="run.title">Run</h2>
-              <span id="run-connection-pill" class="status-pill neutral" aria-label="Run connection status" data-i18n="run.statusIdle">Idle</span>
+            <h2 class="panel-title" data-i18n="taskTree.title">Task Tree</h2>
+            <span id="task-connection-pill" class="status-pill neutral" aria-label="Connection status" data-i18n="taskTree.statusIdle">Idle</span>
           </div>
 
-          <form id="run-create-form" class="ui-form" autocomplete="off">
-            <label for="run-input-nl" data-i18n="run.inputLabel">input_nl</label>
-            <textarea
-              id="run-input-nl"
-              name="input_nl"
-              rows="3"
-              placeholder="Describe what you want this run to do..."
-              data-i18n-placeholder="run.inputPlaceholder"
-              spellcheck="false"
-            ></textarea>
-
-            <div class="ui-row ui-row-single">
-              <button id="run-create" class="btn btn-primary" type="submit" data-i18n="run.create">Create Run</button>
-            </div>
-
-            <details id="run-advanced" class="panel-disclosure" data-default="mobile-closed" aria-label="Run advanced controls">
-              <summary class="panel-summary">
-                <span class="panel-summary-title" data-i18n="run.advancedTitle">Advanced</span>
-                <span class="panel-summary-hint" data-i18n="run.advancedHint">Connect / disconnect</span>
-              </summary>
-
-              <div class="panel-disclosure-body">
-                <div class="ui-row ui-row-single">
-                  <button id="run-disconnect" class="btn btn-ghost" type="button" data-i18n="run.disconnect">Disconnect</button>
-                </div>
-
-                <label for="run-id" data-i18n="run.idLabel">run_id</label>
-                <div class="ui-row">
-            <input
-              id="run-id"
-              name="run_id"
-              type="text"
-              placeholder="Run ID"
-              data-i18n-placeholder="run.idPlaceholder"
-              spellcheck="false"
-            />
-                  <button id="run-connect" class="btn btn-ghost" type="button" data-i18n="run.connect">Connect</button>
-                </div>
-              </div>
-            </details>
-
-            <p id="run-message" class="panel-message" role="status" aria-live="polite"></p>
-          </form>
-        </section>
-
-        <section id="agent-panel" class="panel" aria-label="Agent tree">
-          <details id="agent-details" class="panel-disclosure" data-default="mobile-closed">
-            <summary class="panel-summary">
-              <span class="panel-summary-title" data-i18n="agents.title">Agent Tree</span>
-              <span id="agent-meta" class="panel-summary-hint">0 agents</span>
-            </summary>
-
-            <div class="panel-disclosure-body">
-              <div class="agent-tree" aria-label="Agents">
-                <ul id="agent-tree" class="agent-tree-list" role="list"></ul>
-              </div>
-            </div>
-          </details>
-        </section>
-
-        <section class="panel sop" aria-label="SOP">
-          <div class="panel-head">
-            <h2 class="panel-title" data-i18n="sop.title">SOP</h2>
-            <div class="panel-meta" aria-label="Selected agent">
-              <span id="sop-agent" data-i18n="sop.noAgent">No agent</span>
-              <span id="sop-version">v-</span>
+          <div id="task-tree-content" class="task-tree-content">
+            <div id="task-tree-root" class="task-tree-root" role="tree" aria-label="Task hierarchy">
+              <div class="task-tree-empty-state" data-i18n="taskTree.empty">No tasks yet. Create a new task to get started.</div>
             </div>
           </div>
 
-          <details id="sop-display-details" class="panel-disclosure" data-default="mobile-closed" aria-label="SOP display">
-            <summary class="panel-summary">
-              <span class="panel-summary-title" data-i18n="sop.view">View SOP</span>
-              <span class="panel-summary-hint" data-i18n="sop.viewHint">Markdown</span>
-            </summary>
-            <div class="panel-disclosure-body">
-              <pre id="sop-display" class="sop-display" aria-label="SOP markdown"></pre>
+          <p id="task-message" class="panel-message" role="status" aria-live="polite"></p>
+        </section>
+
+        <section id="task-details-section" class="task-details-panel is-hidden" aria-label="Task details">
+          <div class="panel-head">
+            <h3 class="panel-title" id="task-details-title" data-i18n="taskTree.detailsTitle">Task Details</h3>
+            <button id="close-details-btn" class="btn btn-ghost" type="button" aria-label="Close details">×</button>
+          </div>
+
+          <div class="task-details-content">
+            <div class="task-status-section">
+              <h4 class="section-title" data-i18n="taskTree.status">Status</h4>
+              <div id="task-status-display" class="status-display"></div>
             </div>
-          </details>
 
-          <details
-            id="sop-replace-details"
-            class="panel-disclosure"
-            data-default="mobile-closed"
-            data-requires-agent="true"
-            aria-label="SOP replace editor"
-          >
-            <summary class="panel-summary">
-              <span class="panel-summary-title" data-i18n="sop.replace">Replace SOP</span>
-              <span class="panel-summary-hint" data-i18n="sop.replaceHint">Intervention</span>
-            </summary>
+            <div class="task-sop-section">
+              <h4 class="section-title" data-i18n="taskTree.sop">SOP</h4>
+              <div id="task-sop-display" class="sop-display"></div>
+            </div>
 
-            <div class="panel-disclosure-body">
-              <form id="sop-replace-form" class="ui-form sop-form" autocomplete="off" aria-label="SOP replace">
-                <label for="sop-editor" data-i18n="sop.replaceLabel">Replace SOP (md_text)</label>
-                <textarea
-                  id="sop-editor"
-                  name="md_text"
-                  rows="10"
-                  spellcheck="false"
-                  placeholder="Write replacement SOP markdown..."
-                  data-i18n-placeholder="sop.replacePlaceholder"
-                ></textarea>
-
-                <div class="ui-row ui-row-tight">
-                  <details id="sop-advanced" class="inline-disclosure" aria-label="SOP advanced">
-                    <summary data-i18n="sop.advanced">Advanced</summary>
-                    <div class="sop-version-row" aria-label="Expected version">
-                      <span class="panel-meta">expected_version</span>
-                      <span id="sop-expected-version" class="panel-meta">-</span>
-                    </div>
-                  </details>
-                  <button id="sop-submit" class="btn btn-primary" type="submit" data-i18n="sop.submit">Submit</button>
-                </div>
+            <div class="task-chat-section">
+              <h4 class="section-title" data-i18n="taskTree.chat">Chat</h4>
+              <div id="task-chat-messages" class="chat-messages"></div>
+              <form id="task-chat-form" class="chat-form">
+                <input 
+                  id="task-chat-input" 
+                  type="text" 
+                  placeholder="Type a message..." 
+                  data-i18n-placeholder="taskTree.chatPlaceholder"
+                  autocomplete="off"
+                />
+                <button type="submit" class="btn btn-primary" data-i18n="taskTree.send">Send</button>
               </form>
             </div>
-          </details>
-        </section>
-
-        <section id="run-events" class="panel event-log" aria-label="Run events">
-          <details id="event-log-details" class="panel-disclosure" data-default="mobile-closed" aria-label="Run events">
-            <summary class="panel-summary">
-              <span class="panel-summary-title" data-i18n="events.title">Event Log</span>
-              <span class="panel-summary-hint" data-i18n="events.hint">Stream</span>
-            </summary>
-
-            <div class="panel-disclosure-body">
-              <div class="event-log-head">
-                <h2 class="panel-title" data-i18n="events.heading">Events</h2>
-                <button id="events-clear" type="button" class="btn btn-ghost" aria-label="Clear events" data-i18n="events.clear">Clear</button>
-              </div>
-              <ul id="event-log-list" role="log" aria-label="Event log" aria-live="polite"></ul>
-            </div>
-          </details>
+          </div>
         </section>
       </div>
     </main>
+
+    <div id="add-task-modal" class="modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-overlay"></div>
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 id="modal-title" class="modal-title" data-i18n="taskTree.createTask">Create New Task</h2>
+          <button id="close-modal-btn" class="btn btn-ghost modal-close" type="button" aria-label="Close modal">×</button>
+        </div>
+        
+        <form id="add-task-form" class="ui-form">
+          <label for="task-input-nl" data-i18n="taskTree.inputLabel">Task Description</label>
+          <textarea
+            id="task-input-nl"
+            name="input_nl"
+            rows="4"
+            placeholder="Describe what you want this task to accomplish..."
+            data-i18n-placeholder="taskTree.inputPlaceholder"
+            spellcheck="false"
+            required
+          ></textarea>
+
+          <div class="ui-row ui-row-single">
+            <button type="submit" class="btn btn-primary" data-i18n="taskTree.create">Create Task</button>
+            <button type="button" id="cancel-task-btn" class="btn btn-ghost" data-i18n="taskTree.cancel">Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
 
     <script src="app.js" defer></script>
   </body>

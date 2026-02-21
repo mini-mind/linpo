@@ -5,7 +5,8 @@
   const STORAGE = {
     runId: "roboard_run_id",
     inputNl: "roboard_run_input_nl",
-    lang: "roboard_lang"
+    lang: "roboard_lang",
+    sessionToken: "roboard_session_token"
   };
 
   const STRINGS = {
@@ -90,7 +91,38 @@
       "events.heading": "Events",
       "events.clear": "Clear",
 
-      "logout.msg.loggingOut": "Logging out..."
+      "logout.msg.loggingOut": "Logging out...",
+
+      "taskTree.pageTitle": "RoBoard Task Tree",
+      "taskTree.logout": "Logout",
+      "taskTree.title": "Task Tree",
+      "taskTree.statusIdle": "Idle",
+      "taskTree.statusConnecting": "Connecting",
+      "taskTree.statusConnected": "Connected",
+      "taskTree.statusClosed": "Closed",
+      "taskTree.statusError": "Error",
+      "taskTree.empty": "No tasks yet. Create a new task to get started.",
+      "taskTree.createTask": "Create New Task",
+      "taskTree.inputLabel": "Task Description",
+      "taskTree.inputPlaceholder": "Describe what you want this task to accomplish...",
+      "taskTree.create": "Create Task",
+      "taskTree.cancel": "Cancel",
+      "taskTree.detailsTitle": "Task Details",
+      "taskTree.status": "Status",
+      "taskTree.sop": "SOP",
+      "taskTree.chat": "Chat",
+      "taskTree.chatPlaceholder": "Type a message...",
+      "taskTree.send": "Send",
+      "taskTree.msg.creating": "Creating task...",
+      "taskTree.msg.created": "Task created",
+      "taskTree.msg.createFailed": "Create task failed",
+      "taskTree.msg.connecting": "Connecting...",
+      "taskTree.msg.connected": "Connected",
+      "taskTree.msg.disconnected": "Disconnected",
+      "taskTree.msg.wsError": "WebSocket error",
+      "taskTree.msg.fetchTreeFailed": "Fetch tree failed",
+      "taskTree.msg.fetchSopFailed": "Fetch SOP failed",
+      "taskTree.msg.chatSendFailed": "Send message failed"
     },
     zh: {
       "login.pageTitle": "RoBoard 登录",
@@ -173,7 +205,38 @@
       "events.heading": "事件",
       "events.clear": "清空",
 
-      "logout.msg.loggingOut": "正在退出..."
+      "logout.msg.loggingOut": "正在退出...",
+
+      "taskTree.pageTitle": "RoBoard 任务树",
+      "taskTree.logout": "退出",
+      "taskTree.title": "任务树",
+      "taskTree.statusIdle": "空闲",
+      "taskTree.statusConnecting": "连接中",
+      "taskTree.statusConnected": "已连接",
+      "taskTree.statusClosed": "已断开",
+      "taskTree.statusError": "错误",
+      "taskTree.empty": "暂无任务。创建新任务以开始。",
+      "taskTree.createTask": "创建新任务",
+      "taskTree.inputLabel": "任务描述",
+      "taskTree.inputPlaceholder": "描述这个任务要完成什么...",
+      "taskTree.create": "创建任务",
+      "taskTree.cancel": "取消",
+      "taskTree.detailsTitle": "任务详情",
+      "taskTree.status": "状态",
+      "taskTree.sop": "SOP",
+      "taskTree.chat": "聊天",
+      "taskTree.chatPlaceholder": "输入消息...",
+      "taskTree.send": "发送",
+      "taskTree.msg.creating": "正在创建任务...",
+      "taskTree.msg.created": "任务已创建",
+      "taskTree.msg.createFailed": "创建任务失败",
+      "taskTree.msg.connecting": "连接中...",
+      "taskTree.msg.connected": "已连接",
+      "taskTree.msg.disconnected": "已断开",
+      "taskTree.msg.wsError": "WebSocket 错误",
+      "taskTree.msg.fetchTreeFailed": "获取树失败",
+      "taskTree.msg.fetchSopFailed": "获取 SOP 失败",
+      "taskTree.msg.chatSendFailed": "发送消息失败"
     }
   };
 
@@ -195,7 +258,8 @@
   const applyI18n = () => {
     document.documentElement.lang = lang;
     const isLogin = Boolean(byId("login-form"));
-    document.title = isLogin ? t("login.pageTitle") : t("cockpit.pageTitle");
+    const isTaskTree = Boolean(byId("add-task-btn"));
+    document.title = isLogin ? t("login.pageTitle") : (isTaskTree ? t("taskTree.pageTitle") : t("cockpit.pageTitle"));
 
     document.querySelectorAll("[data-i18n]").forEach((el) => {
       const key = el.getAttribute("data-i18n");
@@ -257,6 +321,12 @@
     if (!headers.has("Accept")) headers.set("Accept", "application/json");
     const wantsJsonBody = init.body != null && typeof init.body === "string" && !headers.has("Content-Type");
     if (wantsJsonBody) headers.set("Content-Type", "application/json");
+
+    // Add session token header if available (for chat endpoint auth)
+    const sessionToken = localStorage.getItem(STORAGE.sessionToken);
+    if (sessionToken && !headers.has("X-Session-Token")) {
+      headers.set("X-Session-Token", sessionToken);
+    }
 
     const resp = await fetch(path, { ...init, headers, credentials: "include" });
     if (resp.ok) return resp;
@@ -1067,8 +1137,504 @@
     window.addEventListener("beforeunload", () => disconnectWs());
   };
 
+  const initTaskTreePage = () => {
+    const addTaskBtn = byId("add-task-btn");
+    if (!addTaskBtn) return;
+
+    const ui = {
+      logoutBtn: byId("logout-btn"),
+      sessionLabel: byId("session-label"),
+      modal: byId("add-task-modal"),
+      overlay: byId("add-task-modal")?.querySelector(".modal-overlay"),
+      closeModalBtn: byId("close-modal-btn"),
+      cancelTaskBtn: byId("cancel-task-btn"),
+      addTaskForm: byId("add-task-form"),
+      taskInputNl: byId("task-input-nl"),
+      taskConnectionPill: byId("task-connection-pill"),
+      taskMessage: byId("task-message"),
+      taskTreeRoot: byId("task-tree-root"),
+      taskDetailsSection: byId("task-details-section"),
+      taskDetailsTitle: byId("task-details-title"),
+      closeDetailsBtn: byId("close-details-btn"),
+      taskStatusDisplay: byId("task-status-display"),
+      taskSopDisplay: byId("task-sop-display"),
+      taskChatMessages: byId("task-chat-messages"),
+      taskChatForm: byId("task-chat-form"),
+      taskChatInput: byId("task-chat-input")
+    };
+
+    const state = {
+      session: null,
+      ws: null,
+      runId: "",
+      selectedNode: null,
+      chatHistories: {}
+    };
+
+    const setSessionUi = (session) => {
+      const user = session && typeof session === "object" ? session.user : null;
+      const tenant = session && typeof session === "object" ? session.tenant : null;
+      const email = safeText(user?.email || user?.username || "").trim();
+      const tenantName = safeText(tenant?.name || "").trim();
+      const label = email ? `${email}${tenantName ? ` @ ${tenantName}` : ""}` : session ? "Signed in" : "";
+
+      if (ui.sessionLabel) ui.sessionLabel.textContent = label;
+      toggleHidden(ui.sessionLabel, !session);
+      toggleHidden(ui.logoutBtn, !session);
+    };
+
+    const setMessage = (text, kind) => setStatusText(ui.taskMessage, text, kind);
+
+    const setConnectionStatus = (status) => {
+      if (!ui.taskConnectionPill) return;
+      const s = safeText(status).trim().toLowerCase();
+      const key = s ? `taskTree.status${s.charAt(0).toUpperCase() + s.slice(1)}` : "taskTree.statusIdle";
+      ui.taskConnectionPill.textContent = t(key);
+      ui.taskConnectionPill.classList.remove("success", "error", "warning", "neutral");
+      const cls =
+        s === "connected"
+          ? "success"
+          : s === "connecting"
+            ? "neutral"
+            : s === "closed"
+              ? "warning"
+              : s === "error"
+                ? "error"
+                : "neutral";
+      ui.taskConnectionPill.classList.add(cls);
+    };
+
+    const openModal = () => {
+      if (!ui.modal) return;
+      ui.modal.classList.remove("is-hidden");
+      if (ui.taskInputNl) ui.taskInputNl.focus();
+    };
+
+    const closeModal = () => {
+      if (!ui.modal) return;
+      ui.modal.classList.add("is-hidden");
+      if (ui.addTaskForm) ui.addTaskForm.reset();
+    };
+
+    const wsUrlForRun = (runId) => {
+      const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+      const host = window.location.host;
+      return `${scheme}://${host}/ws/runs/${encodeURIComponent(runId)}`;
+    };
+
+    const disconnectWs = () => {
+      if (state.ws) {
+        try {
+          state.ws.close();
+        } catch {
+        }
+      }
+      state.ws = null;
+      setConnectionStatus("closed");
+    };
+
+    const handleAuthError = (err) => {
+      const status = err && typeof err === "object" ? err.status : null;
+      if (status !== 401 && status !== 403) return false;
+      redirectToLogin();
+      return true;
+    };
+
+    const createRun = async () => {
+      const inputNl = ui.taskInputNl ? ui.taskInputNl.value.trim() : "";
+      if (!state.session) {
+        redirectToLogin();
+        return;
+      }
+      if (!inputNl) {
+        setMessage(t("taskTree.msg.createFailed"), "error");
+        return;
+      }
+
+      setMessage(t("taskTree.msg.creating"), "warn");
+      try {
+        const resp = await apiFetch("/api/runs", {
+          method: "POST",
+          body: JSON.stringify({ input_nl: inputNl, input: {} })
+        });
+        const data = await resp.json().catch(() => null);
+        const runId = safeText(data?.run_id || data?.id).trim();
+        if (!runId) {
+          setMessage(t("taskTree.msg.createFailed"), "error");
+          return;
+        }
+        state.runId = runId;
+        localStorage.setItem(STORAGE.runId, runId);
+        setMessage(t("taskTree.msg.created"), "ok");
+        closeModal();
+        connectWs();
+      } catch (err) {
+        if (handleAuthError(err)) return;
+        const status = err && typeof err === "object" ? err.status : null;
+        const detail = err && typeof err === "object" ? err.detail : "";
+        setMessage(`${t("taskTree.msg.createFailed")} (${status || "error"}). ${safeText(detail)}`.trim(), "error");
+      }
+    };
+
+    const connectWs = () => {
+      if (!state.session) {
+        redirectToLogin();
+        return;
+      }
+      if (!state.runId) {
+        setMessage(t("taskTree.msg.createFailed"), "error");
+        return;
+      }
+
+      disconnectWs();
+
+      const url = wsUrlForRun(state.runId);
+      setConnectionStatus("connecting");
+      setMessage(t("taskTree.msg.connecting"), "warn");
+
+      const ws = new WebSocket(url);
+      state.ws = ws;
+
+      ws.addEventListener("open", () => {
+        if (state.ws !== ws) return;
+        setConnectionStatus("connected");
+        setMessage(t("taskTree.msg.connected"), "ok");
+        fetchTree();
+      });
+
+      ws.addEventListener("message", (event) => {
+        if (state.ws !== ws) return;
+        try {
+          const frame = JSON.parse(event.data);
+          if (!frame || typeof frame !== "object") return;
+          
+          if (frame.type === "snapshot") {
+            renderTree(frame.data);
+          } else if (frame.type === "delta" && frame.data) {
+            handleDelta(frame.data);
+          }
+        } catch {
+        }
+      });
+
+      ws.addEventListener("close", () => {
+        if (state.ws !== ws) return;
+        setConnectionStatus("closed");
+        setMessage(t("taskTree.msg.disconnected"), "warn");
+        state.ws = null;
+      });
+
+      ws.addEventListener("error", () => {
+        if (state.ws !== ws) return;
+        setConnectionStatus("error");
+        setMessage(t("taskTree.msg.wsError"), "error");
+      });
+    };
+
+    const fetchTree = async () => {
+      if (!state.runId) return;
+      try {
+        const resp = await apiFetch(`/api/runs/${encodeURIComponent(state.runId)}/tree`, { method: "GET" });
+        const data = await resp.json().catch(() => null);
+        renderTree(data);
+      } catch (err) {
+        if (handleAuthError(err)) return;
+        setMessage(t("taskTree.msg.fetchTreeFailed"), "error");
+      }
+    };
+
+    const renderTree = (data) => {
+      if (!ui.taskTreeRoot) return;
+      ui.taskTreeRoot.innerHTML = "";
+
+      const agents = Array.isArray(data?.agents) ? data.agents : [];
+      const edges = Array.isArray(data?.edges) ? data.edges : [];
+
+      if (!agents.length) {
+        const emptyDiv = document.createElement("div");
+        emptyDiv.className = "task-tree-empty-state";
+        emptyDiv.textContent = t("taskTree.empty");
+        ui.taskTreeRoot.appendChild(emptyDiv);
+        return;
+      }
+
+      const nodesById = new Map();
+      agents.forEach((agent) => {
+        const id = agent && agent.id != null ? String(agent.id) : null;
+        if (!id) return;
+        nodesById.set(id, agent);
+      });
+
+      const childrenByParent = new Map();
+      const parentCount = new Map();
+      edges.forEach((edge) => {
+        const from = edge?.from ?? edge?.parent ?? edge?.[0];
+        const to = edge?.to ?? edge?.child ?? edge?.[1];
+        if (from == null || to == null) return;
+        const fromStr = String(from);
+        const toStr = String(to);
+        if (!fromStr || !toStr) return;
+
+        if (!childrenByParent.has(fromStr)) childrenByParent.set(fromStr, new Set());
+        childrenByParent.get(fromStr).add(toStr);
+        parentCount.set(toStr, (parentCount.get(toStr) || 0) + 1);
+      });
+
+      const allIds = Array.from(nodesById.keys());
+      const roots = allIds.filter((id) => !parentCount.has(id));
+      const order = roots.length ? roots : allIds;
+
+      const rendered = new Set();
+      const renderNode = (id, depth) => {
+        if (rendered.has(id)) return;
+        rendered.add(id);
+
+        const agent = nodesById.get(id);
+        const nodeDiv = document.createElement("div");
+        nodeDiv.className = "task-tree-node";
+        nodeDiv.dataset.nodeId = id;
+        nodeDiv.dataset.label = agent?.name || agent?.title || agent?.label || id;
+        nodeDiv.dataset.kind = agent?.type || agent?.agent_type || "";
+        nodeDiv.style.paddingLeft = `${12 + depth * 16}px`;
+
+        const label = agent?.name || agent?.title || agent?.label || id;
+        const kind = agent?.type || agent?.agent_type || "";
+        const status = agent?.status || agent?.state || "";
+        const statusText = status ? ` — ${status}` : "";
+        nodeDiv.textContent = `${safeText(label)}${kind ? ` (${kind})` : ""}${statusText}`;
+
+        nodeDiv.addEventListener("click", () => selectNode(id, agent));
+        ui.taskTreeRoot.appendChild(nodeDiv);
+
+        const kids = childrenByParent.get(id);
+        if (kids?.size) {
+          Array.from(kids).forEach((childId) => {
+            if (nodesById.has(childId)) {
+              renderNode(childId, depth + 1);
+            }
+          });
+        }
+      };
+
+      order.forEach((id) => { renderNode(id, 0); });
+    };
+    const handleDelta = (data) => {
+      const recentEvents = Array.isArray(data?.recent_events) ? data.recent_events : [];
+      if (!recentEvents.length) return;
+
+      recentEvents.forEach((event) => {
+        const agentId = event?.agent_id || event?.data?.agent_id;
+        if (!agentId) return;
+
+        const nodeEl = ui.taskTreeRoot?.querySelector(`[data-node-id="${CSS.escape(agentId)}"]`);
+        if (!nodeEl) return;
+
+        const newStatus = event?.status || event?.data?.status || event?.state || event?.data?.state;
+        if (newStatus) {
+          nodeEl.dataset.status = newStatus;
+          
+          const label = nodeEl.dataset.label || "";
+          const kind = nodeEl.dataset.kind || "";
+          const statusText = newStatus ? ` — ${newStatus}` : "";
+          nodeEl.textContent = `${safeText(label)}${kind ? ` (${kind})` : ""}${statusText}`;
+        }
+
+        if (state.selectedNode?.id === agentId && ui.taskStatusDisplay) {
+          const displayStatus = newStatus || nodeEl.dataset.status || "unknown";
+          ui.taskStatusDisplay.textContent = safeText(displayStatus);
+        }
+      });
+    };
+
+    const selectNode = (nodeId, agent) => {
+      state.selectedNode = { id: nodeId, agent };
+      if (!ui.taskDetailsSection) return;
+
+      ui.taskDetailsSection.classList.remove("is-hidden");
+      if (ui.taskDetailsTitle) {
+        const label = agent?.name || agent?.title || agent?.label || nodeId;
+        ui.taskDetailsTitle.textContent = `${t("taskTree.detailsTitle")}: ${safeText(label)}`;
+      }
+
+      if (ui.taskStatusDisplay) {
+        const status = agent?.status || agent?.state || "unknown";
+        ui.taskStatusDisplay.textContent = safeText(status);
+      }
+
+      if (agent?.id) {
+        fetchSop(agent.id);
+        loadChatHistory(agent.id);
+      }
+
+      const prevSelected = ui.taskTreeRoot?.querySelector(".task-tree-node.is-selected");
+      if (prevSelected) prevSelected.classList.remove("is-selected");
+      
+      const currentNode = ui.taskTreeRoot?.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`);
+      if (currentNode) currentNode.classList.add("is-selected");
+    };
+
+    const fetchSop = async (agentId) => {
+      if (!agentId || !ui.taskSopDisplay) return;
+      try {
+        const resp = await apiFetch(`/api/agents/${encodeURIComponent(agentId)}/sop`, { method: "GET" });
+        const ct = safeText(resp.headers.get("content-type")).toLowerCase();
+        let mdText = "";
+        if (ct.includes("application/json")) {
+          const data = await resp.json().catch(() => null);
+          mdText = safeText(data?.md_text ?? data?.mdText ?? data?.markdown ?? data?.text ?? data?.sop ?? "");
+        } else {
+          mdText = await resp.text();
+        }
+        ui.taskSopDisplay.textContent = mdText || t("taskTree.sop");
+      } catch (err) {
+        if (handleAuthError(err)) return;
+        setMessage(t("taskTree.msg.fetchSopFailed"), "error");
+      }
+    };
+
+    const loadChatHistory = (agentId) => {
+      if (!ui.taskChatMessages) return;
+      const key = `roboard_chat_${agentId}`;
+      try {
+        const stored = localStorage.getItem(key);
+        state.chatHistories[agentId] = stored ? JSON.parse(stored) : [];
+      } catch {
+        state.chatHistories[agentId] = [];
+      }
+      renderChat(agentId);
+    };
+
+    const renderChat = (agentId) => {
+      if (!ui.taskChatMessages) return;
+      ui.taskChatMessages.innerHTML = "";
+      const messages = state.chatHistories[agentId] || [];
+      messages.forEach((msg) => {
+        const div = document.createElement("div");
+        div.className = `chat-message chat-${msg.role}`;
+        div.textContent = `${msg.role}: ${safeText(msg.content)}`;
+        ui.taskChatMessages.appendChild(div);
+      });
+      ui.taskChatMessages.scrollTop = ui.taskChatMessages.scrollHeight;
+    };
+
+    const saveChatHistory = (agentId, messages) => {
+      const key = `roboard_chat_${agentId}`;
+      try {
+        localStorage.setItem(key, JSON.stringify(messages));
+      } catch {
+      }
+    };
+
+    const sendChatMessage = async () => {
+      if (!ui.taskChatInput || !state.selectedNode) return;
+      const message = ui.taskChatInput.value.trim();
+      if (!message) return;
+
+      const agentId = state.selectedNode.id;
+      const agentType = state.selectedNode.agent?.type || state.selectedNode.agent?.agent_type || "ceo";
+
+      const userMsg = { role: "user", content: message, timestamp: Date.now() };
+      if (!state.chatHistories[agentId]) state.chatHistories[agentId] = [];
+      state.chatHistories[agentId].push(userMsg);
+      saveChatHistory(agentId, state.chatHistories[agentId]);
+      renderChat(agentId);
+
+      ui.taskChatInput.value = "";
+
+      const history = state.chatHistories[agentId] || [];
+      const recentHistory = history.slice(-10);
+      const historyContext = recentHistory.map(msg => `${msg.role}: ${msg.content}`).join('\n');
+      const fullMessage = historyContext ? `${historyContext}\n\n[run_id:${state.runId}] [agent_id:${agentId}] ${message}` : `[run_id:${state.runId}] [agent_id:${agentId}] ${message}`;
+
+      try {
+        const resp = await apiFetch(`/api/agents/${encodeURIComponent(agentType)}/chat`, {
+          method: "POST",
+          body: JSON.stringify({
+            message: fullMessage,
+            run_id: state.runId,
+            agent_id: agentId
+          })
+        });
+        const data = await resp.json().catch(() => null);
+        const reply = data?.reply || data?.message || "No reply";
+        const assistantMsg = { role: "assistant", content: reply, timestamp: Date.now() };
+        state.chatHistories[agentId].push(assistantMsg);
+        saveChatHistory(agentId, state.chatHistories[agentId]);
+        renderChat(agentId);
+      } catch (err) {
+        if (handleAuthError(err)) return;
+        setMessage(t("taskTree.msg.chatSendFailed"), "error");
+      }
+    };
+
+    const logout = async () => {
+      if (!state.session) {
+        redirectToLogin();
+        return;
+      }
+      try {
+        await apiFetch("/api/auth/logout", { method: "POST" });
+      } catch {
+      }
+      disconnectWs();
+      redirectToLogin();
+    };
+
+    const bootstrapAuth = async () => {
+      try {
+        const me = await fetchMe();
+        state.session = me;
+        setSessionUi(me);
+        setConnectionStatus("idle");
+
+        const storedRunId = localStorage.getItem(STORAGE.runId);
+        if (storedRunId) {
+          state.runId = storedRunId;
+          connectWs();
+        }
+      } catch (err) {
+        const status = err && typeof err === "object" ? err.status : null;
+        if (status === 401 || status === 403) {
+          redirectToLogin();
+        } else {
+          setMessage("Unable to reach /api/auth/me.", "error");
+        }
+      }
+    };
+
+    if (addTaskBtn) addTaskBtn.addEventListener("click", openModal);
+    if (ui.closeModalBtn) ui.closeModalBtn.addEventListener("click", closeModal);
+    if (ui.cancelTaskBtn) ui.cancelTaskBtn.addEventListener("click", closeModal);
+    if (ui.overlay) ui.overlay.addEventListener("click", closeModal);
+    if (ui.addTaskForm) {
+      ui.addTaskForm.addEventListener("submit", (e) => {
+        e.preventDefault();
+        void createRun();
+      });
+    }
+    if (ui.closeDetailsBtn) ui.closeDetailsBtn.addEventListener("click", () => {
+      if (ui.taskDetailsSection) ui.taskDetailsSection.classList.add("is-hidden");
+    });
+    if (ui.taskChatForm) {
+      ui.taskChatForm.addEventListener("submit", (e) => {
+        e.preventDefault();
+        void sendChatMessage();
+      });
+    }
+    if (ui.logoutBtn) {
+      ui.logoutBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        void logout();
+      });
+    }
+
+    void bootstrapAuth();
+    window.addEventListener("beforeunload", () => disconnectWs());
+  };
+
   setupLangToggle();
   applyI18n();
   initLoginPage();
   initCockpitPage();
+  initTaskTreePage();
 })();
