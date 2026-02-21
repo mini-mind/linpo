@@ -1680,8 +1680,30 @@
 
         const storedRunId = localStorage.getItem(STORAGE.runId);
         if (storedRunId) {
-          state.runId = storedRunId;
-          connectWs();
+          try {
+            // Validate stored run_id before connecting
+            const resp = await apiFetch(`/api/runs/${encodeURIComponent(storedRunId)}/tree`, { method: "GET" });
+            if (resp.ok) {
+              // Validation successful, proceed with connection
+              state.runId = storedRunId;
+              connectWs();
+            }
+          } catch (err) {
+            const status = err && typeof err === "object" ? err.status : null;
+            if (status === 401 || status === 403 || status === 404) {
+              // Validation failed, clear stored run_id and update UI
+              localStorage.removeItem(STORAGE.runId);
+              state.runId = "";
+              setConnectionStatus("idle");
+              setMessage("历史任务不可访问，已清理。请创建新任务。", "warn");
+            } else {
+              // Other errors, still clear run_id to be safe
+              localStorage.removeItem(STORAGE.runId);
+              state.runId = "";
+              setConnectionStatus("idle");
+              setMessage("历史任务不可访问，已清理。请创建新任务。", "warn");
+            }
+          }
         }
       } catch (err) {
         const status = err && typeof err === "object" ? err.status : null;
