@@ -58,6 +58,33 @@ bash scripts/deploy_local.sh
 - 构建并启动核心服务：`edge gateway web-frontend api-backend agent-manager llm-gateway mcp-server redis postgres`
 - 执行 `docker compose up -d --build ...`
 
+#### 拆分部署（前端与后端分离）
+
+对于资源受限或需要分离负载的场景，可以使用拆分部署：
+
+- **`scripts/deploy_local.sh`**（单主机部署）：在单个主机上部署所有服务，适合开发环境或小型部署
+- **`scripts/deploy_worker_host.sh`**（拆分部署）：在 worker 主机上部署后端服务（`api-backend agent-manager llm-gateway mcp-server worker-playwright redis postgres`），前端（`edge gateway web-frontend`）部署在其他主机（如 ravin）
+
+使用拆分部署脚本：
+
+```bash
+# 预览部署命令（不实际执行）
+DRY_RUN=1 bash scripts/deploy_worker_host.sh
+
+# 在 worker 主机上执行部署（后端服务）
+bash scripts/deploy_worker_host.sh
+```
+
+拆分部署适用于：
+- 前端服务（edge/gateway/web-frontend）运行在资源有限的主机（如 ravin）
+- 后端服务（数据库、LLM 网关等）运行在性能更强的 worker 主机
+- 需要隔离前端和后端资源使用场景
+
+该脚本会自动：
+- 检测 `docker compose` 或 `docker-compose` 命令
+- 构建并启动核心服务：`api-backend agent-manager llm-gateway mcp-server worker-playwright redis postgres`
+- 执行 `docker compose up -d --build ...`
+
 ### 1. 验证 Compose 配置（快速失败）
 
 在任何构建或部署之前，验证 compose 文件是否有效：
