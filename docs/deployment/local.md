@@ -41,6 +41,23 @@ SEARXNG_SECRET_KEY=...
 
 SOP 存储默认挂载在宿主机目录 `./sops/`（容器内为 `/app/sops`）。如果你要自定义路径，可设置 `ROBOARD_SOP_ROOT`（默认 `/app/sops`）。
 
+### 快速部署脚本（推荐）
+
+项目提供了 `scripts/deploy_local.sh` 脚本，用于快速迭代部署：
+
+```bash
+# 预览部署命令（不实际执行）
+DRY_RUN=1 bash scripts/deploy_local.sh
+
+# 执行部署
+bash scripts/deploy_local.sh
+```
+
+该脚本会自动：
+- 检测 `docker compose` 或 `docker-compose` 命令
+- 构建并启动核心服务：`edge gateway web-frontend api-backend agent-manager llm-gateway mcp-server redis postgres`
+- 执行 `docker compose up -d --build ...`
+
 ### 1. 验证 Compose 配置（快速失败）
 
 在任何构建或部署之前，验证 compose 文件是否有效：
