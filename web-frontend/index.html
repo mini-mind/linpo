@@ -109,6 +109,21 @@
       </div>
     </div>
 
+    <script>
+      (() => {
+        var addTaskButton = document.getElementById("add-task-btn");
+        var addTaskModal = document.getElementById("add-task-modal");
+        if (!addTaskButton || !addTaskModal) {
+          return;
+        }
+
+        addTaskButton.addEventListener("click", () => {
+          if (addTaskModal.classList.contains("is-hidden")) {
+            addTaskModal.classList.remove("is-hidden");
+          }
+        });
+      })();
+    </script>
     <script src="app.js" defer></script>
   </body>
 </html>
