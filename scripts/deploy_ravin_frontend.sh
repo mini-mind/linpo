@@ -15,7 +15,7 @@ if [ -z "${TAG:-}" ]; then
   fi
 fi
 
-REMOTE_CMDS="cd ${ROBOARD_ROOT} && ROBOARD_ROOT=${ROBOARD_ROOT} TAG=${TAG} docker compose -f deploy/prod/docker-compose.frontend.yml pull && ROBOARD_ROOT=${ROBOARD_ROOT} TAG=${TAG} docker compose -f deploy/prod/docker-compose.frontend.yml up -d && ROBOARD_ROOT=${ROBOARD_ROOT} TAG=${TAG} docker compose -f deploy/prod/docker-compose.frontend.yml ps"
+REMOTE_CMDS="cd ${ROBOARD_ROOT} && ROBOARD_ROOT=${ROBOARD_ROOT} TAG=${TAG} docker compose -f deploy/prod/docker-compose.frontend.yml pull gateway web-frontend && ROBOARD_ROOT=${ROBOARD_ROOT} TAG=${TAG} docker compose -f deploy/prod/docker-compose.frontend.yml up -d gateway web-frontend && ROBOARD_ROOT=${ROBOARD_ROOT} TAG=${TAG} docker compose -f deploy/prod/docker-compose.frontend.yml ps"
 
 if [ "${DRY_RUN}" = "1" ]; then
   echo "DRY RUN - Would execute:"

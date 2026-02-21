@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Check if git working tree is dirty
+if ! git diff --quiet; then
+  echo "ERROR: Git working tree is dirty. Please commit or stash your changes before pushing images."
+  echo ""
+  echo "Uncommitted changes:"
+  git status --short
+  exit 1
+fi
+
 # Environment variables with defaults
 # Recommended tag strategy: YYYYMMDD-<git-short-sha>
 TAG="${TAG:-$(date +%Y%m%d)-$(git rev-parse --short HEAD)}"
-# Append '-dirty' if there are uncommitted changes
-if ! git diff --quiet; then
-  TAG="${TAG}-dirty"
-fi
 ACR_REGISTRY="${ACR_REGISTRY:-registry.cn-hangzhou.aliyuncs.com}"
 ACR_NAMESPACE="${ACR_NAMESPACE:-ravin}"
 
