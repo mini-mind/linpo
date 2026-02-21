@@ -60,3 +60,4 @@
 - [Sisyphus 工作流](process/sisyphus-workflow.md) - 计划、草稿、决策记录系统
 - [产品定位决策记录 (2026-02-13)](decisions/positioning-2026-02-13.md) - 业务专家构建权、长期服务与 P0 方向
 - [P0 开发规划 (2026-02-13)](plans/p0-development-plan-2026-02-13.md) - 状态协议、干预接口与轻量编排
+- [前端 UI 与版本管理规范 (2026-02-21)](specs/2026-02-21-ui-and-versioning.md) - Task Tree UI 形态、版本 TAG 规则、拆分部署边界
