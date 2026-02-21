@@ -1,6 +1,6 @@
 services:
   gateway:
-    image: registry.cn-hangzhou.aliyuncs.com/ravin/web3d-gateway:${TAG:-latest}
+    image: registry.cn-hangzhou.aliyuncs.com/ravin/web3d-gateway:${TAG:?set}
     depends_on:
       - web-frontend
     ports:
@@ -10,13 +10,13 @@ services:
     restart: unless-stopped
 
   web-frontend:
-    image: registry.cn-hangzhou.aliyuncs.com/ravin/web3d-web-frontend:${TAG:-latest}
+    image: registry.cn-hangzhou.aliyuncs.com/ravin/web3d-web-frontend:${TAG:?set}
     networks:
       - app-net
     restart: unless-stopped
 
   searxng:
-    image: docker.io/searxng/searxng:latest
+    image: docker.io/searxng/searxng@sha256:8d1655e92c354814bab388f7fa0b69bfa101e29b9e3579e79500cda78315d2f2
     env_file:
       - ${ROBOARD_ROOT:?set}/searxng/.env
     environment:
