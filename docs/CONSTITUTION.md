@@ -11,3 +11,6 @@
 ## 迭代交付规则
 
 每轮迭代完成后，默认进行一次 git commit；并按约定的部署流程部署到可访问环境，方便用户查看实际效果（部署方式需在项目内明确）。
+
+- 部署使用日期型 TAG（例如 `YYYYMMDD-<git-short-sha>`）
+- 经用户授权，可通过 SSH 登录 ravin 执行前端/网关/searxng 部署命令（遵守拆分部署：ravin 只跑 edge/gateway/web-frontend/searxng，本机跑重服务）
