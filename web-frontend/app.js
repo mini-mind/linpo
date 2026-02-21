@@ -1160,7 +1160,8 @@
       taskSopDisplay: byId("task-sop-display"),
       taskChatMessages: byId("task-chat-messages"),
       taskChatForm: byId("task-chat-form"),
-      taskChatInput: byId("task-chat-input")
+      taskChatInput: byId("task-chat-input"),
+      kanbanContent: byId("kanban-content")
     };
 
     const state = {
@@ -1240,15 +1241,14 @@
       return true;
     };
 
-    const createRun = async () => {
-      const inputNl = ui.taskInputNl ? ui.taskInputNl.value.trim() : "";
+    const createRunWithInput = async (inputNl) => {
       if (!state.session) {
         redirectToLogin();
-        return;
+        return false;
       }
       if (!inputNl) {
         setMessage(t("taskTree.msg.createFailed"), "error");
-        return;
+        return false;
       }
 
       setMessage(t("taskTree.msg.creating"), "warn");
@@ -1261,18 +1261,28 @@
         const runId = safeText(data?.run_id || data?.id).trim();
         if (!runId) {
           setMessage(t("taskTree.msg.createFailed"), "error");
-          return;
+          return false;
         }
         state.runId = runId;
         localStorage.setItem(STORAGE.runId, runId);
         setMessage(t("taskTree.msg.created"), "ok");
-        closeModal();
         connectWs();
+        return true;
       } catch (err) {
-        if (handleAuthError(err)) return;
+        if (handleAuthError(err)) return false;
         const status = err && typeof err === "object" ? err.status : null;
         const detail = err && typeof err === "object" ? err.detail : "";
         setMessage(`${t("taskTree.msg.createFailed")} (${status || "error"}). ${safeText(detail)}`.trim(), "error");
+        return false;
+      }
+    };
+
+    const createRun = async () => {
+      const inputNl = ui.taskInputNl ? ui.taskInputNl.value.trim() : "";
+      const success = await createRunWithInput(inputNl);
+      if (success) {
+        closeModal();
+        if (ui.addTaskForm) ui.addTaskForm.reset();
       }
     };
 
@@ -1417,7 +1427,85 @@
       };
 
       order.forEach((id) => { renderNode(id, 0); });
+      renderKanban({ agents, edges });
     };
+
+    const renderKanban = (data) => {
+      if (!ui.kanbanView) return;
+      
+      const agents = Array.isArray(data?.agents) ? data.agents : [];
+      if (!agents.length) {
+        ui.kanbanView.innerHTML = '<div class="kanban-empty">No tasks yet. Create a new task to get started.</div>';
+        return;
+      }
+
+      const columns = {
+        todo: { title: "To Do", agents: [] },
+        inProgress: { title: "In Progress", agents: [] },
+        done: { title: "Done", agents: [] }
+      };
+
+      const getStatusCategory = (status) => {
+        const s = safeText(status).toLowerCase().trim();
+        if (["done", "completed", "success"].includes(s)) return "done";
+        if (["running", "in_progress", "working"].includes(s)) return "inProgress";
+        return "todo";
+      };
+
+      agents.forEach((agent) => {
+        const status = agent?.status || agent?.state || "";
+        const category = getStatusCategory(status);
+        columns[category].agents.push(agent);
+      });
+
+      ui.kanbanView.innerHTML = "";
+      
+      Object.entries(columns).forEach(([key, column]) => {
+        const columnEl = document.createElement("div");
+        columnEl.className = "kanban-column";
+        columnEl.dataset.column = key;
+        
+        const headerEl = document.createElement("div");
+        headerEl.className = "kanban-column-header";
+        headerEl.textContent = column.title;
+        columnEl.appendChild(headerEl);
+        
+        const cardsContainer = document.createElement("div");
+        cardsContainer.className = "kanban-cards";
+        
+        column.agents.forEach((agent) => {
+          const id = agent && agent.id != null ? String(agent.id) : null;
+          if (!id) return;
+          
+          const cardEl = document.createElement("div");
+          cardEl.className = "kanban-card";
+          cardEl.dataset.agentId = id;
+          
+          const label = agent?.name || agent?.title || agent?.label || id;
+          const kind = agent?.type || agent?.agent_type || "";
+          const status = agent?.status || agent?.state || "";
+          
+          const titleEl = document.createElement("div");
+          titleEl.className = "kanban-card-title";
+          titleEl.textContent = safeText(label);
+          
+          const metaEl = document.createElement("div");
+          metaEl.className = "kanban-card-meta";
+          metaEl.textContent = `${kind ? `(${kind})` : ""} ${status ? `— ${status}` : ""}`.trim();
+          
+          cardEl.appendChild(titleEl);
+          cardEl.appendChild(metaEl);
+          
+          cardEl.addEventListener("click", () => selectNode(id, agent));
+          
+          cardsContainer.appendChild(cardEl);
+        });
+        
+        columnEl.appendChild(cardsContainer);
+        ui.kanbanView.appendChild(columnEl);
+      });
+    };
+
     const handleDelta = (data) => {
       const recentEvents = Array.isArray(data?.recent_events) ? data.recent_events : [];
       if (!recentEvents.length) return;
@@ -1625,6 +1713,83 @@
       ui.logoutBtn.addEventListener("click", (e) => {
         e.preventDefault();
         void logout();
+      });
+    }
+
+    // View toggle functionality
+    const viewTaskTreeBtn = byId("view-task-tree");
+    const viewKanbanBtn = byId("view-kanban");
+    const taskTreeView = byId("task-tree-view");
+    const kanbanView = byId("kanban-view");
+
+    const toggleView = (showTree) => {
+      if (taskTreeView) toggleHidden(taskTreeView, !showTree);
+      if (kanbanView) toggleHidden(kanbanView, showTree);
+      if (viewTaskTreeBtn) viewTaskTreeBtn.classList.toggle("is-active", showTree);
+      if (viewKanbanBtn) viewKanbanBtn.classList.toggle("is-active", !showTree);
+    };
+
+    if (viewTaskTreeBtn) {
+      viewTaskTreeBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        toggleView(true);
+      });
+    }
+    if (viewKanbanBtn) {
+      viewKanbanBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        toggleView(false);
+      });
+    }
+
+    // Floating create and quick composer
+    const floatingCreateBtn = byId("floating-create-btn");
+    const quickComposer = byId("quick-composer");
+    const quickComposerInput = byId("quick-composer-input");
+    const quickComposerSubmit = byId("quick-composer-submit");
+
+    const toggleComposer = (show) => {
+      if (quickComposer) {
+        toggleHidden(quickComposer, !show);
+        if (show && quickComposerInput) {
+          quickComposerInput.focus();
+        }
+      }
+    };
+
+    if (floatingCreateBtn) {
+      floatingCreateBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        const isHidden = quickComposer ? quickComposer.classList.contains("is-hidden") : true;
+        toggleComposer(isHidden);
+      });
+    }
+
+    const submitQuickComposer = async () => {
+      if (!quickComposerInput) return;
+      const inputNl = quickComposerInput.value.trim();
+      if (!inputNl) return;
+
+      const success = await createRunWithInput(inputNl);
+      if (success) {
+        toggleComposer(false);
+        quickComposerInput.value = "";
+      }
+    };
+
+    if (quickComposerSubmit) {
+      quickComposerSubmit.addEventListener("click", (e) => {
+        e.preventDefault();
+        void submitQuickComposer();
+      });
+    }
+
+    if (quickComposerInput) {
+      quickComposerInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          void submitQuickComposer();
+        }
       });
     }
 

@@ -22,7 +22,12 @@
         <span id="session-label" class="session-label is-hidden" aria-live="polite"></span>
         <button id="logout-btn" class="btn btn-ghost is-hidden" type="button" data-i18n="taskTree.logout">Logout</button>
         
-        <button id="add-task-btn" class="btn btn-primary add-task-btn" type="button" aria-label="Add new task" title="Add new task">
+        <div class="view-toggle" role="group" aria-label="View toggle">
+          <button id="view-task-tree" class="btn btn-ghost is-active" type="button">Task Tree</button>
+          <button id="view-kanban" class="btn btn-ghost" type="button">Kanban</button>
+        </div>
+        
+        <button id="add-task-btn" class="btn btn-primary add-task-btn is-hidden" type="button" aria-label="Add new task" title="Add new task">
           <span class="add-task-icon">+</span>
         </button>
       </div>
@@ -81,6 +86,12 @@
       </div>
     </main>
 
+    <main id="kanban-view" class="kanban-view is-hidden" aria-label="Kanban Board">
+      <div class="kanban-container">
+        <div id="kanban-content" class="kanban-content"></div>
+      </div>
+    </main>
+
     <div id="add-task-modal" class="modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
       <div class="modal-overlay"></div>
       <div class="modal-content">
@@ -109,18 +120,25 @@
       </div>
     </div>
 
+    <button id="floating-create-btn" class="floating-create-btn" type="button" aria-label="Quick create">
+      <span class="floating-create-icon">+</span>
+    </button>
+
+    <div id="quick-composer" class="quick-composer is-hidden">
+      <input id="quick-composer-input" type="text" placeholder="Quick create task..." />
+      <button id="quick-composer-submit" class="btn btn-primary" type="button">Create</button>
+    </div>
+
     <script>
       (() => {
-        var addTaskButton = document.getElementById("add-task-btn");
-        var addTaskModal = document.getElementById("add-task-modal");
-        if (!addTaskButton || !addTaskModal) {
+        var floatingCreateBtn = document.getElementById("floating-create-btn");
+        var quickComposer = document.getElementById("quick-composer");
+        if (!floatingCreateBtn || !quickComposer) {
           return;
         }
 
-        addTaskButton.addEventListener("click", () => {
-          if (addTaskModal.classList.contains("is-hidden")) {
-            addTaskModal.classList.remove("is-hidden");
-          }
+        floatingCreateBtn.addEventListener("click", () => {
+          quickComposer.classList.toggle("is-hidden");
         });
       })();
     </script>

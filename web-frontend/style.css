@@ -1,20 +1,20 @@
 :root {
-  --bg: #0b0f14;
-  --bg-2: #070a0e;
-  --panel: rgba(16, 18, 24, 0.66);
-  --panel-2: rgba(16, 18, 24, 0.52);
-  --line: rgba(255, 255, 255, 0.12);
-  --line-2: rgba(255, 255, 255, 0.08);
-  --text: rgba(255, 255, 255, 0.92);
-  --muted: rgba(255, 255, 255, 0.72);
-  --muted-2: rgba(255, 255, 255, 0.6);
+  --bg: #ffffff;
+  --bg-2: #f8f9fa;
+  --panel: rgba(255, 255, 255, 0.9);
+  --panel-2: rgba(248, 249, 250, 0.8);
+  --line: rgba(0, 0, 0, 0.08);
+  --line-2: rgba(0, 0, 0, 0.05);
+  --text: #1a1a1a;
+  --muted: #4a4a4a;
+  --muted-2: #6c6c6c;
   --accent: #c46a2a;
   --accent-2: #3b6e7a;
-  --danger: #ff6d6d;
+  --danger: #dc3545;
 
-  --shadow: 0 20px 70px rgba(0, 0, 0, 0.42);
-  --radius: 22px;
-  --radius-sm: 14px;
+  --shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --radius: 12px;
+  --radius-sm: 8px;
 
   --space-1: 6px;
   --space-2: 10px;
@@ -23,7 +23,7 @@
   --space-5: 24px;
   --space-6: 32px;
 
-  --font-display: "Times New Roman", serif;
+  --font-display: "Helvetica Neue", sans-serif;
   --font-body: "Helvetica Neue", sans-serif;
 }
 
@@ -44,30 +44,13 @@ body {
   font-family: var(--font-body);
   letter-spacing: 0.01em;
   background-color: var(--bg);
-  background-image:
-    radial-gradient(900px 600px at 12% 10%, rgba(196, 106, 42, 0.22), transparent 58%),
-    radial-gradient(950px 700px at 92% 0%, rgba(59, 110, 122, 0.18), transparent 62%),
-    radial-gradient(800px 520px at 76% 92%, rgba(255, 255, 255, 0.06), transparent 62%),
-    linear-gradient(180deg, var(--bg), var(--bg-2));
 }
 
 .is-hidden {
   display: none;
 }
 
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.16;
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px),
-    repeating-radial-gradient(circle at 18% 22%, rgba(255, 255, 255, 0.11) 0 1px, transparent 1px 4px);
-  background-size: 56px 56px, 56px 56px, auto;
-  mix-blend-mode: overlay;
-}
+
 
 a {
   color: inherit;
@@ -82,12 +65,10 @@ a {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: clamp(14px, 2.6vw, 22px) clamp(14px, 3.8vw, 30px);
-  background:
-    radial-gradient(900px 320px at 20% 0%, rgba(196, 106, 42, 0.12), transparent 60%),
-    rgba(11, 15, 20, 0.72);
-  border-bottom: 1px solid var(--line-2);
-  backdrop-filter: blur(12px);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  box-shadow: var(--shadow);
 }
 
 .topbar-actions {
@@ -102,8 +83,40 @@ a {
   gap: 6px;
   padding: 4px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+.view-toggle {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+.view-toggle .btn {
+  width: auto;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  transition: all 0.18s ease;
+}
+
+.view-toggle .btn:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--text);
+}
+
+.view-toggle .btn.is-active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+  box-shadow: 0 2px 6px rgba(196, 106, 42, 0.3);
 }
 
 .lang-toggle .btn {
