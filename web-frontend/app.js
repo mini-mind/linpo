@@ -1327,10 +1327,14 @@
         }
       });
 
-      ws.addEventListener("close", () => {
+      ws.addEventListener("close", (event) => {
         if (state.ws !== ws) return;
         setConnectionStatus("closed");
-        setMessage(t("taskTree.msg.disconnected"), "warn");
+        if (event.code === 1008) {
+          setMessage("连接被拒绝（会话/租户不匹配或任务不可访问）。已清理历史任务，请创建新任务。", "warn");
+        } else {
+          setMessage(t("taskTree.msg.disconnected"), "warn");
+        }
         state.ws = null;
       });
 
