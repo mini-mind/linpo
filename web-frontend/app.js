@@ -1665,6 +1665,9 @@
       } catch {
       }
       disconnectWs();
+      localStorage.removeItem(STORAGE.runId);
+      setMessage("", null);
+      setConnectionStatus("idle");
       redirectToLogin();
     };
 
