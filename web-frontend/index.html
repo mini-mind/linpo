@@ -13,20 +13,18 @@
         <span class="brand-name">RoBoard</span>
       </a>
 
-      <div class="topbar-actions" aria-label="Task controls">
-        <div class="lang-toggle" role="group" aria-label="Language">
-          <button id="lang-zh" class="btn btn-ghost" type="button">中文</button>
-          <button id="lang-en" class="btn btn-ghost" type="button">English</button>
-        </div>
+      <div class="view-toggle" role="group" aria-label="View toggle">
+        <button id="view-task-tree" class="btn btn-ghost is-active" type="button">Task Tree</button>
+        <button id="view-kanban" class="btn btn-ghost" type="button">Kanban</button>
+      </div>
 
+      <div class="topbar-right" aria-label="Task controls">
         <span id="session-label" class="session-label is-hidden" aria-live="polite"></span>
+        <button id="settings-btn" class="btn btn-ghost" type="button" aria-label="Settings" title="Settings">
+          <span class="settings-icon">⚙️</span>
+        </button>
         <button id="logout-btn" class="btn btn-ghost is-hidden" type="button" data-i18n="taskTree.logout">Logout</button>
-        
-        <div class="view-toggle" role="group" aria-label="View toggle">
-          <button id="view-task-tree" class="btn btn-ghost is-active" type="button">Task Tree</button>
-          <button id="view-kanban" class="btn btn-ghost" type="button">Kanban</button>
-        </div>
-        
+
         <button id="add-task-btn" class="btn btn-primary add-task-btn is-hidden" type="button" aria-label="Add new task" title="Add new task">
           <span class="add-task-icon">+</span>
         </button>
@@ -117,6 +115,25 @@
             <button type="button" id="cancel-task-btn" class="btn btn-ghost" data-i18n="taskTree.cancel">Cancel</button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <div id="settings-modal" class="modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="modal-overlay"></div>
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 id="settings-title" class="modal-title">Settings</h2>
+          <button id="close-settings-btn" class="btn btn-ghost modal-close" type="button" aria-label="Close settings">×</button>
+        </div>
+
+        <div class="settings-section">
+          <h3>Language</h3>
+          <p>Choose display language.</p>
+          <div class="lang-toggle" role="group" aria-label="Language">
+            <button id="lang-zh" class="btn btn-ghost" type="button">中文</button>
+            <button id="lang-en" class="btn btn-ghost" type="button">English</button>
+          </div>
+        </div>
       </div>
     </div>
 

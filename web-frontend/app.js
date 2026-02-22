@@ -1144,6 +1144,10 @@
     const ui = {
       logoutBtn: byId("logout-btn"),
       sessionLabel: byId("session-label"),
+      settingsBtn: byId("settings-btn"),
+      settingsModal: byId("settings-modal"),
+      settingsOverlay: byId("settings-modal")?.querySelector(".modal-overlay"),
+      closeSettingsBtn: byId("close-settings-btn"),
       modal: byId("add-task-modal"),
       overlay: byId("add-task-modal")?.querySelector(".modal-overlay"),
       closeModalBtn: byId("close-modal-btn"),
@@ -1215,6 +1219,16 @@
       if (!ui.modal) return;
       ui.modal.classList.add("is-hidden");
       if (ui.addTaskForm) ui.addTaskForm.reset();
+    };
+
+    const openSettings = () => {
+      if (!ui.settingsModal) return;
+      ui.settingsModal.classList.remove("is-hidden");
+    };
+
+    const closeSettings = () => {
+      if (!ui.settingsModal) return;
+      ui.settingsModal.classList.add("is-hidden");
     };
 
     const wsUrlForRun = (runId) => {
@@ -1452,11 +1466,11 @@
     };
 
     const renderKanban = (data) => {
-      if (!ui.kanbanView) return;
+      if (!ui.kanbanContent) return;
       
       const agents = Array.isArray(data?.agents) ? data.agents : [];
       if (!agents.length) {
-        ui.kanbanView.innerHTML = '<div class="kanban-empty">No tasks yet. Create a new task to get started.</div>';
+        ui.kanbanContent.innerHTML = '<div class="kanban-empty">No tasks yet. Create a new task to get started.</div>';
         return;
       }
 
@@ -1479,7 +1493,7 @@
         columns[category].agents.push(agent);
       });
 
-      ui.kanbanView.innerHTML = "";
+      ui.kanbanContent.innerHTML = "";
       
       Object.entries(columns).forEach(([key, column]) => {
         const columnEl = document.createElement("div");
@@ -1523,7 +1537,7 @@
         });
         
         columnEl.appendChild(cardsContainer);
-        ui.kanbanView.appendChild(columnEl);
+        ui.kanbanContent.appendChild(columnEl);
       });
     };
 
@@ -1740,6 +1754,19 @@
     if (ui.closeModalBtn) ui.closeModalBtn.addEventListener("click", closeModal);
     if (ui.cancelTaskBtn) ui.cancelTaskBtn.addEventListener("click", closeModal);
     if (ui.overlay) ui.overlay.addEventListener("click", closeModal);
+
+    if (ui.settingsBtn) ui.settingsBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      openSettings();
+    });
+    if (ui.closeSettingsBtn) ui.closeSettingsBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      closeSettings();
+    });
+    if (ui.settingsOverlay) ui.settingsOverlay.addEventListener("click", closeSettings);
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeSettings();
+    });
     if (ui.addTaskForm) {
       ui.addTaskForm.addEventListener("submit", (e) => {
         e.preventDefault();
