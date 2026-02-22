@@ -20,3 +20,4 @@ package-lock.json
 package.json
 config/runtime.local.json
 screenshots/
+.worktrees/
