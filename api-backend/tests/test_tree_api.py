@@ -15,6 +15,7 @@ def test_tree_api_router_exposes_routes(monkeypatch) -> None:
     paths = {route.path for route in tree_api.router.routes}
     assert "/api/runs/{run_id}/tree" in paths
     assert "/api/agents/{agent_id}/sop" in paths
+    assert "/api/runs/{run_id}/agents/{agent_id}/state" in paths
 
 
 def test_run_tree_and_sop_endpoints(tmp_path, monkeypatch) -> None:
@@ -83,3 +84,20 @@ def test_run_tree_and_sop_endpoints(tmp_path, monkeypatch) -> None:
     sop = sop_resp.json()
     assert set(sop.keys()) == {"md_text"}
     assert "CEO SOP" in sop["md_text"]
+
+    patch_resp = client.patch(
+        f"/api/runs/{run_id}/agents/{root_agent_id}/state",
+        json={"state": "completed"},
+        headers={"X-API-Key": api_key},
+    )
+    assert patch_resp.status_code == 200
+    patched = patch_resp.json()
+    assert patched["id"] == str(root_agent_id)
+    assert patched["state"] == "completed"
+
+    tree_after = client.get(
+        f"/api/runs/{run_id}/tree",
+        headers={"X-API-Key": api_key},
+    ).json()
+    by_id = {str(agent["id"]): agent for agent in tree_after["agents"]}
+    assert by_id[str(root_agent_id)]["state"] == "completed"

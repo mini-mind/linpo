@@ -38,6 +38,10 @@ class RunTreeOut(BaseModel):
     edges: list[AgentEdgeOut] = Field(default_factory=list)
 
 
+class AgentStatePatchIn(BaseModel):
+    state: str
+
+
 class SopOut(BaseModel):
     md_text: str
 
@@ -165,3 +169,78 @@ async def get_agent_sop(
     md_text = sop_store.read_sop_text(md_path)
 
     return SopOut(md_text=md_text)
+
+
+@router.patch("/api/runs/{run_id}/agents/{agent_id}/state", response_model=AgentInstanceOut)
+async def patch_agent_state(
+    run_id: str,
+    agent_id: str,
+    body: AgentStatePatchIn,
+    tenant: Annotated[models.Tenant, Depends(require_tenant)],
+    session: DbSessionDep,
+) -> AgentInstanceOut:
+    run_id_int = _parse_int_id(run_id, "run_id")
+    agent_id_int = _parse_int_id(agent_id, "agent_id")
+
+    raw_state = (body.state or "").strip()
+    next_state = raw_state.lower().strip()
+    next_state = next_state.replace(" ", "_")
+    if not next_state:
+        raise HTTPException(status_code=400, detail="state is required")
+    if len(next_state) > 50:
+        raise HTTPException(status_code=400, detail="state is too long")
+
+    synonyms = {
+        "in_progress": "running",
+        "working": "running",
+        "done": "completed",
+        "success": "completed",
+        "blocked": "needs_human",
+    }
+    next_state = synonyms.get(next_state, next_state)
+
+    allowed = {"queued", "running", "needs_human", "completed", "failed"}
+    if next_state not in allowed:
+        raise HTTPException(status_code=400, detail="Invalid state")
+
+    task = (
+        session.query(models.Task)
+        .filter(models.Task.id == run_id_int, models.Task.tenant_id == tenant.id)
+        .first()
+    )
+    if not task:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    agent = (
+        session.query(models.AgentInstance)
+        .filter(
+            models.AgentInstance.id == agent_id_int,
+            models.AgentInstance.tenant_id == tenant.id,
+            models.AgentInstance.run_id == run_id_int,
+        )
+        .first()
+    )
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    setattr(agent, "state", next_state)
+
+    current_rev = getattr(task, "tree_revision", 0) or 0
+    setattr(task, "tree_revision", int(current_rev) + 1)
+
+    session.add(agent)
+    session.add(task)
+    session.commit()
+
+    parent_agent_id = getattr(agent, "parent_agent_id")
+    return AgentInstanceOut(
+        id=str(getattr(agent, "id")),
+        parent_agent_id=str(parent_agent_id) if parent_agent_id is not None else None,
+        role_label=cast(str | None, getattr(agent, "role_label", None)),
+        state=cast(str, getattr(agent, "state")),
+        current_sop_version_id=(
+            str(getattr(agent, "current_sop_version_id"))
+            if getattr(agent, "current_sop_version_id") is not None
+            else None
+        ),
+    )
