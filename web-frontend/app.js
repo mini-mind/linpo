@@ -545,6 +545,7 @@
       if (ui.sessionLabel) ui.sessionLabel.textContent = label;
       toggleHidden(ui.sessionLabel, !session);
       toggleHidden(ui.logoutBtn, !session);
+      toggleHidden(addTaskBtn, !session);
     };
 
     const setMessage = (text, kind) => setStatusText(ui.message, text, kind);
@@ -1144,10 +1145,8 @@
     const ui = {
       logoutBtn: byId("logout-btn"),
       sessionLabel: byId("session-label"),
-      settingsBtn: byId("settings-btn"),
-      settingsModal: byId("settings-modal"),
-      settingsOverlay: byId("settings-modal")?.querySelector(".modal-overlay"),
-      closeSettingsBtn: byId("close-settings-btn"),
+      userDropdownTrigger: byId("user-dropdown-trigger"),
+      userDropdownMenu: byId("user-dropdown-menu"),
       modal: byId("add-task-modal"),
       overlay: byId("add-task-modal")?.querySelector(".modal-overlay"),
       closeModalBtn: byId("close-modal-btn"),
@@ -1221,15 +1220,19 @@
       if (ui.addTaskForm) ui.addTaskForm.reset();
     };
 
-    const openSettings = () => {
-      if (!ui.settingsModal) return;
-      ui.settingsModal.classList.remove("is-hidden");
+    const isDesktopHover = () => window.matchMedia?.("(hover: hover)")?.matches === true;
+
+    const toggleDropdown = (show) => {
+      if (!ui.userDropdownMenu || !ui.userDropdownTrigger) return;
+      const shouldShow = show !== undefined ? show : ui.userDropdownMenu.classList.contains("is-hidden");
+      ui.userDropdownMenu.classList.toggle("is-hidden", !shouldShow);
+      if (ui.userDropdownTrigger) {
+        ui.userDropdownTrigger.setAttribute("aria-expanded", shouldShow ? "true" : "false");
+      }
     };
 
-    const closeSettings = () => {
-      if (!ui.settingsModal) return;
-      ui.settingsModal.classList.add("is-hidden");
-    };
+    const closeDropdown = () => toggleDropdown(false);
+    const openDropdown = () => toggleDropdown(true);
 
     const wsUrlForRun = (runId) => {
       const scheme = window.location.protocol === "https:" ? "wss" : "ws";
@@ -1755,27 +1758,22 @@
     if (ui.cancelTaskBtn) ui.cancelTaskBtn.addEventListener("click", closeModal);
     if (ui.overlay) ui.overlay.addEventListener("click", closeModal);
 
-    if (ui.settingsBtn) ui.settingsBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      openSettings();
-    });
-    if (ui.closeSettingsBtn) ui.closeSettingsBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      closeSettings();
-    });
-    if (ui.settingsOverlay) ui.settingsOverlay.addEventListener("click", closeSettings);
-    window.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") closeSettings();
-    });
     if (ui.addTaskForm) {
       ui.addTaskForm.addEventListener("submit", (e) => {
         e.preventDefault();
         void createRun();
       });
     }
-    if (ui.closeDetailsBtn) ui.closeDetailsBtn.addEventListener("click", () => {
-      if (ui.taskDetailsSection) ui.taskDetailsSection.classList.add("is-hidden");
-    });
+
+    if (ui.closeDetailsBtn) {
+      ui.closeDetailsBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        if (ui.taskDetailsSection) {
+          ui.taskDetailsSection.classList.add("is-hidden");
+        }
+      });
+    }
+
     if (ui.taskChatForm) {
       ui.taskChatForm.addEventListener("submit", (e) => {
         e.preventDefault();
@@ -1814,57 +1812,66 @@
         toggleView(false);
       });
     }
+    // User dropdown behavior
+    const setupUserDropdown = () => {
+      if (!ui.userDropdownTrigger || !ui.userDropdownMenu) return;
 
-    // Floating create and quick composer
-    const floatingCreateBtn = byId("floating-create-btn");
-    const quickComposer = byId("quick-composer");
-    const quickComposerInput = byId("quick-composer-input");
-    const quickComposerSubmit = byId("quick-composer-submit");
+      const isDesktopHover = () => window.matchMedia?.("(hover: hover)")?.matches === true;
 
-    const toggleComposer = (show) => {
-      if (quickComposer) {
-        toggleHidden(quickComposer, !show);
-        if (show && quickComposerInput) {
-          quickComposerInput.focus();
-        }
+      const toggleDropdown = (show) => {
+        const shouldShow = show !== undefined ? show : ui.userDropdownMenu.classList.contains("is-hidden");
+        ui.userDropdownMenu.classList.toggle("is-hidden", !shouldShow);
+        ui.userDropdownTrigger.setAttribute("aria-expanded", shouldShow ? "true" : "false");
+      };
+
+      const closeDropdown = () => toggleDropdown(false);
+      const openDropdown = () => toggleDropdown(true);
+
+      // Click toggles
+      ui.userDropdownTrigger.addEventListener("click", (e) => {
+        e.preventDefault();
+        const isHidden = ui.userDropdownMenu.classList.contains("is-hidden");
+        toggleDropdown(isHidden);
+      });
+
+      // Hover opens on desktop
+      if (isDesktopHover()) {
+        ui.userDropdownTrigger.addEventListener("mouseenter", openDropdown);
+        ui.userDropdownTrigger.addEventListener("mouseleave", (e) => {
+          // Delay to allow moving to menu
+          setTimeout(() => {
+            if (!ui.userDropdownMenu.matches(":hover") && !ui.userDropdownTrigger.matches(":hover")) {
+              closeDropdown();
+            }
+          }, 100);
+        });
+
+        ui.userDropdownMenu.addEventListener("mouseleave", (e) => {
+          setTimeout(() => {
+            if (!ui.userDropdownMenu.matches(":hover") && !ui.userDropdownTrigger.matches(":hover")) {
+              closeDropdown();
+            }
+          }, 100);
+        });
       }
+
+      // Outside click closes
+      document.addEventListener("click", (e) => {
+        if (!ui.userDropdownTrigger.contains(e.target) && !ui.userDropdownMenu.contains(e.target)) {
+          closeDropdown();
+        }
+      });
+
+      // Escape key closes
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && !ui.userDropdownMenu.classList.contains("is-hidden")) {
+          closeDropdown();
+          ui.userDropdownTrigger.focus();
+        }
+      });
     };
 
-    if (floatingCreateBtn) {
-      floatingCreateBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        const isHidden = quickComposer ? quickComposer.classList.contains("is-hidden") : true;
-        toggleComposer(isHidden);
-      });
-    }
-
-    const submitQuickComposer = async () => {
-      if (!quickComposerInput) return;
-      const inputNl = quickComposerInput.value.trim();
-      if (!inputNl) return;
-
-      const success = await createRunWithInput(inputNl);
-      if (success) {
-        toggleComposer(false);
-        quickComposerInput.value = "";
-      }
-    };
-
-    if (quickComposerSubmit) {
-      quickComposerSubmit.addEventListener("click", (e) => {
-        e.preventDefault();
-        void submitQuickComposer();
-      });
-    }
-
-    if (quickComposerInput) {
-      quickComposerInput.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" && !e.shiftKey) {
-          e.preventDefault();
-          void submitQuickComposer();
-        }
-      });
-    }
+    setupUserDropdown();
 
     void bootstrapAuth();
     window.addEventListener("beforeunload", () => disconnectWs());
