@@ -1070,3 +1070,110 @@ details[open] > .panel-summary::after {
   color: var(--muted-2);
   line-height: 1.4;
 }
+
+/* Task Tree UI Overrides */
+.task-tree-shell .topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+
+.task-tree-shell .topbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.task-tree-shell .user-dropdown {
+  position: relative;
+}
+
+.task-tree-shell .user-dropdown-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: transform 0.18s ease, background 0.18s ease;
+}
+
+.task-tree-shell .user-dropdown-trigger:hover {
+  transform: translateY(-1px);
+  background: var(--panel);
+}
+
+.task-tree-shell .user-dropdown-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  min-width: 180px;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px);
+  z-index: 100;
+}
+
+.task-tree-shell .user-dropdown-menu .btn {
+  width: 100%;
+  justify-content: flex-start;
+  padding: 10px 12px;
+  font-size: 12px;
+}
+
+.task-tree-shell #add-task-btn.add-task-btn {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(196, 106, 42, 0.4);
+  background: linear-gradient(135deg, rgba(196, 106, 42, 0.98), rgba(196, 140, 42, 0.92));
+  border-color: rgba(196, 106, 42, 0.7);
+  color: #151312;
+  font-size: 24px;
+  padding: 0;
+}
+/* Task Tree UI Density Overrides */
+.task-tree-shell .topbar {
+  padding: var(--space-2) var(--space-3);
+  gap: var(--space-2);
+}
+
+.task-tree-shell .user-dropdown-trigger {
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 500;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.task-tree-shell #task-connection-pill {
+  font-size: 10px;
+  padding: 4px 8px;
+}
+
+.task-tree-shell #add-task-btn.add-task-btn {
+  width: 52px;
+  height: 52px;
+  font-size: 22px;
+  box-shadow: 0 3px 10px rgba(196, 106, 42, 0.35);
+}
+
+.task-tree-shell .view-toggle .btn {
+  padding: 6px 12px;
+}

@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>RoBoard Task Tree</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23c46a2a'/%3E%3Ctext x='50' y='70' font-family='Arial, sans-serif' font-size='60' font-weight='bold' text-anchor='middle' fill='white'%3ER%3C/text%3E%3C/svg%3E" type="image/svg+xml" />
     <link rel="stylesheet" href="style.css" />
   </head>
   <body class="task-tree-shell">
@@ -18,16 +19,20 @@
         <button id="view-kanban" class="btn btn-ghost" type="button">Kanban</button>
       </div>
 
-      <div class="topbar-right" aria-label="Task controls">
-        <span id="session-label" class="session-label is-hidden" aria-live="polite"></span>
-        <button id="settings-btn" class="btn btn-ghost" type="button" aria-label="Settings" title="Settings">
-          <span class="settings-icon">⚙️</span>
-        </button>
-        <button id="logout-btn" class="btn btn-ghost is-hidden" type="button" data-i18n="taskTree.logout">Logout</button>
-
-        <button id="add-task-btn" class="btn btn-primary add-task-btn is-hidden" type="button" aria-label="Add new task" title="Add new task">
-          <span class="add-task-icon">+</span>
-        </button>
+      <div class="topbar-right" aria-label="User menu">
+        <div class="user-dropdown">
+          <button id="user-dropdown-trigger" class="user-dropdown-trigger" type="button" aria-haspopup="menu" aria-expanded="false">
+            <span id="session-label" class="session-label is-hidden"></span>
+            <span id="task-connection-pill" class="status-pill neutral" aria-label="Connection status" data-i18n="taskTree.statusIdle">Idle</span>
+          </button>
+          <div id="user-dropdown-menu" class="user-dropdown-menu is-hidden" role="menu">
+            <div class="lang-toggle" role="group" aria-label="Language">
+              <button id="lang-zh" class="btn btn-ghost" type="button" role="menuitem">中文</button>
+              <button id="lang-en" class="btn btn-ghost" type="button" role="menuitem">English</button>
+            </div>
+            <button id="logout-btn" class="btn btn-ghost" type="button" role="menuitem" data-i18n="taskTree.logout">Logout</button>
+          </div>
+        </div>
       </div>
     </header>
 
@@ -36,7 +41,6 @@
         <section id="task-tree-section" class="task-tree-panel" aria-label="Task Tree">
           <div class="panel-head">
             <h2 class="panel-title" data-i18n="taskTree.title">Task Tree</h2>
-            <span id="task-connection-pill" class="status-pill neutral" aria-label="Connection status" data-i18n="taskTree.statusIdle">Idle</span>
           </div>
 
           <div id="task-tree-content" class="task-tree-content">
@@ -118,47 +122,9 @@
       </div>
     </div>
 
-    <div id="settings-modal" class="modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
-      <div class="modal-overlay"></div>
-      <div class="modal-content">
-        <div class="modal-header">
-          <h2 id="settings-title" class="modal-title">Settings</h2>
-          <button id="close-settings-btn" class="btn btn-ghost modal-close" type="button" aria-label="Close settings">×</button>
-        </div>
-
-        <div class="settings-section">
-          <h3>Language</h3>
-          <p>Choose display language.</p>
-          <div class="lang-toggle" role="group" aria-label="Language">
-            <button id="lang-zh" class="btn btn-ghost" type="button">中文</button>
-            <button id="lang-en" class="btn btn-ghost" type="button">English</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <button id="floating-create-btn" class="floating-create-btn" type="button" aria-label="Quick create">
-      <span class="floating-create-icon">+</span>
+    <button id="add-task-btn" class="btn btn-primary add-task-btn is-hidden" type="button" aria-label="Add new task" title="Add new task">
+      <span class="add-task-icon">+</span>
     </button>
-
-    <div id="quick-composer" class="quick-composer is-hidden">
-      <input id="quick-composer-input" type="text" placeholder="Quick create task..." />
-      <button id="quick-composer-submit" class="btn btn-primary" type="button">Create</button>
-    </div>
-
-    <script>
-      (() => {
-        var floatingCreateBtn = document.getElementById("floating-create-btn");
-        var quickComposer = document.getElementById("quick-composer");
-        if (!floatingCreateBtn || !quickComposer) {
-          return;
-        }
-
-        floatingCreateBtn.addEventListener("click", () => {
-          quickComposer.classList.toggle("is-hidden");
-        });
-      })();
-    </script>
     <script src="app.js" defer></script>
   </body>
 </html>
