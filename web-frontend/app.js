@@ -122,7 +122,13 @@
       "taskTree.msg.wsError": "WebSocket error",
       "taskTree.msg.fetchTreeFailed": "Fetch tree failed",
       "taskTree.msg.fetchSopFailed": "Fetch SOP failed",
-      "taskTree.msg.chatSendFailed": "Send message failed"
+      "taskTree.msg.chatSendFailed": "Send message failed",
+
+      "taskTree.kanban.todo": "To Do",
+      "taskTree.kanban.inProgress": "In Progress",
+      "taskTree.kanban.blocked": "Blocked",
+      "taskTree.kanban.done": "Done",
+      "taskTree.msg.updateAgentStateFailed": "Update status failed"
     },
     zh: {
       "login.pageTitle": "RoBoard 登录",
@@ -236,7 +242,13 @@
       "taskTree.msg.wsError": "WebSocket 错误",
       "taskTree.msg.fetchTreeFailed": "获取树失败",
       "taskTree.msg.fetchSopFailed": "获取 SOP 失败",
-      "taskTree.msg.chatSendFailed": "发送消息失败"
+      "taskTree.msg.chatSendFailed": "发送消息失败",
+
+      "taskTree.kanban.todo": "待办",
+      "taskTree.kanban.inProgress": "进行中",
+      "taskTree.kanban.blocked": "阻塞",
+      "taskTree.kanban.done": "完成",
+      "taskTree.msg.updateAgentStateFailed": "更新状态失败"
     }
   };
 
@@ -270,6 +282,15 @@
       const key = el.getAttribute("data-i18n-placeholder");
       if (key) el.setAttribute("placeholder", t(key));
     });
+
+    const kanbanTodo = document.querySelector('.kanban-column[data-column="todo"] .kanban-column-title');
+    if (kanbanTodo) kanbanTodo.textContent = t("taskTree.kanban.todo");
+    const kanbanInProgress = document.querySelector('.kanban-column[data-column="inProgress"] .kanban-column-title');
+    if (kanbanInProgress) kanbanInProgress.textContent = t("taskTree.kanban.inProgress");
+    const kanbanBlocked = document.querySelector('.kanban-column[data-column="blocked"] .kanban-column-title');
+    if (kanbanBlocked) kanbanBlocked.textContent = t("taskTree.kanban.blocked");
+    const kanbanDone = document.querySelector('.kanban-column[data-column="done"] .kanban-column-title');
+    if (kanbanDone) kanbanDone.textContent = t("taskTree.kanban.done");
   };
 
   const setLang = (next) => {
@@ -1172,7 +1193,10 @@
       ws: null,
       runId: "",
       selectedNode: null,
-      chatHistories: {}
+      chatHistories: {},
+      dragPayload: null,
+      pointerDrag: null,
+      suppressNextClick: false
     };
 
     const setSessionUi = (session) => {
@@ -1219,20 +1243,6 @@
       ui.modal.classList.add("is-hidden");
       if (ui.addTaskForm) ui.addTaskForm.reset();
     };
-
-    const isDesktopHover = () => window.matchMedia?.("(hover: hover)")?.matches === true;
-
-    const toggleDropdown = (show) => {
-      if (!ui.userDropdownMenu || !ui.userDropdownTrigger) return;
-      const shouldShow = show !== undefined ? show : ui.userDropdownMenu.classList.contains("is-hidden");
-      ui.userDropdownMenu.classList.toggle("is-hidden", !shouldShow);
-      if (ui.userDropdownTrigger) {
-        ui.userDropdownTrigger.setAttribute("aria-expanded", shouldShow ? "true" : "false");
-      }
-    };
-
-    const closeDropdown = () => toggleDropdown(false);
-    const openDropdown = () => toggleDropdown(true);
 
     const wsUrlForRun = (runId) => {
       const scheme = window.location.protocol === "https:" ? "wss" : "ws";
@@ -1283,6 +1293,7 @@
         state.runId = runId;
         localStorage.setItem(STORAGE.runId, runId);
         setMessage(t("taskTree.msg.created"), "ok");
+        await fetchTree();
         connectWs();
         return true;
       } catch (err) {
@@ -1336,7 +1347,15 @@
       setConnectionStatus("connecting");
       setMessage(t("taskTree.msg.connecting"), "warn");
 
-      const ws = new WebSocket(url);
+      let ws;
+      try {
+        ws = new WebSocket(url);
+      } catch {
+        setConnectionStatus("error");
+        setMessage(t("taskTree.msg.wsError"), "error");
+        void fetchTree();
+        return;
+      }
       state.ws = ws;
 
       ws.addEventListener("open", () => {
@@ -1376,6 +1395,7 @@
         if (state.ws !== ws) return;
         setConnectionStatus("error");
         setMessage(t("taskTree.msg.wsError"), "error");
+        void fetchTree();
       });
     };
 
@@ -1387,6 +1407,12 @@
         renderTree(data);
       } catch (err) {
         if (handleAuthError(err)) return;
+        const status = err && typeof err === "object" ? err.status : null;
+        if (status === 404) {
+          localStorage.removeItem(STORAGE.runId);
+          state.runId = "";
+          disconnectWs();
+        }
         setMessage(t("taskTree.msg.fetchTreeFailed"), "error");
       }
     };
@@ -1473,20 +1499,29 @@
       
       const agents = Array.isArray(data?.agents) ? data.agents : [];
       if (!agents.length) {
-        ui.kanbanContent.innerHTML = '<div class="kanban-empty">No tasks yet. Create a new task to get started.</div>';
+        ui.kanbanContent.innerHTML = `<div class="kanban-empty">${safeText(t("taskTree.empty"))}</div>`;
         return;
       }
 
       const columns = {
-        todo: { title: "To Do", agents: [] },
-        inProgress: { title: "In Progress", agents: [] },
-        done: { title: "Done", agents: [] }
+        todo: { title: t("taskTree.kanban.todo"), agents: [] },
+        inProgress: { title: t("taskTree.kanban.inProgress"), agents: [] },
+        blocked: { title: t("taskTree.kanban.blocked"), agents: [] },
+        done: { title: t("taskTree.kanban.done"), agents: [] }
+      };
+
+      const columnKeyToAgentState = (key) => {
+        if (key === "done") return "completed";
+        if (key === "inProgress") return "running";
+        if (key === "blocked") return "needs_human";
+        return "queued";
       };
 
       const getStatusCategory = (status) => {
         const s = safeText(status).toLowerCase().trim();
         if (["done", "completed", "success"].includes(s)) return "done";
         if (["running", "in_progress", "working"].includes(s)) return "inProgress";
+        if (["needs_human", "blocked", "failed", "error"].includes(s)) return "blocked";
         return "todo";
       };
 
@@ -1497,15 +1532,80 @@
       });
 
       ui.kanbanContent.innerHTML = "";
+
+      const boardEl = document.createElement("div");
+      boardEl.className = "kanban-board";
       
       Object.entries(columns).forEach(([key, column]) => {
         const columnEl = document.createElement("div");
         columnEl.className = "kanban-column";
         columnEl.dataset.column = key;
+
+        columnEl.addEventListener("dragover", (e) => {
+          // Allow dropping cards onto columns.
+          e.preventDefault();
+          columnEl.classList.add("is-drop-target");
+        });
+
+        columnEl.addEventListener("dragleave", () => {
+          columnEl.classList.remove("is-drop-target");
+        });
+
+          columnEl.addEventListener("drop", (e) => {
+          e.preventDefault();
+          columnEl.classList.remove("is-drop-target");
+
+          const runId = safeText(state.runId);
+          if (!runId) return;
+
+          const payload = safeText(e.dataTransfer?.getData("text/plain"));
+
+          let parsed = null;
+          if (payload) {
+            try {
+              parsed = JSON.parse(payload);
+            } catch {
+              parsed = null;
+            }
+          } else {
+            parsed = state.dragPayload;
+          }
+
+          const agentId = parsed && parsed.agentId != null ? String(parsed.agentId) : "";
+          const fromCol = parsed && parsed.fromCol != null ? String(parsed.fromCol) : "";
+          if (!agentId) return;
+          if (fromCol === key) return;
+
+          state.dragPayload = null;
+
+          const nextState = columnKeyToAgentState(key);
+          void apiFetch(`/api/runs/${encodeURIComponent(runId)}/agents/${encodeURIComponent(agentId)}/state`, {
+            method: "PATCH",
+            body: JSON.stringify({ state: nextState })
+          })
+            .then(() => fetchTree())
+            .catch((err) => {
+              if (handleAuthError(err)) return;
+              const status = err && typeof err === "object" ? err.status : null;
+              const detail = err && typeof err === "object" ? err.detail : "";
+              const suffix = safeText(detail).trim();
+              setMessage(`${t("taskTree.msg.updateAgentStateFailed")} (${status || "error"}). ${suffix}`.trim(), "error");
+            });
+        });
         
         const headerEl = document.createElement("div");
         headerEl.className = "kanban-column-header";
-        headerEl.textContent = column.title;
+
+        const titleEl = document.createElement("div");
+        titleEl.className = "kanban-column-title";
+        titleEl.textContent = safeText(column.title);
+
+        const countEl = document.createElement("div");
+        countEl.className = "kanban-column-count";
+        countEl.textContent = String(column.agents.length);
+
+        headerEl.appendChild(titleEl);
+        headerEl.appendChild(countEl);
         columnEl.appendChild(headerEl);
         
         const cardsContainer = document.createElement("div");
@@ -1518,10 +1618,13 @@
           const cardEl = document.createElement("div");
           cardEl.className = "kanban-card";
           cardEl.dataset.agentId = id;
-          
+          cardEl.draggable = true;
+          cardEl.setAttribute("draggable", "true");
+
           const label = agent?.name || agent?.title || agent?.label || id;
           const kind = agent?.type || agent?.agent_type || "";
           const status = agent?.status || agent?.state || "";
+          cardEl.dataset.status = safeText(status).toLowerCase().trim();
           
           const titleEl = document.createElement("div");
           titleEl.className = "kanban-card-title";
@@ -1529,19 +1632,174 @@
           
           const metaEl = document.createElement("div");
           metaEl.className = "kanban-card-meta";
-          metaEl.textContent = `${kind ? `(${kind})` : ""} ${status ? `— ${status}` : ""}`.trim();
+
+          const metaText = document.createElement("span");
+          metaText.textContent = `${kind ? `(${kind})` : ""} ${status ? `— ${status}` : ""}`.trim();
+
+          const chipEl = document.createElement("button");
+          chipEl.type = "button";
+          chipEl.className = "kanban-status-chip";
+          chipEl.textContent = safeText(columns[key]?.title || "");
+          chipEl.setAttribute("aria-label", `Move status (current: ${safeText(columns[key]?.title || "")})`);
+          chipEl.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const runId = safeText(state.runId);
+            if (!runId) return;
+
+            const order = ["todo", "inProgress", "blocked", "done"];
+            const idx = Math.max(0, order.indexOf(key));
+            const nextKey = order[(idx + 1) % order.length];
+            const nextState = columnKeyToAgentState(nextKey);
+
+            void apiFetch(`/api/runs/${encodeURIComponent(runId)}/agents/${encodeURIComponent(id)}/state`, {
+              method: "PATCH",
+              body: JSON.stringify({ state: nextState })
+            })
+              .then(() => fetchTree())
+              .catch((err) => {
+                if (handleAuthError(err)) return;
+                const status = err && typeof err === "object" ? err.status : null;
+                const detail = err && typeof err === "object" ? err.detail : "";
+                const suffix = safeText(detail).trim();
+                setMessage(`${t("taskTree.msg.updateAgentStateFailed")} (${status || "error"}). ${suffix}`.trim(), "error");
+              });
+          });
+
+          metaEl.appendChild(metaText);
+          metaEl.appendChild(chipEl);
           
           cardEl.appendChild(titleEl);
           cardEl.appendChild(metaEl);
           
-          cardEl.addEventListener("click", () => selectNode(id, agent));
+          cardEl.addEventListener("click", (e) => {
+            if (state.suppressNextClick) {
+              state.suppressNextClick = false;
+              e.preventDefault();
+              e.stopPropagation();
+              return;
+            }
+            selectNode(id, agent);
+          });
+
+          cardEl.addEventListener("dragstart", (e) => {
+            cardEl.classList.add("is-dragging");
+            state.dragPayload = { agentId: id, fromCol: key };
+            if (e.dataTransfer) {
+              e.dataTransfer.effectAllowed = "move";
+              e.dataTransfer.setData("text/plain", JSON.stringify({ agentId: id, fromCol: key }));
+            }
+          });
+
+          cardEl.addEventListener("dragend", () => {
+            cardEl.classList.remove("is-dragging");
+            if (state.dragPayload && state.dragPayload.agentId === id) {
+              state.dragPayload = null;
+            }
+          });
+
+          cardEl.addEventListener("pointerdown", (e) => {
+            if (!e.isPrimary) return;
+            if (e.button !== 0) return;
+            if (!cardEl.setPointerCapture) return;
+
+            const target = e.target;
+            if (target && typeof target === "object" && target.closest) {
+              if (target.closest("button, a, input, textarea, select")) return;
+            }
+
+            const startX = e.clientX;
+            const startY = e.clientY;
+            state.pointerDrag = {
+              pointerId: e.pointerId,
+              startX,
+              startY,
+              moved: false,
+              agentId: id,
+              fromCol: key,
+              cardEl
+            };
+
+            try {
+              cardEl.setPointerCapture(e.pointerId);
+            } catch {
+            }
+          });
+
+          cardEl.addEventListener("pointermove", (e) => {
+            const drag = state.pointerDrag;
+            if (!drag) return;
+            if (drag.pointerId !== e.pointerId) return;
+
+            const dx = e.clientX - drag.startX;
+            const dy = e.clientY - drag.startY;
+            if (!drag.moved && Math.hypot(dx, dy) < 6) return;
+
+            drag.moved = true;
+            cardEl.classList.add("is-dragging");
+            cardEl.style.transform = `translate(${dx}px, ${dy}px) rotate(-0.6deg)`;
+            cardEl.style.zIndex = "30";
+
+            const hit = document.elementFromPoint(e.clientX, e.clientY);
+            const targetCol = hit ? hit.closest?.(".kanban-column") : null;
+            document.querySelectorAll(".kanban-column.is-drop-target").forEach((el) => {
+              el.classList.remove("is-drop-target");
+            });
+            targetCol?.classList?.add("is-drop-target");
+          });
+
+          const finishPointerDrag = (e) => {
+            const drag = state.pointerDrag;
+            if (!drag) return;
+            if (drag.pointerId !== e.pointerId) return;
+
+            state.pointerDrag = null;
+            document.querySelectorAll(".kanban-column.is-drop-target").forEach((el) => {
+              el.classList.remove("is-drop-target");
+            });
+            cardEl.classList.remove("is-dragging");
+            cardEl.style.transform = "";
+            cardEl.style.zIndex = "";
+
+            if (!drag.moved) return;
+
+            state.suppressNextClick = true;
+
+            const hit = document.elementFromPoint(e.clientX, e.clientY);
+            const targetCol = hit ? hit.closest?.(".kanban-column") : null;
+            const toCol = targetCol?.dataset?.column || "";
+            if (!toCol || toCol === drag.fromCol) return;
+
+            const runId = safeText(state.runId);
+            if (!runId) return;
+
+            const nextState = columnKeyToAgentState(toCol);
+            void apiFetch(`/api/runs/${encodeURIComponent(runId)}/agents/${encodeURIComponent(drag.agentId)}/state`, {
+              method: "PATCH",
+              body: JSON.stringify({ state: nextState })
+            })
+              .then(() => fetchTree())
+              .catch((err) => {
+                if (handleAuthError(err)) return;
+                const status = err && typeof err === "object" ? err.status : null;
+                const detail = err && typeof err === "object" ? err.detail : "";
+                const suffix = safeText(detail).trim();
+                setMessage(`${t("taskTree.msg.updateAgentStateFailed")} (${status || "error"}). ${suffix}`.trim(), "error");
+              });
+          };
+
+          cardEl.addEventListener("pointerup", finishPointerDrag);
+          cardEl.addEventListener("pointercancel", finishPointerDrag);
           
           cardsContainer.appendChild(cardEl);
         });
         
         columnEl.appendChild(cardsContainer);
-        ui.kanbanContent.appendChild(columnEl);
+        boardEl.appendChild(columnEl);
       });
+
+      ui.kanbanContent.appendChild(boardEl);
     };
 
     const handleDelta = (data) => {
@@ -1837,7 +2095,7 @@
       // Hover opens on desktop
       if (isDesktopHover()) {
         ui.userDropdownTrigger.addEventListener("mouseenter", openDropdown);
-        ui.userDropdownTrigger.addEventListener("mouseleave", (e) => {
+        ui.userDropdownTrigger.addEventListener("mouseleave", () => {
           // Delay to allow moving to menu
           setTimeout(() => {
             if (!ui.userDropdownMenu.matches(":hover") && !ui.userDropdownTrigger.matches(":hover")) {
@@ -1846,7 +2104,7 @@
           }, 100);
         });
 
-        ui.userDropdownMenu.addEventListener("mouseleave", (e) => {
+        ui.userDropdownMenu.addEventListener("mouseleave", () => {
           setTimeout(() => {
             if (!ui.userDropdownMenu.matches(":hover") && !ui.userDropdownTrigger.matches(":hover")) {
               closeDropdown();

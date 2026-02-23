@@ -42,6 +42,7 @@ Files:
 
 - `POST /api/runs` - 创建新运行
 - `GET /api/runs/{run_id}/tree` - 获取运行的任务树
+- `PATCH /api/runs/{run_id}/agents/{agent_id}/state` - 更新 Kanban 卡片状态（用于拖拽移动列）
 
 ## WebSocket 连接
 
