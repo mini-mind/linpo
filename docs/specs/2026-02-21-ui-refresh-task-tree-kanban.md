@@ -5,6 +5,17 @@
 **目标**:  lighter 视觉，简化导航，增加 Kanban 视图，移动创建入口
 
 ---
+## Status
+
+**Superseded**: This specification has been superseded by the consolidated implementation plan.
+
+**Current approach** (see `docs/plans/2026-02-23-roboard-task-tree-ui-consolidation-implementation-plan.md`):
+- Quick composer (`#floating-create-btn`, `#quick-composer`) is no longer in use
+- Current create flow is FAB `#add-task-btn` opening existing `#add-task-modal`
+- Current user menu is dropdown (`#user-dropdown-trigger`, `#user-dropdown-menu`) containing language + logout
+- Favicon is inline data-URI (no external file)
+
+---
 
 ## 1. 视觉方向
 

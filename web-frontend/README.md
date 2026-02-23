@@ -1,4 +1,4 @@
-web-frontend: Task Tree UI
+Task Tree UI
 
 Task Tree UI 用于创建任务、查看任务树、与任务交互和管理会话。
 
@@ -10,12 +10,18 @@ Files:
 ## UI 元素
 
 ### 顶部栏
-- **会话标签**: `#session-label` 显示当前会话信息
-- **登出按钮**: `#logout-btn` 用于退出当前会话
+- **品牌标识**: `.brand` 和 `.brand-name` 显示 RoBoard 品牌
+- **视图切换**: `.view-toggle` 包含 Task Tree 和 Kanban 视图切换按钮
+- **用户下拉菜单**: `.user-dropdown` 包含用户信息和操作
+  - **下拉触发器**: `#user-dropdown-trigger` 显示会话标签和连接状态
+  - **会话标签**: `#session-label` 显示当前会话信息（在触发器内）
+  - **连接状态**: `#task-connection-pill` 显示连接状态（在触发器内）
+  - **下拉菜单**: `#user-dropdown-menu` 包含语言切换和登出
+    - **语言切换**: `#lang-zh` 和 `#lang-en` 切换界面语言
+    - **登出按钮**: `#logout-btn` 用于退出当前会话
 
 ### 任务创建
-- **添加任务按钮**: `#add-task-btn` 打开任务创建模态框
-- **连接状态**: 状态指示器 `#task-connection-pill` 显示连接状态
+- **添加任务按钮**: `#add-task-btn` 是浮动操作按钮，打开任务创建模态框
 - **消息提示**: `#task-message` 显示操作结果消息
 
 ### 任务创建模态框
