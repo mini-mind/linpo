@@ -414,10 +414,16 @@
 
       setMsg(t("login.msg.loggingIn"), "warn");
       await withBusy(async () => {
-        await apiFetch("/api/auth/login", {
+        const resp = await apiFetch("/api/auth/login", {
           method: "POST",
           body: JSON.stringify({ email, password })
         });
+        const data = await resp.json().catch(() => null);
+        if (data && typeof data === "object" && typeof data.session_token === "string" && data.session_token) {
+          localStorage.setItem(STORAGE.sessionToken, data.session_token);
+        } else {
+          throw new Error("Invalid response: missing session_token");
+        }
       });
       window.location.assign("/");
     };
@@ -432,10 +438,16 @@
 
       setMsg(t("login.msg.registering"), "warn");
       await withBusy(async () => {
-        await apiFetch("/api/auth/register", {
+        const resp = await apiFetch("/api/auth/register", {
           method: "POST",
           body: JSON.stringify({ email, password })
         });
+        const data = await resp.json().catch(() => null);
+        if (data && typeof data === "object" && typeof data.session_token === "string" && data.session_token) {
+          localStorage.setItem(STORAGE.sessionToken, data.session_token);
+        } else {
+          throw new Error("Invalid response: missing session_token");
+        }
       });
       window.location.assign("/");
     };
@@ -566,7 +578,6 @@
       if (ui.sessionLabel) ui.sessionLabel.textContent = label;
       toggleHidden(ui.sessionLabel, !session);
       toggleHidden(ui.logoutBtn, !session);
-      toggleHidden(addTaskBtn, !session);
     };
 
     const setMessage = (text, kind) => setStatusText(ui.message, text, kind);
@@ -643,7 +654,9 @@
     const wsUrlForRun = (runId) => {
       const scheme = window.location.protocol === "https:" ? "wss" : "ws";
       const host = window.location.host;
-      return `${scheme}://${host}/ws/runs/${encodeURIComponent(runId)}`;
+      const sessionToken = localStorage.getItem(STORAGE.sessionToken);
+      const query = sessionToken ? `?session_token=${encodeURIComponent(sessionToken)}` : "";
+      return `${scheme}://${host}/ws/runs/${encodeURIComponent(runId)}${query}`;
     };
 
     const disconnectWs = () => {
@@ -1196,7 +1209,8 @@
       chatHistories: {},
       dragPayload: null,
       pointerDrag: null,
-      suppressNextClick: false
+      suppressNextClick: false,
+      deltaFetchTimer: null
     };
 
     const setSessionUi = (session) => {
@@ -1209,6 +1223,7 @@
       if (ui.sessionLabel) ui.sessionLabel.textContent = label;
       toggleHidden(ui.sessionLabel, !session);
       toggleHidden(ui.logoutBtn, !session);
+      toggleHidden(addTaskBtn, !session);
     };
 
     const setMessage = (text, kind) => setStatusText(ui.taskMessage, text, kind);
@@ -1247,7 +1262,9 @@
     const wsUrlForRun = (runId) => {
       const scheme = window.location.protocol === "https:" ? "wss" : "ws";
       const host = window.location.host;
-      return `${scheme}://${host}/ws/runs/${encodeURIComponent(runId)}`;
+      const sessionToken = localStorage.getItem(STORAGE.sessionToken);
+      const query = sessionToken ? `?session_token=${encodeURIComponent(sessionToken)}` : "";
+      return `${scheme}://${host}/ws/runs/${encodeURIComponent(runId)}${query}`;
     };
 
     const disconnectWs = () => {
@@ -1300,18 +1317,6 @@
         const status = err && typeof err === "object" ? err.status : null;
         const detail = err && typeof err === "object" ? err.detail : "";
         
-        // Handle specific error codes with better feedback
-        if (status === 401 || status === 403) {
-          setMessage("登录已失效，请重新登录", "error");
-          return false;
-        }
-        
-        if (status === 429) {
-          const baseMessage = "触发并发/速率限制，请稍后再试";
-          const message = detail ? `${baseMessage}: ${safeText(detail)}` : baseMessage;
-          setMessage(message, "error");
-          return false;
-        }
         
         // For other auth errors, use the existing handler
         if (handleAuthError(err)) return false;
@@ -1828,6 +1833,14 @@
           ui.taskStatusDisplay.textContent = safeText(displayStatus);
         }
       });
+      // Debounced fetchTree() to pick up new nodes/edges after delta updates
+      if (state.deltaFetchTimer) {
+        clearTimeout(state.deltaFetchTimer);
+      }
+      state.deltaFetchTimer = setTimeout(() => {
+        state.deltaFetchTimer = null;
+        void fetchTree();
+      }, 300);
     };
 
     const selectNode = (nodeId, agent) => {
@@ -1835,6 +1848,8 @@
       if (!ui.taskDetailsSection) return;
 
       ui.taskDetailsSection.classList.remove("is-hidden");
+      // Hide add task button when details panel is open to prevent pointer interception
+      toggleHidden(addTaskBtn, true);
       if (ui.taskDetailsTitle) {
         const label = agent?.name || agent?.title || agent?.label || nodeId;
         ui.taskDetailsTitle.textContent = `${t("taskTree.detailsTitle")}: ${safeText(label)}`;
@@ -2028,6 +2043,8 @@
         e.preventDefault();
         if (ui.taskDetailsSection) {
           ui.taskDetailsSection.classList.add("is-hidden");
+          // Show add task button when details panel is closed
+          toggleHidden(addTaskBtn, !state.session);
         }
       });
     }

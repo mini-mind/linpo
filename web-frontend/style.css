@@ -50,6 +50,10 @@ body {
   display: none;
 }
 
+.btn.is-hidden {
+  display: none;
+}
+
 
 
 a {
