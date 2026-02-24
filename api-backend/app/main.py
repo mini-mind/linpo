@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnusedCallResult=false, reportUntypedBaseClass=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnusedImport=false, reportInvalidTypeForm=false, reportUnboundVariable=false, reportAttributeAccessIssue=false, reportUntypedFunctionDecorator=false, reportUnusedFunction=false, reportImplicitStringConcatenation=false, reportUnnecessaryIsInstance=false, reportUnusedVariable=false, reportImportCycles=false, reportAny=false, reportImplicitOverride=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnusedCallResult=false, reportUntypedBaseClass=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnusedImport=false, reportInvalidTypeForm=false, reportUnboundVariable=false, reportAttributeAccessIssue=false, reportUntypedFunctionDecorator=false, reportUnusedFunction=false, reportImplicitStringConcatenation=false, reportUnnecessaryIsInstance=false, reportUnusedVariable=false, reportImportCycles=false, reportImplicitOverride=false, reportAny=false
 """FastAPI app: multi-tenant tasks + event streaming.
 
 Production behavior:
@@ -2104,10 +2104,12 @@ async def a2a_ask(
 async def agent_chat(
     agent_type: str,
     body: AgentChatIn,
+    request: Request,
     session: DbSessionDep,
     x_session_token: SessionTokenHeader = None,
 ) -> AgentChatOut:
-    user = _require_session_user(session, x_session_token)
+    token = x_session_token or request.cookies.get(SESSION_COOKIE_NAME)
+    user = _require_session_user(session, token)
     user_id = cast(int, getattr(user, "id"))
     user_tenant_id = getattr(user, "tenant_id")
 
@@ -2251,11 +2253,13 @@ async def agent_chat(
 async def agent_chat_stream(
     agent_type: str,
     body: AgentChatIn,
+    request: Request,
     session: DbSessionDep,
     x_session_token: SessionTokenHeader = None,
 ) -> StreamingResponse:
     """Stream chat responses from LLM gateway."""
-    user = _require_session_user(session, x_session_token)
+    token = x_session_token or request.cookies.get(SESSION_COOKIE_NAME)
+    user = _require_session_user(session, token)
     user_id = cast(int, getattr(user, "id"))
     user_tenant_id = getattr(user, "tenant_id")
 
@@ -2859,17 +2863,52 @@ async def post_event(
     task_id_db = getattr(task, "id")
     old_status = cast(str, getattr(task, "status"))
     new_status = EVENT_TO_STATUS.get(body.type, old_status)
+    data = dict(body.data)
+    root_agent_id = getattr(task, "root_agent_id", None)
+    should_tag_root_agent = (
+        getattr(task, "kind", None) == "run"
+        and body.type.startswith("task.")
+        and "agent_id" not in data
+        and root_agent_id is not None
+    )
+    if should_tag_root_agent:
+        data["agent_id"] = str(root_agent_id)
 
     try:
         event = models.Event()
         setattr(event, "task_id", task_id_db)
         setattr(event, "tenant_id", tenant_id_db)
         setattr(event, "type", body.type)
-        setattr(event, "data_json", json.dumps(body.data))
+        setattr(event, "data_json", json.dumps(data))
+        if root_agent_id is not None and should_tag_root_agent:
+            setattr(event, "agent_id", int(root_agent_id))
         setattr(event, "status", new_status)
         setattr(event, "timestamp", _utcnow_naive())
         session.add(event)
         session.flush()
+
+        if getattr(task, "kind", None) == "run" and body.type in {
+            "task.step.started",
+            "task.requires_input",
+            "task.completed",
+            "task.failed",
+        }:
+            if root_agent_id is not None:
+                agent = (
+                    session.query(models.AgentInstance)
+                    .filter(
+                        models.AgentInstance.id == int(root_agent_id),
+                        models.AgentInstance.tenant_id == tenant_id_db,
+                        models.AgentInstance.run_id == task_id_db,
+                    )
+                    .first()
+                )
+                if agent is not None:
+                    setattr(agent, "state", new_status)
+                    current_rev = getattr(task, "tree_revision", 0) or 0
+                    setattr(task, "tree_revision", int(current_rev) + 1)
+                    session.add(agent)
+                    session.add(task)
 
         if new_status != old_status:
             setattr(task, "status", new_status)
@@ -3009,6 +3048,7 @@ async def ws_runs(
     api_key: Annotated[str | None, Query()] = None,
     internal_key: Annotated[str | None, Query()] = None,
     tenant_id: Annotated[str | None, Query()] = None,
+    session_token: Annotated[str | None, Query()] = None,
 ) -> None:
     await websocket.accept()
 
@@ -3027,7 +3067,7 @@ async def ws_runs(
                 return
             tenant_row = session.query(models.Tenant).filter(models.Tenant.id == tenant_id_int).first()
         else:
-            token = websocket.cookies.get(SESSION_COOKIE_NAME)
+            token = session_token or websocket.cookies.get(SESSION_COOKIE_NAME)
             if token:
                 try:
                     user = _require_session_user(session, token)
@@ -3122,6 +3162,7 @@ async def ws_world(
     api_key: Annotated[str | None, Query()] = None,
     internal_key: Annotated[str | None, Query()] = None,
     tenant_id: Annotated[str | None, Query()] = None,
+    session_token: Annotated[str | None, Query()] = None,
 ) -> None:
     await websocket.accept()
 
@@ -3140,7 +3181,7 @@ async def ws_world(
                 return
             tenant_row = session.query(models.Tenant).filter(models.Tenant.id == tenant_id_int).first()
         else:
-            token = websocket.cookies.get(SESSION_COOKIE_NAME)
+            token = session_token or websocket.cookies.get(SESSION_COOKIE_NAME)
             if token:
                 try:
                     user = _require_session_user(session, token)

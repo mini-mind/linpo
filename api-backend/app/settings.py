@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = Field(default="redis://redis:6379/0")
     ADMIN_API_KEY: str = Field(...)
     INTERNAL_API_KEY: str = Field(...)
+    SEARXNG_SECRET_KEY: str | None = Field(default=None)
     TENANT_CONCURRENCY_LIMIT: int = Field(default=2)
     RATE_LIMIT: str = Field(default="100/minute")
     ALLOW_ORIGINS: str = Field(default="*")
