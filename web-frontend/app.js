@@ -109,6 +109,8 @@
       "taskTree.cancel": "Cancel",
       "taskTree.detailsTitle": "Task Details",
       "taskTree.status": "Status",
+      "taskTree.plan": "Plan",
+      "taskTree.plan.empty": "No plan subtasks yet.",
       "taskTree.sop": "SOP",
       "taskTree.chat": "Chat",
       "taskTree.chatPlaceholder": "Type a message...",
@@ -229,6 +231,8 @@
       "taskTree.cancel": "取消",
       "taskTree.detailsTitle": "任务详情",
       "taskTree.status": "状态",
+      "taskTree.plan": "计划",
+      "taskTree.plan.empty": "暂无计划子任务。",
       "taskTree.sop": "SOP",
       "taskTree.chat": "聊天",
       "taskTree.chatPlaceholder": "输入消息...",
@@ -1168,6 +1172,11 @@
       });
     }
 
+    // Manual QA checklist:
+    // 1) Create/connect a run and verify agent tree shows name/state/current_step.
+    // 2) Select an agent and confirm plan subtasks list renders with statuses.
+    // 3) Switch to Kanban view and verify subtasks are grouped by status columns.
+
     void bootstrapAuth();
     window.addEventListener("beforeunload", () => disconnectWs());
   };
@@ -1194,6 +1203,8 @@
       taskDetailsTitle: byId("task-details-title"),
       closeDetailsBtn: byId("close-details-btn"),
       taskStatusDisplay: byId("task-status-display"),
+      taskPlanList: byId("task-plan-list"),
+      taskPlanEmpty: byId("task-plan-empty"),
       taskSopDisplay: byId("task-sop-display"),
       taskChatMessages: byId("task-chat-messages"),
       taskChatForm: byId("task-chat-form"),
@@ -1422,6 +1433,86 @@
       }
     };
 
+    const labelForAgent = (agent, fallbackId) =>
+      safeText(agent?.name || agent?.role_label || agent?.title || agent?.label || fallbackId);
+
+    const stateForAgent = (agent) => safeText(agent?.state || agent?.status || "");
+
+    const stepForAgent = (agent) => safeText(agent?.current_step || agent?.currentStep || "");
+
+    const normalizePlanSubtask = (subtask, index) => {
+      if (subtask == null) {
+        return { label: `Subtask ${index + 1}`, status: "" };
+      }
+
+      if (typeof subtask === "string") {
+        return { label: safeText(subtask), status: "" };
+      }
+
+      const label = safeText(
+        subtask?.text ||
+          subtask?.title ||
+          subtask?.label ||
+          subtask?.name ||
+          subtask?.content ||
+          subtask?.task ||
+          `Subtask ${index + 1}`
+      );
+
+      const rawStatus =
+        subtask?.status ??
+        subtask?.state ??
+        subtask?.phase ??
+        subtask?.result ??
+        (typeof subtask?.checked === "boolean" ? (subtask.checked ? "done" : "todo") : "") ??
+        (typeof subtask?.completed === "boolean" ? (subtask.completed ? "done" : "todo") : "") ??
+        (typeof subtask?.done === "boolean" ? (subtask.done ? "done" : "todo") : "");
+
+      return { label, status: safeText(rawStatus) };
+    };
+
+    const getSubtaskCategory = (status) => {
+      const s = safeText(status).toLowerCase().trim();
+      if (["done", "completed", "complete", "success", "finished", "checked", "ok"].includes(s)) return "done";
+      if (["running", "in_progress", "working", "doing", "active"].includes(s)) return "inProgress";
+      if (["needs_human", "blocked", "failed", "error"].includes(s)) return "blocked";
+      return "todo";
+    };
+
+    const renderPlanSubtasks = (agent) => {
+      if (!ui.taskPlanList || !ui.taskPlanEmpty) return;
+
+      ui.taskPlanList.innerHTML = "";
+      const subtasks = Array.isArray(agent?.plan_subtasks) ? agent.plan_subtasks : [];
+
+      if (!subtasks.length) {
+        ui.taskPlanEmpty.textContent = t("taskTree.plan.empty");
+        ui.taskPlanEmpty.classList.remove("is-hidden");
+        return;
+      }
+
+      ui.taskPlanEmpty.classList.add("is-hidden");
+
+      subtasks.forEach((subtask, index) => {
+        const normalized = normalizePlanSubtask(subtask, index);
+        const item = document.createElement("li");
+        item.className = "plan-item";
+
+        const label = document.createElement("div");
+        label.className = "plan-item-title";
+        label.textContent = normalized.label;
+
+        const status = document.createElement("div");
+        status.className = "plan-item-status";
+        status.textContent = normalized.status || "todo";
+        status.dataset.status = getSubtaskCategory(normalized.status);
+
+        item.appendChild(label);
+        item.appendChild(status);
+        ui.taskPlanList.appendChild(item);
+      });
+    };
+
     const renderTree = (data) => {
       if (!ui.taskTreeRoot) return;
       ui.taskTreeRoot.innerHTML = "";
@@ -1472,15 +1563,35 @@
         const nodeDiv = document.createElement("div");
         nodeDiv.className = "task-tree-node";
         nodeDiv.dataset.nodeId = id;
-        nodeDiv.dataset.label = agent?.name || agent?.title || agent?.label || id;
-        nodeDiv.dataset.kind = agent?.type || agent?.agent_type || "";
+        const label = labelForAgent(agent, id);
+        const status = stateForAgent(agent);
+        const currentStep = stepForAgent(agent);
+
+        nodeDiv.dataset.label = label;
+        nodeDiv.dataset.state = status.toLowerCase().trim();
         nodeDiv.style.paddingLeft = `${12 + depth * 16}px`;
 
-        const label = agent?.name || agent?.title || agent?.label || id;
-        const kind = agent?.type || agent?.agent_type || "";
-        const status = agent?.status || agent?.state || "";
-        const statusText = status ? ` — ${status}` : "";
-        nodeDiv.textContent = `${safeText(label)}${kind ? ` (${kind})` : ""}${statusText}`;
+        const header = document.createElement("div");
+        header.className = "task-tree-node-header";
+
+        const title = document.createElement("div");
+        title.className = "task-tree-node-title";
+        title.textContent = label;
+
+        const state = document.createElement("span");
+        state.className = "task-tree-node-state";
+        state.textContent = status || "unknown";
+
+        header.appendChild(title);
+        header.appendChild(state);
+        nodeDiv.appendChild(header);
+
+        if (currentStep) {
+          const step = document.createElement("div");
+          step.className = "task-tree-node-step";
+          step.textContent = currentStep;
+          nodeDiv.appendChild(step);
+        }
 
         nodeDiv.addEventListener("click", () => selectNode(id, agent));
         ui.taskTreeRoot.appendChild(nodeDiv);
@@ -1501,103 +1612,52 @@
 
     const renderKanban = (data) => {
       if (!ui.kanbanContent) return;
-      
+      const columns = {
+        todo: { title: t("taskTree.kanban.todo"), cards: [] },
+        inProgress: { title: t("taskTree.kanban.inProgress"), cards: [] },
+        blocked: { title: t("taskTree.kanban.blocked"), cards: [] },
+        done: { title: t("taskTree.kanban.done"), cards: [] }
+      };
+
       const agents = Array.isArray(data?.agents) ? data.agents : [];
-      if (!agents.length) {
-        ui.kanbanContent.innerHTML = `<div class="kanban-empty">${safeText(t("taskTree.empty"))}</div>`;
+      const cards = [];
+
+      agents.forEach((agent) => {
+        const agentId = agent && agent.id != null ? String(agent.id) : "";
+        const agentLabel = labelForAgent(agent, agentId);
+        const subtasks = Array.isArray(agent?.plan_subtasks) ? agent.plan_subtasks : [];
+
+        subtasks.forEach((subtask, index) => {
+          const normalized = normalizePlanSubtask(subtask, index);
+          cards.push({
+            agentId,
+            agentLabel,
+            label: normalized.label,
+            status: normalized.status,
+            category: getSubtaskCategory(normalized.status)
+          });
+        });
+      });
+
+      if (!cards.length) {
+        ui.kanbanContent.innerHTML = `<div class="kanban-empty">${safeText(t("taskTree.plan.empty"))}</div>`;
         return;
       }
 
-      const columns = {
-        todo: { title: t("taskTree.kanban.todo"), agents: [] },
-        inProgress: { title: t("taskTree.kanban.inProgress"), agents: [] },
-        blocked: { title: t("taskTree.kanban.blocked"), agents: [] },
-        done: { title: t("taskTree.kanban.done"), agents: [] }
-      };
-
-      const columnKeyToAgentState = (key) => {
-        if (key === "done") return "completed";
-        if (key === "inProgress") return "running";
-        if (key === "blocked") return "needs_human";
-        return "queued";
-      };
-
-      const getStatusCategory = (status) => {
-        const s = safeText(status).toLowerCase().trim();
-        if (["done", "completed", "success"].includes(s)) return "done";
-        if (["running", "in_progress", "working"].includes(s)) return "inProgress";
-        if (["needs_human", "blocked", "failed", "error"].includes(s)) return "blocked";
-        return "todo";
-      };
-
-      agents.forEach((agent) => {
-        const status = agent?.status || agent?.state || "";
-        const category = getStatusCategory(status);
-        columns[category].agents.push(agent);
+      cards.forEach((card) => {
+        columns[card.category].cards.push(card);
       });
 
       ui.kanbanContent.innerHTML = "";
 
       const boardEl = document.createElement("div");
       boardEl.className = "kanban-board";
-      
+
       Object.entries(columns).forEach(([key, column]) => {
         const columnEl = document.createElement("div");
         columnEl.className = "kanban-column";
         columnEl.dataset.column = key;
 
-        columnEl.addEventListener("dragover", (e) => {
-          // Allow dropping cards onto columns.
-          e.preventDefault();
-          columnEl.classList.add("is-drop-target");
-        });
-
-        columnEl.addEventListener("dragleave", () => {
-          columnEl.classList.remove("is-drop-target");
-        });
-
-          columnEl.addEventListener("drop", (e) => {
-          e.preventDefault();
-          columnEl.classList.remove("is-drop-target");
-
-          const runId = safeText(state.runId);
-          if (!runId) return;
-
-          const payload = safeText(e.dataTransfer?.getData("text/plain"));
-
-          let parsed = null;
-          if (payload) {
-            try {
-              parsed = JSON.parse(payload);
-            } catch {
-              parsed = null;
-            }
-          } else {
-            parsed = state.dragPayload;
-          }
-
-          const agentId = parsed && parsed.agentId != null ? String(parsed.agentId) : "";
-          const fromCol = parsed && parsed.fromCol != null ? String(parsed.fromCol) : "";
-          if (!agentId) return;
-          if (fromCol === key) return;
-
-          state.dragPayload = null;
-
-          const nextState = columnKeyToAgentState(key);
-          void apiFetch(`/api/runs/${encodeURIComponent(runId)}/agents/${encodeURIComponent(agentId)}/state`, {
-            method: "PATCH",
-            body: JSON.stringify({ state: nextState })
-          })
-            .then(() => fetchTree())
-            .catch((err) => {
-              if (handleAuthError(err)) return;
-              const status = err && typeof err === "object" ? err.status : null;
-              const detail = err && typeof err === "object" ? err.detail : "";
-              const suffix = safeText(detail).trim();
-              setMessage(`${t("taskTree.msg.updateAgentStateFailed")} (${status || "error"}). ${suffix}`.trim(), "error");
-            });
-        });
-        
         const headerEl = document.createElement("div");
         headerEl.className = "kanban-column-header";
 
@@ -1607,199 +1667,35 @@
 
         const countEl = document.createElement("div");
         countEl.className = "kanban-column-count";
-        countEl.textContent = String(column.agents.length);
+        countEl.textContent = String(column.cards.length);
 
         headerEl.appendChild(titleEl);
         headerEl.appendChild(countEl);
         columnEl.appendChild(headerEl);
-        
+
         const cardsContainer = document.createElement("div");
         cardsContainer.className = "kanban-cards";
-        
-        column.agents.forEach((agent) => {
-          const id = agent && agent.id != null ? String(agent.id) : null;
-          if (!id) return;
-          
+
+        column.cards.forEach((card) => {
           const cardEl = document.createElement("div");
           cardEl.className = "kanban-card";
-          cardEl.dataset.agentId = id;
-          cardEl.draggable = true;
-          cardEl.setAttribute("draggable", "true");
 
-          const label = agent?.name || agent?.title || agent?.label || id;
-          const kind = agent?.type || agent?.agent_type || "";
-          const status = agent?.status || agent?.state || "";
-          cardEl.dataset.status = safeText(status).toLowerCase().trim();
-          
-          const titleEl = document.createElement("div");
-          titleEl.className = "kanban-card-title";
-          titleEl.textContent = safeText(label);
-          
+          const cardTitle = document.createElement("div");
+          cardTitle.className = "kanban-card-title";
+          cardTitle.textContent = safeText(card.label);
+
           const metaEl = document.createElement("div");
           metaEl.className = "kanban-card-meta";
 
           const metaText = document.createElement("span");
-          metaText.textContent = `${kind ? `(${kind})` : ""} ${status ? `— ${status}` : ""}`.trim();
-
-          const chipEl = document.createElement("button");
-          chipEl.type = "button";
-          chipEl.className = "kanban-status-chip";
-          chipEl.textContent = safeText(columns[key]?.title || "");
-          chipEl.setAttribute("aria-label", `Move status (current: ${safeText(columns[key]?.title || "")})`);
-          chipEl.addEventListener("click", (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-
-            const runId = safeText(state.runId);
-            if (!runId) return;
-
-            const order = ["todo", "inProgress", "blocked", "done"];
-            const idx = Math.max(0, order.indexOf(key));
-            const nextKey = order[(idx + 1) % order.length];
-            const nextState = columnKeyToAgentState(nextKey);
-
-            void apiFetch(`/api/runs/${encodeURIComponent(runId)}/agents/${encodeURIComponent(id)}/state`, {
-              method: "PATCH",
-              body: JSON.stringify({ state: nextState })
-            })
-              .then(() => fetchTree())
-              .catch((err) => {
-                if (handleAuthError(err)) return;
-                const status = err && typeof err === "object" ? err.status : null;
-                const detail = err && typeof err === "object" ? err.detail : "";
-                const suffix = safeText(detail).trim();
-                setMessage(`${t("taskTree.msg.updateAgentStateFailed")} (${status || "error"}). ${suffix}`.trim(), "error");
-              });
-          });
-
+          metaText.textContent = `${safeText(card.agentLabel)}${card.status ? ` — ${card.status}` : ""}`.trim();
           metaEl.appendChild(metaText);
-          metaEl.appendChild(chipEl);
-          
-          cardEl.appendChild(titleEl);
+
+          cardEl.appendChild(cardTitle);
           cardEl.appendChild(metaEl);
-          
-          cardEl.addEventListener("click", (e) => {
-            if (state.suppressNextClick) {
-              state.suppressNextClick = false;
-              e.preventDefault();
-              e.stopPropagation();
-              return;
-            }
-            selectNode(id, agent);
-          });
-
-          cardEl.addEventListener("dragstart", (e) => {
-            cardEl.classList.add("is-dragging");
-            state.dragPayload = { agentId: id, fromCol: key };
-            if (e.dataTransfer) {
-              e.dataTransfer.effectAllowed = "move";
-              e.dataTransfer.setData("text/plain", JSON.stringify({ agentId: id, fromCol: key }));
-            }
-          });
-
-          cardEl.addEventListener("dragend", () => {
-            cardEl.classList.remove("is-dragging");
-            if (state.dragPayload && state.dragPayload.agentId === id) {
-              state.dragPayload = null;
-            }
-          });
-
-          cardEl.addEventListener("pointerdown", (e) => {
-            if (!e.isPrimary) return;
-            if (e.button !== 0) return;
-            if (!cardEl.setPointerCapture) return;
-
-            const target = e.target;
-            if (target && typeof target === "object" && target.closest) {
-              if (target.closest("button, a, input, textarea, select")) return;
-            }
-
-            const startX = e.clientX;
-            const startY = e.clientY;
-            state.pointerDrag = {
-              pointerId: e.pointerId,
-              startX,
-              startY,
-              moved: false,
-              agentId: id,
-              fromCol: key,
-              cardEl
-            };
-
-            try {
-              cardEl.setPointerCapture(e.pointerId);
-            } catch {
-            }
-          });
-
-          cardEl.addEventListener("pointermove", (e) => {
-            const drag = state.pointerDrag;
-            if (!drag) return;
-            if (drag.pointerId !== e.pointerId) return;
-
-            const dx = e.clientX - drag.startX;
-            const dy = e.clientY - drag.startY;
-            if (!drag.moved && Math.hypot(dx, dy) < 6) return;
-
-            drag.moved = true;
-            cardEl.classList.add("is-dragging");
-            cardEl.style.transform = `translate(${dx}px, ${dy}px) rotate(-0.6deg)`;
-            cardEl.style.zIndex = "30";
-
-            const hit = document.elementFromPoint(e.clientX, e.clientY);
-            const targetCol = hit ? hit.closest?.(".kanban-column") : null;
-            document.querySelectorAll(".kanban-column.is-drop-target").forEach((el) => {
-              el.classList.remove("is-drop-target");
-            });
-            targetCol?.classList?.add("is-drop-target");
-          });
-
-          const finishPointerDrag = (e) => {
-            const drag = state.pointerDrag;
-            if (!drag) return;
-            if (drag.pointerId !== e.pointerId) return;
-
-            state.pointerDrag = null;
-            document.querySelectorAll(".kanban-column.is-drop-target").forEach((el) => {
-              el.classList.remove("is-drop-target");
-            });
-            cardEl.classList.remove("is-dragging");
-            cardEl.style.transform = "";
-            cardEl.style.zIndex = "";
-
-            if (!drag.moved) return;
-
-            state.suppressNextClick = true;
-
-            const hit = document.elementFromPoint(e.clientX, e.clientY);
-            const targetCol = hit ? hit.closest?.(".kanban-column") : null;
-            const toCol = targetCol?.dataset?.column || "";
-            if (!toCol || toCol === drag.fromCol) return;
-
-            const runId = safeText(state.runId);
-            if (!runId) return;
-
-            const nextState = columnKeyToAgentState(toCol);
-            void apiFetch(`/api/runs/${encodeURIComponent(runId)}/agents/${encodeURIComponent(drag.agentId)}/state`, {
-              method: "PATCH",
-              body: JSON.stringify({ state: nextState })
-            })
-              .then(() => fetchTree())
-              .catch((err) => {
-                if (handleAuthError(err)) return;
-                const status = err && typeof err === "object" ? err.status : null;
-                const detail = err && typeof err === "object" ? err.detail : "";
-                const suffix = safeText(detail).trim();
-                setMessage(`${t("taskTree.msg.updateAgentStateFailed")} (${status || "error"}). ${suffix}`.trim(), "error");
-              });
-          };
-
-          cardEl.addEventListener("pointerup", finishPointerDrag);
-          cardEl.addEventListener("pointercancel", finishPointerDrag);
-          
           cardsContainer.appendChild(cardEl);
         });
-        
+
         columnEl.appendChild(cardsContainer);
         boardEl.appendChild(columnEl);
       });
@@ -1820,16 +1716,13 @@
 
         const newStatus = event?.status || event?.data?.status || event?.state || event?.data?.state;
         if (newStatus) {
-          nodeEl.dataset.status = newStatus;
-          
-          const label = nodeEl.dataset.label || "";
-          const kind = nodeEl.dataset.kind || "";
-          const statusText = newStatus ? ` — ${newStatus}` : "";
-          nodeEl.textContent = `${safeText(label)}${kind ? ` (${kind})` : ""}${statusText}`;
+          nodeEl.dataset.state = safeText(newStatus).toLowerCase().trim();
+          const stateEl = nodeEl.querySelector(".task-tree-node-state");
+          if (stateEl) stateEl.textContent = safeText(newStatus);
         }
 
         if (state.selectedNode?.id === agentId && ui.taskStatusDisplay) {
-          const displayStatus = newStatus || nodeEl.dataset.status || "unknown";
+          const displayStatus = newStatus || nodeEl.dataset.state || "unknown";
           ui.taskStatusDisplay.textContent = safeText(displayStatus);
         }
       });
@@ -1851,14 +1744,16 @@
       // Hide add task button when details panel is open to prevent pointer interception
       toggleHidden(addTaskBtn, true);
       if (ui.taskDetailsTitle) {
-        const label = agent?.name || agent?.title || agent?.label || nodeId;
+        const label = labelForAgent(agent, nodeId);
         ui.taskDetailsTitle.textContent = `${t("taskTree.detailsTitle")}: ${safeText(label)}`;
       }
 
       if (ui.taskStatusDisplay) {
-        const status = agent?.status || agent?.state || "unknown";
+        const status = stateForAgent(agent) || "unknown";
         ui.taskStatusDisplay.textContent = safeText(status);
       }
+
+      renderPlanSubtasks(agent);
 
       if (agent?.id) {
         fetchSop(agent.id);

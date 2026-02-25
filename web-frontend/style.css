@@ -985,6 +985,83 @@ details[open] > .panel-summary::after {
   transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease;
 }
 
+.task-tree-node-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.task-tree-node-title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.task-tree-node-state {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.06);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.task-tree-node-step {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted-2);
+}
+
+.task-tree-node[data-state="running"],
+.task-tree-node[data-state="in_progress"],
+.task-tree-node[data-state="working"] {
+  border-color: rgba(59, 110, 122, 0.45);
+  background: rgba(59, 110, 122, 0.08);
+}
+
+.task-tree-node[data-state="completed"],
+.task-tree-node[data-state="done"],
+.task-tree-node[data-state="success"] {
+  border-color: rgba(92, 184, 92, 0.45);
+  background: rgba(92, 184, 92, 0.10);
+}
+
+.task-tree-node[data-state="needs_human"],
+.task-tree-node[data-state="blocked"],
+.task-tree-node[data-state="failed"],
+.task-tree-node[data-state="error"] {
+  border-color: rgba(220, 53, 69, 0.45);
+  background: rgba(220, 53, 69, 0.08);
+}
+
+.task-tree-node[data-state="running"] .task-tree-node-state,
+.task-tree-node[data-state="in_progress"] .task-tree-node-state,
+.task-tree-node[data-state="working"] .task-tree-node-state {
+  border-color: rgba(59, 110, 122, 0.35);
+  background: rgba(59, 110, 122, 0.16);
+  color: #2f5d68;
+}
+
+.task-tree-node[data-state="completed"] .task-tree-node-state,
+.task-tree-node[data-state="done"] .task-tree-node-state,
+.task-tree-node[data-state="success"] .task-tree-node-state {
+  border-color: rgba(92, 184, 92, 0.35);
+  background: rgba(92, 184, 92, 0.16);
+  color: #4e9f4e;
+}
+
+.task-tree-node[data-state="needs_human"] .task-tree-node-state,
+.task-tree-node[data-state="blocked"] .task-tree-node-state,
+.task-tree-node[data-state="failed"] .task-tree-node-state,
+.task-tree-node[data-state="error"] .task-tree-node-state {
+  border-color: rgba(220, 53, 69, 0.35);
+  background: rgba(220, 53, 69, 0.14);
+  color: #b02a37;
+}
+
 .task-tree-node:hover {
   transform: translateY(-1px);
   background: var(--panel);
@@ -1026,6 +1103,76 @@ details[open] > .panel-summary::after {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+}
+
+.task-plan-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.plan-empty {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px dashed rgba(0, 0, 0, 0.16);
+  background: rgba(255, 255, 255, 0.6);
+  color: var(--muted-2);
+  font-size: 12px;
+  font-style: italic;
+}
+
+.plan-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.plan-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  font-size: 13px;
+}
+
+.plan-item-title {
+  color: var(--text);
+}
+
+.plan-item-status {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.06);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.plan-item-status[data-status="inProgress"] {
+  border-color: rgba(59, 110, 122, 0.35);
+  background: rgba(59, 110, 122, 0.16);
+  color: #2f5d68;
+}
+
+.plan-item-status[data-status="done"] {
+  border-color: rgba(92, 184, 92, 0.35);
+  background: rgba(92, 184, 92, 0.16);
+  color: #4e9f4e;
+}
+
+.plan-item-status[data-status="blocked"] {
+  border-color: rgba(220, 53, 69, 0.35);
+  background: rgba(220, 53, 69, 0.14);
+  color: #b02a37;
 }
 
 .status-display {
