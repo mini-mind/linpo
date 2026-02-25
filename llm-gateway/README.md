@@ -18,7 +18,7 @@ Platform-level LLM gateway for internal services.
       "base_url": "https://example-ark-host/v3",
       "api_key": "YOUR_ARK_API_KEY"
     },
-    "right-code/gpt-5.2-codex": {
+    "right-code/gpt-5.2": {
       "base_url": "https://right.codes/codex/v1",
       "api_key": "YOUR_RIGHT_CODE_API_KEY"
     }

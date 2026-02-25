@@ -1,7 +1,7 @@
 {
   "model": {
     "provider": "volcengine",
-    "name": "ark-code-latest"
+    "name": "right-code/gpt-5.2"
   },
   "services": {
     "llm_gateway_url": "http://llm-gateway:7300",

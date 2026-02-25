@@ -2,9 +2,9 @@
 # Each model defines provider, authentication, and capabilities
 
 models:
-  ark-code-latest:
+  right-code/gpt-5.2:
     provider: llm-gateway
-    model_id: ark-code-latest
+    model_id: right-code/gpt-5.2
     endpoint:
       url_env: LLM_GATEWAY_URL
       path: /internal/llm/chat
@@ -32,4 +32,4 @@ models:
 
 defaults:
   # Default model for all agents unless overridden
-  model: ark-code-latest
+  model: right-code/gpt-5.2

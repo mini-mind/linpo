@@ -1,6 +1,6 @@
 {
   "providers": {
-    "ark-code-latest": {
+    "right-code/gpt-5.2": {
       "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
       "api_key": "YOUR_ARK_API_KEY_HERE"
     }
