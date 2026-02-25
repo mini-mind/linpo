@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from . import models
 from . import sop_store
+from . import config_loader
 
 
 def _sha256_text(text: str) -> str:
@@ -63,7 +64,15 @@ def hire_default_team(
         run_id=run_id,
         parent_agent_id=None,
         role_label="ceo",
-        sop_text="# CEO SOP\n\nResponsibilities:\n- Own the run\n\nSteps:\n1. Create subagents\n2. Coordinate\n",
+        sop_text=config_loader.load_sop_template("ceo") or """# CEO SOP
+
+Responsibilities:
+- Own the run
+
+Steps:
+1. Create subagents
+2. Coordinate
+""",
         created_by_user_id=created_by_user_id,
     )
     ceo_id = int(getattr(ceo, "id"))
@@ -74,7 +83,15 @@ def hire_default_team(
         run_id=run_id,
         parent_agent_id=ceo_id,
         role_label="pm",
-        sop_text="# PM SOP\n\nResponsibilities:\n- Break down tasks\n\nSteps:\n1. Clarify\n2. Plan\n",
+        sop_text=config_loader.load_sop_template("pm") or """# PM SOP
+
+Responsibilities:
+- Break down tasks
+
+Steps:
+1. Clarify
+2. Plan
+""",
         created_by_user_id=created_by_user_id,
     )
 
@@ -84,7 +101,15 @@ def hire_default_team(
         run_id=run_id,
         parent_agent_id=ceo_id,
         role_label="engineer",
-        sop_text="# Engineer SOP\n\nResponsibilities:\n- Implement changes\n\nSteps:\n1. Write tests\n2. Implement\n",
+        sop_text=config_loader.load_sop_template("engineer") or """# Engineer SOP
+
+Responsibilities:
+- Implement changes
+
+Steps:
+1. Write tests
+2. Implement
+""",
         created_by_user_id=created_by_user_id,
     )
 

@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from . import db, models, sop_store
+from . import config_loader
 
 router = APIRouter()
 
@@ -190,16 +191,8 @@ async def patch_agent_state(
     if len(next_state) > 50:
         raise HTTPException(status_code=400, detail="state is too long")
 
-    synonyms = {
-        "in_progress": "running",
-        "working": "running",
-        "done": "completed",
-        "success": "completed",
-        "blocked": "needs_human",
-    }
+    synonyms, allowed = config_loader.get_state_rules()
     next_state = synonyms.get(next_state, next_state)
-
-    allowed = {"queued", "running", "needs_human", "completed", "failed"}
     if next_state not in allowed:
         raise HTTPException(status_code=400, detail="Invalid state")
 

@@ -40,6 +40,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from . import admission, auth, db, models
+from . import config_loader
 from .settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -2131,13 +2132,9 @@ async def agent_chat(
                 raise HTTPException(status_code=404, detail="Tenant not found")
 
         message_lower = body.message.lower()
-        trending_keywords = [
-            "github trending", "github trend", "top repo", "popular repo",
-            "github 热门", "github 趋势", "热门仓库", "流行仓库", "今日热门", "今日趋势"
-        ]
+        trending_keywords, growth_indicators = config_loader.get_github_trending_keywords()
         is_github_trending = any(keyword in message_lower for keyword in trending_keywords)
         if not is_github_trending and "github" in message_lower:
-            growth_indicators = ["trending", "热门", "趋势", "增长", "stars", "star"]
             is_github_trending = any(indicator in message_lower for indicator in growth_indicators)
 
         if is_github_trending:
@@ -2229,7 +2226,8 @@ async def agent_chat(
                     a2a_summary="CEO 委派失败"
                 )
 
-    if agent_type not in {"pm", "engineer", "ceo"}:
+    allowed_agents = config_loader.get_allowed_agent_types()
+    if agent_type not in allowed_agents:
         raise HTTPException(status_code=404, detail="Agent not found")
 
     system_prompt = _build_agent_prompt(agent_type)
@@ -2274,7 +2272,8 @@ async def agent_chat_stream(
 
         try:
             # Validate agent type
-            if agent_type not in {"pm", "engineer", "ceo"}:
+            allowed_agents = config_loader.get_allowed_agent_types()
+            if agent_type not in allowed_agents:
                 yield _format_sse_error("Agent not found")
                 yield "data: [DONE]\n\n"
                 return
@@ -2299,13 +2298,9 @@ async def agent_chat_stream(
                         return
 
                 message_lower = body.message.lower()
-                trending_keywords = [
-                    "github trending", "github trend", "top repo", "popular repo",
-                    "github 热门", "github 趋势", "热门仓库", "流行仓库", "今日热门", "今日趋势"
-                ]
+                trending_keywords, growth_indicators = config_loader.get_github_trending_keywords()
                 is_github_trending = any(keyword in message_lower for keyword in trending_keywords)
                 if not is_github_trending and "github" in message_lower:
-                    growth_indicators = ["trending", "热门", "趋势", "增长", "stars", "star"]
                     is_github_trending = any(indicator in message_lower for indicator in growth_indicators)
 
                 if is_github_trending:
