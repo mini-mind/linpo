@@ -1,0 +1,29 @@
+{
+  "github_trending_detection": {
+    "keywords": [
+      "github trending",
+      "github trend",
+      "top repo",
+      "popular repo",
+      "github 热门",
+      "github 趋势",
+      "热门仓库",
+      "流行仓库",
+      "今日热门",
+      "今日趋势"
+    ],
+    "growth_indicators": [
+      "trending",
+      "热门",
+      "趋势",
+      "增长",
+      "stars",
+      "star"
+    ]
+  },
+  "agent_type_allowlist": [
+    "ceo",
+    "pm",
+    "engineer"
+  ]
+}

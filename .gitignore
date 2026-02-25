@@ -12,7 +12,9 @@ searxng/.env
 backups/
 .sisyphus/notepads/
 .opencode/
-sops/
+sops/*/
+!sops/templates/
+!sops/templates/*.md
 .smoke/
 *.yml.new
 node_modules/

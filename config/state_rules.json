@@ -1,0 +1,16 @@
+{
+  "state_synonyms": {
+    "in_progress": "running",
+    "working": "running",
+    "done": "completed",
+    "success": "completed",
+    "blocked": "needs_human"
+  },
+  "allowed_states": [
+    "queued",
+    "running",
+    "needs_human",
+    "completed",
+    "failed"
+  ]
+}
