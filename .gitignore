@@ -10,6 +10,8 @@ searxng/.env
 .env.*
 *.dump
 backups/
+# Runtime data outputs
+data/
 .sisyphus/notepads/
 .opencode/
 sops/*/
