@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnusedCallResult=false, reportUntypedBaseClass=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnusedImport=false, reportInvalidTypeForm=false, reportUnboundVariable=false, reportAttributeAccessIssue=false, reportUntypedFunctionDecorator=false, reportUnusedFunction=false, reportImplicitStringConcatenation=false, reportUnnecessaryIsInstance=false, reportUnusedVariable=false, reportImportCycles=false, reportImplicitOverride=false, reportAny=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnusedCallResult=false, reportUntypedBaseClass=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnusedImport=false, reportInvalidTypeForm=false, reportUnboundVariable=false, reportAttributeAccessIssue=false, reportUntypedFunctionDecorator=false, reportUnusedFunction=false, reportImplicitStringConcatenation=false, reportUnnecessaryIsInstance=false, reportUnusedVariable=false, reportImportCycles=false, reportImplicitOverride=false
 """FastAPI app: multi-tenant tasks + event streaming.
 
 Production behavior:
@@ -18,6 +18,7 @@ import logging
 import sys
 import secrets
 import time
+from pathlib import Path
 import urllib.parse
 import uuid
 from contextvars import ContextVar
@@ -34,12 +35,12 @@ from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.websockets import WebSocketDisconnect
 import httpx
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest  # type: ignore[import-not-found]
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, REGISTRY, generate_latest  # type: ignore[import-not-found]
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from . import admission, auth, db, models
+from . import admission, agent_fs, auth, db, models, project_fs
 from . import config_loader
 from .settings import get_settings
 
@@ -89,22 +90,30 @@ def _configure_json_logging() -> None:
 
 _configure_json_logging()
 
-TASKS_CREATED_TOTAL = Counter(
+
+def _get_counter(name: str, description: str, labelnames: list[str]) -> Counter:
+    existing = REGISTRY._names_to_collectors.get(name)
+    if existing is not None:
+        return cast(Counter, existing)
+    return Counter(name, description, labelnames)
+
+
+TASKS_CREATED_TOTAL = _get_counter(
     "web3d_tasks_created_total",
     "Total number of tasks created.",
     ["tenant_id"],
 )
-DISPATCH_ENQUEUED_TOTAL = Counter(
+DISPATCH_ENQUEUED_TOTAL = _get_counter(
     "web3d_dispatch_enqueued_total",
     "Total number of dispatch messages enqueued.",
     ["tenant_id"],
 )
-DISPATCH_ENQUEUE_FAILURES_TOTAL = Counter(
+DISPATCH_ENQUEUE_FAILURES_TOTAL = _get_counter(
     "web3d_dispatch_enqueue_failures_total",
     "Total number of dispatch enqueue failures.",
     ["tenant_id"],
 )
-TASK_EVENTS_WRITTEN_TOTAL = Counter(
+TASK_EVENTS_WRITTEN_TOTAL = _get_counter(
     "web3d_task_events_written_total",
     "Total number of task events written.",
     ["tenant_id"],
@@ -229,7 +238,7 @@ def _env_bool(name: str, default: bool) -> bool:
 def _resolve_default_llm_model() -> str:
     # Allow switching providers/models without code changes.
     model = (os.getenv("LLM_DEFAULT_MODEL") or "").strip()
-    return model if model else "ark-code-latest"
+    return model if model else "gpt-4o-mini"
 
 
 def _parse_int_id(value: str, label: str) -> int:
@@ -1023,6 +1032,35 @@ def _event_cursor(event: models.Event) -> int | None:
 
 def _run_ws_key(run_id: int | str) -> str:
     return f"run:{run_id}"
+
+
+def _run_fs_agents(tenant_id: int, run_id: int) -> tuple[list[dict[str, object]], list[dict[str, str]]]:
+    roboard_root = tree_api._get_roboard_root()
+    project_root = project_fs.project_root_for(roboard_root, tenant_id, run_id)
+    agents_root = project_root / "agents"
+    agents_out: list[dict[str, object]] = []
+    edges_out: list[dict[str, str]] = []
+    if agents_root.exists():
+        for agent_dir in sorted(agents_root.iterdir(), key=lambda path: path.name):
+            if not agent_dir.is_dir():
+                continue
+            identity = agent_fs.read_agent_identity(agent_dir)
+            agent_id = tree_api._identity_str(identity, "agent_id") or agent_dir.name
+            parent_agent_id = tree_api._identity_str(identity, "parent_agent_id")
+            role_label = tree_api._identity_str(identity, "role_label")
+            state = tree_api._identity_state(identity)
+            agents_out.append(
+                AgentInstanceOut(
+                    id=str(agent_id),
+                    parent_agent_id=str(parent_agent_id) if parent_agent_id is not None else None,
+                    role_label=cast(str | None, role_label),
+                    state=cast(str, state),
+                    current_sop_version_id=None,
+                ).model_dump()
+            )
+            if parent_agent_id is not None:
+                edges_out.append(AgentEdgeOut(parent=str(parent_agent_id), child=str(agent_id)).model_dump())
+    return agents_out, edges_out
 
 
 def _run_delta_payload(event: models.Event) -> dict[str, object]:
@@ -2596,6 +2634,28 @@ async def create_run(
         setattr(task, "root_agent_id", root_agent_id)
         session.add(task)
 
+        roboard_root = Path((os.getenv("ROBOARD_ROOT") or ".").strip() or ".")
+        agent_root = project_fs.agent_root_for(
+            roboard_root,
+            int(tenant_id),
+            int(run_id),
+            str(root_agent_id),
+        )
+        agent_fs.ensure_agent_layout(agent_root)
+        agent_fs.write_agent_identity(
+            agent_root,
+            {
+                "agent_id": str(root_agent_id),
+                "tenant_id": int(tenant_id),
+                "run_id": int(run_id),
+            },
+        )
+        sop_template = config_loader.load_sop_template("ceo")
+        if not isinstance(sop_template, str) or not sop_template.strip():
+            sop_template = "# CEO SOP\n"
+        agent_fs.write_text(agent_root, "mission.md", sop_template)
+        agent_fs.write_text(agent_root, "plan.md", "")
+
         created_event = models.Event()
         setattr(created_event, "task_id", run_id)
         setattr(created_event, "run_id", run_id)
@@ -3093,32 +3153,7 @@ async def ws_runs(
             await websocket.close(code=1008)
             return
 
-        agents = (
-            session.query(models.AgentInstance)
-            .filter(models.AgentInstance.run_id == run_id_int, models.AgentInstance.tenant_id == tenant_id_int)
-            .order_by(models.AgentInstance.id.asc())
-            .all()
-        )
-        agents_out: list[dict[str, object]] = []
-        edges_out: list[dict[str, str]] = []
-        for agent in agents:
-            agent_id = getattr(agent, "id")
-            parent_agent_id = getattr(agent, "parent_agent_id")
-            agents_out.append(
-                AgentInstanceOut(
-                    id=str(agent_id),
-                    parent_agent_id=str(parent_agent_id) if parent_agent_id is not None else None,
-                    role_label=cast(str | None, getattr(agent, "role_label", None)),
-                    state=cast(str, getattr(agent, "state")),
-                    current_sop_version_id=(
-                        str(getattr(agent, "current_sop_version_id"))
-                        if getattr(agent, "current_sop_version_id") is not None
-                        else None
-                    ),
-                ).model_dump()
-            )
-            if parent_agent_id is not None:
-                edges_out.append(AgentEdgeOut(parent=str(parent_agent_id), child=str(agent_id)).model_dump())
+        agents_out, edges_out = _run_fs_agents(tenant_id_int, run_id_int)
 
         events = (
             session.query(models.Event)

@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     ADMIN_API_KEY: str = Field(...)
     INTERNAL_API_KEY: str = Field(...)
     SEARXNG_SECRET_KEY: str | None = Field(default=None)
+    LLM_PROVIDERS_HOST_PATH: str | None = Field(default=None)
     TENANT_CONCURRENCY_LIMIT: int = Field(default=2)
     RATE_LIMIT: str = Field(default="100/minute")
     ALLOW_ORIGINS: str = Field(default="*")
@@ -18,4 +19,4 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    return Settings()  # pyright: ignore[reportCallIssue]

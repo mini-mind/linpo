@@ -56,6 +56,16 @@ class _MainModule(Protocol):
     app: ASGIApp
 
 
+class _ProjectFs(Protocol):
+    def agent_root_for(self, base: pathlib.Path, tenant_id: int, run_id: int, agent_id: str) -> pathlib.Path: ...
+
+
+class _AgentFs(Protocol):
+    def ensure_agent_layout(self, agent_root: pathlib.Path) -> None: ...
+    def write_agent_identity(self, agent_root: pathlib.Path, payload: dict[str, object]) -> None: ...
+    def write_text(self, agent_root: pathlib.Path, rel: str, text: str) -> None: ...
+
+
 class _SqlAlchemy(Protocol):
     def create_engine(self, url: str) -> object: ...
 
@@ -125,6 +135,7 @@ def test_tree_api_router_exposes_routes(monkeypatch: _MonkeyPatch) -> None:
 def test_run_tree_and_sop_endpoints(tmp_path: pathlib.Path, monkeypatch: _MonkeyPatch) -> None:
     db_path = tmp_path / "test.db"
     sop_root = tmp_path / "sops"
+    roboard_root = tmp_path
 
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin")
     monkeypatch.setenv("INTERNAL_API_KEY", "test-internal")
@@ -140,7 +151,7 @@ def test_run_tree_and_sop_endpoints(tmp_path: pathlib.Path, monkeypatch: _Monkey
     main.db.SessionLocal.configure(bind=engine)
     main.models.Base.metadata.create_all(engine)
 
-    client = cast(_Client, TestClient(main.app))
+    client = cast(_Client, cast(object, TestClient(main.app)))
     tenant_resp = client.post(
         "/internal/tenants",
         json={"name": "t1"},
@@ -158,6 +169,26 @@ def test_run_tree_and_sop_endpoints(tmp_path: pathlib.Path, monkeypatch: _Monkey
     run_id = cast(str, run_payload["run_id"])
     root_agent_id = cast(str, run_payload["root_agent_id"])
 
+    project_fs = cast(_ProjectFs, cast(object, importlib.import_module("app.project_fs")))
+    agent_fs = cast(_AgentFs, cast(object, importlib.import_module("app.agent_fs")))
+    root_agent_root = project_fs.agent_root_for(
+        roboard_root,
+        int(cast(str, tenant_payload["tenant_id"])),
+        int(run_id),
+        str(root_agent_id),
+    )
+    agent_fs.ensure_agent_layout(root_agent_root)
+    agent_fs.write_agent_identity(
+        root_agent_root,
+        {
+            "agent_id": str(root_agent_id),
+            "tenant_id": int(cast(str, tenant_payload["tenant_id"])),
+            "run_id": int(run_id),
+            "role_label": "ceo",
+            "state": "running",
+        },
+    )
+
     tree_resp = client.get(
         f"/api/runs/{run_id}/tree",
         headers={"X-API-Key": api_key},
@@ -167,20 +198,14 @@ def test_run_tree_and_sop_endpoints(tmp_path: pathlib.Path, monkeypatch: _Monkey
     assert set(tree.keys()) == {"agents", "edges"}
     agents = cast(list[dict[str, object]], tree["agents"])
     edges = cast(list[dict[str, object]], tree["edges"])
-    assert len(agents) >= 3
-    assert len(edges) >= 2
+    assert len(agents) == 1
+    assert len(edges) == 0
 
     agent_parents = {
         str(agent["id"]): agent.get("parent_agent_id")
         for agent in agents
     }
-    expected_edges = {
-        (str(parent), str(child))
-        for child, parent in agent_parents.items()
-        if parent is not None
-    }
-    actual_edges = {(edge["parent"], edge["child"]) for edge in edges}
-    assert expected_edges == actual_edges
+    assert agent_parents == {str(root_agent_id): None}
 
     sop_resp = client.get(
         f"/api/agents/{root_agent_id}/sop",
@@ -214,10 +239,12 @@ def test_run_tree_and_sop_endpoints(tmp_path: pathlib.Path, monkeypatch: _Monkey
 def test_run_task_event_updates_root_state_and_ws_delta(tmp_path: pathlib.Path, monkeypatch: _MonkeyPatch) -> None:
     db_path = tmp_path / "test.db"
     sop_root = tmp_path / "sops"
+    roboard_root = tmp_path / "roboard"
 
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin")
     monkeypatch.setenv("INTERNAL_API_KEY", "test-internal")
     monkeypatch.setenv("ROBOARD_SOP_ROOT", str(sop_root))
+    monkeypatch.setenv("ROBOARD_ROOT", str(roboard_root))
     monkeypatch.delenv("SEARXNG_SECRET_KEY", raising=False)
     monkeypatch.chdir(tmp_path)
 
@@ -229,7 +256,7 @@ def test_run_task_event_updates_root_state_and_ws_delta(tmp_path: pathlib.Path, 
     main.db.SessionLocal.configure(bind=engine)
     main.models.Base.metadata.create_all(engine)
 
-    client = cast(_Client, TestClient(main.app))
+    client = cast(_Client, cast(object, TestClient(main.app)))
     tenant_resp = client.post(
         "/internal/tenants",
         json={"name": "t2"},
@@ -268,6 +295,25 @@ def test_run_task_event_updates_root_state_and_ws_delta(tmp_path: pathlib.Path, 
         recent_event_data = cast(dict[str, object], recent_event["data"])
         assert recent_event_data["agent_id"] == root_agent_id
 
+    project_fs = cast(_ProjectFs, cast(object, importlib.import_module("app.project_fs")))
+    agent_fs = cast(_AgentFs, cast(object, importlib.import_module("app.agent_fs")))
+    root_agent_root = project_fs.agent_root_for(
+        roboard_root,
+        int(tenant_id),
+        int(run_id),
+        str(root_agent_id),
+    )
+    agent_fs.ensure_agent_layout(root_agent_root)
+    agent_fs.write_agent_identity(
+        root_agent_root,
+        {
+            "agent_id": str(root_agent_id),
+            "tenant_id": int(tenant_id),
+            "run_id": int(run_id),
+            "state": "completed",
+        },
+    )
+
     tree_resp = client.get(
         f"/api/runs/{run_id}/tree",
         headers={"X-API-Key": api_key},
@@ -277,6 +323,135 @@ def test_run_task_event_updates_root_state_and_ws_delta(tmp_path: pathlib.Path, 
     tree_agents = cast(list[dict[str, object]], tree["agents"])
     by_id = {str(agent["id"]): agent for agent in tree_agents}
     assert by_id[str(root_agent_id)]["state"] == "completed"
+
+
+def test_run_tree_reads_fs_agent_data(tmp_path: pathlib.Path, monkeypatch: _MonkeyPatch) -> None:
+    db_path = tmp_path / "test.db"
+    roboard_root = tmp_path / "roboard"
+    sop_root = tmp_path / "sops"
+
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin")
+    monkeypatch.setenv("INTERNAL_API_KEY", "test-internal")
+    monkeypatch.setenv("ROBOARD_ROOT", str(roboard_root))
+    monkeypatch.setenv("ROBOARD_SOP_ROOT", str(sop_root))
+    monkeypatch.delenv("SEARXNG_SECRET_KEY", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    main = cast(_MainModule, cast(object, importlib.import_module("app.main")))
+    sqlalchemy = cast(_SqlAlchemy, cast(object, importlib.import_module("sqlalchemy")))
+
+    engine = sqlalchemy.create_engine(f"sqlite+pysqlite:///{db_path}")
+    main.ENGINE = engine
+    main.db.SessionLocal.configure(bind=engine)
+    main.models.Base.metadata.create_all(engine)
+
+    client = cast(_Client, cast(object, TestClient(main.app)))
+    tenant_resp = client.post(
+        "/internal/tenants",
+        json={"name": "fs-tree"},
+        headers={"X-Admin-Key": "test-admin"},
+    )
+    tenant_payload = tenant_resp.json()
+    api_key = cast(str, tenant_payload["api_key"])
+    tenant_id = cast(str, tenant_payload["tenant_id"])
+
+    run_resp = client.post(
+        "/api/runs",
+        json={"input_nl": "fs tree", "input": {}},
+        headers={"X-API-Key": api_key},
+    )
+    run_payload = run_resp.json()
+    run_id = cast(str, run_payload["run_id"])
+    root_agent_id = cast(str, run_payload["root_agent_id"])
+
+    project_fs = cast(_ProjectFs, cast(object, importlib.import_module("app.project_fs")))
+    agent_fs = cast(_AgentFs, cast(object, importlib.import_module("app.agent_fs")))
+
+    root_agent_root = cast(pathlib.Path, project_fs.agent_root_for(
+        roboard_root,
+        int(tenant_id),
+        int(run_id),
+        str(root_agent_id),
+    ))
+    agent_fs.ensure_agent_layout(root_agent_root)
+    agent_fs.write_agent_identity(
+        root_agent_root,
+        {
+            "agent_id": str(root_agent_id),
+            "tenant_id": int(tenant_id),
+            "run_id": int(run_id),
+            "role_label": "ceo",
+            "state": "running",
+            "name": "Root Agent",
+            "current_step": "planning",
+        },
+    )
+    agent_fs.write_text(
+        root_agent_root,
+        "plan.md",
+        "- [ ] Draft plan\n- [x] Ship plan\n",
+    )
+
+    child_agent_id = "child-1"
+    child_agent_root = cast(pathlib.Path, project_fs.agent_root_for(
+        roboard_root,
+        int(tenant_id),
+        int(run_id),
+        child_agent_id,
+    ))
+    agent_fs.ensure_agent_layout(child_agent_root)
+    agent_fs.write_agent_identity(
+        child_agent_root,
+        {
+            "agent_id": child_agent_id,
+            "tenant_id": int(tenant_id),
+            "run_id": int(run_id),
+            "parent_agent_id": str(root_agent_id),
+            "role_label": "engineer",
+            "state": "queued",
+            "name": "Worker",
+            "current_step": "coding",
+        },
+    )
+    agent_fs.write_text(
+        child_agent_root,
+        "plan.md",
+        "- [ ] Implement feature\n",
+    )
+
+    tree_resp = client.get(
+        f"/api/runs/{run_id}/tree",
+        headers={"X-API-Key": api_key},
+    )
+    assert tree_resp.status_code == 200
+    tree = tree_resp.json()
+    agents = cast(list[dict[str, object]], tree["agents"])
+    edges = cast(list[dict[str, object]], tree["edges"])
+    by_id = {str(agent["id"]): agent for agent in agents}
+
+    root_agent = by_id[str(root_agent_id)]
+    assert root_agent["role_label"] == "ceo"
+    assert root_agent["state"] == "running"
+    assert root_agent["name"] == "Root Agent"
+    assert root_agent["current_step"] == "planning"
+    assert root_agent["parent_agent_id"] is None
+    assert root_agent["plan_subtasks"] == [
+        {"title": "Draft plan", "status": "pending"},
+        {"title": "Ship plan", "status": "done"},
+    ]
+
+    child_agent = by_id[child_agent_id]
+    assert child_agent["role_label"] == "engineer"
+    assert child_agent["state"] == "queued"
+    assert child_agent["name"] == "Worker"
+    assert child_agent["current_step"] == "coding"
+    assert child_agent["parent_agent_id"] == str(root_agent_id)
+    assert child_agent["plan_subtasks"] == [
+        {"title": "Implement feature", "status": "pending"},
+    ]
+
+    assert {edge["parent"] for edge in edges} == {str(root_agent_id)}
+    assert {edge["child"] for edge in edges} == {child_agent_id}
 
 
 def test_ws_runs_accepts_session_token_query(tmp_path: pathlib.Path, monkeypatch: _MonkeyPatch) -> None:
@@ -298,7 +473,7 @@ def test_ws_runs_accepts_session_token_query(tmp_path: pathlib.Path, monkeypatch
     main.models.Base.metadata.create_all(engine)
 
     raw_client = TestClient(main.app)
-    client = cast(_ClientWithCookies, raw_client)
+    client = cast(_ClientWithCookies, cast(object, raw_client))
     email = f"ws_session_{uuid.uuid4().hex}@example.com"
     register_resp = client.post(
         "/api/auth/register",

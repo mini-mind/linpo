@@ -1,11 +1,14 @@
 from collections.abc import Generator
+import os
+from pathlib import Path
+import re
 from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from . import db, models, sop_store
+from . import agent_fs, db, models, project_fs
 from . import config_loader
 
 router = APIRouter()
@@ -21,12 +24,78 @@ def _parse_int_id(value: str, label: str) -> int:
     return parsed
 
 
+_CHECKBOX_RE = re.compile(r"^\s*[-*]\s+\[(?P<checked>[xX ])\]\s+(?P<title>.+?)\s*$")
+
+
+def _parse_plan_subtasks(md_text: str) -> list["PlanSubtaskOut"]:
+    subtasks: list[PlanSubtaskOut] = []
+    for line in md_text.splitlines():
+        match = _CHECKBOX_RE.match(line)
+        if not match:
+            continue
+        title = match.group("title").strip()
+        if not title:
+            continue
+        checked = match.group("checked").lower() == "x"
+        status = "done" if checked else "pending"
+        subtasks.append(PlanSubtaskOut(title=title, status=status))
+    return subtasks
+
+
+def _identity_str(identity: dict[str, object], key: str) -> str | None:
+    value = identity.get(key)
+    if value is None:
+        return None
+    if isinstance(value, str):
+        trimmed = value.strip()
+        return trimmed or None
+    return str(value)
+
+
+def _identity_state(identity: dict[str, object]) -> str:
+    value = identity.get("state")
+    if value is None:
+        return "unknown"
+    if isinstance(value, str):
+        trimmed = value.strip()
+        return trimmed or "unknown"
+    return str(value)
+
+
+def _get_roboard_root() -> Path:
+    roboard_root = (os.getenv("ROBOARD_ROOT") or ".").strip()
+    return Path(roboard_root or ".")
+
+
+def _try_update_agent_state_fs(tenant_id: int, run_id: int, agent_id: int, state: str) -> None:
+    try:
+        roboard_root = _get_roboard_root()
+        agent_root = project_fs.agent_root_for(roboard_root, tenant_id, run_id, str(agent_id))
+        identity = agent_fs.read_agent_identity(agent_root)
+        identity["state"] = state
+        _ = identity.setdefault("agent_id", str(agent_id))
+        _ = identity.setdefault("tenant_id", tenant_id)
+        _ = identity.setdefault("run_id", run_id)
+        agent_fs.ensure_agent_layout(agent_root)
+        agent_fs.write_agent_identity(agent_root, identity)
+    except Exception:
+        return
+
+
+class PlanSubtaskOut(BaseModel):
+    title: str
+    status: str
+
+
 class AgentInstanceOut(BaseModel):
     id: str
     parent_agent_id: str | None = None
     role_label: str | None = None
     state: str
     current_sop_version_id: str | None = None
+    name: str | None = None
+    current_step: str | None = None
+    plan_subtasks: list[PlanSubtaskOut] = Field(default_factory=list)
 
 
 class AgentEdgeOut(BaseModel):
@@ -100,33 +169,44 @@ async def get_run_tree(
     if not task:
         raise HTTPException(status_code=404, detail="Run not found")
 
-    agents = (
-        session.query(models.AgentInstance)
-        .filter(models.AgentInstance.run_id == run_id_int, models.AgentInstance.tenant_id == tenant.id)
-        .order_by(models.AgentInstance.id.asc())
-        .all()
-    )
+    roboard_root = _get_roboard_root()
+    tenant_id = cast(int, getattr(tenant, "id"))
+    project_root = project_fs.project_root_for(roboard_root, tenant_id, run_id_int)
+    agents_root = project_root / "agents"
 
     agents_out: list[AgentInstanceOut] = []
     edges_out: list[AgentEdgeOut] = []
-    for agent in agents:
-        agent_id = getattr(agent, "id")
-        parent_agent_id = getattr(agent, "parent_agent_id")
-        agents_out.append(
-            AgentInstanceOut(
-                id=str(agent_id),
-                parent_agent_id=str(parent_agent_id) if parent_agent_id is not None else None,
-                role_label=cast(str | None, getattr(agent, "role_label", None)),
-                state=cast(str, getattr(agent, "state")),
-                current_sop_version_id=(
-                    str(getattr(agent, "current_sop_version_id"))
-                    if getattr(agent, "current_sop_version_id") is not None
-                    else None
-                ),
+    if agents_root.exists():
+        for agent_dir in sorted(agents_root.iterdir(), key=lambda path: path.name):
+            if not agent_dir.is_dir():
+                continue
+            identity = agent_fs.read_agent_identity(agent_dir)
+            agent_id = _identity_str(identity, "agent_id") or agent_dir.name
+            parent_agent_id = _identity_str(identity, "parent_agent_id")
+            role_label = _identity_str(identity, "role_label")
+            name = _identity_str(identity, "name")
+            current_step = _identity_str(identity, "current_step")
+            state = _identity_state(identity)
+            try:
+                plan_text = agent_fs.read_text(agent_dir, "plan.md")
+            except FileNotFoundError:
+                plan_text = ""
+            plan_subtasks = _parse_plan_subtasks(plan_text)
+
+            agents_out.append(
+                AgentInstanceOut(
+                    id=str(agent_id),
+                    parent_agent_id=str(parent_agent_id) if parent_agent_id is not None else None,
+                    role_label=cast(str | None, role_label),
+                    state=cast(str, state),
+                    current_sop_version_id=None,
+                    name=cast(str | None, name),
+                    current_step=cast(str | None, current_step),
+                    plan_subtasks=plan_subtasks,
+                )
             )
-        )
-        if parent_agent_id is not None:
-            edges_out.append(AgentEdgeOut(parent=str(parent_agent_id), child=str(agent_id)))
+            if parent_agent_id is not None:
+                edges_out.append(AgentEdgeOut(parent=str(parent_agent_id), child=str(agent_id)))
 
     return RunTreeOut(agents=agents_out, edges=edges_out)
 
@@ -146,28 +226,24 @@ async def get_agent_sop(
     )
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
-
-    q = session.query(models.SopVersion).filter(
-        models.SopVersion.agent_id == agent_id_int,
-        models.SopVersion.tenant_id == tenant.id,
-    )
-    if version:
+    if version is not None:
         try:
-            version_int = int(version)
+            _ = int(version)
         except ValueError:
             raise HTTPException(status_code=400, detail="version must be an integer")
-        q = q.filter(models.SopVersion.version == version_int)
-    else:
-        current_id = getattr(agent, "current_sop_version_id")
-        if current_id is not None:
-            q = q.filter(models.SopVersion.id == int(current_id))
 
-    sop = q.order_by(models.SopVersion.id.desc()).first()
-    if not sop:
+    roboard_root = _get_roboard_root()
+    run_id = cast(int, getattr(agent, "run_id"))
+    agent_root = project_fs.agent_root_for(
+        roboard_root,
+        cast(int, getattr(tenant, "id")),
+        run_id,
+        str(agent_id_int),
+    )
+    try:
+        md_text = agent_fs.read_text(agent_root, "mission.md")
+    except FileNotFoundError:
         raise HTTPException(status_code=404, detail="SOP not found")
-
-    md_path = cast(str, getattr(sop, "md_path"))
-    md_text = sop_store.read_sop_text(md_path)
 
     return SopOut(md_text=md_text)
 
@@ -224,6 +300,9 @@ async def patch_agent_state(
     session.add(agent)
     session.add(task)
     session.commit()
+
+    tenant_id = cast(int, getattr(tenant, "id"))
+    _try_update_agent_state_fs(tenant_id, run_id_int, agent_id_int, next_state)
 
     parent_agent_id = getattr(agent, "parent_agent_id")
     return AgentInstanceOut(

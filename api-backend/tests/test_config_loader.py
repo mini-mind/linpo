@@ -1,9 +1,14 @@
+# pyright: reportImplicitRelativeImport=false
 """Tests for config_loader module."""
 
 import json
+import pathlib
+import sys
 from pathlib import Path
 
 import pytest
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from app import config_loader
 
@@ -213,3 +218,16 @@ def test_integration_all_functions(tmp_path: Path) -> None:
         assert sop == "# CEO SOP"
     finally:
         config_loader._clear_repo_root_override()
+
+
+def test_default_llm_model_is_gpt(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("LLM_PROVIDERS_HOST_PATH", raising=False)
+    monkeypatch.delenv("LLM_DEFAULT_MODEL", raising=False)
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'test.db'}")
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-key")
+    monkeypatch.setenv("INTERNAL_API_KEY", "test-internal-key")
+
+    from app.main import _resolve_default_llm_model
+
+    assert _resolve_default_llm_model() == "gpt-4o-mini"
