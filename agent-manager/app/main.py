@@ -7,6 +7,7 @@ import json
 import logging
 import uuid
 import time
+from pathlib import Path
 from contextvars import ContextVar, Token
 import requests
 from contextlib import asynccontextmanager
@@ -15,6 +16,8 @@ from typing import TYPE_CHECKING, Annotated, Callable, Protocol, cast, override
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
+
+from . import agent_fs
 
 try:
     import redis.asyncio as redis_async
@@ -342,8 +345,41 @@ def _parse_params_json(raw: object) -> dict[str, object]:
     return {str(key): value for key, value in typed.items()}
 
 
+def _extract_agent_id(task_input: dict[str, object]) -> str | None:
+    for key in ("agent_id", "root_agent_id", "target_agent_id"):
+        value = task_input.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _try_update_agent_state_fs(
+    tenant_id: str,
+    run_id: str,
+    agent_id: str | None,
+    state: str,
+    current_step: str | None = None,
+) -> None:
+    roboard_root = (os.getenv("ROBOARD_ROOT") or "").strip()
+    if not roboard_root:
+        return
+    try:
+        updated = agent_fs.update_agent_identity_state(
+            Path(roboard_root),
+            tenant_id,
+            run_id,
+            agent_id,
+            state,
+            current_step,
+        )
+        if not updated:
+            logger.info("Agent FS state update skipped; no agent found for run %s", run_id)
+    except Exception as exc:
+        logger.warning("Failed to update agent FS state for run %s: %s", run_id, exc)
+
+
 def call_llm_gateway(system_prompt: str, user_message: str) -> str:
-    default_model = (os.getenv("LLM_DEFAULT_MODEL") or "ark-code-latest").strip() or "ark-code-latest"
+    default_model = (os.getenv("LLM_DEFAULT_MODEL") or "gpt-4o-mini").strip() or "gpt-4o-mini"
     payload = {
         "model": default_model,
         "messages": [
@@ -1022,6 +1058,13 @@ async def dispatch_task(request: DispatchRequest, x_internal_key: Annotated[str 
     
     tokens = set_request_context(tenant_id=tenant_id, task_id=task_id)
     try:
+        agent_id = _extract_agent_id(task_input)
+        _try_update_agent_state_fs(
+            tenant_id=tenant_id,
+            run_id=task_id,
+            agent_id=agent_id,
+            state="running",
+        )
         # Post task.step.started event
         post_event(
             tenant_id=tenant_id,
@@ -1091,6 +1134,13 @@ async def dispatch_task(request: DispatchRequest, x_internal_key: Annotated[str 
             task_id=task_id,
             event_type="task.completed",
             data=summary
+        )
+        _try_update_agent_state_fs(
+            tenant_id=tenant_id,
+            run_id=task_id,
+            agent_id=agent_id,
+            state="completed",
+            current_step="completed",
         )
         DISPATCH_HTTP_REQUESTS_TOTAL.labels(status="success").inc()
         return JSONResponse(content={"status": "dispatched", "task_id": task_id})

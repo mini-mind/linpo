@@ -1,4 +1,5 @@
 import asyncio
+import json
 import importlib
 import pathlib
 import sys
@@ -78,3 +79,49 @@ def test_dispatch_keeps_input_without_input_nl(monkeypatch: MonkeyPatchLike) -> 
     worker_payload = captured[0].get("json")
     assert isinstance(worker_payload, dict)
     assert worker_payload.get("input") == {"query": "keep-this"}
+
+
+def test_dispatch_updates_fs_status(tmp_path: pathlib.Path, monkeypatch: MonkeyPatchLike) -> None:
+    monkeypatch.setenv("INTERNAL_API_KEY", "test-internal")
+    monkeypatch.setenv("ROBOARD_ROOT", str(tmp_path))
+    main = importlib.import_module("app.main")
+
+    tenant_id = "tenant-9"
+    task_id = "run-9"
+    agent_id = "agent-9"
+    identity_path = (
+        tmp_path
+        / "data"
+        / "projects"
+        / f"t{tenant_id}-r{task_id}"
+        / "agents"
+        / agent_id
+        / "identity.json"
+    )
+    _ = identity_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = identity_path.write_text(
+        "{\"agent_id\": \"agent-9\", \"tenant_id\": \"tenant-9\", \"run_id\": \"run-9\", \"state\": \"queued\"}",
+        encoding="utf-8",
+    )
+
+    def _post(url: str, **kwargs: object) -> DummyResponse:
+        _ = kwargs
+        if url.endswith("/run"):
+            identity = json.loads(identity_path.read_text(encoding="utf-8"))
+            assert identity.get("state") == "running"
+            return DummyResponse({"result": "ok"})
+        return DummyResponse({"ok": True})
+
+    monkeypatch.setattr(main.requests, "post", _post)
+
+    payload = {
+        "task_id": task_id,
+        "tenant_id": tenant_id,
+        "input": {"query": "check-status"},
+    }
+    request = main.DispatchRequest(**payload)
+    _ = asyncio.run(main.dispatch_task(request, x_internal_key="test-internal"))
+
+    updated_identity = json.loads(identity_path.read_text(encoding="utf-8"))
+    assert updated_identity.get("state") == "completed"
+    assert updated_identity.get("current_step") == "completed"
