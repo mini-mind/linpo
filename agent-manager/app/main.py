@@ -38,11 +38,6 @@ DISPATCH_DEAD_STREAM = os.getenv("DISPATCH_DEAD_STREAM", "queue:dispatch:dead")
 DISPATCH_GROUP = os.getenv("DISPATCH_GROUP", "agent-manager")
 DISPATCH_CONSUMER = os.getenv("DISPATCH_CONSUMER", os.getenv("HOSTNAME", "agent-manager"))
 DISPATCH_MAX_ATTEMPTS = int(os.getenv("DISPATCH_MAX_ATTEMPTS", "3"))
-A2A_STREAM = os.getenv("A2A_STREAM", "queue:a2a")
-A2A_DEAD_STREAM = os.getenv("A2A_DEAD_STREAM", "queue:a2a:dead")
-A2A_GROUP = os.getenv("A2A_GROUP", "agent-manager-a2a")
-A2A_CONSUMER = os.getenv("A2A_CONSUMER", os.getenv("HOSTNAME", "agent-manager"))
-A2A_MAX_ATTEMPTS = int(os.getenv("A2A_MAX_ATTEMPTS", "3"))
 LLM_GATEWAY_URL = os.getenv("LLM_GATEWAY_URL", "http://llm-gateway:7300")
 
 # Setup logging
@@ -284,45 +279,6 @@ def build_stream_payload(
     return payload
 
 
-def build_a2a_stream_payload(
-    tenant_id: str,
-    a2a_thread_id: str,
-    from_agent_id: str,
-    to_agent_id: str,
-    message: str,
-    attempt: int,
-    enqueued_at: str | None,
-    trace_id: str | None,
-) -> dict[str, str]:
-    payload = {
-        "tenant_id": tenant_id,
-        "a2a_thread_id": a2a_thread_id,
-        "from_agent_id": from_agent_id,
-        "to_agent_id": to_agent_id,
-        "message": message,
-        "attempt": str(attempt),
-    }
-    if enqueued_at:
-        payload["enqueued_at"] = enqueued_at
-    if trace_id:
-        payload["trace_id"] = trace_id
-    return payload
-
-
-def load_agent_prompt(agent_id: str) -> str:
-    prompt_path = f"/app/prompts/agents/{agent_id}.md"
-    try:
-        with open(prompt_path, "r", encoding="utf-8") as handle:
-            content = handle.read().strip()
-            if content:
-                return content
-    except FileNotFoundError:
-        pass
-    except Exception as exc:
-        logger.warning("Failed to load agent prompt %s: %s", prompt_path, exc)
-    return f"You are agent {agent_id}. Provide concise, helpful responses."
-
-
 def build_internal_headers() -> dict[str, str]:
     headers = {"X-Internal-Key": INTERNAL_API_KEYS[0]}
     trace_id = current_trace_id()
@@ -414,78 +370,6 @@ def call_llm_gateway(system_prompt: str, user_message: str) -> str:
     return content_obj.strip()
 
 
-def build_github_trending_job() -> dict[str, object]:
-    return {
-        "url": "https://github.com/trending?since=daily",
-        "actions": [
-            {
-                "type": "wait_for_selector",
-                "selector": "article.Box-row",
-            },
-            {
-                "type": "extract",
-                "kind": "text",
-                "selector": "article.Box-row:nth-of-type(1) h2 a",
-                "as": "top_repo",
-            },
-            {
-                "type": "extract",
-                "kind": "text",
-                "selector": "article.Box-row:nth-of-type(1) span:has-text(\"stars today\")",
-                "as": "top_stars_today",
-            },
-        ],
-    }
-
-
-def call_worker_playwright(job: dict[str, object], tenant_id: str, thread_id: str, message_id: str) -> object:
-    task_id = f"a2a-{thread_id}-{message_id}"
-    payload = {
-        "task_id": task_id,
-        "tenant_id": tenant_id,
-        "input": {"job": job},
-    }
-    response = requests.post(
-        f"{WORKER_URL}/run",
-        json=payload,
-        headers=build_internal_headers(),
-        timeout=120.0,
-    )
-    response.raise_for_status()
-    return cast(object, response.json())
-
-
-def find_nested_value(data: object, key: str) -> str | None:
-    if isinstance(data, dict):
-        typed_data = cast(dict[str, object], data)
-        if key in typed_data:
-            value = typed_data[key]
-            if isinstance(value, (str, int, float)):
-                return str(value).strip()
-        for value in typed_data.values():
-            found = find_nested_value(value, key)
-            if found:
-                return found
-    elif isinstance(data, list):
-        for item in cast(list[object], data):
-            found = find_nested_value(item, key)
-            if found:
-                return found
-    return None
-
-
-def build_browser_reply(result: object) -> str:
-    top_repo = find_nested_value(result, "top_repo")
-    top_stars_today = find_nested_value(result, "top_stars_today")
-    if top_repo:
-        repo = top_repo.replace("\n", " ").strip()
-        if top_stars_today:
-            stars = top_stars_today.replace("\n", " ").strip()
-            return f"Top GitHub Trending repo today: {repo} ({stars})."
-        return f"Top GitHub Trending repo today: {repo}."
-    return "I checked GitHub Trending but couldn't extract the top repo details."
-
-
 def build_search_fallback_summary(worker_result: object) -> str | None:
     if not isinstance(worker_result, dict):
         return None
@@ -515,29 +399,6 @@ def build_search_fallback_summary(worker_result: object) -> str | None:
                 prefix = "\u6211\u4ece\u641c\u7d22\u7ed3\u679c\u91cc\u627e\u5230\u4e86\uff1a"
                 return f"{prefix}{title}\uff08{url}\uff09"
     return None
-
-
-def send_a2a_reply(
-    tenant_id: str,
-    from_agent_id: str,
-    to_agent_id: str,
-    message: str,
-    parent_thread_id: str,
-) -> None:
-    payload = {
-        "tenant_id": tenant_id,
-        "from_agent_id": from_agent_id,
-        "to_agent_id": to_agent_id,
-        "message": message,
-        "parent_thread_id": parent_thread_id,
-    }
-    response = requests.post(
-        f"{API_BACKEND_URL}/internal/a2a/send",
-        json=payload,
-        headers=build_internal_headers(),
-        timeout=30.0,
-    )
-    response.raise_for_status()
 
 
 async def handle_dispatch_message(
@@ -641,142 +502,6 @@ async def handle_dispatch_message(
         reset_request_context(tokens)
 
 
-async def handle_a2a_failure(
-    redis_client: RedisClient,
-    tenant_id: str,
-    a2a_thread_id: str,
-    from_agent_id: str,
-    to_agent_id: str,
-    message: str,
-    attempt: int,
-    enqueued_at: str | None,
-    trace_id: str,
-    message_id: str,
-    error_message: str,
-) -> None:
-    next_attempt = attempt + 1
-    if next_attempt <= A2A_MAX_ATTEMPTS:
-        payload = build_a2a_stream_payload(
-            tenant_id=tenant_id,
-            a2a_thread_id=a2a_thread_id,
-            from_agent_id=from_agent_id,
-            to_agent_id=to_agent_id,
-            message=message,
-            attempt=next_attempt,
-            enqueued_at=enqueued_at,
-            trace_id=trace_id,
-        )
-        _ = await redis_client.xadd(A2A_STREAM, payload)
-        _ = await redis_client.xack(A2A_STREAM, A2A_GROUP, message_id)
-        logger.warning(
-            "A2A failed, retrying attempt %s for thread %s",
-            next_attempt,
-            a2a_thread_id,
-        )
-        return
-
-    payload = build_a2a_stream_payload(
-        tenant_id=tenant_id,
-        a2a_thread_id=a2a_thread_id,
-        from_agent_id=from_agent_id,
-        to_agent_id=to_agent_id,
-        message=message,
-        attempt=next_attempt,
-        enqueued_at=enqueued_at,
-        trace_id=trace_id,
-    )
-    _ = await redis_client.xadd(A2A_DEAD_STREAM, payload)
-    _ = await redis_client.xack(A2A_STREAM, A2A_GROUP, message_id)
-    logger.error(
-        "A2A failed after %s attempts for thread %s: %s",
-        attempt,
-        a2a_thread_id,
-        error_message,
-    )
-
-
-async def handle_a2a_message(
-    redis_client: RedisClient,
-    message_id: str,
-    fields: dict[object, object],
-) -> None:
-    trace_id_value = fields.get(b"trace_id") or fields.get("trace_id")
-    tenant_id_value = fields.get(b"tenant_id") or fields.get("tenant_id")
-    thread_id_value = fields.get(b"a2a_thread_id") or fields.get("a2a_thread_id")
-    from_agent_value = fields.get(b"from_agent_id") or fields.get("from_agent_id")
-    to_agent_value = fields.get(b"to_agent_id") or fields.get("to_agent_id")
-    message_value = fields.get(b"message") or fields.get("message")
-    enqueued_at_value = fields.get(b"enqueued_at") or fields.get("enqueued_at")
-    attempt_value = fields.get(b"attempt") or fields.get("attempt")
-
-    trace_id = decode_field(trace_id_value) if trace_id_value is not None else str(uuid.uuid4())
-    tenant_id = decode_field(tenant_id_value) if tenant_id_value is not None else None
-    a2a_thread_id = decode_field(thread_id_value) if thread_id_value is not None else None
-    from_agent_id = decode_field(from_agent_value) if from_agent_value is not None else None
-    to_agent_id = decode_field(to_agent_value) if to_agent_value is not None else None
-    message = decode_field(message_value) if message_value is not None else None
-    enqueued_at = decode_field(enqueued_at_value) if enqueued_at_value is not None else None
-    attempt = parse_attempt(attempt_value)
-
-    tokens = set_request_context(
-        trace_id=trace_id,
-        tenant_id=tenant_id,
-        task_id=a2a_thread_id,
-    )
-    try:
-        if not tenant_id or not a2a_thread_id or not from_agent_id or not to_agent_id or message is None:
-            logger.error("A2A message missing required fields; acking")
-            _ = await redis_client.xack(A2A_STREAM, A2A_GROUP, message_id)
-            return
-
-        logger.info(
-            "A2A message received",
-            extra={"message_id": message_id, "attempt": attempt, "a2a_thread_id": a2a_thread_id},
-        )
-
-        if to_agent_id == "browser":
-            browser_result = call_worker_playwright(
-                job=build_github_trending_job(),
-                tenant_id=tenant_id,
-                thread_id=a2a_thread_id,
-                message_id=message_id,
-            )
-            reply_message = build_browser_reply(browser_result)
-        else:
-            system_prompt = load_agent_prompt(to_agent_id)
-            reply_message = call_llm_gateway(system_prompt, message)
-
-        send_a2a_reply(
-            tenant_id=tenant_id,
-            from_agent_id=to_agent_id,
-            to_agent_id=from_agent_id,
-            message=reply_message,
-            parent_thread_id=a2a_thread_id,
-        )
-        _ = await redis_client.xack(A2A_STREAM, A2A_GROUP, message_id)
-        logger.info("A2A reply sent", extra={"a2a_thread_id": a2a_thread_id})
-    except Exception as exc:
-        if tenant_id and a2a_thread_id and from_agent_id and to_agent_id and message is not None:
-            await handle_a2a_failure(
-                redis_client=redis_client,
-                tenant_id=tenant_id,
-                a2a_thread_id=a2a_thread_id,
-                from_agent_id=from_agent_id,
-                to_agent_id=to_agent_id,
-                message=message,
-                attempt=attempt,
-                enqueued_at=enqueued_at,
-                trace_id=trace_id,
-                message_id=message_id,
-                error_message=str(exc),
-            )
-        else:
-            _ = await redis_client.xack(A2A_STREAM, A2A_GROUP, message_id)
-        logger.error("A2A handler failed: %s", exc)
-    finally:
-        reset_request_context(tokens)
-
-
 async def handle_dispatch_failure(
     redis_client: RedisClient,
     task_id: str,
@@ -858,40 +583,6 @@ async def dispatch_consumer_loop(redis_client: RedisClient) -> None:
             await asyncio.sleep(1)
 
 
-async def a2a_consumer_loop(redis_client: RedisClient) -> None:
-    try:
-        _ = await redis_client.xgroup_create(A2A_STREAM, A2A_GROUP, id="0", mkstream=True)
-    except Exception as exc:
-        if "BUSYGROUP" not in str(exc):
-            logger.error("Failed to create A2A Redis consumer group: %s", exc)
-            return
-
-    logger.info("A2A consumer started for stream %s", A2A_STREAM)
-    while True:
-        try:
-            result = await redis_client.xreadgroup(
-                groupname=A2A_GROUP,
-                consumername=A2A_CONSUMER,
-                streams={A2A_STREAM: ">"},
-                count=1,
-                block=1000,
-            )
-            if not result:
-                continue
-            for _stream, messages in result:
-                for message_id, fields in messages:
-                    await handle_a2a_message(
-                        redis_client=redis_client,
-                        message_id=decode_field(message_id),
-                        fields=fields,
-                    )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.error("A2A consumer error: %s", exc)
-            await asyncio.sleep(1)
-
-
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     consumer_tasks: list[asyncio.Task[None]] = []
@@ -904,7 +595,6 @@ async def lifespan(_app: FastAPI):
             redis_from_url = cast(Callable[[str], object], getattr(redis_async, "from_url"))
             redis_client = cast(RedisClient, redis_from_url(REDIS_URL))
             consumer_tasks.append(asyncio.create_task(dispatch_consumer_loop(redis_client)))
-            consumer_tasks.append(asyncio.create_task(a2a_consumer_loop(redis_client)))
         except Exception as exc:
             logger.error("Failed to start Redis consumers: %s", exc)
 
