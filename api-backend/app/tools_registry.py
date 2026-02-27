@@ -72,14 +72,6 @@ def ensure_tool_record(session: Session, key: str) -> models.Tool | None:
 
 def _register_defaults() -> None:
     register_tool(
-        "a2a.send",
-        "Send a message to another agent for consultation and collaboration",
-    )
-    register_tool(
-        "a2a.fetch_thread",
-        "Fetch details of an agent-to-agent conversation thread",
-    )
-    register_tool(
         "mcp.search",
         "Search via MCP provider",
     )

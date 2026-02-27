@@ -87,7 +87,7 @@ def test_tool_permission_deny_blocks_tool(monkeypatch) -> None:
         tenant_id = cast(int, getattr(tenant, "id"))
 
         tool = main.models.Tool()
-        setattr(tool, "key", "a2a.send")
+        setattr(tool, "key", "browser.run")
         setattr(tool, "enabled", True)
         session.add(tool)
         session.flush()
@@ -105,7 +105,7 @@ def test_tool_permission_deny_blocks_tool(monkeypatch) -> None:
         )
 
         try:
-            tool_permissions.require_tool_allowed(session, tenant_id, "a2a.send")
+            tool_permissions.require_tool_allowed(session, tenant_id, "mcp.search")
             assert False, "expected tool to be denied"
         except ValueError:
             pass
@@ -134,7 +134,7 @@ def test_tool_permission_scoped_deny_blocks_only_matching_scope(monkeypatch) -> 
         tenant_id = cast(int, getattr(tenant, "id"))
 
         tool = main.models.Tool()
-        setattr(tool, "key", "a2a.send")
+        setattr(tool, "key", "browser.run")
         setattr(tool, "enabled", True)
         session.add(tool)
         session.flush()
@@ -152,10 +152,10 @@ def test_tool_permission_scoped_deny_blocks_only_matching_scope(monkeypatch) -> 
             cast(object, importlib.import_module("app.tool_permissions")),
         )
 
-        tool_permissions.require_tool_allowed(session, tenant_id, "a2a.send", run_id=11)
+        tool_permissions.require_tool_allowed(session, tenant_id, "mcp.search", run_id=11)
 
         try:
-            tool_permissions.require_tool_allowed(session, tenant_id, "a2a.send", run_id=10)
+            tool_permissions.require_tool_allowed(session, tenant_id, "mcp.search", run_id=10)
             assert False, "expected scoped tool to be denied"
         except ValueError:
             pass
@@ -184,7 +184,7 @@ def test_tool_permission_requires_explicit_allow_when_permissions_exist(monkeypa
         tenant_id = cast(int, getattr(tenant, "id"))
 
         tool = main.models.Tool()
-        setattr(tool, "key", "a2a.send")
+        setattr(tool, "key", "browser.run")
         setattr(tool, "enabled", True)
         session.add(tool)
         session.flush()
