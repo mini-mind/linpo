@@ -10,17 +10,22 @@ Environment Variables:
 - DISPATCH_GROUP: Redis consumer group for dispatch
 - DISPATCH_CONSUMER: Redis consumer name for dispatch
 - DISPATCH_MAX_ATTEMPTS: Max retry attempts for dispatch jobs
-- A2A_STREAM: Redis stream for A2A jobs
-- A2A_DEAD_STREAM: Dead-letter stream for A2A jobs
-- A2A_GROUP: Redis consumer group for A2A
-- A2A_CONSUMER: Redis consumer name for A2A
-- A2A_MAX_ATTEMPTS: Max retry attempts for A2A jobs
 
 Endpoints:
 POST /internal/dispatch
   Receives dispatch requests and forwards them to workers.
   Posts task events to api-backend at /api/tasks/{id}/events
   Requires X-Internal-Key header with INTERNAL_API_KEY value
+
+Dispatch stream payload (queue:dispatch):
+{
+  "task_id": "string",
+  "tenant_id": "string",
+  "input_json": "{\"input_nl\":...,\"input\":...}",
+  "attempt": "1",
+  "enqueued_at": "2026-02-27T00:00:00Z",
+  "trace_id": "optional-trace-id"
+}
 
 Request Example:
 {
