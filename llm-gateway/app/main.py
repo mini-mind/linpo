@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import json
 import os
-from typing import cast
+from typing import Protocol, cast, runtime_checkable
 
-import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from litellm import acompletion
 from pydantic import BaseModel, ConfigDict, Field
 
 app = FastAPI(title="LLM Gateway", version="0.1.0")
@@ -67,6 +67,23 @@ def _get_provider_for_model(config: dict[str, object], model: str) -> dict[str, 
     return {"base_url": base_url, "api_key": api_key}
 
 
+@runtime_checkable
+class _ModelDump(Protocol):
+    def model_dump(self, *, exclude_none: bool = False) -> object:
+        ...
+
+
+def _serialize_completion(payload: object) -> object:
+    if isinstance(payload, _ModelDump):
+        return payload.model_dump(exclude_none=True)
+    return payload
+
+
+def _sse_encode(payload: object) -> bytes:
+    data = json.dumps(payload, ensure_ascii=True)
+    return f"data: {data}\n\n".encode("utf-8")
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -77,52 +94,37 @@ async def chat(request: ChatRequest, http_request: Request) -> object:
     _require_internal_key(http_request)
     config = _load_provider_config()
     provider = _get_provider_for_model(config, request.model)
-
-    payload: dict[str, object] = {
+    completion_args: dict[str, object] = {
         "model": request.model,
         "messages": [message.model_dump(exclude_none=True) for message in request.messages],
+        "api_base": provider["base_url"],
+        "api_key": provider["api_key"],
     }
     if request.temperature is not None:
-        payload["temperature"] = request.temperature
+        completion_args["temperature"] = request.temperature
     if request.max_tokens is not None:
-        payload["max_tokens"] = request.max_tokens
+        completion_args["max_tokens"] = request.max_tokens
     if request.tools is not None:
-        payload["tools"] = request.tools
+        completion_args["tools"] = request.tools
     if request.tool_choice is not None:
-        payload["tool_choice"] = request.tool_choice
+        completion_args["tool_choice"] = request.tool_choice
     if request.parallel_tool_calls is not None:
-        payload["parallel_tool_calls"] = request.parallel_tool_calls
+        completion_args["parallel_tool_calls"] = request.parallel_tool_calls
     if request.response_format is not None:
-        payload["response_format"] = request.response_format
-    if request.stream is not None:
-        payload["stream"] = request.stream
+        completion_args["response_format"] = request.response_format
 
     try:
         if request.stream:
-            timeout = httpx.Timeout(30.0, read=None)
-            
-            # Streaming mode - client created inside generator to keep it alive
+            completion_args["stream"] = True
+
             async def stream_response():
-                async with httpx.AsyncClient(base_url=provider["base_url"], timeout=timeout) as client:
-                    try:
-                        async with client.stream(
-                            "POST",
-                            "/chat/completions",
-                            json=payload,
-                            headers={"Authorization": f"Bearer {provider['api_key']}"},
-                        ) as response:
-                            if response.status_code >= 400:
-                                # Read a small part of the body to form the error
-                                upstream_body = await response.aread(1500)
-                                detail = f"Provider returned {response.status_code}: {upstream_body.decode('utf-8', errors='replace')}"
-                                # Emit SSE error event and close
-                                yield f"event: error\ndata: {detail}\n\n".encode()
-                                return
-                            async for chunk in response.aiter_bytes():
-                                yield chunk
-                    except Exception as e:
-                        # Emit SSE error event for any unexpected errors
-                        yield f"event: error\ndata: Provider request failed: {str(e)}\n\n".encode()
+                try:
+                    response = await acompletion(**completion_args)
+                    async for chunk in response:
+                        yield _sse_encode(_serialize_completion(chunk))
+                except Exception as e:
+                    detail = f"Provider request failed: {str(e)}"
+                    yield f"event: error\ndata: {detail}\n\n".encode("utf-8")
 
             return StreamingResponse(
                 stream_response(),
@@ -132,27 +134,12 @@ async def chat(request: ChatRequest, http_request: Request) -> object:
                     "X-Accel-Buffering": "no",
                 },
             )
-        else:
-            # Non-streaming mode (existing behavior)
-            timeout = 30.0
-            async with httpx.AsyncClient(base_url=provider["base_url"], timeout=timeout) as client:
-                response = await client.post(
-                    "/chat/completions",
-                    json=payload,
-                    headers={"Authorization": f"Bearer {provider['api_key']}"},
-                )
-                if response.status_code >= 400:
-                    upstream_body = response.text
-                    truncated_body = upstream_body[:1500] if len(upstream_body) > 1500 else upstream_body
-                    detail = f"Provider returned {response.status_code}: {truncated_body}"
-                    raise HTTPException(status_code=502, detail=detail)
-                try:
-                    return response.json()
-                except ValueError:
-                    raise HTTPException(status_code=502, detail="Provider response invalid")
+
+        response = await acompletion(**completion_args)
+        return _serialize_completion(response)
     except HTTPException:
         raise
-    except httpx.RequestError:
+    except Exception:
         raise HTTPException(status_code=502, detail="Provider request failed")
 
 
