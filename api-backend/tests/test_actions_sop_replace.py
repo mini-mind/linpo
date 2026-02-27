@@ -45,7 +45,7 @@ def test_action_sop_replace_creates_new_version(tmp_path, monkeypatch) -> None:
     run_id = run_resp.json()["run_id"]
     agent_id = run_resp.json()["root_agent_id"]
 
-    new_md = "# CEO SOP\n\nUPDATED\n"
+    new_md = "# Lead SOP\n\nUPDATED\n"
     action_resp = client.post(
         f"/api/runs/{run_id}/actions",
         json={

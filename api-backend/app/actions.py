@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 from . import models, sop_store
 from .agent_hiring import _sha256_text
 
+CONTROL_ACTION_TYPES = {"run.pause", "run.resume", "run.retry"}
+
 
 def _utcnow_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -200,3 +202,129 @@ def apply_sop_replace_action(
 
     session.commit()
     return action, new_sop, events
+
+
+def apply_control_action(
+    session: Session,
+    tenant: models.Tenant,
+    run_id_int: int,
+    agent_id_int: int,
+    body,
+) -> tuple[models.Action, list[models.Event]]:
+    if body.idempotency_key:
+        existing = (
+            session.query(models.Action)
+            .filter(
+                models.Action.tenant_id == tenant.id,
+                models.Action.run_id == run_id_int,
+                models.Action.idempotency_key == body.idempotency_key,
+            )
+            .first()
+        )
+        if existing:
+            return existing, []
+
+    if body.action_type not in CONTROL_ACTION_TYPES:
+        raise HTTPException(status_code=400, detail="Unsupported action_type")
+
+    task = (
+        session.query(models.Task)
+        .filter(models.Task.id == run_id_int, models.Task.tenant_id == tenant.id)
+        .first()
+    )
+    if not task:
+        raise HTTPException(status_code=404, detail="Run not found")
+    run_status = cast(str, getattr(task, "status"))
+
+    agent = (
+        session.query(models.AgentInstance)
+        .filter(
+            models.AgentInstance.id == agent_id_int,
+            models.AgentInstance.tenant_id == tenant.id,
+            models.AgentInstance.run_id == run_id_int,
+        )
+        .first()
+    )
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    action = models.Action()
+    setattr(action, "tenant_id", getattr(tenant, "id"))
+    setattr(action, "run_id", run_id_int)
+    setattr(action, "target_agent_id", agent_id_int)
+    setattr(action, "action_type", body.action_type)
+    setattr(action, "params_json", json.dumps({}))
+    setattr(action, "expected_head", None)
+    setattr(action, "idempotency_key", body.idempotency_key)
+    setattr(action, "status", "requested")
+    session.add(action)
+    session.flush()
+
+    events: list[models.Event] = []
+    events.append(
+        _create_event(
+            session,
+            tenant_id=int(getattr(tenant, "id")),
+            run_id=run_id_int,
+            event_type="action.requested",
+            status=run_status,
+            data={
+                "action_id": str(getattr(action, "id")),
+                "action_type": body.action_type,
+                "target_agent_id": str(agent_id_int),
+                "idempotency_key": body.idempotency_key,
+            },
+            agent_id=agent_id_int,
+            action_id=int(getattr(action, "id")),
+        )
+    )
+
+    applied_status = run_status
+    if body.action_type == "run.pause":
+        applied_status = "needs_human"
+        data: dict[str, object] = {
+            "agent_id": str(agent_id_int),
+            "action_id": str(getattr(action, "id")),
+            "action_type": body.action_type,
+        }
+        events.append(
+            _create_event(
+                session,
+                tenant_id=int(getattr(tenant, "id")),
+                run_id=run_id_int,
+                event_type="task.requires_input",
+                status=applied_status,
+                data=data,
+                agent_id=agent_id_int,
+                action_id=int(getattr(action, "id")),
+            )
+        )
+        current_rev = getattr(task, "tree_revision", 0) or 0
+        setattr(task, "status", applied_status)
+        setattr(task, "tree_revision", int(current_rev) + 1)
+        setattr(agent, "state", applied_status)
+        session.add(task)
+        session.add(agent)
+
+    setattr(action, "status", "applied")
+    setattr(action, "applied_at", _utcnow_naive())
+    session.add(action)
+    action_data: dict[str, object] = {
+        "action_id": str(getattr(action, "id")),
+        "action_type": body.action_type,
+    }
+    events.append(
+        _create_event(
+            session,
+            tenant_id=int(getattr(tenant, "id")),
+            run_id=run_id_int,
+            event_type="action.applied",
+            status=applied_status,
+            data=action_data,
+            agent_id=agent_id_int,
+            action_id=int(getattr(action, "id")),
+        )
+    )
+
+    session.commit()
+    return action, events

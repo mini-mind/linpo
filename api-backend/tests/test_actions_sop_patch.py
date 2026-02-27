@@ -1,11 +1,88 @@
+import importlib
 import json
 import pathlib
 import sys
+from typing import Protocol, cast
+
+from starlette.types import ASGIApp
 
 from fastapi.testclient import TestClient
+from sqlalchemy import asc, desc
+from sqlalchemy.sql.elements import ColumnElement
 
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+
+
+class _QueryLike(Protocol):
+    def filter(self, *criteria: object) -> "_QueryLike": ...
+    def order_by(self, *criteria: object) -> "_QueryLike": ...
+    def all(self) -> list[object]: ...
+    def first(self) -> object | None: ...
+
+
+class _SessionLike(Protocol):
+    def query(self, model: object) -> _QueryLike: ...
+    def add(self, obj: object) -> None: ...
+    def flush(self) -> None: ...
+    def commit(self) -> None: ...
+    def close(self) -> None: ...
+
+
+class _SessionLocal(Protocol):
+    def __call__(self) -> _SessionLike: ...
+    def configure(self, *, bind: object) -> None: ...
+
+
+class _DbModule(Protocol):
+    SessionLocal: _SessionLocal
+
+
+class _BaseMeta(Protocol):
+    def create_all(self, bind: object) -> None: ...
+
+
+class _Base(Protocol):
+    metadata: _BaseMeta
+
+
+class _ModelsModule(Protocol):
+    Base: _Base
+    Event: type["_EventModel"]
+    SopVersion: type["_SopVersionModel"]
+
+
+class _MainModule(Protocol):
+    ENGINE: object
+    db: _DbModule
+    models: _ModelsModule
+    app: ASGIApp
+
+
+class _EventModel(Protocol):
+    task_id: ColumnElement[object]
+    tenant_id: ColumnElement[object]
+    id: ColumnElement[object]
+    type: ColumnElement[object]
+
+
+class _SopVersionModel(Protocol):
+    agent_id: ColumnElement[object]
+    tenant_id: ColumnElement[object]
+    version: ColumnElement[object]
+    id: ColumnElement[object]
+    md_sha256: ColumnElement[object]
+
+
+class _EventInstance(Protocol):
+    type: str
+    data_json: object
+
+
+class _SopVersionInstance(Protocol):
+    id: object
+    version: object
+    md_sha256: object
 
 
 def test_action_sop_replace_emits_events(tmp_path, monkeypatch) -> None:
@@ -16,7 +93,7 @@ def test_action_sop_replace_emits_events(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("INTERNAL_API_KEY", "test-internal")
     monkeypatch.setenv("ROBOARD_SOP_ROOT", str(sop_root))
 
-    import app.main as main
+    main = cast(_MainModule, cast(object, importlib.import_module("app.main")))
     from sqlalchemy import create_engine
 
     engine = create_engine(f"sqlite+pysqlite:///{db_path}")
@@ -41,7 +118,7 @@ def test_action_sop_replace_emits_events(tmp_path, monkeypatch) -> None:
     run_id = run_resp.json()["run_id"]
     agent_id = run_resp.json()["root_agent_id"]
 
-    new_md = "# CEO SOP\n\nUPDATED\n"
+    new_md = "# Lead SOP\n\nUPDATED\n"
     action_resp = client.post(
         f"/api/runs/{run_id}/actions",
         json={
@@ -57,14 +134,15 @@ def test_action_sop_replace_emits_events(tmp_path, monkeypatch) -> None:
 
     session = main.db.SessionLocal()
     try:
-        events = (
+        events = cast(
+            list[_EventInstance],
             session.query(main.models.Event)
             .filter(
                 main.models.Event.task_id == int(run_id),
                 main.models.Event.tenant_id == int(tenant_id),
             )
-            .order_by(main.models.Event.id.asc())
-            .all()
+            .order_by(asc(main.models.Event.id))
+            .all(),
         )
         action_events = [
             event
@@ -77,18 +155,20 @@ def test_action_sop_replace_emits_events(tmp_path, monkeypatch) -> None:
             "action.applied",
         ]
 
-        sop_version = (
+        sop_version = cast(
+            _SopVersionInstance | None,
             session.query(main.models.SopVersion)
             .filter(
                 main.models.SopVersion.agent_id == int(agent_id),
                 main.models.SopVersion.tenant_id == int(tenant_id),
             )
-            .order_by(main.models.SopVersion.version.desc())
-            .first()
+            .order_by(desc(main.models.SopVersion.version))
+            .first(),
         )
         assert sop_version is not None
         sop_event = next(event for event in action_events if event.type == "sop.updated")
-        data = json.loads(sop_event.data_json or "{}")
+        data_json = getattr(sop_event, "data_json")
+        data = json.loads(data_json if isinstance(data_json, str) else "{}")
         assert data == {
             "agent_id": str(agent_id),
             "sop_version_id": str(getattr(sop_version, "id")),
