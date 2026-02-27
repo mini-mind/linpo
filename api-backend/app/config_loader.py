@@ -33,16 +33,6 @@ _FALLBACK_GROWTH_INDICATORS = [
     "star",
 ]
 
-_FALLBACK_STATE_SYNONYMS = {
-    "in_progress": "running",
-    "working": "running",
-    "done": "completed",
-    "success": "completed",
-    "blocked": "needs_human",
-}
-
-_FALLBACK_ALLOWED_STATES = {"queued", "running", "needs_human", "completed", "failed"}
-
 # Test override for repo root
 _REPO_ROOT_OVERRIDE: Path | None = None
 
@@ -134,19 +124,6 @@ def load_decision_rules() -> dict[str, Any]:
     return content if content is not None else {}
 
 
-def load_state_rules() -> dict[str, Any]:
-    """Load state rules from config/state_rules.json.
-
-    Returns:
-        Parsed JSON dict, or empty dict if file missing/invalid
-    """
-    repo_root = _find_repo_root()
-    rules_path = repo_root / "config" / "state_rules.json"
-
-    content = _read_json_file(rules_path)
-    return content if content is not None else {}
-
-
 def get_allowed_agent_types() -> list[str]:
     """Get list of allowed agent types.
 
@@ -204,40 +181,3 @@ def get_github_trending_keywords() -> tuple[list[str], list[str]]:
 
     return trending_keywords, growth_indicators
 
-
-def get_state_rules() -> tuple[dict[str, str], set[str]]:
-    """Get state synonym mapping and allowed states.
-
-    Returns:
-        Tuple of (synonyms_dict, allowed_set) from state_rules.json,
-        or fallback to hardcoded values
-    """
-    rules = load_state_rules()
-
-    # Get state_synonyms mapping
-    synonyms = rules.get("state_synonyms")
-    if isinstance(synonyms, dict) and synonyms:
-        # Filter valid string mappings
-        valid_synonyms = {}
-        for key, value in synonyms.items():
-            if isinstance(key, str) and isinstance(value, str) and key.strip() and value.strip():
-                valid_synonyms[key.strip()] = value.strip()
-        if valid_synonyms:
-            synonyms_dict = valid_synonyms
-        else:
-            synonyms_dict = _FALLBACK_STATE_SYNONYMS
-    else:
-        synonyms_dict = _FALLBACK_STATE_SYNONYMS
-
-    # Get allowed_states
-    allowed = rules.get("allowed_states")
-    if isinstance(allowed, list) and allowed:
-        valid_allowed = {str(s) for s in allowed if isinstance(s, str) and s.strip()}
-        if valid_allowed:
-            allowed_set = valid_allowed
-        else:
-            allowed_set = _FALLBACK_ALLOWED_STATES
-    else:
-        allowed_set = _FALLBACK_ALLOWED_STATES
-
-    return synonyms_dict, allowed_set

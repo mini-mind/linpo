@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from . import agent_fs, db, models, project_fs
-from . import config_loader
 
 router = APIRouter()
 
@@ -67,21 +66,6 @@ def _get_roboard_root() -> Path:
     return Path(roboard_root or ".")
 
 
-def _try_update_agent_state_fs(tenant_id: int, run_id: int, agent_id: int, state: str) -> None:
-    try:
-        roboard_root = _get_roboard_root()
-        agent_root = project_fs.agent_root_for(roboard_root, tenant_id, run_id, str(agent_id))
-        identity = agent_fs.read_agent_identity(agent_root)
-        identity["state"] = state
-        _ = identity.setdefault("agent_id", str(agent_id))
-        _ = identity.setdefault("tenant_id", tenant_id)
-        _ = identity.setdefault("run_id", run_id)
-        agent_fs.ensure_agent_layout(agent_root)
-        agent_fs.write_agent_identity(agent_root, identity)
-    except Exception:
-        return
-
-
 class PlanSubtaskOut(BaseModel):
     title: str
     status: str
@@ -106,10 +90,6 @@ class AgentEdgeOut(BaseModel):
 class RunTreeOut(BaseModel):
     agents: list[AgentInstanceOut] = Field(default_factory=list)
     edges: list[AgentEdgeOut] = Field(default_factory=list)
-
-
-class AgentStatePatchIn(BaseModel):
-    state: str
 
 
 class SopOut(BaseModel):
@@ -247,72 +227,3 @@ async def get_agent_sop(
 
     return SopOut(md_text=md_text)
 
-
-@router.patch("/api/runs/{run_id}/agents/{agent_id}/state", response_model=AgentInstanceOut)
-async def patch_agent_state(
-    run_id: str,
-    agent_id: str,
-    body: AgentStatePatchIn,
-    tenant: Annotated[models.Tenant, Depends(require_tenant)],
-    session: DbSessionDep,
-) -> AgentInstanceOut:
-    run_id_int = _parse_int_id(run_id, "run_id")
-    agent_id_int = _parse_int_id(agent_id, "agent_id")
-
-    raw_state = (body.state or "").strip()
-    next_state = raw_state.lower().strip()
-    next_state = next_state.replace(" ", "_")
-    if not next_state:
-        raise HTTPException(status_code=400, detail="state is required")
-    if len(next_state) > 50:
-        raise HTTPException(status_code=400, detail="state is too long")
-
-    synonyms, allowed = config_loader.get_state_rules()
-    next_state = synonyms.get(next_state, next_state)
-    if next_state not in allowed:
-        raise HTTPException(status_code=400, detail="Invalid state")
-
-    task = (
-        session.query(models.Task)
-        .filter(models.Task.id == run_id_int, models.Task.tenant_id == tenant.id)
-        .first()
-    )
-    if not task:
-        raise HTTPException(status_code=404, detail="Run not found")
-
-    agent = (
-        session.query(models.AgentInstance)
-        .filter(
-            models.AgentInstance.id == agent_id_int,
-            models.AgentInstance.tenant_id == tenant.id,
-            models.AgentInstance.run_id == run_id_int,
-        )
-        .first()
-    )
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
-
-    setattr(agent, "state", next_state)
-
-    current_rev = getattr(task, "tree_revision", 0) or 0
-    setattr(task, "tree_revision", int(current_rev) + 1)
-
-    session.add(agent)
-    session.add(task)
-    session.commit()
-
-    tenant_id = cast(int, getattr(tenant, "id"))
-    _try_update_agent_state_fs(tenant_id, run_id_int, agent_id_int, next_state)
-
-    parent_agent_id = getattr(agent, "parent_agent_id")
-    return AgentInstanceOut(
-        id=str(getattr(agent, "id")),
-        parent_agent_id=str(parent_agent_id) if parent_agent_id is not None else None,
-        role_label=cast(str | None, getattr(agent, "role_label", None)),
-        state=cast(str, getattr(agent, "state")),
-        current_sop_version_id=(
-            str(getattr(agent, "current_sop_version_id"))
-            if getattr(agent, "current_sop_version_id") is not None
-            else None
-        ),
-    )
