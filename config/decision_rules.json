@@ -22,7 +22,7 @@
     ]
   },
   "agent_type_allowlist": [
-    "ceo",
+    "lead",
     "pm",
     "engineer"
   ]

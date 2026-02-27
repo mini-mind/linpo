@@ -46,22 +46,6 @@ skills:
           type: string
     description: Execute browser automation via Playwright
 
-  a2a_consult:
-    prompt_file: prompts/skills/a2a_consult.md
-    allowed_tools:
-      - a2a.send
-      - a2a.fetch_thread
-    output_contract:
-      type: object
-      properties:
-        thread_id:
-          type: string
-        summary:
-          type: string
-        response:
-          type: string
-    description: Agent-to-agent consultation for cross-agent collaboration
-
   citation_minify:
     prompt_file: prompts/skills/citation_minify.md
     allowed_tools: []

@@ -2,13 +2,14 @@
 # Each agent references its prompt file, model, and allowed skills
 
 agents:
-  ceo:
-    prompt_file: prompts/agents/ceo.md
+  lead:
+    prompt_file: prompts/agents/lead.md
     model: right-code/gpt-5.2
     allowed_skills:
       - chat_user
-      - a2a_consult
-    description: Chief Executive Officer - orchestrates tasks across agents
+      - search_web
+      - citation_minify
+    description: Team Lead - oversees execution and aligns interventions
     default_agent: true
 
   pm:
@@ -17,7 +18,6 @@ agents:
     allowed_skills:
       - chat_user
       - search_web
-      - a2a_consult
       - citation_minify
     description: Project Manager - plans and coordinates work
 
@@ -26,7 +26,6 @@ agents:
     model: right-code/gpt-5.2
     allowed_skills:
       - chat_user
-      - a2a_consult
     description: Software Engineer - implements code solutions
 
   researcher:
@@ -51,5 +50,4 @@ agents:
     model: right-code/gpt-5.2
     allowed_skills:
       - chat_user
-      - a2a_consult
     description: Code Reviewer - reviews and validates work
