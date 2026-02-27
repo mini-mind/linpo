@@ -1,4 +1,4 @@
-# Search Infrastructure
+# 搜索基础设施
 
 ## 文档目录结构
 
@@ -8,11 +8,11 @@
   - [本地部署指南](docs/deployment/local.md) - Docker Compose 本地部署流程
   - [生产部署指南](docs/prod-deployment.md) - 生产环境部署配置
   - [文档中心](docs/README.md) - 完整的项目文档入口
-  - [Sisyphus 工作流](docs/process/sisyphus-workflow.md) - `.sisyphus` 进程文档
+- [Sisyphus 工作流](docs/process/sisyphus-workflow.md) - 流程说明（`.sisyphus/` 位于仓库根目录，不在 `docs/` 中）
 
 - **`prompts/`** - 运行时角色提示词（仅供应用内 Agent 使用）
   - `prompts/agents/*.md` - Agent 角色定义
-  - `prompts/skills/*.md` - Agent 技能提示词（如 `chat_user.md`, `search_web.md`, `browser_run.md`, `a2a_consult.md` 等）
+  - `prompts/skills/*.md` - Agent 技能提示词（如 `chat_user.md`, `search_web.md`, `browser_run.md` 等）
   - 这些文件仅供 LLM 在运行时使用，不包含人类操作手册或部署指南
 
 ## 服务架构
@@ -47,87 +47,56 @@
 - **内部管理端点**: 使用 `docker compose exec` 进入容器
   - 临时端口映射 (仅本地调试): 修改 docker-compose.yml 添加 `127.0.0.1:端口号:端口号`（当前默认已映射 `api-backend:127.0.0.1:8005->8000`）
 
-## Quick Start
+## 快速开始
 
-Run all services:
+启动全部服务：
 ```bash
 docker compose up -d
 ```
 
-If docker compose is not available, use:
+如果没有 `docker compose`，使用：
 ```bash
 docker-compose up -d
 ```
 
-Stop services:
+停止服务：
 ```bash
 docker compose down
 ```
 
-View logs:
+查看日志：
 ```bash
 docker compose logs -f
 ```
 
-## A2A (Agent-to-Agent) Communication
+<a id="intervention"></a>
+## 自然语言干预（Intervention）
 
-The system supports async agent-to-agent communication via Redis streams:
+系统通过 run 事件流支持执行中干预，干预会以 `task.requires_input` 事件广播给 WebSocket 订阅者。
 
-### Flow
-1. `POST /internal/a2a/ask` enqueues A2A jobs to Redis stream `queue:a2a`
-2. `agent-manager` consumes `queue:a2a` (consumer group: `agent-manager-a2a`) and processes messages
-3. `agent-manager` replies by calling `POST /internal/a2a/send`
-4. `GET /api/a2a/threads/{id}` is used by the UI for expanding thread details
+### 流程
+1. `POST /api/runs` 创建 run
+2. `GET /api/runs/{run_id}/tree` 获取树与 `agent_id`
+3. `POST /api/runs/{run_id}/interventions` 提交干预
+4. 通过 `WS /ws/runs/{run_id}` 观察事件
 
-### Environment Variables
+### 请求示例
 
-#### A2A Stream Configuration
-- `A2A_STREAM`: Redis stream for A2A jobs (default: `queue:a2a`)
-- `A2A_DEAD_STREAM`: Dead-letter stream for failed A2A jobs (default: `queue:a2a:dead`)
-- `A2A_GROUP`: Redis consumer group for A2A (default: `agent-manager-a2a`)
-- `A2A_CONSUMER`: Redis consumer name (default: `agent-manager` or hostname)
-- `A2A_MAX_ATTEMPTS`: Max retry attempts for A2A jobs (default: `3`)
+```json
+{
+  "agent_id": "123",
+  "message": "请重新聚焦目标，并更新当前计划"
+}
+```
 
-#### LLM Gateway Configuration
-- `LLM_GATEWAY_URL`: URL of the LLM gateway service (default: `http://llm-gateway:7300`)
-- `LLM_PROVIDERS_HOST_PATH`: Path to llm-providers.json file mounted by `llm-gateway`
-  - HK dev path: `/home/ravin/.web3d-secrets/llm-providers.json`
-  - Without a real providers file, LLM calls will return 502 errors
-
-## CEO Delegation (Tool-Calling Flow)
-
-The CEO agent uses native tool calling to delegate work to sub-agents. This is a **non-blocking** flow:
-- The HTTP request returns immediately with an `a2a_thread_id`
-- Agent execution continues in the background via `agent-manager`
-- Progress can be tracked via A2A thread endpoints
-
-### Flow
-1. `POST /api/agents/ceo/chat` creates a chat request for the CEO agent
-2. CEO LLM receives tools (`a2a.send`, `a2a.fetch_thread`) and decides to call them
-3. API backend executes tool loop:
-   - If tool calls exist: execute them (e.g., `a2a.send` to enqueue sub-agent work)
-   - Pass tool responses back to LLM for further processing
-4. HTTP response returns immediately with `{"a2a_thread_id": "..."}` (non-blocking)
-5. Use `GET /api/a2a/threads/{id}` to poll agent messages and replies
-
-### Tool Schema Requirements
-For tool-calling to work, `llm-gateway` must pass through OpenAI-compatible message fields:
-- `tool_calls`: Array of tool call objects (from LLM response)
-- `tool_call_id`: String identifier for tool response messages
-- **Gotcha**: Ensure `llm-gateway` message schema does not strip extra fields like `tool_call_id`
-
-### Quick QA (Local)
+### 快速验证（本地）
 
 ```bash
 docker compose exec -T api-backend python3 - <<'PY'
 import urllib.request, json, time
 
-# NOTE: This snippet runs inside the api-backend container.
-# - So BASE=http://localhost:8000 is correct here.
-# - From the host, api-backend is bound to http://127.0.0.1:8005 by default.
 BASE = "http://localhost:8000"
 
-# 1. Register
 email = f"qa_{int(time.time())}@example.com"
 req = urllib.request.Request(
     f"{BASE}/api/auth/register",
@@ -136,39 +105,43 @@ req = urllib.request.Request(
 )
 with urllib.request.urlopen(req) as resp:
     token = json.load(resp)["session_token"]
-print(f"Session Token: {token}")
 
-# 2. CEO chat
 req = urllib.request.Request(
-    f"{BASE}/api/agents/ceo/chat",
-    data=json.dumps({"message": "Get top 3 trending repos on GitHub"}).encode(),
+    f"{BASE}/api/runs",
+    data=json.dumps({"input_nl": "hello", "input": {}}).encode(),
     headers={"Content-Type": "application/json", "X-Session-Token": token}
 )
 with urllib.request.urlopen(req) as resp:
-    chat = json.load(resp)
-thread_id = chat["a2a_thread_id"]
-print(f"A2A Thread ID: {thread_id}")
+    run = json.load(resp)
+run_id = run["run_id"]
 
-# 3. Poll thread (wait a bit for processing)
-time.sleep(5)
 req = urllib.request.Request(
-    f"{BASE}/api/a2a/threads/{thread_id}",
+    f"{BASE}/api/runs/{run_id}/tree",
     headers={"X-Session-Token": token}
 )
 with urllib.request.urlopen(req) as resp:
-    thread = json.load(resp)
-print(json.dumps(thread, indent=2))
+    tree = json.load(resp)
+agent_id = tree["agents"][0]["id"]
+
+req = urllib.request.Request(
+    f"{BASE}/api/runs/{run_id}/interventions",
+    data=json.dumps({"agent_id": str(agent_id), "message": "更新当前计划"}).encode(),
+    headers={"Content-Type": "application/json", "X-Session-Token": token}
+)
+with urllib.request.urlopen(req) as resp:
+    event = json.load(resp)
+print(event)
 PY
 ```
 
-## Environment Variables
+## 环境变量
 
 ### 必填环境变量
 - `ADMIN_API_KEY`: Admin 认证密钥 (用于创建租户)
 - `INTERNAL_API_KEY`: 内部服务认证密钥 (服务间通信)
 - `SEARXNG_SECRET_KEY`: SearXng 搜索引擎密钥（仅在部署 `searxng` 服务时需要）
 
-### 可选环境变量 (有默认值)
+### 可选环境变量（有默认值）
 - `DATABASE_URL`: PostgreSQL 连接字符串
   - 默认值: `postgresql://postgres:postgres@postgres:5432/web3d` (仅适用于 compose 网络内)
 - `REDIS_URL`: Redis 连接字符串
@@ -176,7 +149,7 @@ PY
 - `ALLOW_ORIGINS`: CORS 允许的源
 - `RATE_LIMIT`: 速率限制 (请求/分钟)
 
-## Authentication
+## 认证方式
 
 - **外部 API**: 使用 `X-API-Key` 头部认证
 - **内部服务**: 使用 `X-Internal-Key` 头部认证
@@ -317,7 +290,7 @@ Playwright 浏览器执行任务已迁移至独立 worker 服务器以提升性�
 
 ### DuckDNS 使用说明
 
-- **获取子域名**：在 https://www.duckdns.org 注册，可免费获取 `your-name.duckdns.org` 子域名
+- **获取子域名**：在 https://www.duckdns.org 注册，可免费获取 `roboard.duckdns.org` 子域名
 - **更新 IP**：通过以下方式保持域名指向当前公网 IP：
   - **Web 界面**：登录 DuckDNS 后手动更新
   - **定时任务**：使用 `cron` 或定时脚本调用 DuckDNS API
@@ -391,7 +364,7 @@ edge 服务使用 Caddy 作为反向代理，自动通过 Let's Encrypt 获取�
 - 示例命令：
   ```bash
   certbot certonly --dns-duckdns --dns-duckdns-token YOUR_TOKEN \
-    --dns-duckdns-domains your-name.duckdns.org
+    --dns-duckdns-domains roboard.duckdns.org
   ```
 
 #### 自有域名 + Cloudflare

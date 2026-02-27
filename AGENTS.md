@@ -29,7 +29,7 @@ Each service owns its own `app/main.py` entrypoint and `requirements*.txt` depen
 | Task | Location | Notes |
 |------|----------|-------|
 | API/WS behavior | api-backend/app/main.py | FastAPI app, auth, WS events/snapshots |
-| Dispatch + A2A | agent-manager/app/main.py | Redis streams, scheduler, dispatch |
+| Dispatch | agent-manager/app/main.py | Redis streams, scheduler, dispatch |
 | LLM proxy | llm-gateway/app/main.py | `/internal/llm/chat` only |
 | SearXNG proxy | mcp-server/app/main.py | `/search` only |
 | Worker API | worker-playwright/app/main.py | `/run` internal-only |
@@ -56,7 +56,8 @@ Each service owns its own `app/main.py` entrypoint and `requirements*.txt` depen
 - No CI config files; builds are via Docker Compose + scripts.
 - 每改完一个服务就立即更新相关的 `AGENTS.md` 并完成该服务测试。
 - 每次完成版本更新（TAG/镜像）必须完成测试、commit、部署。
-- 尽可能用中文与写文档，除非用户明确要求使用其他语言。
+- 复杂任务尽量拆分给子代理并行推进。
+- 必须用中文交流与写文档，除非用户明确要求使用其他语言。
 
 ## ANTI-PATTERNS (THIS PROJECT)
 - Never commit secrets (see `docs/agent-framework.md`).
