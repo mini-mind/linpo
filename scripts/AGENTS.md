@@ -19,6 +19,8 @@ Operational scripts for deploy/push/backup/verification workflows.
 - Bash scripts use `set -euo pipefail` and `DRY_RUN` flags.
 - Tag format: `YYYYMMDD-<git-short-sha>` (core push adds `-dirty` if dirty).
 - `deploy_worker.sh` requires `INTERNAL_API_KEY` and pre-pulls runner images.
+- 每次完成版本更新（TAG/镜像）必须完成测试、commit、部署。
+- 尽可能用中文与写文档，除非用户明确要求使用其他语言。
 
 ## ANTI-PATTERNS
 - Do not run `pg_restore.sh` without confirming target DB and backups.

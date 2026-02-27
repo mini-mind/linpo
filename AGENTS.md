@@ -55,6 +55,8 @@ Each service owns its own `app/main.py` entrypoint and `requirements*.txt` depen
 - Local compose binds `api-backend` to `127.0.0.1:8005->8000` by default.
 - No CI config files; builds are via Docker Compose + scripts.
 - 每改完一个服务就立即更新相关的 `AGENTS.md` 并完成该服务测试。
+- 每次完成版本更新（TAG/镜像）必须完成测试、commit、部署。
+- 尽可能用中文与写文档，除非用户明确要求使用其他语言。
 
 ## ANTI-PATTERNS (THIS PROJECT)
 - Never commit secrets (see `docs/agent-framework.md`).

@@ -27,6 +27,7 @@ docs/
 ## CONVENTIONS
 - Dated files use `YYYY-MM-DD-<topic>.md`.
 - Plans/specs/decisions are additive; avoid overwriting history.
+- 尽可能用中文与写文档，除非用户明确要求使用其他语言。
 
 ## ANTI-PATTERNS
 - Do not include secrets in docs.
