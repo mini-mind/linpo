@@ -49,3 +49,8 @@ python -m pytest -q
 - 2026-02-27: run 控制动作补全：`run.pause` 触发 `task.requires_input` 并标记 `action.applied`；`run.resume`/`run.retry` 触发重新入队派发；新增 `tests/test_run_controls.py` 覆盖。
 - 2026-02-27: Added agent skills manifest API + FS layout for skills, with tests for roundtrip and layout.
 - 2026-02-27: Added community skills registry + install API, plus team export/import YAML endpoints.
+- 2026-02-27: Added community skill search + NL install, skill catalog tiers (builtin/platform/tenant), and skill bootstrap enqueue endpoint.
+- 2026-02-27: Added skill invoke enqueue endpoint `/api/skills/{skill_key}/invoke` for `queue:skill-exec`, and allowed skill.create/execute event types.
+- 2026-02-27: Added placeholder Alembic revision `20260219_0006` to repair migration chain.
+- 2026-02-27: 新增 `/api/runs/{run_id}/events` 与 `/api/runs/{run_id}/kanban`，测试覆盖见 `tests/test_runs_events_kanban.py`。
+- 2026-02-27: 接口删减建议（仅评估）：若前端已完全切换到 run 视图，可评估是否逐步弃用旧的 task 结果/通知接口（`/api/tasks/{task_id}/result`、`/api/tasks/{task_id}/notifications`）及 `ws/events` 路径；需先核实外部依赖后再决定。

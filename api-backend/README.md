@@ -234,9 +234,17 @@ Request:
 
 `GET /api/runs/{run_id}/team/export`
 
-Response:
+Query:
+- `format`: `yaml` (default) or `json`
+
+Response (YAML):
 ```json
-{ "yaml": "version: 1\n..." }
+{ "format": "yaml", "yaml": "version: 1\n..." }
+```
+
+Response (JSON):
+```json
+{ "format": "json", "content": "{\"version\":1,...}" }
 ```
 
 `POST /api/runs/team/import`
