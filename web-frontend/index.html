@@ -59,6 +59,15 @@
               <div id="task-status-display" class="status-display"></div>
             </div>
 
+            <div class="task-controls-section">
+              <h4 class="section-title" data-i18n="taskTree.controls">Controls</h4>
+              <div class="control-buttons">
+                <button id="task-control-pause" class="btn btn-ghost" type="button" data-i18n="taskTree.pause">Pause</button>
+                <button id="task-control-resume" class="btn btn-ghost" type="button" data-i18n="taskTree.resume">Resume</button>
+                <button id="task-control-retry" class="btn btn-ghost" type="button" data-i18n="taskTree.retry">Retry</button>
+              </div>
+            </div>
+
             <div class="task-plan-section">
               <h4 class="section-title" data-i18n="taskTree.plan">Plan</h4>
               <div id="task-plan-empty" class="plan-empty" data-i18n="taskTree.plan.empty">No plan subtasks yet.</div>
@@ -68,6 +77,54 @@
             <div class="task-sop-section">
               <h4 class="section-title" data-i18n="taskTree.sop">SOP</h4>
               <div id="task-sop-display" class="sop-display"></div>
+            </div>
+
+            <div class="task-sources-section">
+              <h4 class="section-title" data-i18n="taskTree.sources">Sources</h4>
+              <div id="task-sources-empty" class="sources-empty" data-i18n="taskTree.sourcesEmpty">No sources yet.</div>
+              <ul id="task-sources-list" class="sources-list"></ul>
+              <form id="task-sources-form" class="sources-form">
+                <input
+                  id="task-sources-input"
+                  type="text"
+                  placeholder="Add a source path..."
+                  data-i18n-placeholder="taskTree.sourcePlaceholder"
+                  autocomplete="off"
+                />
+                <button type="submit" class="btn btn-ghost" data-i18n="taskTree.addSource">Add</button>
+              </form>
+            </div>
+
+            <div class="task-skills-section">
+              <h4 class="section-title" data-i18n="taskTree.skills">Skills</h4>
+              <div id="task-skills-empty" class="skills-empty" data-i18n="taskTree.skillsEmpty">No skills yet.</div>
+              <ul id="task-skills-list" class="skills-list"></ul>
+              <div class="skills-actions">
+                <select id="task-skill-select" aria-label="Skills"></select>
+                <button id="task-skill-install" class="btn btn-ghost" type="button" data-i18n="taskTree.installSkill">
+                  Install
+                </button>
+              </div>
+            </div>
+
+            <div class="task-team-section">
+              <h4 class="section-title" data-i18n="taskTree.teamTemplate">Team Template</h4>
+              <div class="team-actions">
+                <button id="task-team-export" class="btn btn-ghost" type="button" data-i18n="taskTree.exportYaml">
+                  Export YAML
+                </button>
+              </div>
+              <form id="task-team-import-form" class="team-import-form">
+                <textarea
+                  id="task-team-import-input"
+                  rows="6"
+                  placeholder="Paste team YAML..."
+                  data-i18n-placeholder="taskTree.importPlaceholder"
+                ></textarea>
+                <button id="task-team-import" type="submit" class="btn btn-ghost" data-i18n="taskTree.importYaml">
+                  Import YAML
+                </button>
+              </form>
             </div>
 
             <div class="task-chat-section">

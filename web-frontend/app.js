@@ -109,9 +109,24 @@
       "taskTree.cancel": "Cancel",
       "taskTree.detailsTitle": "Task Details",
       "taskTree.status": "Status",
+      "taskTree.controls": "Controls",
+      "taskTree.pause": "Pause",
+      "taskTree.resume": "Resume",
+      "taskTree.retry": "Retry",
       "taskTree.plan": "Plan",
       "taskTree.plan.empty": "No plan subtasks yet.",
       "taskTree.sop": "SOP",
+      "taskTree.sources": "Sources",
+      "taskTree.sourcesEmpty": "No sources yet.",
+      "taskTree.addSource": "Add",
+      "taskTree.sourcePlaceholder": "Add a source path...",
+      "taskTree.skills": "Skills",
+      "taskTree.skillsEmpty": "No skills yet.",
+      "taskTree.installSkill": "Install",
+      "taskTree.teamTemplate": "Team Template",
+      "taskTree.exportYaml": "Export YAML",
+      "taskTree.importYaml": "Import YAML",
+      "taskTree.importPlaceholder": "Paste team YAML...",
       "taskTree.chat": "Chat",
       "taskTree.chatPlaceholder": "Type a message...",
       "taskTree.send": "Send",
@@ -125,6 +140,19 @@
       "taskTree.msg.fetchTreeFailed": "Fetch tree failed",
       "taskTree.msg.fetchSopFailed": "Fetch SOP failed",
       "taskTree.msg.chatSendFailed": "Send message failed",
+      "taskTree.msg.interventionSubmitted": "Intervention submitted",
+      "taskTree.msg.sourcesLoadFailed": "Load sources failed",
+      "taskTree.msg.sourcesSaveFailed": "Save sources failed",
+      "taskTree.msg.sourceAdded": "Source added",
+      "taskTree.msg.controlSent": "Control sent",
+      "taskTree.msg.controlFailed": "Control failed",
+      "taskTree.msg.skillsLoadFailed": "Load skills failed",
+      "taskTree.msg.skillsInstallFailed": "Install skill failed",
+      "taskTree.msg.skillsInstallOk": "Skill installed",
+      "taskTree.msg.teamExportFailed": "Export failed",
+      "taskTree.msg.teamExportOk": "Exported template",
+      "taskTree.msg.teamImportFailed": "Import failed",
+      "taskTree.msg.teamImportOk": "Imported new run",
 
     },
     zh: {
@@ -226,9 +254,24 @@
       "taskTree.cancel": "取消",
       "taskTree.detailsTitle": "任务详情",
       "taskTree.status": "状态",
+      "taskTree.controls": "控制",
+      "taskTree.pause": "暂停",
+      "taskTree.resume": "继续",
+      "taskTree.retry": "重试",
       "taskTree.plan": "计划",
       "taskTree.plan.empty": "暂无计划子任务。",
       "taskTree.sop": "SOP",
+      "taskTree.sources": "来源",
+      "taskTree.sourcesEmpty": "暂无来源。",
+      "taskTree.addSource": "添加",
+      "taskTree.sourcePlaceholder": "添加来源路径...",
+      "taskTree.skills": "技能",
+      "taskTree.skillsEmpty": "暂无技能。",
+      "taskTree.installSkill": "安装",
+      "taskTree.teamTemplate": "团队模板",
+      "taskTree.exportYaml": "导出 YAML",
+      "taskTree.importYaml": "导入 YAML",
+      "taskTree.importPlaceholder": "粘贴团队 YAML...",
       "taskTree.chat": "聊天",
       "taskTree.chatPlaceholder": "输入消息...",
       "taskTree.send": "发送",
@@ -242,6 +285,19 @@
       "taskTree.msg.fetchTreeFailed": "获取树失败",
       "taskTree.msg.fetchSopFailed": "获取 SOP 失败",
       "taskTree.msg.chatSendFailed": "发送消息失败",
+      "taskTree.msg.interventionSubmitted": "已提交干预",
+      "taskTree.msg.sourcesLoadFailed": "加载来源失败",
+      "taskTree.msg.sourcesSaveFailed": "保存来源失败",
+      "taskTree.msg.sourceAdded": "已添加来源",
+      "taskTree.msg.controlSent": "已发送控制指令",
+      "taskTree.msg.controlFailed": "控制指令失败",
+      "taskTree.msg.skillsLoadFailed": "加载技能失败",
+      "taskTree.msg.skillsInstallFailed": "安装技能失败",
+      "taskTree.msg.skillsInstallOk": "技能已安装",
+      "taskTree.msg.teamExportFailed": "导出失败",
+      "taskTree.msg.teamExportOk": "已导出模板",
+      "taskTree.msg.teamImportFailed": "导入失败",
+      "taskTree.msg.teamImportOk": "已导入新运行",
 
     }
   };
@@ -1187,9 +1243,24 @@
       taskPlanList: byId("task-plan-list"),
       taskPlanEmpty: byId("task-plan-empty"),
       taskSopDisplay: byId("task-sop-display"),
+      taskSourcesList: byId("task-sources-list"),
+      taskSourcesEmpty: byId("task-sources-empty"),
+      taskSourcesForm: byId("task-sources-form"),
+      taskSourcesInput: byId("task-sources-input"),
+      taskSkillsList: byId("task-skills-list"),
+      taskSkillsEmpty: byId("task-skills-empty"),
+      taskSkillSelect: byId("task-skill-select"),
+      taskSkillInstall: byId("task-skill-install"),
+      taskTeamExport: byId("task-team-export"),
+      taskTeamImportForm: byId("task-team-import-form"),
+      taskTeamImportInput: byId("task-team-import-input"),
+      taskTeamImport: byId("task-team-import"),
       taskChatMessages: byId("task-chat-messages"),
       taskChatForm: byId("task-chat-form"),
-      taskChatInput: byId("task-chat-input")
+      taskChatInput: byId("task-chat-input"),
+      taskControlPause: byId("task-control-pause"),
+      taskControlResume: byId("task-control-resume"),
+      taskControlRetry: byId("task-control-retry")
     };
 
     const state = {
@@ -1198,6 +1269,9 @@
       runId: "",
       selectedNode: null,
       chatHistories: {},
+      sourcesByAgent: {},
+      skillsByAgent: {},
+      communitySkills: [],
       dragPayload: null,
       pointerDrag: null,
       suppressNextClick: false,
@@ -1644,6 +1718,8 @@
       if (agent?.id) {
         fetchSop(agent.id);
         loadChatHistory(agent.id);
+        loadSources(agent.id);
+        loadSkills(agent.id);
       }
 
       const prevSelected = ui.taskTreeRoot?.querySelector(".task-tree-node.is-selected");
@@ -1669,6 +1745,255 @@
       } catch (err) {
         if (handleAuthError(err)) return;
         setMessage(t("taskTree.msg.fetchSopFailed"), "error");
+      }
+    };
+
+    const renderSources = (agentId) => {
+      if (!ui.taskSourcesList || !ui.taskSourcesEmpty) return;
+      ui.taskSourcesList.innerHTML = "";
+      const sources = Array.isArray(state.sourcesByAgent?.[agentId]) ? state.sourcesByAgent[agentId] : [];
+      toggleHidden(ui.taskSourcesEmpty, sources.length > 0);
+      sources.forEach((source) => {
+        const path = safeText(source?.path || "").trim();
+        const label = safeText(source?.label || "").trim();
+        const li = document.createElement("li");
+        li.className = "source-item";
+
+        const meta = document.createElement("div");
+        meta.className = "source-meta";
+        const pathEl = document.createElement("div");
+        pathEl.className = "source-path";
+        pathEl.textContent = path || "-";
+        meta.appendChild(pathEl);
+        if (label) {
+          const labelEl = document.createElement("div");
+          labelEl.className = "source-label";
+          labelEl.textContent = label;
+          meta.appendChild(labelEl);
+        }
+
+        li.appendChild(meta);
+        ui.taskSourcesList.appendChild(li);
+      });
+    };
+
+    const renderSkills = (agentId) => {
+      if (!ui.taskSkillsList || !ui.taskSkillsEmpty) return;
+      ui.taskSkillsList.innerHTML = "";
+      const skills = Array.isArray(state.skillsByAgent?.[agentId]) ? state.skillsByAgent[agentId] : [];
+      toggleHidden(ui.taskSkillsEmpty, skills.length > 0);
+      skills.forEach((skill) => {
+        const name = safeText(skill?.name || "").trim();
+        const filename = safeText(skill?.filename || "").trim();
+        const li = document.createElement("li");
+        li.className = "skill-item";
+
+        const meta = document.createElement("div");
+        meta.className = "skill-meta";
+        const nameEl = document.createElement("div");
+        nameEl.className = "skill-name";
+        nameEl.textContent = name || "-";
+        meta.appendChild(nameEl);
+        if (filename) {
+          const fileEl = document.createElement("div");
+          fileEl.className = "skill-filename";
+          fileEl.textContent = filename;
+          meta.appendChild(fileEl);
+        }
+        li.appendChild(meta);
+        ui.taskSkillsList.appendChild(li);
+      });
+    };
+
+    const loadSources = async (agentId) => {
+      if (!agentId || !state.runId) return;
+      if (!ui.taskSourcesList) return;
+      try {
+        const resp = await apiFetch(
+          `/api/runs/${encodeURIComponent(state.runId)}/agents/${encodeURIComponent(agentId)}/sources`,
+          { method: "GET" }
+        );
+        const data = await resp.json().catch(() => null);
+        const sources = Array.isArray(data?.sources) ? data.sources : [];
+        state.sourcesByAgent[agentId] = sources;
+        renderSources(agentId);
+      } catch (err) {
+        if (handleAuthError(err)) return;
+        setMessage(t("taskTree.msg.sourcesLoadFailed"), "error");
+      }
+    };
+
+    const populateCommunitySkills = () => {
+      if (!ui.taskSkillSelect) return;
+      ui.taskSkillSelect.innerHTML = "";
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = t("taskTree.installSkill");
+      ui.taskSkillSelect.appendChild(placeholder);
+
+      const skills = Array.isArray(state.communitySkills) ? state.communitySkills : [];
+      skills.forEach((skill) => {
+        const key = safeText(skill?.key || "").trim();
+        const name = safeText(skill?.name || "").trim();
+        if (!key || !name) return;
+        const option = document.createElement("option");
+        option.value = key;
+        option.textContent = name;
+        ui.taskSkillSelect.appendChild(option);
+      });
+    };
+
+    const loadCommunitySkills = async () => {
+      try {
+        const resp = await apiFetch("/api/community-skills", { method: "GET" });
+        const data = await resp.json().catch(() => null);
+        const skills = Array.isArray(data?.skills) ? data.skills : [];
+        state.communitySkills = skills;
+        populateCommunitySkills();
+      } catch (err) {
+        if (handleAuthError(err)) return;
+        setMessage(t("taskTree.msg.skillsLoadFailed"), "error");
+      }
+    };
+
+    const loadSkills = async (agentId) => {
+      if (!agentId || !state.runId) return;
+      if (!ui.taskSkillsList) return;
+      try {
+        const resp = await apiFetch(
+          `/api/runs/${encodeURIComponent(state.runId)}/agents/${encodeURIComponent(agentId)}/skills`,
+          { method: "GET" }
+        );
+        const data = await resp.json().catch(() => null);
+        const skills = Array.isArray(data?.skills) ? data.skills : [];
+        state.skillsByAgent[agentId] = skills;
+        renderSkills(agentId);
+      } catch (err) {
+        if (handleAuthError(err)) return;
+        setMessage(t("taskTree.msg.skillsLoadFailed"), "error");
+      }
+    };
+
+    const saveSources = async (agentId, sources) => {
+      if (!state.runId) return;
+      try {
+        const resp = await apiFetch(
+          `/api/runs/${encodeURIComponent(state.runId)}/agents/${encodeURIComponent(agentId)}/sources`,
+          {
+            method: "PUT",
+            body: JSON.stringify({ sources })
+          }
+        );
+        const data = await resp.json().catch(() => null);
+        const next = Array.isArray(data?.sources) ? data.sources : sources;
+        state.sourcesByAgent[agentId] = next;
+        renderSources(agentId);
+        setMessage(t("taskTree.msg.sourceAdded"), "ok");
+      } catch (err) {
+        if (handleAuthError(err)) return;
+        setMessage(t("taskTree.msg.sourcesSaveFailed"), "error");
+      }
+    };
+
+    const installSelectedSkill = async () => {
+      const agentId = state.selectedNode?.id;
+      if (!agentId || !state.runId || !ui.taskSkillSelect) {
+        setMessage(t("sop.msg.needAgent"), "error");
+        return;
+      }
+      const skillKey = ui.taskSkillSelect.value.trim();
+      if (!skillKey) return;
+      try {
+        const resp = await apiFetch(
+          `/api/runs/${encodeURIComponent(state.runId)}/agents/${encodeURIComponent(agentId)}/skills/install`,
+          {
+            method: "POST",
+            body: JSON.stringify({ skill_key: skillKey })
+          }
+        );
+        const data = await resp.json().catch(() => null);
+        const skills = Array.isArray(data?.skills) ? data.skills : [];
+        state.skillsByAgent[agentId] = skills;
+        renderSkills(agentId);
+        setMessage(t("taskTree.msg.skillsInstallOk"), "ok");
+      } catch (err) {
+        if (handleAuthError(err)) return;
+        setMessage(t("taskTree.msg.skillsInstallFailed"), "error");
+      }
+    };
+
+    const exportTeamTemplate = async () => {
+      if (!state.runId) {
+        setMessage(t("sop.msg.needRun"), "error");
+        return;
+      }
+      try {
+        const resp = await apiFetch(`/api/runs/${encodeURIComponent(state.runId)}/team/export`, { method: "GET" });
+        const data = await resp.json().catch(() => null);
+        const yamlText = safeText(data?.yaml || "").trim();
+        if (!yamlText) throw new Error("empty export");
+        const blob = new Blob([yamlText], { type: "text/yaml" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `team-${state.runId}.yaml`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(link.href);
+        setMessage(t("taskTree.msg.teamExportOk"), "ok");
+      } catch (err) {
+        if (handleAuthError(err)) return;
+        setMessage(t("taskTree.msg.teamExportFailed"), "error");
+      }
+    };
+
+    const importTeamTemplate = async () => {
+      if (!state.runId) {
+        setMessage(t("sop.msg.needRun"), "error");
+        return;
+      }
+      if (!ui.taskTeamImportInput) return;
+      const yamlText = ui.taskTeamImportInput.value.trim();
+      if (!yamlText) return;
+      try {
+        const resp = await apiFetch("/api/runs/team/import", {
+          method: "POST",
+          body: JSON.stringify({ yaml: yamlText })
+        });
+        const data = await resp.json().catch(() => null);
+        const newRunId = safeText(data?.run_id || "").trim();
+        if (newRunId) {
+          state.runId = newRunId;
+          localStorage.setItem(STORAGE.runId, newRunId);
+          await fetchTree();
+        }
+        ui.taskTeamImportInput.value = "";
+        setMessage(t("taskTree.msg.teamImportOk"), "ok");
+      } catch (err) {
+        if (handleAuthError(err)) return;
+        setMessage(t("taskTree.msg.teamImportFailed"), "error");
+      }
+    };
+
+    const sendControlAction = async (actionType) => {
+      const agentId = state.selectedNode?.id;
+      if (!agentId) {
+        setMessage(t("sop.msg.needAgent"), "error");
+        return;
+      }
+      if (!state.runId) {
+        setMessage(t("sop.msg.needRun"), "error");
+        return;
+      }
+      try {
+        await apiFetch(`/api/runs/${encodeURIComponent(state.runId)}/actions`, {
+          method: "POST",
+          body: JSON.stringify({ target_agent_id: agentId, action_type: actionType })
+        });
+        setMessage(t("taskTree.msg.controlSent"), "ok");
+      } catch (err) {
+        if (handleAuthError(err)) return;
+        setMessage(t("taskTree.msg.controlFailed"), "error");
       }
     };
 
@@ -1711,7 +2036,10 @@
       if (!message) return;
 
       const agentId = state.selectedNode.id;
-      const agentType = state.selectedNode.agent?.type || state.selectedNode.agent?.agent_type || "ceo";
+      if (!state.runId) {
+        setMessage(t("taskTree.msg.chatSendFailed"), "error");
+        return;
+      }
 
       const userMsg = { role: "user", content: message, timestamp: Date.now() };
       if (!state.chatHistories[agentId]) state.chatHistories[agentId] = [];
@@ -1721,24 +2049,17 @@
 
       ui.taskChatInput.value = "";
 
-      const history = state.chatHistories[agentId] || [];
-      const recentHistory = history.slice(-10);
-      const historyContext = recentHistory.map(msg => `${msg.role}: ${msg.content}`).join('\n');
-      const fullMessage = historyContext ? `${historyContext}\n\n[run_id:${state.runId}] [agent_id:${agentId}] ${message}` : `[run_id:${state.runId}] [agent_id:${agentId}] ${message}`;
-
       try {
-        const resp = await apiFetch(`/api/agents/${encodeURIComponent(agentType)}/chat`, {
+        const resp = await apiFetch(`/api/runs/${encodeURIComponent(state.runId)}/interventions`, {
           method: "POST",
           body: JSON.stringify({
-            message: fullMessage,
-            run_id: state.runId,
+            message,
             agent_id: agentId
           })
         });
-        const data = await resp.json().catch(() => null);
-        const reply = data?.reply || data?.message || "No reply";
-        const assistantMsg = { role: "assistant", content: reply, timestamp: Date.now() };
-        state.chatHistories[agentId].push(assistantMsg);
+        await resp.json().catch(() => null);
+        const systemMsg = { role: "system", content: t("taskTree.msg.interventionSubmitted"), timestamp: Date.now() };
+        state.chatHistories[agentId].push(systemMsg);
         saveChatHistory(agentId, state.chatHistories[agentId]);
         renderChat(agentId);
       } catch (err) {
@@ -1769,6 +2090,7 @@
         state.session = me;
         setSessionUi(me);
         setConnectionStatus("idle");
+        await loadCommunitySkills();
 
         const storedRunId = localStorage.getItem(STORAGE.runId);
         if (storedRunId) {
@@ -1834,6 +2156,59 @@
       ui.taskChatForm.addEventListener("submit", (e) => {
         e.preventDefault();
         void sendChatMessage();
+      });
+    }
+    if (ui.taskSourcesForm) {
+      ui.taskSourcesForm.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const agentId = state.selectedNode?.id;
+        if (!agentId || !ui.taskSourcesInput) {
+          setMessage(t("sop.msg.needAgent"), "error");
+          return;
+        }
+        const path = ui.taskSourcesInput.value.trim();
+        if (!path) return;
+        const existing = Array.isArray(state.sourcesByAgent?.[agentId]) ? state.sourcesByAgent[agentId] : [];
+        const filtered = existing.filter((item) => safeText(item?.path || "") !== path);
+        const next = [...filtered, { path }];
+        ui.taskSourcesInput.value = "";
+        void saveSources(agentId, next);
+      });
+    }
+    if (ui.taskSkillInstall) {
+      ui.taskSkillInstall.addEventListener("click", (e) => {
+        e.preventDefault();
+        void installSelectedSkill();
+      });
+    }
+    if (ui.taskTeamExport) {
+      ui.taskTeamExport.addEventListener("click", (e) => {
+        e.preventDefault();
+        void exportTeamTemplate();
+      });
+    }
+    if (ui.taskTeamImportForm) {
+      ui.taskTeamImportForm.addEventListener("submit", (e) => {
+        e.preventDefault();
+        void importTeamTemplate();
+      });
+    }
+    if (ui.taskControlPause) {
+      ui.taskControlPause.addEventListener("click", (e) => {
+        e.preventDefault();
+        void sendControlAction("run.pause");
+      });
+    }
+    if (ui.taskControlResume) {
+      ui.taskControlResume.addEventListener("click", (e) => {
+        e.preventDefault();
+        void sendControlAction("run.resume");
+      });
+    }
+    if (ui.taskControlRetry) {
+      ui.taskControlRetry.addEventListener("click", (e) => {
+        e.preventDefault();
+        void sendControlAction("run.retry");
       });
     }
     if (ui.logoutBtn) {
