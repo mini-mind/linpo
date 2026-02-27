@@ -17,6 +17,8 @@ Each service owns its own `app/main.py` entrypoint and `requirements*.txt` depen
 ├── mcp-server/           # SearXNG proxy
 ├── worker-playwright/    # Worker API (calls MCP/Playwright)
 ├── playwright-gateway/   # Playwright runner orchestration
+├── skill-gateway/        # Docker sandbox executor gateway
+├── sandbox-template/     # Sandbox template generator
 ├── web-frontend/         # Static HTML/CSS/JS UI
 ├── gateway/              # Nginx reverse proxy rules
 ├── edge/                 # Caddy/Nginx edge proxy
@@ -34,6 +36,8 @@ Each service owns its own `app/main.py` entrypoint and `requirements*.txt` depen
 | SearXNG proxy | mcp-server/app/main.py | `/search` only |
 | Worker API | worker-playwright/app/main.py | `/run` internal-only |
 | Playwright runner | playwright-gateway/app/main.py | Docker runner orchestration |
+| Skill gateway | skill-gateway/app/main.py | `/skills/*` internal-only |
+| Sandbox template | sandbox-template/app/main.py | `/templates/*` internal-only |
 | UI | web-frontend/index.html + app.js | No build step |
 | Routing | gateway/nginx.conf + edge/Caddyfile | `/api`, `/ws`, `/` routing |
 | Deployment | deploy/* | prod/worker/legacy compose |
@@ -58,6 +62,18 @@ Each service owns its own `app/main.py` entrypoint and `requirements*.txt` depen
 - 每次完成版本更新（TAG/镜像）必须完成测试、commit、部署。
 - 复杂任务尽量拆分给子代理并行推进。
 - 必须用中文交流与写文档，除非用户明确要求使用其他语言。
+- 禁止多轮压缩；仅允许在执行过程中“不得已”压缩一次，且必须在任务完成后明确告知是否发生压缩。
+- 若已发生压缩：必须及时补齐交接文档，并提供新 session 的开头指令模板。
+- 每个 agent 必须使用 ReAct 框架执行分配任务（先推理，再行动，最后复盘）。
+
+交接新 session 开头指令模板（发生压缩时必须提供）：
+```text
+请读取上一轮交接文档并继续：
+- 交接文档路径: <path>
+- 当前状态: <progress summary>
+- 剩余任务: <remaining tasks>
+- 关键约束: <constraints>
+```
 
 ## ANTI-PATTERNS (THIS PROJECT)
 - Never commit secrets (see `docs/agent-framework.md`).
@@ -86,8 +102,39 @@ INTERNAL_API_KEY=... TAG=YYYYMMDD-<sha> ./scripts/deploy_worker.sh
 cd api-backend && .venv/bin/python -m pytest -q
 ```
 
-## NOTES
-- `docs/CONSTITUTION.md` defines governance and communication rules; treat as authoritative.
+## CONSTITUTION
+
+### 沟通语言规则
+- 默认用中文与用户交流，除非用户明确要求使用其他语言。
+
+### 章程修改规则
+- 涉及本项目的关键规则（例如流程、权限、安全边界、交付标准）的新增或修改，必须先征得用户确认后，才能写入本章程。
+
+### 迭代交付规则
+- 每轮迭代完成后，默认进行一次 git commit；并按约定的部署流程部署到可访问环境，方便用户查看实际效果（部署方式需在项目内明确）。
+- 部署使用日期型 TAG（例如 `YYYYMMDD-<git-short-sha>`）。
+- 经用户授权，可通过 SSH 登录 ravin（68.64.179.125）执行前端/网关/searxng 部署命令（遵守拆分部署：ravin 只跑 edge/gateway/web-frontend/searxng，本机跑重服务）。
+
+### 部署原则
+- 拆分部署架构：ravin（68.64.179.125）运行轻量级边缘服务（edge/gateway/web-frontend/searxng），本地机器运行重型服务（api-backend、agent-manager、worker-playwright 等）。
+- Agent 执行规范：所有 agent 执行任务必须采用 ReAct（先推理、再行动、最后复盘）。
+- SSH 授权状态：用户已明确授权通过 SSH 登录 ravin 执行部署命令。
+
+## REACT 执行规范
+
+所有 agent 处理分配任务时必须使用 ReAct，输出结构固定为三段：
+
+1) 推理：
+- 明确目标、约束与假设
+- 列出需要检查的文件/命令
+
+2) 行动：
+- 按步骤执行，记录关键结果（文件、命令、输出）
+- 遇到阻塞必须记录原因与下一步
+
+3) 复盘：
+- 说明完成情况与验证结果
+- 标记遗留问题与风险
 - AGENTS.md follows directory precedence: the closest file to the working area applies.
 - `.env` is required for secrets; `.env` and `.env.*` are gitignored.
 - `.gitignore` also ignores `backups/`, `data/`, `screenshots/`, and `sops/*` (except templates).
