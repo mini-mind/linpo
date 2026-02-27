@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
-import os
+import yaml
 from pathlib import Path
 from typing import Any
 
 
 # Fallback values matching existing hardcoded values in main.py and tree_api.py
-_FALLBACK_ALLOWED_AGENT_TYPES = ["ceo", "pm", "engineer"]
+_FALLBACK_ALLOWED_AGENT_TYPES = ["lead", "pm", "engineer"]
 
 _FALLBACK_TRENDING_KEYWORDS = [
     "github trending",
@@ -34,18 +34,18 @@ _FALLBACK_GROWTH_INDICATORS = [
 ]
 
 # Test override for repo root
-_REPO_ROOT_OVERRIDE: Path | None = None
+_repo_root_override: Path | None = None
 
 def _set_repo_root_override(path: Path | None) -> None:
     """Override the repo root for testing."""
-    global _REPO_ROOT_OVERRIDE
-    _REPO_ROOT_OVERRIDE = path
+    global _repo_root_override
+    _repo_root_override = path
 
 
 def _clear_repo_root_override() -> None:
     """Clear the repo root override."""
-    global _REPO_ROOT_OVERRIDE
-    _REPO_ROOT_OVERRIDE = None
+    global _repo_root_override
+    _repo_root_override = None
 
 
 
@@ -58,8 +58,8 @@ def _find_repo_root() -> Path:
 
     Tests can override this by calling _set_repo_root_override().
     """
-    if _REPO_ROOT_OVERRIDE is not None:
-        return _REPO_ROOT_OVERRIDE
+    if _repo_root_override is not None:
+        return _repo_root_override
 
     candidates = [
         Path.cwd(),  # Current working directory
@@ -87,13 +87,24 @@ def _read_json_file(path: Path) -> dict[str, Any] | None:
     return None
 
 
+def _read_yaml_file(path: Path) -> dict[str, Any] | None:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            content = yaml.safe_load(f)
+        if isinstance(content, dict):
+            return content
+    except (FileNotFoundError, yaml.YAMLError, UnicodeDecodeError):
+        pass
+    return None
+
+
 def load_sop_template(role_label: str) -> str | None:
     """Load SOP template for given role label.
 
     Reads from sops/templates/<role>.md
 
     Args:
-        role_label: Role label (e.g., "ceo", "pm", "engineer")
+        role_label: Role label (e.g., "lead", "pm", "engineer")
 
     Returns:
         Template content as string, or None if file not found
@@ -129,7 +140,7 @@ def get_allowed_agent_types() -> list[str]:
 
     Returns:
         List of agent type strings from decision_rules.json,
-        or fallback to ["ceo", "pm", "engineer"]
+        or fallback to ["lead", "pm", "engineer"]
     """
     rules = load_decision_rules()
     agents = rules.get("agent_type_allowlist")
@@ -181,3 +192,36 @@ def get_github_trending_keywords() -> tuple[list[str], list[str]]:
 
     return trending_keywords, growth_indicators
 
+
+def load_community_skills() -> list[dict[str, str]]:
+    repo_root = _find_repo_root()
+    skills_path = repo_root / "config" / "community_skills.yaml"
+    content = _read_yaml_file(skills_path)
+    if not content:
+        return []
+    skills = content.get("skills")
+    if not isinstance(skills, list):
+        return []
+    normalized: list[dict[str, str]] = []
+    for item in skills:
+        if not isinstance(item, dict):
+            continue
+        key = item.get("key")
+        name = item.get("name")
+        filename = item.get("filename")
+        description = item.get("description")
+        if not isinstance(key, str) or not key.strip():
+            continue
+        if not isinstance(name, str) or not name.strip():
+            continue
+        if not isinstance(filename, str) or not filename.strip():
+            continue
+        entry = {
+            "key": key.strip(),
+            "name": name.strip(),
+            "filename": filename.strip(),
+        }
+        if isinstance(description, str) and description.strip():
+            entry["description"] = description.strip()
+        normalized.append(entry)
+    return normalized

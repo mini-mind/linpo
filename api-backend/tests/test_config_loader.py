@@ -41,7 +41,7 @@ def test_load_decision_rules_returns_dict(tmp_path: Path) -> None:
     """Test loading valid decision rules."""
     config_dir = tmp_path / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
-    rules = {"agents": ["ceo", "pm"]}
+    rules = {"agents": ["lead", "pm"]}
     (config_dir / "decision_rules.json").write_text(json.dumps(rules))
 
     config_loader._set_repo_root_override(tmp_path)
@@ -66,13 +66,13 @@ def test_get_allowed_agent_types_from_rules(tmp_path: Path) -> None:
     """Test getting allowed agent types from config."""
     config_dir = tmp_path / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
-    rules = {"agent_type_allowlist": ["ceo", "pm", "engineer"]}
+    rules = {"agent_type_allowlist": ["lead", "pm", "engineer"]}
     (config_dir / "decision_rules.json").write_text(json.dumps(rules))
 
     config_loader._set_repo_root_override(tmp_path)
     try:
         result = config_loader.get_allowed_agent_types()
-        assert result == ["ceo", "pm", "engineer"]
+        assert result == ["lead", "pm", "engineer"]
     finally:
         config_loader._clear_repo_root_override()
 
@@ -82,7 +82,7 @@ def test_get_allowed_agent_types_fallback(tmp_path: Path) -> None:
     config_loader._set_repo_root_override(tmp_path)
     try:
         result = config_loader.get_allowed_agent_types()
-        assert result == ["ceo", "pm", "engineer"]
+        assert result == ["lead", "pm", "engineer"]
     finally:
         config_loader._clear_repo_root_override()
 
@@ -128,7 +128,7 @@ def test_integration_all_functions(tmp_path: Path) -> None:
     sops_dir.mkdir(parents=True, exist_ok=True)
 
     decision_rules = {
-        "agent_type_allowlist": ["ceo", "pm", "engineer"],
+        "agent_type_allowlist": ["lead", "pm", "engineer"],
         "github_trending_detection": {
             "keywords": ["custom", "trending"],
             "growth_indicators": ["growth", "stars"],
@@ -136,20 +136,20 @@ def test_integration_all_functions(tmp_path: Path) -> None:
     }
     (config_dir / "decision_rules.json").write_text(json.dumps(decision_rules))
 
-    (sops_dir / "ceo.md").write_text("# CEO SOP")
+    (sops_dir / "lead.md").write_text("# Lead SOP")
 
     config_loader._set_repo_root_override(tmp_path)
     try:
         # Test all functions
         agents = config_loader.get_allowed_agent_types()
-        assert agents == ["ceo", "pm", "engineer"]
+        assert agents == ["lead", "pm", "engineer"]
 
         trending, indicators = config_loader.get_github_trending_keywords()
         assert trending == ["custom", "trending"]
         assert indicators == ["growth", "stars"]
 
-        sop = config_loader.load_sop_template("ceo")
-        assert sop == "# CEO SOP"
+        sop = config_loader.load_sop_template("lead")
+        assert sop == "# Lead SOP"
     finally:
         config_loader._clear_repo_root_override()
 

@@ -1,0 +1,5 @@
+skills:
+  - key: hello_world
+    name: Hello World
+    filename: hello_world.py
+    description: Sample community skill
