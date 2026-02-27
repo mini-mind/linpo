@@ -22,6 +22,17 @@ The worker stack consists of three services running on a dedicated worker host:
 - **Swap Size**: 16GB (prevents OOM during heavy browser workloads)
 - **Public Port**: `7200` (Playwright Gateway API)
 
+### Port Mapping (Worker Host)
+
+| Service | Container Port | Host Port | Notes |
+| --- | --- | --- | --- |
+| api-backend | 8000 | 0.0.0.0:8000 | Split 部署时必须对前端 host 可达 |
+| playwright-gateway | 7200 | 7200 | 仅允许 HK 主机访问 |
+
+Conflict prevention:
+- 若只部署 worker（Playwright），可以关闭 8000 的公网访问。
+- Split 部署时必须开放 8000 给前端 host，否则 `/api/*` 会 502。
+
 ### Architecture
 
 ```

@@ -21,7 +21,7 @@
 - **edge**: 80/443 (公网入口，Caddy 反向代理 + HTTPS)
 - **gateway**: 80 (内部，统一入口，Nginx 反向代理；在 `deploy/prod/docker-compose.frontend.yml` 中会绑定 `127.0.0.1:8082->80` 便于本机调试)
 - **web-frontend**: 80 (内部，静态文件服务)
-- **api-backend**: 8000 (内部，FastAPI 后端；本地 `docker-compose.yml` 默认绑定 `127.0.0.1:8005->8000` 供调试)
+- **api-backend**: 8000 (内部，FastAPI 后端；本地 `docker-compose.yml` 默认绑定 `127.0.0.1:8005->8000` 供调试；split 部署时对外绑定 `0.0.0.0:8000->8000`)
 - **agent-manager**: 7000 (内部，任务调度；默认不暴露到宿主机)
 - **worker-playwright**: 7100 (内部，浏览器执行；默认不暴露到宿主机)
 - **mcp-server**: 9000 (内部，MCP 协议服务；默认不暴露到宿主机)
@@ -38,6 +38,10 @@
   - API: `https://roboard.duckdns.org/api/...`
   - WebSocket: `wss://roboard.duckdns.org/ws/events?...`
 - **不对公网暴露的端口**: 127.0.0.1 绑定的 8082/8005/5432/6379/8025/8081 等（按部署形态启用），以及仅在 compose 网络内可达的 7000/7100/9000 等
+
+**冲突规避（固定约定）**：
+- `80/443` 必须由 edge 占用（前端 host），避免与本机已有 Caddy/Nginx 冲突。
+- `8000` 必须对前端 host 可达（split 部署），否则 `/api/*` 将 502。
 
 **内部管理访问**：
 - **内部管理服务**: 绑定 127.0.0.1，仅本地访问

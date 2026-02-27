@@ -59,6 +59,7 @@ frontend host 负责：edge(Caddy) + gateway + web-frontend + searxng。
 ```bash
 export ROBOARD_ROOT="/home/ravin/roboard-root"
 export TAG="<your-tag>"
+export API_BACKEND_URL="http://175.178.213.10:8000"
 
 cd "$ROBOARD_ROOT"
 docker compose -f deploy/prod/docker-compose.frontend.yml pull
@@ -81,6 +82,10 @@ worker host 负责：api-backend/agent-manager/worker-playwright/mcp-server/post
 ```bash
 curl -fsS https://roboard.duckdns.org/api/health
 curl -fsS https://roboard.duckdns.org/ >/dev/null
+
+端口固定约定（split 部署）：
+- 前端 host：80/443 由 edge 占用；gateway 仅本机 127.0.0.1:8082
+- worker host：api-backend 对外 `0.0.0.0:8000->8000`，必须可被前端 host 访问
 ```
 
 浏览器人工验收：

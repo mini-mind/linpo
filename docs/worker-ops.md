@@ -50,6 +50,17 @@ The worker runs two core services via Docker Compose in `~/web3d-worker/docker-c
 
 Compose file location: `deploy/worker/docker-compose.yml` in the repository.
 
+## Port Mapping Summary
+
+| Service | Host Port | Access |
+| --- | --- | --- |
+| api-backend | 8000 | Split 部署时供前端 host 访问 |
+| playwright-gateway | 7200 | 仅 HK 主机访问 |
+
+Conflict prevention:
+- Split 部署需要 worker 的 8000 对前端 host 可达。
+- 若 worker 仅用于 Playwright，可关闭 8000 以减少暴露面。
+
 ## Registry Constraints
 
 **Critical**: The worker host cannot reliably pull images from Docker Hub (docker.io).
