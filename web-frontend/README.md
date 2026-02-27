@@ -59,9 +59,11 @@ Files:
 ## 手动验证清单
 
 - [ ] 任务详情显示 Skills 面板（列表 + 安装按钮）
+- [ ] Skills search returns results and renders list
+- [ ] NL install installs top skill and updates list
 - [ ] 导出 YAML 文件成功下载
 - [ ] 粘贴 YAML 导入并创建新 run
-- [ ] 手机端可查看状态/控制/Skills 面板，不遮挡主列表
+- [ ] Mobile layout keeps tree visible and shows pause/resume/retry + intervention entry
 
 ## WebSocket 连接
 
@@ -81,6 +83,10 @@ ws://localhost:8082/ws/runs/{run_id}
 
 注意：项目根 `docker-compose.yml` 默认不会把 gateway 暴露到宿主机端口；
 本地开发如果不能直接访问 `https://roboard.duckdns.org/`，需要额外绑定 gateway 端口（例如 `127.0.0.1:8082->80`）或在目标部署机上验证。
+
+端口约定提示：
+- split 部署时，前端 host 的 API 必须通过 `API_BACKEND_URL` 指向 worker host 的 `0.0.0.0:8000`。
+- 若 worker 端口未开放，将导致 `/api/*` 502。
 
 1. 启动所有服务:
 ```bash

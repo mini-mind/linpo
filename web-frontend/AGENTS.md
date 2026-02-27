@@ -40,3 +40,5 @@ docker compose up -d web-frontend gateway edge
 - 2026-02-27: Chat input submits interventions via `/api/runs/{run_id}/interventions`.
 - 2026-02-27: Added Sources panel and control buttons (pause/resume/retry) in task details; manual UI check only.
 - 2026-02-27: Added Skills panel + team template export/import UI in task details; manual UI check only.
+- 2026-02-27: Added skills search + NL install entry and mobile quick actions layout; manual UI check only.
+- 2026-02-27: Task tree UI updated with industrial night theme and three views (tree/log/kanban); manual UI check only.
