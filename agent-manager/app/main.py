@@ -44,7 +44,6 @@ A2A_GROUP = os.getenv("A2A_GROUP", "agent-manager-a2a")
 A2A_CONSUMER = os.getenv("A2A_CONSUMER", os.getenv("HOSTNAME", "agent-manager"))
 A2A_MAX_ATTEMPTS = int(os.getenv("A2A_MAX_ATTEMPTS", "3"))
 LLM_GATEWAY_URL = os.getenv("LLM_GATEWAY_URL", "http://llm-gateway:7300")
-SCHEDULER_POLL_INTERVAL = float(os.getenv("SCHEDULER_POLL_INTERVAL", "5"))
 
 # Setup logging
 try:
@@ -893,109 +892,10 @@ async def a2a_consumer_loop(redis_client: RedisClient) -> None:
             await asyncio.sleep(1)
 
 
-async def scheduler_tick() -> None:
-    claim_url = f"{API_BACKEND_URL}/internal/schedules/claim_due"
-    try:
-        response = requests.post(claim_url, headers=build_internal_headers(), timeout=30.0)
-        response.raise_for_status()
-        payload = cast(object, response.json())
-    except Exception as exc:
-        logger.error("Failed to claim due schedules: %s", exc)
-        return
-
-    if not isinstance(payload, list) or not payload:
-        return
-
-    schedules = cast(list[object], payload)
-    for schedule in schedules:
-        if not isinstance(schedule, dict):
-            logger.error("Invalid schedule payload: %s", schedule)
-            continue
-        schedule_data = cast(dict[str, object], schedule)
-        schedule_id = str(schedule_data.get("schedule_id") or "").strip()
-        tenant_id = str(schedule_data.get("tenant_id") or "").strip()
-        template_key = str(schedule_data.get("template_key") or "").strip()
-        if not schedule_id or not tenant_id or not template_key:
-            logger.error("Schedule missing required fields: %s", schedule_data)
-            continue
-
-        params = _parse_params_json(schedule_data.get("params_json"))
-        headers = build_internal_headers()
-        headers["X-Tenant-ID"] = tenant_id
-
-        try:
-            compile_response = requests.post(
-                f"{API_BACKEND_URL}/api/templates/{template_key}/compile",
-                json=params,
-                headers=headers,
-                timeout=30.0,
-            )
-            compile_response.raise_for_status()
-            compile_payload = cast(object, compile_response.json())
-            if not isinstance(compile_payload, dict):
-                raise ValueError("Template compile response invalid")
-            typed_compile_payload = cast(dict[str, object], compile_payload)
-            input_nl = typed_compile_payload.get("input_nl")
-            input_payload = typed_compile_payload.get("input")
-            if not isinstance(input_nl, str) or not input_nl.strip():
-                raise ValueError("Template compile response missing input_nl")
-            if not isinstance(input_payload, dict):
-                raise ValueError("Template compile response missing input")
-            typed_input_payload = cast(dict[str, object], input_payload)
-
-            run_response = requests.post(
-                f"{API_BACKEND_URL}/api/runs",
-                json={"input_nl": input_nl, "input": typed_input_payload},
-                headers=headers,
-                timeout=30.0,
-            )
-            run_response.raise_for_status()
-            run_payload = cast(object, run_response.json())
-            run_id = ""
-            if isinstance(run_payload, dict):
-                typed_run_payload = cast(dict[str, object], run_payload)
-                run_id = str(typed_run_payload.get("run_id") or "")
-            if not run_id:
-                raise ValueError("Run create response missing run_id")
-
-            try:
-                post_event(
-                    tenant_id=tenant_id,
-                    task_id=run_id,
-                    event_type="schedule.run.created",
-                    data={"schedule_id": schedule_id},
-                )
-            except Exception as exc:
-                logger.error(
-                    "Failed to post schedule.run.created for schedule %s: %s",
-                    schedule_id,
-                    exc,
-                )
-        except Exception as exc:
-            logger.error("Failed to create run for schedule %s: %s", schedule_id, exc)
-
-
-async def scheduler_loop() -> None:
-    logger.info("Scheduler loop started")
-    while True:
-        try:
-            await scheduler_tick()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.error("Scheduler loop error: %s", exc)
-        await asyncio.sleep(SCHEDULER_POLL_INTERVAL)
-
-
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     consumer_tasks: list[asyncio.Task[None]] = []
     redis_client: RedisClient | None = None
-
-    if SCHEDULER_POLL_INTERVAL <= 0:
-        logger.warning("Scheduler loop disabled (SCHEDULER_POLL_INTERVAL <= 0)")
-    else:
-        consumer_tasks.append(asyncio.create_task(scheduler_loop()))
 
     if redis_async is None:
         logger.warning("redis.asyncio not available; Redis consumers disabled")
