@@ -24,7 +24,6 @@ def test_create_run_hires_default_team_and_writes_sop(tmp_path, monkeypatch) -> 
     
     # Create minimal config files so _find_repo_root() works
     (config_dir / "decision_rules.json").write_text('{"agent_type_allowlist": ["ceo", "pm", "engineer"]}')
-    (config_dir / "state_rules.json").write_text('{"allowed_states": ["queued", "running", "completed"]}')
 
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin")
     monkeypatch.setenv("INTERNAL_API_KEY", "test-internal")

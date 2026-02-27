@@ -129,7 +129,6 @@ def test_tree_api_router_exposes_routes(monkeypatch: _MonkeyPatch) -> None:
     paths = {route.path for route in tree_api.router.routes}
     assert "/api/runs/{run_id}/tree" in paths
     assert "/api/agents/{agent_id}/sop" in paths
-    assert "/api/runs/{run_id}/agents/{agent_id}/state" in paths
 
 
 def test_run_tree_and_sop_endpoints(tmp_path: pathlib.Path, monkeypatch: _MonkeyPatch) -> None:
@@ -217,23 +216,13 @@ def test_run_tree_and_sop_endpoints(tmp_path: pathlib.Path, monkeypatch: _Monkey
     md_text = cast(str, sop["md_text"])
     assert "CEO SOP" in md_text
 
-    patch_resp = client.patch(
-        f"/api/runs/{run_id}/agents/{root_agent_id}/state",
-        json={"state": "completed"},
-        headers={"X-API-Key": api_key},
-    )
-    assert patch_resp.status_code == 200
-    patched = patch_resp.json()
-    assert patched["id"] == str(root_agent_id)
-    assert patched["state"] == "completed"
-
     tree_after = client.get(
         f"/api/runs/{run_id}/tree",
         headers={"X-API-Key": api_key},
     ).json()
     tree_after_agents = cast(list[dict[str, object]], tree_after["agents"])
     by_id = {str(agent["id"]): agent for agent in tree_after_agents}
-    assert by_id[str(root_agent_id)]["state"] == "completed"
+    assert by_id[str(root_agent_id)]["state"] == "running"
 
 
 def test_run_task_event_updates_root_state_and_ws_delta(tmp_path: pathlib.Path, monkeypatch: _MonkeyPatch) -> None:
