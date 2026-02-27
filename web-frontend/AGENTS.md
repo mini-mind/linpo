@@ -37,3 +37,6 @@ docker compose up -d web-frontend gateway edge
 
 ## NOTES
 - Root `package.json` is tooling-only (Playwright), not a web build pipeline.
+- 2026-02-27: Chat input submits interventions via `/api/runs/{run_id}/interventions`.
+- 2026-02-27: Added Sources panel and control buttons (pause/resume/retry) in task details; manual UI check only.
+- 2026-02-27: Added Skills panel + team template export/import UI in task details; manual UI check only.
