@@ -13,7 +13,7 @@ Operational scripts for deploy/push/backup/verification workflows.
 | Push images | scripts/push_*_images.sh | ACR push helpers |
 | DB backup | scripts/pg_backup.sh | docker compose exec |
 | DB restore | scripts/pg_restore.sh | destructive restore w/ confirmation |
-| Validation | scripts/e2e.sh / scripts/verify_sse_streaming.py | e2e + SSE checks |
+| Validation | scripts/e2e.sh | e2e checks |
 
 ## CONVENTIONS
 - Bash scripts use `set -euo pipefail` and `DRY_RUN` flags.
