@@ -33,18 +33,102 @@
 
     <main id="task-tree-view" class="task-tree-main" aria-label="Task Tree">
       <div class="task-tree-container">
-        <section id="task-tree-section" class="task-tree-panel" aria-label="Task Tree">
-          <div class="panel-head">
-            <h2 class="panel-title" data-i18n="taskTree.title">Task Tree</h2>
+        <section class="task-viewer" aria-label="Task views">
+          <div class="task-view-switcher" role="tablist" aria-label="View switcher">
+            <button id="task-view-tree-tab" class="view-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="task-tree-section" data-view="tree">
+              <span class="view-tab-label" data-i18n="taskTree.title">Task Tree</span>
+            </button>
+            <button id="task-view-log-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="task-log-section" data-view="log">
+              <span class="view-tab-label" data-i18n="events.title">Event Log</span>
+            </button>
+            <button id="task-view-kanban-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="task-kanban-section" data-view="kanban">
+              <span class="view-tab-label">Task Board</span>
+            </button>
+            <div class="view-switcher-status" aria-hidden="true"></div>
           </div>
 
-          <div id="task-tree-content" class="task-tree-content">
-            <div id="task-tree-root" class="task-tree-root" role="tree" aria-label="Task hierarchy">
-              <div class="task-tree-empty-state" data-i18n="taskTree.empty">No tasks yet. Create a new task to get started.</div>
+          <div class="task-view-panels">
+            <section id="task-tree-section" class="task-view-panel task-tree-panel" role="tabpanel" aria-label="Task Tree" data-view="tree">
+              <div class="panel-head">
+                <h2 class="panel-title" data-i18n="taskTree.title">Task Tree</h2>
+              </div>
+
+              <div class="panel-body task-tree-body">
+                <div id="task-tree-content" class="task-tree-content">
+                  <div id="task-tree-root" class="task-tree-root" role="tree" aria-label="Task hierarchy">
+                    <div class="task-tree-empty-state" data-i18n="taskTree.empty">No tasks yet. Create a new task to get started.</div>
+                  </div>
+                </div>
+
+                <p id="task-message" class="panel-message" role="status" aria-live="polite"></p>
+              </div>
+            </section>
+
+            <section id="task-log-section" class="task-view-panel task-log-panel is-hidden" role="tabpanel" aria-label="Event log" data-view="log">
+              <div class="panel-head">
+                <div>
+                  <h2 class="panel-title" data-i18n="events.title">Event Log</h2>
+                  <p class="panel-subtitle" data-i18n="events.hint">Stream</p>
+                </div>
+              </div>
+
+              <div class="panel-body task-log-body">
+                <div class="task-log-content">
+                  <div id="task-log-empty" class="task-log-empty">No events yet.</div>
+                  <ul id="task-log-list" class="task-log-list" aria-live="polite"></ul>
+                </div>
+              </div>
+            </section>
+
+            <section id="task-kanban-section" class="task-view-panel task-kanban-panel is-hidden" role="tabpanel" aria-label="Task board" data-view="kanban">
+              <div class="panel-head">
+                <div>
+                  <h2 class="panel-title">Task Board</h2>
+                  <p class="panel-subtitle">Status lanes</p>
+                </div>
+              </div>
+
+              <div class="panel-body task-kanban-body">
+                <div id="task-kanban-board" class="task-kanban-board">
+                  <div class="kanban-column" data-status="todo">
+                    <div class="kanban-column-head">To Do</div>
+                    <div id="task-kanban-todo" class="kanban-column-body"></div>
+                  </div>
+                  <div class="kanban-column" data-status="running">
+                    <div class="kanban-column-head">Running</div>
+                    <div id="task-kanban-running" class="kanban-column-body"></div>
+                  </div>
+                  <div class="kanban-column" data-status="done">
+                    <div class="kanban-column-head">Done</div>
+                    <div id="task-kanban-done" class="kanban-column-body"></div>
+                  </div>
+                  <div class="kanban-column" data-status="blocked">
+                    <div class="kanban-column-head">Blocked</div>
+                    <div id="task-kanban-blocked" class="kanban-column-body"></div>
+                  </div>
+                </div>
+                <div id="task-kanban-empty" class="task-kanban-empty">No tasks yet.</div>
+              </div>
+            </section>
+          </div>
+
+          <section id="task-mobile-toolbar" class="task-mobile-toolbar" aria-label="Mobile actions">
+            <div class="task-mobile-controls">
+              <button id="task-mobile-pause" class="btn btn-ghost" type="button" data-i18n="taskTree.pause">Pause</button>
+              <button id="task-mobile-resume" class="btn btn-ghost" type="button" data-i18n="taskTree.resume">Resume</button>
+              <button id="task-mobile-retry" class="btn btn-ghost" type="button" data-i18n="taskTree.retry">Retry</button>
             </div>
-          </div>
-
-          <p id="task-message" class="panel-message" role="status" aria-live="polite"></p>
+            <form id="task-mobile-intervention-form" class="task-mobile-intervention">
+              <input
+                id="task-mobile-intervention-input"
+                type="text"
+                placeholder="Intervention message..."
+                data-i18n-placeholder="taskTree.mobileInterventionPlaceholder"
+                autocomplete="off"
+              />
+              <button id="task-mobile-intervention-submit" type="submit" class="btn btn-primary" data-i18n="taskTree.send">Send</button>
+            </form>
+          </section>
         </section>
 
         <section id="task-details-section" class="task-details-panel is-hidden" aria-label="Task details">
@@ -97,8 +181,31 @@
 
             <div class="task-skills-section">
               <h4 class="section-title" data-i18n="taskTree.skills">Skills</h4>
+              <p class="skills-hint" data-i18n="taskTree.skillsAutoHint">Skills auto-run after install.</p>
+              <form id="task-skill-search-form" class="skills-search">
+                <input
+                  id="task-skill-search-input"
+                  type="text"
+                  placeholder="Search skills..."
+                  data-i18n-placeholder="taskTree.skillSearchPlaceholder"
+                  autocomplete="off"
+                />
+                <button id="task-skill-search-btn" class="btn btn-ghost" type="submit" data-i18n="taskTree.skillSearch">Search</button>
+              </form>
+              <div id="task-skill-search-empty" class="skills-empty is-hidden" data-i18n="taskTree.skillSearchEmpty">No results yet.</div>
+              <ul id="task-skill-search-results" class="skills-search-results"></ul>
               <div id="task-skills-empty" class="skills-empty" data-i18n="taskTree.skillsEmpty">No skills yet.</div>
               <ul id="task-skills-list" class="skills-list"></ul>
+              <form id="task-skill-install-nl-form" class="skills-nl">
+                <input
+                  id="task-skill-nl-input"
+                  type="text"
+                  placeholder="Describe the skill you want..."
+                  data-i18n-placeholder="taskTree.skillNlPlaceholder"
+                  autocomplete="off"
+                />
+                <button id="task-skill-install-nl" class="btn btn-ghost" type="submit" data-i18n="taskTree.skillNlInstall">Install by NL</button>
+              </form>
               <div class="skills-actions">
                 <select id="task-skill-select" aria-label="Skills"></select>
                 <button id="task-skill-install" class="btn btn-ghost" type="button" data-i18n="taskTree.installSkill">
@@ -145,6 +252,11 @@
         </section>
       </div>
     </main>
+
+    <section class="command-bar" aria-label="Quick command">
+      <input class="command-input" type="text" placeholder="Enter command..." aria-label="Quick command" />
+      <button class="btn btn-primary" type="button" aria-label="Send command">→</button>
+    </section>
 
     <div id="add-task-modal" class="modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
       <div class="modal-overlay"></div>

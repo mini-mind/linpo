@@ -122,6 +122,13 @@
       "taskTree.sourcePlaceholder": "Add a source path...",
       "taskTree.skills": "Skills",
       "taskTree.skillsEmpty": "No skills yet.",
+      "taskTree.skillSearch": "Search",
+      "taskTree.skillSearchPlaceholder": "Search skills...",
+      "taskTree.skillSearchEmpty": "No results yet.",
+      "taskTree.skillNlInstall": "Install by NL",
+      "taskTree.skillNlPlaceholder": "Describe the skill you want...",
+      "taskTree.skillsAutoHint": "Skills auto-run after install.",
+      "taskTree.mobileInterventionPlaceholder": "Intervention message...",
       "taskTree.installSkill": "Install",
       "taskTree.teamTemplate": "Team Template",
       "taskTree.exportYaml": "Export YAML",
@@ -147,8 +154,11 @@
       "taskTree.msg.controlSent": "Control sent",
       "taskTree.msg.controlFailed": "Control failed",
       "taskTree.msg.skillsLoadFailed": "Load skills failed",
+      "taskTree.msg.skillsSearchFailed": "Search failed",
       "taskTree.msg.skillsInstallFailed": "Install skill failed",
       "taskTree.msg.skillsInstallOk": "Skill installed",
+      "taskTree.msg.skillsInstallNlFailed": "Install by NL failed",
+      "taskTree.msg.skillsInstallNlOk": "Skill installed",
       "taskTree.msg.teamExportFailed": "Export failed",
       "taskTree.msg.teamExportOk": "Exported template",
       "taskTree.msg.teamImportFailed": "Import failed",
@@ -267,6 +277,13 @@
       "taskTree.sourcePlaceholder": "添加来源路径...",
       "taskTree.skills": "技能",
       "taskTree.skillsEmpty": "暂无技能。",
+      "taskTree.skillSearch": "Search",
+      "taskTree.skillSearchPlaceholder": "Search skills...",
+      "taskTree.skillSearchEmpty": "No results yet.",
+      "taskTree.skillNlInstall": "Install by NL",
+      "taskTree.skillNlPlaceholder": "Describe the skill you want...",
+      "taskTree.skillsAutoHint": "Skills auto-run after install.",
+      "taskTree.mobileInterventionPlaceholder": "Intervention message...",
       "taskTree.installSkill": "安装",
       "taskTree.teamTemplate": "团队模板",
       "taskTree.exportYaml": "导出 YAML",
@@ -292,8 +309,11 @@
       "taskTree.msg.controlSent": "已发送控制指令",
       "taskTree.msg.controlFailed": "控制指令失败",
       "taskTree.msg.skillsLoadFailed": "加载技能失败",
+      "taskTree.msg.skillsSearchFailed": "Search failed",
       "taskTree.msg.skillsInstallFailed": "安装技能失败",
       "taskTree.msg.skillsInstallOk": "技能已安装",
+      "taskTree.msg.skillsInstallNlFailed": "Install by NL failed",
+      "taskTree.msg.skillsInstallNlOk": "技能已安装",
       "taskTree.msg.teamExportFailed": "导出失败",
       "taskTree.msg.teamExportOk": "已导出模板",
       "taskTree.msg.teamImportFailed": "导入失败",
@@ -1235,6 +1255,19 @@
       taskInputNl: byId("task-input-nl"),
       taskConnectionPill: byId("task-connection-pill"),
       taskMessage: byId("task-message"),
+      taskViewTreeTab: byId("task-view-tree-tab"),
+      taskViewLogTab: byId("task-view-log-tab"),
+      taskViewKanbanTab: byId("task-view-kanban-tab"),
+      taskTreeSection: byId("task-tree-section"),
+      taskLogSection: byId("task-log-section"),
+      taskKanbanSection: byId("task-kanban-section"),
+      taskLogList: byId("task-log-list"),
+      taskLogEmpty: byId("task-log-empty"),
+      taskKanbanTodo: byId("task-kanban-todo"),
+      taskKanbanRunning: byId("task-kanban-running"),
+      taskKanbanDone: byId("task-kanban-done"),
+      taskKanbanBlocked: byId("task-kanban-blocked"),
+      taskKanbanEmpty: byId("task-kanban-empty"),
       taskTreeRoot: byId("task-tree-root"),
       taskDetailsSection: byId("task-details-section"),
       taskDetailsTitle: byId("task-details-title"),
@@ -1249,6 +1282,13 @@
       taskSourcesInput: byId("task-sources-input"),
       taskSkillsList: byId("task-skills-list"),
       taskSkillsEmpty: byId("task-skills-empty"),
+      taskSkillSearchForm: byId("task-skill-search-form"),
+      taskSkillSearchInput: byId("task-skill-search-input"),
+      taskSkillSearchResults: byId("task-skill-search-results"),
+      taskSkillSearchEmpty: byId("task-skill-search-empty"),
+      taskSkillNlForm: byId("task-skill-install-nl-form"),
+      taskSkillNlInput: byId("task-skill-nl-input"),
+      taskSkillInstallNl: byId("task-skill-install-nl"),
       taskSkillSelect: byId("task-skill-select"),
       taskSkillInstall: byId("task-skill-install"),
       taskTeamExport: byId("task-team-export"),
@@ -1260,7 +1300,13 @@
       taskChatInput: byId("task-chat-input"),
       taskControlPause: byId("task-control-pause"),
       taskControlResume: byId("task-control-resume"),
-      taskControlRetry: byId("task-control-retry")
+      taskControlRetry: byId("task-control-retry"),
+      taskMobilePause: byId("task-mobile-pause"),
+      taskMobileResume: byId("task-mobile-resume"),
+      taskMobileRetry: byId("task-mobile-retry"),
+      taskMobileInterventionForm: byId("task-mobile-intervention-form"),
+      taskMobileInterventionInput: byId("task-mobile-intervention-input"),
+      taskMobileInterventionSubmit: byId("task-mobile-intervention-submit")
     };
 
     const state = {
@@ -1272,10 +1318,14 @@
       sourcesByAgent: {},
       skillsByAgent: {},
       communitySkills: [],
+      communitySearchResults: [],
+      communitySearchQuery: "",
       dragPayload: null,
       pointerDrag: null,
       suppressNextClick: false,
-      deltaFetchTimer: null
+      deltaFetchTimer: null,
+      activeView: "tree",
+      recentEvents: []
     };
 
     const setSessionUi = (session) => {
@@ -1289,9 +1339,101 @@
       toggleHidden(ui.sessionLabel, !session);
       toggleHidden(ui.logoutBtn, !session);
       toggleHidden(addTaskBtn, !session);
+      updateMobileControlsState();
     };
 
     const setMessage = (text, kind) => setStatusText(ui.taskMessage, text, kind);
+
+    const viewMap = {
+      tree: { tab: ui.taskViewTreeTab, panel: ui.taskTreeSection },
+      log: { tab: ui.taskViewLogTab, panel: ui.taskLogSection },
+      kanban: { tab: ui.taskViewKanbanTab, panel: ui.taskKanbanSection }
+    };
+
+    const setActiveView = (view) => {
+      const next = safeText(view).trim().toLowerCase();
+      const target = viewMap[next] ? next : "tree";
+      state.activeView = target;
+
+      Object.entries(viewMap).forEach(([key, entry]) => {
+        if (entry.panel) entry.panel.classList.toggle("is-hidden", key !== target);
+        if (entry.tab) {
+          entry.tab.classList.toggle("is-active", key === target);
+          entry.tab.setAttribute("aria-selected", key === target ? "true" : "false");
+        }
+      });
+    };
+
+    const setupViewTabs = () => {
+      if (ui.taskViewTreeTab) ui.taskViewTreeTab.addEventListener("click", () => setActiveView("tree"));
+      if (ui.taskViewLogTab) ui.taskViewLogTab.addEventListener("click", () => setActiveView("log"));
+      if (ui.taskViewKanbanTab) ui.taskViewKanbanTab.addEventListener("click", () => setActiveView("kanban"));
+      setActiveView(state.activeView);
+    };
+
+    const nowStamp = () => {
+      const d = new Date();
+      const hh = String(d.getHours()).padStart(2, "0");
+      const mm = String(d.getMinutes()).padStart(2, "0");
+      const ss = String(d.getSeconds()).padStart(2, "0");
+      return `${hh}:${mm}:${ss}`;
+    };
+
+    const formatEventLine = (frame) => {
+      if (typeof frame === "string") return frame;
+      if (!frame || typeof frame !== "object") return safeText(frame);
+
+      const type = frame.type || frame.event_type || frame.kind || frame.name;
+      const data = frame.data != null ? frame.data : frame;
+      let body = "";
+      try {
+        body = typeof data === "string" ? data : JSON.stringify(data);
+      } catch {
+        body = "[unserializable event]";
+      }
+      return type ? `${type}: ${body}` : body;
+    };
+
+    const setTaskLogEmpty = () => {
+      if (!ui.taskLogEmpty || !ui.taskLogList) return;
+      toggleHidden(ui.taskLogEmpty, ui.taskLogList.childElementCount > 0);
+    };
+
+    const appendTaskLog = (frame, opts = {}) => {
+      if (!ui.taskLogList) return;
+      const item = document.createElement("li");
+      item.className = "task-log-item";
+      item.textContent = `[${nowStamp()}] ${formatEventLine(frame)}`;
+      ui.taskLogList.appendChild(item);
+      if (opts.limit && ui.taskLogList.childElementCount > opts.limit) {
+        while (ui.taskLogList.childElementCount > opts.limit) {
+          ui.taskLogList.removeChild(ui.taskLogList.firstElementChild);
+        }
+      }
+      ui.taskLogList.scrollTop = ui.taskLogList.scrollHeight;
+      setTaskLogEmpty();
+    };
+
+    const clearTaskLog = () => {
+      state.recentEvents = [];
+      if (ui.taskLogList) ui.taskLogList.innerHTML = "";
+      setTaskLogEmpty();
+    };
+
+    const setMobileControlsEnabled = (enabled) => {
+      const disabled = !enabled;
+      const buttons = [ui.taskMobilePause, ui.taskMobileResume, ui.taskMobileRetry];
+      buttons.forEach((btn) => {
+        if (btn) btn.disabled = disabled;
+      });
+      if (ui.taskMobileInterventionInput) ui.taskMobileInterventionInput.disabled = disabled;
+      if (ui.taskMobileInterventionSubmit) ui.taskMobileInterventionSubmit.disabled = disabled;
+    };
+
+    const updateMobileControlsState = () => {
+      const enabled = Boolean(state.session && state.selectedNode && state.runId);
+      setMobileControlsEnabled(enabled);
+    };
 
     const setConnectionStatus = (status) => {
       if (!ui.taskConnectionPill) return;
@@ -1375,6 +1517,9 @@
         state.runId = runId;
         localStorage.setItem(STORAGE.runId, runId);
         setMessage(t("taskTree.msg.created"), "ok");
+        clearTaskLog();
+        renderKanban([]);
+        updateMobileControlsState();
         await fetchTree();
         connectWs();
         return true;
@@ -1388,6 +1533,7 @@
         
         // Generic error message for other cases
         setMessage(`${t("taskTree.msg.createFailed")} (${status || "error"}). ${safeText(detail)}`.trim(), "error");
+        updateMobileControlsState();
         return false;
       }
     };
@@ -1533,6 +1679,53 @@
       return "todo";
     };
 
+    const getAgentCategory = (status) => {
+      const s = safeText(status).toLowerCase().trim();
+      if (["done", "completed", "complete", "success", "finished", "ok"].includes(s)) return "done";
+      if (["running", "in_progress", "working", "doing", "active"].includes(s)) return "running";
+      if (["needs_human", "blocked", "failed", "error"].includes(s)) return "blocked";
+      return "todo";
+    };
+
+    const renderKanban = (agents) => {
+      if (!ui.taskKanbanTodo || !ui.taskKanbanRunning || !ui.taskKanbanDone || !ui.taskKanbanBlocked) return;
+      const list = Array.isArray(agents) ? agents : [];
+
+      ui.taskKanbanTodo.innerHTML = "";
+      ui.taskKanbanRunning.innerHTML = "";
+      ui.taskKanbanDone.innerHTML = "";
+      ui.taskKanbanBlocked.innerHTML = "";
+
+      if (ui.taskKanbanEmpty) toggleHidden(ui.taskKanbanEmpty, list.length > 0);
+
+      list.forEach((agent) => {
+        const id = agent && agent.id != null ? String(agent.id) : "";
+        const label = labelForAgent(agent, id || "-");
+        const status = stateForAgent(agent);
+        const category = getAgentCategory(status);
+
+        const card = document.createElement("div");
+        card.className = "kanban-card";
+        card.textContent = label || "-";
+        if (id) {
+          card.dataset.nodeId = id;
+          card.addEventListener("click", () => selectNode(id, agent));
+        }
+
+        if (status) {
+          const meta = document.createElement("div");
+          meta.className = "kanban-card-meta";
+          meta.textContent = status;
+          card.appendChild(meta);
+        }
+
+        if (category === "running") ui.taskKanbanRunning.appendChild(card);
+        else if (category === "done") ui.taskKanbanDone.appendChild(card);
+        else if (category === "blocked") ui.taskKanbanBlocked.appendChild(card);
+        else ui.taskKanbanTodo.appendChild(card);
+      });
+    };
+
     const renderPlanSubtasks = (agent) => {
       if (!ui.taskPlanList || !ui.taskPlanEmpty) return;
 
@@ -1573,6 +1766,21 @@
 
       const agents = Array.isArray(data?.agents) ? data.agents : [];
       const edges = Array.isArray(data?.edges) ? data.edges : [];
+      const events = Array.isArray(data?.recent_events)
+        ? data.recent_events
+        : Array.isArray(data?.events)
+          ? data.events
+          : [];
+
+      renderKanban(agents);
+
+      if (events.length && !state.recentEvents.length) {
+        clearTaskLog();
+        events.forEach((evt) => {
+          appendTaskLog(evt, { limit: 200 });
+        });
+        state.recentEvents = events.slice(-200);
+      }
 
       if (!agents.length) {
         const emptyDiv = document.createElement("div");
@@ -1668,6 +1876,7 @@
       if (!recentEvents.length) return;
 
       recentEvents.forEach((event) => {
+        appendTaskLog(event, { limit: 200 });
         const agentId = event?.agent_id || event?.data?.agent_id;
         if (!agentId) return;
 
@@ -1686,6 +1895,7 @@
           ui.taskStatusDisplay.textContent = safeText(displayStatus);
         }
       });
+      state.recentEvents = [...state.recentEvents, ...recentEvents].slice(-200);
       // Debounced fetchTree() to pick up new nodes/edges after delta updates
       if (state.deltaFetchTimer) {
         clearTimeout(state.deltaFetchTimer);
@@ -1698,6 +1908,7 @@
 
     const selectNode = (nodeId, agent) => {
       state.selectedNode = { id: nodeId, agent };
+      updateMobileControlsState();
       if (!ui.taskDetailsSection) return;
 
       ui.taskDetailsSection.classList.remove("is-hidden");
@@ -1805,6 +2016,35 @@
       });
     };
 
+    const renderSkillSearchResults = () => {
+      if (!ui.taskSkillSearchResults || !ui.taskSkillSearchEmpty) return;
+      ui.taskSkillSearchResults.innerHTML = "";
+      const results = Array.isArray(state.communitySearchResults) ? state.communitySearchResults : [];
+      const hasQuery = Boolean(state.communitySearchQuery);
+      toggleHidden(ui.taskSkillSearchEmpty, !hasQuery || results.length > 0);
+      results.forEach((skill) => {
+        const name = safeText(skill?.name || skill?.key || "").trim();
+        const desc = safeText(skill?.description || skill?.summary || "").trim();
+        const li = document.createElement("li");
+        li.className = "skill-result";
+
+        const meta = document.createElement("div");
+        meta.className = "skill-meta";
+        const nameEl = document.createElement("div");
+        nameEl.className = "skill-name";
+        nameEl.textContent = name || "-";
+        meta.appendChild(nameEl);
+        if (desc) {
+          const descEl = document.createElement("div");
+          descEl.className = "skill-desc";
+          descEl.textContent = desc;
+          meta.appendChild(descEl);
+        }
+        li.appendChild(meta);
+        ui.taskSkillSearchResults.appendChild(li);
+      });
+    };
+
     const loadSources = async (agentId) => {
       if (!agentId || !state.runId) return;
       if (!ui.taskSourcesList) return;
@@ -1841,6 +2081,27 @@
         option.textContent = name;
         ui.taskSkillSelect.appendChild(option);
       });
+    };
+
+    const searchCommunitySkills = async () => {
+      if (!ui.taskSkillSearchInput) return;
+      const query = ui.taskSkillSearchInput.value.trim();
+      state.communitySearchQuery = query;
+      if (!query) {
+        state.communitySearchResults = [];
+        renderSkillSearchResults();
+        return;
+      }
+      try {
+        const resp = await apiFetch(`/api/community-skills/search?query=${encodeURIComponent(query)}`, { method: "GET" });
+        const data = await resp.json().catch(() => null);
+        const results = Array.isArray(data?.skills) ? data.skills : Array.isArray(data?.results) ? data.results : [];
+        state.communitySearchResults = results;
+        renderSkillSearchResults();
+      } catch (err) {
+        if (handleAuthError(err)) return;
+        setMessage(t("taskTree.msg.skillsSearchFailed"), "error");
+      }
     };
 
     const loadCommunitySkills = async () => {
@@ -1922,6 +2183,39 @@
       }
     };
 
+    const installSkillByNl = async () => {
+      const agentId = state.selectedNode?.id;
+      if (!agentId) {
+        setMessage(t("sop.msg.needAgent"), "error");
+        return;
+      }
+      if (!state.runId) {
+        setMessage(t("sop.msg.needRun"), "error");
+        return;
+      }
+      if (!ui.taskSkillNlInput) return;
+      const query = ui.taskSkillNlInput.value.trim();
+      if (!query) return;
+      try {
+        const resp = await apiFetch(
+          `/api/runs/${encodeURIComponent(state.runId)}/agents/${encodeURIComponent(agentId)}/skills/install-nl`,
+          {
+            method: "POST",
+            body: JSON.stringify({ query })
+          }
+        );
+        const data = await resp.json().catch(() => null);
+        const skills = Array.isArray(data?.skills) ? data.skills : [];
+        state.skillsByAgent[agentId] = skills;
+        renderSkills(agentId);
+        ui.taskSkillNlInput.value = "";
+        setMessage(t("taskTree.msg.skillsInstallNlOk"), "ok");
+      } catch (err) {
+        if (handleAuthError(err)) return;
+        setMessage(t("taskTree.msg.skillsInstallNlFailed"), "error");
+      }
+    };
+
     const exportTeamTemplate = async () => {
       if (!state.runId) {
         setMessage(t("sop.msg.needRun"), "error");
@@ -1965,6 +2259,7 @@
         if (newRunId) {
           state.runId = newRunId;
           localStorage.setItem(STORAGE.runId, newRunId);
+          updateMobileControlsState();
           await fetchTree();
         }
         ui.taskTeamImportInput.value = "";
@@ -2030,30 +2325,27 @@
       }
     };
 
-    const sendChatMessage = async () => {
-      if (!ui.taskChatInput || !state.selectedNode) return;
-      const message = ui.taskChatInput.value.trim();
-      if (!message) return;
-
+    const submitInterventionMessage = async (message) => {
+      if (!state.selectedNode) return false;
       const agentId = state.selectedNode.id;
+      const trimmed = safeText(message).trim();
+      if (!trimmed) return false;
       if (!state.runId) {
         setMessage(t("taskTree.msg.chatSendFailed"), "error");
-        return;
+        return false;
       }
 
-      const userMsg = { role: "user", content: message, timestamp: Date.now() };
+      const userMsg = { role: "user", content: trimmed, timestamp: Date.now() };
       if (!state.chatHistories[agentId]) state.chatHistories[agentId] = [];
       state.chatHistories[agentId].push(userMsg);
       saveChatHistory(agentId, state.chatHistories[agentId]);
       renderChat(agentId);
 
-      ui.taskChatInput.value = "";
-
       try {
         const resp = await apiFetch(`/api/runs/${encodeURIComponent(state.runId)}/interventions`, {
           method: "POST",
           body: JSON.stringify({
-            message,
+            message: trimmed,
             agent_id: agentId
           })
         });
@@ -2062,10 +2354,28 @@
         state.chatHistories[agentId].push(systemMsg);
         saveChatHistory(agentId, state.chatHistories[agentId]);
         renderChat(agentId);
+        return true;
       } catch (err) {
-        if (handleAuthError(err)) return;
+        if (handleAuthError(err)) return false;
         setMessage(t("taskTree.msg.chatSendFailed"), "error");
+        return false;
       }
+    };
+
+    const sendChatMessage = async () => {
+      if (!ui.taskChatInput || !state.selectedNode) return;
+      const message = ui.taskChatInput.value.trim();
+      if (!message) return;
+      ui.taskChatInput.value = "";
+      await submitInterventionMessage(message);
+    };
+
+    const sendMobileIntervention = async () => {
+      if (!ui.taskMobileInterventionInput) return;
+      const message = ui.taskMobileInterventionInput.value.trim();
+      if (!message) return;
+      ui.taskMobileInterventionInput.value = "";
+      await submitInterventionMessage(message);
     };
 
     const logout = async () => {
@@ -2081,6 +2391,11 @@
       localStorage.removeItem(STORAGE.runId);
       setMessage("", null);
       setConnectionStatus("idle");
+      clearTaskLog();
+      renderKanban([]);
+      state.runId = "";
+      state.selectedNode = null;
+      updateMobileControlsState();
       redirectToLogin();
     };
 
@@ -2100,6 +2415,7 @@
             if (resp.ok) {
               // Validation successful, proceed with connection
               state.runId = storedRunId;
+              updateMobileControlsState();
               connectWs();
             }
           } catch (err) {
@@ -2110,12 +2426,14 @@
               state.runId = "";
               setConnectionStatus("idle");
               setMessage("历史任务不可访问，已清理。请创建新任务。", "warn");
+              updateMobileControlsState();
             } else {
               // Other errors, still clear run_id to be safe
               localStorage.removeItem(STORAGE.runId);
               state.runId = "";
               setConnectionStatus("idle");
               setMessage("历史任务不可访问，已清理。请创建新任务。", "warn");
+              updateMobileControlsState();
             }
           }
         }
@@ -2156,6 +2474,18 @@
       ui.taskChatForm.addEventListener("submit", (e) => {
         e.preventDefault();
         void sendChatMessage();
+      });
+    }
+    if (ui.taskSkillSearchForm) {
+      ui.taskSkillSearchForm.addEventListener("submit", (e) => {
+        e.preventDefault();
+        void searchCommunitySkills();
+      });
+    }
+    if (ui.taskSkillNlForm) {
+      ui.taskSkillNlForm.addEventListener("submit", (e) => {
+        e.preventDefault();
+        void installSkillByNl();
       });
     }
     if (ui.taskSourcesForm) {
@@ -2211,12 +2541,39 @@
         void sendControlAction("run.retry");
       });
     }
+    if (ui.taskMobilePause) {
+      ui.taskMobilePause.addEventListener("click", (e) => {
+        e.preventDefault();
+        void sendControlAction("run.pause");
+      });
+    }
+    if (ui.taskMobileResume) {
+      ui.taskMobileResume.addEventListener("click", (e) => {
+        e.preventDefault();
+        void sendControlAction("run.resume");
+      });
+    }
+    if (ui.taskMobileRetry) {
+      ui.taskMobileRetry.addEventListener("click", (e) => {
+        e.preventDefault();
+        void sendControlAction("run.retry");
+      });
+    }
+    if (ui.taskMobileInterventionForm) {
+      ui.taskMobileInterventionForm.addEventListener("submit", (e) => {
+        e.preventDefault();
+        void sendMobileIntervention();
+      });
+    }
     if (ui.logoutBtn) {
       ui.logoutBtn.addEventListener("click", (e) => {
         e.preventDefault();
         void logout();
       });
     }
+
+    updateMobileControlsState();
+    setTaskLogEmpty();
 
     // User dropdown behavior
     const setupUserDropdown = () => {
@@ -2278,6 +2635,7 @@
     };
 
     setupUserDropdown();
+    setupViewTabs();
 
     void bootstrapAuth();
     window.addEventListener("beforeunload", () => disconnectWs());
