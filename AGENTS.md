@@ -54,6 +54,7 @@ Each service owns its own `app/main.py` entrypoint and `requirements*.txt` depen
 - Auth headers are split by boundary: `X-API-Key`, `X-Internal-Key`, `X-Admin-Key`.
 - Local compose binds `api-backend` to `127.0.0.1:8005->8000` by default.
 - No CI config files; builds are via Docker Compose + scripts.
+- 每改完一个服务就立即更新相关的 `AGENTS.md` 并完成该服务测试。
 
 ## ANTI-PATTERNS (THIS PROJECT)
 - Never commit secrets (see `docs/agent-framework.md`).

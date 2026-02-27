@@ -22,6 +22,8 @@ mcp-server/
 - Internal auth via `X-Internal-Key` (`INTERNAL_API_KEY` required, comma-separated allowed).
 - SearXNG base URL via `SEARXNG_URL`.
 - JSON logging with `X-Request-ID` middleware.
+- 默认通过 `docker-compose.yml` 的 `searxng` 服务提供搜索后端。
+- 每改完一个服务就立即更新相关的 `AGENTS.md` 并完成该服务测试。
 
 ## ANTI-PATTERNS
 - Do not expose `/search` without internal auth.
