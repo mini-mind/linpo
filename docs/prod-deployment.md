@@ -4,19 +4,18 @@
 
 ## 当前运行位置 (务必先确认)
 
-本仓库存在两种部署形态。**当前我们只有两台机器：本机(开发) + ravin(生产)**。
+本仓库存在两种部署形态。当前常见资源形态是：
 
-1) **单机全量部署 (single-host)**
-   - 特征：同一台机器同时运行 edge/gateway/web-frontend/api-backend/agent-manager/postgres/redis/... 等。
-   - Compose：项目根 `docker-compose.yml`（本地构建镜像）或 `deploy/legacy/docker-compose.single-host.yml`（ACR 镜像）。
-   - 适用：只有 1 台服务器时；或需要最快恢复时。
+- 本机（开发）
+- `ravin`（frontend host，跑 edge/gateway/web-frontend/searxng）
+- `ubuntu@175.178.213.10`（worker host，跑后端/worker）
 
-2) **双机拆分部署 (split deployment)**
+1) **双机拆分部署 (split deployment)**
    - 特征：frontend host 运行 edge/gateway/web-frontend/searxng；worker host 运行 api-backend/agent-manager/worker-playwright/...。
    - Compose：`deploy/prod/docker-compose.frontend.yml`（frontend）；worker 侧以 `docs/worker-deployment.md` / 实际运维 SOP 为准。
    - 适用：前后端分离、worker 资源隔离。
 
-备注：如果你只有一台生产机（ravin），则 split deployment 的 "worker host" 实际上与 ravin 可能是同一台机器；这种情况下优先按 single-host 或 prod compose 的实际落地为准。
+备注：如果你只有一台生产机（例如只有 ravin），则 split deployment 的 "worker host" 可能与 frontend host 是同一台机器；这种情况下按实际 compose 落地为准。
 
 如果你不确定当前线上属于哪种形态，先在目标机器执行：
 
@@ -88,41 +87,3 @@ curl -fsS https://roboard.duckdns.org/ >/dev/null
 - 未登录显示登录/注册
 - 注册/登录后可创建 run 并连接 WS（不需要填写 API key）
 - Logout 正常清理会话
-
-## MVP2: Scheduling / Templates / Reporting
-
-MVP2 增加了三类能力：
-- Scheduling: 定时/周期性创建 run
-- Templates: 场景模板编译（当前至少包含 `supplier.monitoring`）
-- Reporting: run 的确定性报告（从 events 推导，不依赖 LLM）
-
-### 公网 API (tenant auth)
-
-- Schedules:
-  - `POST /api/schedules`
-  - `GET /api/schedules`
-  - `POST /api/schedules/{schedule_id}/enable`
-  - `POST /api/schedules/{schedule_id}/disable`
-- Templates:
-  - `GET /api/templates`
-  - `POST /api/templates/{template_key}/compile`
-- Reporting:
-  - `GET /api/runs/{run_id}/report`
-
-### 内部 API (internal auth)
-
-- `POST /internal/schedules/claim_due`
-  - 用途：scheduler 领取 due schedules，并推进 `next_run_at`
-  - 认证：`X-Internal-Key`
-
-### Scheduler 运行位置
-
-- `agent-manager` 在启动时会启动 scheduler loop（FastAPI lifespan）。
-- 通过环境变量控制轮询间隔：`SCHEDULER_POLL_INTERVAL` (seconds)
-  - `<= 0` 表示禁用
-
-## Legacy
-
-单机全量部署（历史版本）已移至：
-- Compose: `deploy/legacy/docker-compose.single-host.yml`
-- Doc: `docs/legacy/prod-deployment-single-host.md`

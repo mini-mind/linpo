@@ -8,6 +8,9 @@
 
 **项目简介**: 多服务搜索基础设施，包含 Agent 框架、A2A 通信、浏览器自动化等组件。
 
+**产品需求文档（最新）**:
+- [灵板 PRD v3.0](prd/2026-02-26-lingban-prd-v3.0.md)
+
 **快速启动**:
 - [Quick Start - 本地运行所有服务](../README.md#quick-start)
 
@@ -41,8 +44,13 @@
 - [Local Deployment Guide](deployment/local.md) - Docker Compose 本地部署快速指南
 
 **部署脚本**:
+- `scripts/deploy_local.sh` - 本地/单机快速部署核心服务（本地构建镜像）
+- `scripts/deploy_worker_host.sh` - 本地/拆分部署：仅部署后端重服务（本地构建镜像）
 - `scripts/push_worker_images.sh` - 推送 worker 镜像到 Aliyun ACR
 - `scripts/deploy_worker.sh` - 在 worker 主机上部署服务
+- `scripts/push_frontend_images.sh` - 推送 frontend 镜像到 Aliyun ACR
+- `scripts/deploy_ravin_frontend.sh` - 在 ravin(frontend host) 部署 gateway/web-frontend
+- `scripts/push_core_images.sh` - 推送全量 core 镜像到 Aliyun ACR
 - `scripts/pg_backup.sh` / `scripts/pg_restore.sh` - 数据库备份与恢复
 
 **生产配置**（根 README）:
@@ -59,5 +67,4 @@
 - [项目章程](CONSTITUTION.md) - 项目治理与沟通规则
 - [Sisyphus 工作流](process/sisyphus-workflow.md) - 计划、草稿、决策记录系统
 - [产品定位决策记录 (2026-02-13)](decisions/positioning-2026-02-13.md) - 业务专家构建权、长期服务与 P0 方向
-- [P0 开发规划 (2026-02-13)](plans/p0-development-plan-2026-02-13.md) - 状态协议、干预接口与轻量编排
 - [前端 UI 与版本管理规范 (2026-02-21)](specs/2026-02-21-ui-and-versioning.md) - Task Tree UI 形态、版本 TAG 规则、拆分部署边界

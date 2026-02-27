@@ -57,4 +57,4 @@ export PATH="$HOME/.opencode/bin:$PATH"
 
 - worker 上可以运行 `opencode --version`
 - worker 上 `~/projects/roboard` 目录存在且内容为最新
-- 在 worker 上可以继续按 `docs/plans/p0-development-plan-2026-02-13.md` 推进开发
+- 在 worker 上以最新 PRD 为准推进开发：`docs/prd/2026-02-26-lingban-prd-v3.0.md`

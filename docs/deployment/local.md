@@ -16,7 +16,7 @@
 - `edge` - Caddy 反向代理（端口 80/443）
 - `gateway` - 内部 Nginx 网关（容器内监听 80；仅 compose 网络内访问）
 - `web-frontend` - 静态文件服务
-- `api-backend` - FastAPI 后端（端口 8000）
+- `api-backend` - FastAPI 后端（容器内 8000；本地默认绑定 `127.0.0.1:8005->8000` 供调试）
 - `agent-manager` - 任务调度器（端口 7000）
 - `llm-gateway` - LLM 提供商多路复用（端口 7300）
 - `mcp-server` - MCP 协议服务
@@ -24,8 +24,8 @@
 可选/辅助服务（按需单独部署）：
 - `postgres` - PostgreSQL 数据库
 - `redis` - Redis 缓存和消息代理
-- `searxng` - 搜索引擎（端口 8081）
-- `mailhog` - 邮件测试（开发环境，端口 8025）
+- `mailhog` - 邮件测试（开发环境，端口 8025；本仓库 `docker-compose.yml` 提供该服务，但脚本默认不启动）
+- `searxng` - 搜索引擎（端口 8081；在 `deploy/prod/docker-compose.frontend.yml` / legacy compose 中提供。若本地不跑该服务，可通过 `SEARXNG_URL` 让 `mcp-server` 指向一个外部 SearXNG 实例）
 
 ## 部署策略
 
@@ -36,7 +36,11 @@
 ```bash
 ADMIN_API_KEY=...
 INTERNAL_API_KEY=...
-SEARXNG_SECRET_KEY=...
+
+# Optional:
+# LLM_PROVIDERS_HOST_PATH=/abs/path/to/llm-providers.json
+# SEARXNG_URL=http://host.docker.internal:18081
+# SEARXNG_SECRET_KEY=...  # only required if you deploy the searxng service
 ```
 
 SOP 存储默认挂载在宿主机目录 `./sops/`（容器内为 `/app/sops`）。如果你要自定义路径，可设置 `ROBOARD_SOP_ROOT`（默认 `/app/sops`）。
@@ -118,11 +122,6 @@ docker compose up -d --build edge gateway web-frontend api-backend agent-manager
 docker compose ps
 ```
 
-MVP2 相关说明：
-- `agent-manager` 会启动 scheduler loop，用于周期性创建 run。
-- 轮询间隔通过 `SCHEDULER_POLL_INTERVAL` 控制（秒）。
-  - `SCHEDULER_POLL_INTERVAL<=0` 可禁用 scheduler。
-
 **最小化重部署**（服务子集）：
 
 当只有特定服务变更时，仅重部署这些服务：
@@ -185,42 +184,26 @@ docker compose logs
 docker compose ps
 # 预期：所有服务显示 "Up" 或 "running" 状态
 
-# 检查 edge (Caddy) 正在服务
-curl -I https://roboard.duckdns.org/
-# 预期：HTTP 200 或 308 重定向
+# Compose 网络内健康检查（不依赖公网域名；适合本地/开发机验证）
+docker compose exec -T api-backend curl -fsS http://localhost:8000/health
+docker compose exec -T gateway curl -fsS http://localhost/api/health
 
-# 检查 API 健康端点
-curl https://roboard.duckdns.org/api/health
-# 预期：包含 status "ok" 的 JSON 响应
-
-# (MVP2) 检查模板列表
-curl https://roboard.duckdns.org/api/templates
-# 预期：包含 supplier.monitoring
-
-# (MVP2) 创建 schedule (示例；需要 tenant auth)
-# curl -X POST https://roboard.duckdns.org/api/schedules -H "X-API-Key: ..." -H "Content-Type: application/json" \
-#   -d '{"template_key":"supplier.monitoring","interval_sec":3600,"params":{"suppliers":["Acme"],"keywords":["fraud"]}}'
-
-# (MVP2) 查看 run report
-# curl https://roboard.duckdns.org/api/runs/<run_id>/report -H "X-API-Key: ..."
-
-# 检查 WebSocket 升级是否工作
-curl -I -H "Upgrade: websocket" -H "Connection: Upgrade" \
-  https://roboard.duckdns.org/ws/events
-# 预期：101 Switching Protocols 或 400/426（缺少参数）
+# 如果你是在真实线上机器部署（域名已解析到该机器），可额外做一次公网验证：
+# curl -fsS https://roboard.duckdns.org/api/health
+# curl -I https://roboard.duckdns.org/ >/dev/null
 ```
 
 **Bootstrap 验证**（如果适用）：
 ```bash
-# 检查 bootstrap 端点返回 wss:// URL
-curl https://roboard.duckdns.org/api/bootstrap
-# 预期：包含 "wss://roboard.duckdns.org" 的 "ws_url" JSON
+# 检查 bootstrap 端点返回 ws_url
+docker compose exec -T gateway curl -fsS http://localhost/api/bootstrap
+# 预期：返回 JSON，包含 "ws_url" 字段（生产环境通常为 wss://roboard.duckdns.org/...）
 ```
 
 **内部服务连接**（从 compose 网络内）：
 ```bash
 # 通过 docker compose exec 访问内部服务
-docker compose exec api-backend curl http://localhost:8000/health
+docker compose exec -T api-backend curl -fsS http://localhost:8000/health
 docker compose exec gateway curl http://localhost/api/health
 ```
 
@@ -237,7 +220,8 @@ docker compose stop api-backend
 docker compose rm -f api-backend
 
 # 重新部署之前已知良好的状态（如果已版本化）
-git checkout docker-compose.yml
+# git restore 需要较新的 git；如不可用可回退为 git checkout
+git restore docker-compose.yml || git checkout docker-compose.yml
 docker compose up -d
 ```
 

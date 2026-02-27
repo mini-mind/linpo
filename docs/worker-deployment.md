@@ -111,14 +111,14 @@ The script performs the following:
 PUSH WORKER IMAGES TO ACR
 ================================
 
-TAG: v1.0.0
+TAG: 20260210-28d14cd
 ACR_REGISTRY: registry.cn-hangzhou.aliyuncs.com
 ACR_NAMESPACE: ravin
 
 Images to push:
-  - registry.cn-hangzhou.aliyuncs.com/ravin/web3d-playwright-runner:v1.0.0
-  - registry.cn-hangzhou.aliyuncs.com/ravin/web3d-playwright-gateway:v1.0.0
-  - registry.cn-hangzhou.aliyuncs.com/ravin/web3d-worker-playwright:v1.0.0
+  - registry.cn-hangzhou.aliyuncs.com/ravin/web3d-playwright-runner:20260210-28d14cd
+  - registry.cn-hangzhou.aliyuncs.com/ravin/web3d-playwright-gateway:20260210-28d14cd
+  - registry.cn-hangzhou.aliyuncs.com/ravin/web3d-worker-playwright:20260210-28d14cd
   - registry.cn-hangzhou.aliyuncs.com/ravin/docker-socket-proxy:0.1.1
 
 [1/4] Building and pushing playwright-runner...
@@ -145,7 +145,7 @@ The script performs the following:
 1. Creates `~/web3d-worker` directory on the worker host
 2. Copies `deploy/worker/docker-compose.yml` to the worker host
 3. Runs `docker compose up -d` with environment variables:
-   - `TAG=v1.0.0` (used by compose file for image selection)
+   - `TAG=YYYYMMDD-<git-short-sha>` (used by compose file for image selection)
    - `INTERNAL_API_KEY=your-secret-key` (authentication secret)
 
 **Environment Variables**:
@@ -329,7 +329,7 @@ environment:
 
 Re-run the push script to mirror images:
 ```bash
-TAG=v1.0.0 ./scripts/push_worker_images.sh
+TAG=20260210-28d14cd ./scripts/push_worker_images.sh
 ```
 
 ## Updating the Worker Stack
@@ -338,12 +338,12 @@ To update the worker stack with new images:
 
 1. **Build and push new images**:
    ```bash
-   TAG=v1.1.0 ./scripts/push_worker_images.sh
+   TAG=20260211-3b8c3d1 ./scripts/push_worker_images.sh
    ```
 
 2. **Deploy with new tag**:
    ```bash
-   INTERNAL_API_KEY=your-secret-key TAG=v1.1.0 ./scripts/deploy_worker.sh
+   INTERNAL_API_KEY=your-secret-key TAG=20260211-3b8c3d1 ./scripts/deploy_worker.sh
    ```
 
 3. **Verify deployment**:
@@ -358,11 +358,11 @@ To update the worker stack with new images:
 
 To rollback to a previous version:
 
-1. **Identify the previous tag** (e.g., `v1.0.0`)
+1. **Identify the previous tag** (e.g., `20260210-28d14cd`)
 
 2. **Deploy with previous tag**:
    ```bash
-   INTERNAL_API_KEY=your-secret-key TAG=v1.0.0 ./scripts/deploy_worker.sh
+   INTERNAL_API_KEY=your-secret-key TAG=20260210-28d14cd ./scripts/deploy_worker.sh
    ```
 
 3. **Verify rollback**:
@@ -376,7 +376,7 @@ To rollback to a previous version:
 
 ```bash
 # 1. Set variables
-TAG=v1.0.0
+TAG=20260210-28d14cd
 INTERNAL_API_KEY="your-32-character-random-secret-key"
 
 # 2. Build and push images to ACR
