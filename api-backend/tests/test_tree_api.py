@@ -183,7 +183,7 @@ def test_run_tree_and_sop_endpoints(tmp_path: pathlib.Path, monkeypatch: _Monkey
             "agent_id": str(root_agent_id),
             "tenant_id": int(cast(str, tenant_payload["tenant_id"])),
             "run_id": int(run_id),
-            "role_label": "ceo",
+            "role_label": "lead",
             "state": "running",
         },
     )
@@ -214,7 +214,7 @@ def test_run_tree_and_sop_endpoints(tmp_path: pathlib.Path, monkeypatch: _Monkey
     sop = sop_resp.json()
     assert set(sop.keys()) == {"md_text"}
     md_text = cast(str, sop["md_text"])
-    assert "CEO SOP" in md_text
+    assert "Lead SOP" in md_text
 
     tree_after = client.get(
         f"/api/runs/{run_id}/tree",
@@ -369,7 +369,7 @@ def test_run_tree_reads_fs_agent_data(tmp_path: pathlib.Path, monkeypatch: _Monk
             "agent_id": str(root_agent_id),
             "tenant_id": int(tenant_id),
             "run_id": int(run_id),
-            "role_label": "ceo",
+            "role_label": "lead",
             "state": "running",
             "name": "Root Agent",
             "current_step": "planning",
@@ -419,7 +419,7 @@ def test_run_tree_reads_fs_agent_data(tmp_path: pathlib.Path, monkeypatch: _Monk
     by_id = {str(agent["id"]): agent for agent in agents}
 
     root_agent = by_id[str(root_agent_id)]
-    assert root_agent["role_label"] == "ceo"
+    assert root_agent["role_label"] == "lead"
     assert root_agent["state"] == "running"
     assert root_agent["name"] == "Root Agent"
     assert root_agent["current_step"] == "planning"
