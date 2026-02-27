@@ -133,11 +133,10 @@ services:
       - WORKER_URL=${WORKER_URL:-http://worker-playwright:7100}
       - API_BACKEND_URL=${API_BACKEND_URL:-http://api-backend:8000}
       - MCP_URL=${MCP_URL:-http://mcp-server:9000}
-      - SEARXNG_URL=${SEARXNG_URL:-http://host.docker.internal:18081}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
     depends_on:
       - redis
+      - searxng
     healthcheck:
       test:
         - CMD-SHELL
@@ -149,6 +148,15 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
+    networks:
+      - app-net
+    restart: unless-stopped
+
+  searxng:
+    image: searxng/searxng:latest
+    environment:
+      - BASE_URL=http://localhost:8080/
+      - INSTANCE_NAME=roboard-searxng
     networks:
       - app-net
     restart: unless-stopped
