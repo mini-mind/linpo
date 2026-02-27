@@ -138,6 +138,116 @@ Returns:
 
 `GET /api/tasks/{task_id}/notifications` (requires `X-API-Key` OR `X-Internal-Key` + `X-Tenant-ID`)
 
+### Run tree
+
+`GET /api/runs/{run_id}/tree`
+
+返回 run 的 agent 树（agents + edges），用于前端任务树展示。
+
+### Run SOP
+
+`GET /api/agents/{agent_id}/sop`
+
+返回 agent 的 SOP（`mission.md`）。
+
+### Interventions
+
+`POST /api/runs/{run_id}/interventions`
+
+Request:
+```json
+{
+  "agent_id": "123",
+  "message": "Please focus on delivery risk."
+}
+```
+
+Response: 事件对象（`task.requires_input`），并将 run 状态更新为 `needs_human`。
+
+### Run actions (pause/resume/retry)
+
+`POST /api/runs/{run_id}/actions`
+
+Request:
+```json
+{
+  "target_agent_id": "123",
+  "action_type": "run.pause",
+  "idempotency_key": "pause-1"
+}
+```
+
+`action_type` 支持：`run.pause` / `run.resume` / `run.retry` / `sop.replace`。
+
+行为说明：
+- `run.pause`: 生成 `task.requires_input` 事件并把 run 标记为 `needs_human`
+- `run.resume` / `run.retry`: 生成 `action.*` 事件并重新入队 `queue:dispatch`
+
+### Agent sources
+
+`GET /api/runs/{run_id}/agents/{agent_id}/sources`
+`PUT /api/runs/{run_id}/agents/{agent_id}/sources`
+
+Request (PUT):
+```json
+{
+  "sources": [
+    {"path": "docs/manuals", "label": "Manuals"}
+  ]
+}
+```
+
+来源清单写入 `agent_fs/context/sources/manifest.json`，并创建相应目录。
+
+### Agent skills
+
+`GET /api/runs/{run_id}/agents/{agent_id}/skills`
+`PUT /api/runs/{run_id}/agents/{agent_id}/skills`
+
+Request (PUT):
+```json
+{
+  "skills": [
+    {"name": "hello", "filename": "hello.py", "code": "def run():\n    return 'hello'\n"}
+  ]
+}
+```
+
+技能清单写入 `agent_fs/skills/manifest.json`，代码文件写入 `agent_fs/skills/*.py`。
+
+### Community skills
+
+`GET /api/community-skills`
+
+返回 `config/community_skills.yaml` 中登记的技能列表。
+
+`POST /api/runs/{run_id}/agents/{agent_id}/skills/install`
+
+Request:
+```json
+{ "skill_key": "hello_world" }
+```
+
+安装指定社区技能并更新 manifest。
+
+### Team template export/import
+
+`GET /api/runs/{run_id}/team/export`
+
+Response:
+```json
+{ "yaml": "version: 1\n..." }
+```
+
+`POST /api/runs/team/import`
+
+Request:
+```json
+{ "yaml": "version: 1\n..." }
+```
+
+导入后创建新的 run，并按模板生成 agent 树。
+
 ## WebSocket
 
 订阅任务事件流，连接时发送快照，之后广播新事件。
