@@ -146,6 +146,10 @@ ALLOWED_EVENT_TYPES: set[str] = {
     "task.requires_input",
     "task.completed",
     "task.failed",
+    "skill.create.succeeded",
+    "skill.create.failed",
+    "skill.execute.succeeded",
+    "skill.execute.failed",
 }
 
 EVENT_TO_STATUS: dict[str, str] = {
@@ -1507,6 +1511,35 @@ async def get_run(
     if not task:
         raise HTTPException(status_code=404, detail="Run not found")
     return _run_to_out(task)
+
+
+@app.get("/api/runs/{run_id}/events", response_model=list[EventOut])
+async def get_run_events(
+    run_id: str,
+    tenant: Annotated[models.Tenant, Depends(require_tenant)],
+    session: DbSessionDep,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+) -> list[EventOut]:
+    TASK_ID_CONTEXT.set(run_id)
+    run_id_int = _parse_int_id(run_id, "run_id")
+    task = (
+        session.query(models.Task)
+        .filter(models.Task.id == run_id_int, models.Task.tenant_id == tenant.id)
+        .first()
+    )
+    if not task:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    events = (
+        session.query(models.Event)
+        .filter(models.Event.task_id == run_id_int, models.Event.tenant_id == tenant.id)
+        .order_by(models.Event.id.desc())
+        .limit(limit)
+        .all()
+    )
+    events = list(reversed(events))
+    return [_event_to_out(event) for event in events]
+
 
 
 

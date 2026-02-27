@@ -118,6 +118,46 @@ def write_skill_code(agent_root: Path, filename: str, code: str) -> None:
     _ = full_path.write_text(code, encoding="utf-8")
 
 
+def read_tenant_skills_manifest(tenant_root: Path) -> list[dict[str, str]]:
+    manifest_path = tenant_root / "skills" / "manifest.json"
+    if not manifest_path.exists():
+        return []
+    raw_value = cast(object, json.loads(manifest_path.read_text(encoding="utf-8")))
+    if not isinstance(raw_value, list):
+        return []
+    raw_list = cast(list[object], raw_value)
+    skills: list[dict[str, str]] = []
+    for item in raw_list:
+        if not isinstance(item, dict):
+            continue
+        item_dict = cast(dict[str, object], item)
+        name = item_dict.get("name")
+        filename = item_dict.get("filename")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        if not isinstance(filename, str) or not filename.strip():
+            continue
+        skills.append({"name": name, "filename": filename})
+    return skills
+
+
+def write_tenant_skills_manifest(tenant_root: Path, skills: list[dict[str, str]]) -> None:
+    skills_root = tenant_root / "skills"
+    skills_root.mkdir(parents=True, exist_ok=True)
+    manifest_path = skills_root / "manifest.json"
+    _ = manifest_path.write_text(
+        json.dumps(skills, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def write_tenant_skill_code(tenant_root: Path, filename: str, code: str) -> None:
+    skills_root = tenant_root / "skills"
+    skills_root.mkdir(parents=True, exist_ok=True)
+    skill_path = skills_root / filename
+    _ = skill_path.write_text(code, encoding="utf-8")
+
+
 def _safe_path(agent_root: Path, rel: str) -> Path:
     rel_path = Path(rel)
     if rel_path.is_absolute():

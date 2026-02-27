@@ -11,3 +11,7 @@ def project_root_for(base: Path, tenant_id: int, run_id: int) -> Path:
 
 def agent_root_for(base: Path, tenant_id: int, run_id: int, agent_id: str) -> Path:
     return project_root_for(base, tenant_id, run_id) / "agents" / agent_id
+
+
+def tenant_root_for(base: Path, tenant_id: int) -> Path:
+    return base / "data" / "tenants" / f"t{tenant_id}"

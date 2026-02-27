@@ -225,3 +225,53 @@ def load_community_skills() -> list[dict[str, str]]:
             entry["description"] = description.strip()
         normalized.append(entry)
     return normalized
+
+
+def load_builtin_skills() -> list[dict[str, str]]:
+    repo_root = _find_repo_root()
+    skills_path = repo_root / "config" / "builtin_skills.yaml"
+    content = _read_yaml_file(skills_path)
+    if not content:
+        return []
+    skills = content.get("skills")
+    if not isinstance(skills, list):
+        return []
+    normalized: list[dict[str, str]] = []
+    for item in skills:
+        if not isinstance(item, dict):
+            continue
+        key = item.get("key")
+        name = item.get("name")
+        filename = item.get("filename")
+        description = item.get("description")
+        if not isinstance(key, str) or not key.strip():
+            continue
+        if not isinstance(name, str) or not name.strip():
+            continue
+        if not isinstance(filename, str) or not filename.strip():
+            continue
+        entry = {
+            "key": key.strip(),
+            "name": name.strip(),
+            "filename": filename.strip(),
+        }
+        if isinstance(description, str) and description.strip():
+            entry["description"] = description.strip()
+        normalized.append(entry)
+    return normalized
+
+
+def search_community_skills(query: str, *, limit: int = 5) -> list[dict[str, str]]:
+    normalized_query = query.strip().lower()
+    if not normalized_query:
+        return []
+    matches: list[dict[str, str]] = []
+    for item in load_community_skills():
+        key = item.get("key", "").lower()
+        name = item.get("name", "").lower()
+        description = item.get("description", "").lower()
+        if normalized_query in key or normalized_query in name or normalized_query in description:
+            matches.append(item)
+        if len(matches) >= limit:
+            break
+    return matches

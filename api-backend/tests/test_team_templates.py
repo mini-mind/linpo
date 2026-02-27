@@ -1,4 +1,5 @@
 import importlib
+import json
 import pathlib
 import sys
 from typing import Protocol, cast
@@ -137,5 +138,62 @@ def test_team_export_import_yaml(tmp_path: pathlib.Path, monkeypatch: _MonkeyPat
     )
     assert tree_resp.status_code == 200
     tree = tree_resp.json()
-    tree_roles = {agent.get("role_label") for agent in tree.get("agents", [])}
+    tree_agents = cast(list[dict[str, object]], tree.get("agents", []))
+    tree_roles = {agent.get("role_label") for agent in tree_agents}
     assert {"lead", "pm", "engineer"}.issubset(tree_roles)
+
+
+def test_team_export_json(tmp_path: pathlib.Path, monkeypatch: _MonkeyPatch) -> None:
+    db_path = tmp_path / "test.db"
+    sop_root = tmp_path / "sops"
+    roboard_root = tmp_path
+    config_dir = tmp_path / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "decision_rules.json").write_text('{"agent_type_allowlist": ["lead", "pm", "engineer"]}')
+
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin")
+    monkeypatch.setenv("INTERNAL_API_KEY", "test-internal")
+    monkeypatch.setenv("ROBOARD_SOP_ROOT", str(sop_root))
+    monkeypatch.setenv("ROBOARD_ROOT", str(roboard_root))
+    monkeypatch.delenv("SEARXNG_SECRET_KEY", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    main = cast(_MainModule, cast(object, importlib.import_module("app.main")))
+    sqlalchemy = cast(_SqlAlchemy, cast(object, importlib.import_module("sqlalchemy")))
+
+    engine = sqlalchemy.create_engine(f"sqlite+pysqlite:///{db_path}")
+    main.ENGINE = engine
+    main.db.SessionLocal.configure(bind=engine)
+    main.models.Base.metadata.create_all(engine)
+
+    client = cast(_Client, cast(object, TestClient(main.app)))
+    tenant_resp = client.post(
+        "/internal/tenants",
+        json={"name": "t1"},
+        headers={"X-Admin-Key": "test-admin"},
+    )
+    tenant_payload = tenant_resp.json()
+    api_key = cast(str, tenant_payload["api_key"])
+
+    run_resp = client.post(
+        "/api/runs",
+        json={"input_nl": "hello", "input": {}},
+        headers={"X-API-Key": api_key},
+    )
+    run_payload = run_resp.json()
+    run_id = cast(str, run_payload["run_id"])
+
+    export_resp = client.get(
+        f"/api/runs/{run_id}/team/export?format=json",
+        headers={"X-API-Key": api_key},
+    )
+    assert export_resp.status_code == 200
+    payload = export_resp.json()
+    assert payload.get("format") == "json"
+    json_text = cast(str, payload.get("content"))
+    exported = cast(dict[str, object], json.loads(json_text))
+    assert exported.get("version") == 1
+    agents = cast(list[dict[str, object]], exported.get("agents", []))
+    assert agents
+    assert all("sop" in agent for agent in agents)
+    assert any("parent" in agent for agent in agents)

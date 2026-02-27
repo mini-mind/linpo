@@ -1,0 +1,5 @@
+skills:
+  - key: search_web
+    name: Web Search
+    filename: search_web.py
+    description: Built-in skill executed by sandbox executor

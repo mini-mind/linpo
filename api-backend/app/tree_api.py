@@ -1,4 +1,5 @@
 from collections.abc import Generator
+import json
 import os
 from pathlib import Path
 import re
@@ -63,6 +64,18 @@ def _identity_state(identity: dict[str, object]) -> str:
     return str(value)
 
 
+_KANBAN_RUNNING_STATES = {"running", "in_progress", "working", "doing", "active"}
+
+
+def _kanban_title(identity: dict[str, object], agent_id: str) -> str:
+    label = _identity_str(identity, "name") or _identity_str(identity, "role_label")
+    return label or agent_id
+
+
+def _is_running_state(state: str) -> bool:
+    return state.strip().lower() in _KANBAN_RUNNING_STATES
+
+
 def _get_roboard_root() -> Path:
     roboard_root = (os.getenv("ROBOARD_ROOT") or ".").strip()
     return Path(roboard_root or ".")
@@ -92,6 +105,18 @@ class AgentEdgeOut(BaseModel):
 class RunTreeOut(BaseModel):
     agents: list[AgentInstanceOut] = Field(default_factory=list)
     edges: list[AgentEdgeOut] = Field(default_factory=list)
+
+
+class KanbanItemOut(BaseModel):
+    title: str
+    status: str
+    agent_id: str | None = None
+
+
+class KanbanOut(BaseModel):
+    todo: list[KanbanItemOut] = Field(default_factory=list)
+    running: list[KanbanItemOut] = Field(default_factory=list)
+    done: list[KanbanItemOut] = Field(default_factory=list)
 
 
 class SopOut(BaseModel):
@@ -150,8 +175,24 @@ class CommunitySkillInstallIn(BaseModel):
     skill_key: str
 
 
+class CommunitySkillInstallNlIn(BaseModel):
+    query: str
+
+
+class TenantSkillIn(BaseModel):
+    name: str
+    filename: str
+    code: str
+
+
+class TenantSkillsIn(BaseModel):
+    skills: list[TenantSkillIn]
+
+
 class TeamTemplateExportOut(BaseModel):
-    yaml: str
+    format: str
+    yaml: str | None = None
+    content: str | None = None
 
 
 class TeamTemplateImportIn(BaseModel):
@@ -161,6 +202,41 @@ class TeamTemplateImportIn(BaseModel):
 class TeamTemplateImportOut(BaseModel):
     run_id: str
     root_agent_id: str
+
+
+class SkillCatalogItemOut(BaseModel):
+    key: str | None = None
+    name: str
+    filename: str
+    description: str | None = None
+
+
+class SkillCatalogOut(BaseModel):
+    builtin: list[SkillCatalogItemOut]
+    platform: list[SkillCatalogItemOut]
+    tenant: list[SkillCatalogItemOut]
+
+
+class TenantSkillsOut(BaseModel):
+    skills: list[SkillCatalogItemOut]
+
+
+class SkillBootstrapIn(BaseModel):
+    spec: str
+
+
+class SkillBootstrapOut(BaseModel):
+    status: str
+
+
+class SkillInvokeIn(BaseModel):
+    run_id: str
+    agent_id: str
+    input: dict[str, object] = Field(default_factory=dict)
+
+
+class SkillInvokeOut(BaseModel):
+    status: str
 
 
 def _normalize_source_path(value: str) -> str:
@@ -229,11 +305,70 @@ def _normalize_skills(items: list[SkillItemIn]) -> list[dict[str, str]]:
     return normalized
 
 
+def _normalize_tenant_skills(items: list[TenantSkillIn]) -> list[dict[str, str]]:
+    seen: set[str] = set()
+    normalized: list[dict[str, str]] = []
+    for item in items:
+        name = _normalize_skill_name(item.name)
+        filename = _normalize_skill_filename(item.filename)
+        code = _normalize_skill_code(item.code)
+        if filename in seen:
+            continue
+        seen.add(filename)
+        normalized.append({"name": name, "filename": filename, "code": code})
+    return normalized
+
+
 def _find_community_skill(skill_key: str) -> dict[str, str] | None:
     for item in config_loader.load_community_skills():
         if item.get("key") == skill_key:
             return item
     return None
+
+
+def _install_community_skill_by_key(
+    *,
+    skill_key: str,
+    tenant_id: int,
+    run_id_int: int,
+    agent_id_int: int,
+) -> AgentSkillsOut:
+    if not skill_key:
+        raise HTTPException(status_code=400, detail="skill_key required")
+    registry_item = _find_community_skill(skill_key)
+    if not registry_item:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    name = _normalize_skill_name(registry_item["name"])
+    filename = _normalize_skill_filename(registry_item["filename"])
+
+    repo_root = _get_roboard_root()
+    skill_path = repo_root / "community_skills" / filename
+    if not skill_path.exists():
+        raise HTTPException(status_code=404, detail="Skill file not found")
+    code = _normalize_skill_code(skill_path.read_text(encoding="utf-8"))
+
+    agent_root = project_fs.agent_root_for(repo_root, tenant_id, run_id_int, str(agent_id_int))
+    agent_fs.ensure_agent_layout(agent_root)
+
+    existing = agent_fs.read_skills_manifest(agent_root)
+    manifest_items: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in existing:
+        existing_filename = item.get("filename")
+        existing_name = item.get("name")
+        if not existing_filename or not existing_name:
+            continue
+        if existing_filename in seen:
+            continue
+        seen.add(existing_filename)
+        manifest_items.append({"name": existing_name, "filename": existing_filename})
+
+    if filename not in seen:
+        manifest_items.append({"name": name, "filename": filename})
+
+    agent_fs.write_skill_code(agent_root, filename, code)
+    agent_fs.write_skills_manifest(agent_root, manifest_items)
+    return AgentSkillsOut(skills=[SkillItemOut(**item) for item in manifest_items])
 
 
 def _parse_team_template(raw_text: str) -> dict[str, object]:
@@ -377,6 +512,63 @@ async def get_run_tree(
     return RunTreeOut(agents=agents_out, edges=edges_out)
 
 
+@router.get("/api/runs/{run_id}/kanban", response_model=KanbanOut)
+async def get_run_kanban(
+    run_id: str,
+    tenant: Annotated[models.Tenant, Depends(require_tenant)],
+    session: DbSessionDep,
+) -> KanbanOut:
+    from . import main as app_main
+
+    app_main.TASK_ID_CONTEXT.set(run_id)
+    run_id_int = _parse_int_id(run_id, "run_id")
+    task = (
+        session.query(models.Task)
+        .filter(models.Task.id == run_id_int, models.Task.tenant_id == tenant.id)
+        .first()
+    )
+    if not task:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    roboard_root = _get_roboard_root()
+    tenant_id = cast(int, getattr(tenant, "id"))
+    project_root = project_fs.project_root_for(roboard_root, tenant_id, run_id_int)
+    agents_root = project_root / "agents"
+
+    todo: list[KanbanItemOut] = []
+    running: list[KanbanItemOut] = []
+    done: list[KanbanItemOut] = []
+
+    if agents_root.exists():
+        for agent_dir in sorted(agents_root.iterdir(), key=lambda path: path.name):
+            if not agent_dir.is_dir():
+                continue
+            identity = agent_fs.read_agent_identity(agent_dir)
+            agent_id = _identity_str(identity, "agent_id") or agent_dir.name
+            state = _identity_state(identity)
+            if _is_running_state(state):
+                running.append(
+                    KanbanItemOut(
+                        title=_kanban_title(identity, str(agent_id)),
+                        status="running",
+                        agent_id=str(agent_id),
+                    )
+                )
+            try:
+                plan_text = agent_fs.read_text(agent_dir, "plan.md")
+            except FileNotFoundError:
+                plan_text = ""
+            for subtask in _parse_plan_subtasks(plan_text):
+                status = "done" if subtask.status == "done" else "todo"
+                item = KanbanItemOut(title=subtask.title, status=status, agent_id=str(agent_id))
+                if status == "done":
+                    done.append(item)
+                else:
+                    todo.append(item)
+
+    return KanbanOut(todo=todo, running=running, done=done)
+
+
 @router.get("/api/agents/{agent_id}/sop", response_model=SopOut)
 async def get_agent_sop(
     agent_id: str,
@@ -487,6 +679,52 @@ async def list_community_skills(
     return CommunitySkillsOut(skills=[CommunitySkillOut(**item) for item in skills])
 
 
+@router.get("/api/skills/catalog", response_model=SkillCatalogOut)
+async def get_skill_catalog(
+    tenant: Annotated[models.Tenant, Depends(require_tenant)],
+) -> SkillCatalogOut:
+    tenant_id = cast(int, getattr(tenant, "id"))
+    roboard_root = _get_roboard_root()
+    tenant_root = project_fs.tenant_root_for(roboard_root, tenant_id)
+
+    builtin = [SkillCatalogItemOut(**item) for item in config_loader.load_builtin_skills()]
+    platform = [SkillCatalogItemOut(**item) for item in config_loader.load_community_skills()]
+    tenant_skills = [SkillCatalogItemOut(**item) for item in agent_fs.read_tenant_skills_manifest(tenant_root)]
+    return SkillCatalogOut(builtin=builtin, platform=platform, tenant=tenant_skills)
+
+
+@router.put("/api/skills/tenant", response_model=TenantSkillsOut)
+async def put_tenant_skills(
+    body: TenantSkillsIn,
+    tenant: Annotated[models.Tenant, Depends(require_tenant)],
+) -> TenantSkillsOut:
+    tenant_id = cast(int, getattr(tenant, "id"))
+    roboard_root = _get_roboard_root()
+    tenant_root = project_fs.tenant_root_for(roboard_root, tenant_id)
+
+    skills = _normalize_tenant_skills(body.skills)
+    manifest_items = [{"name": item["name"], "filename": item["filename"]} for item in skills]
+    for item in skills:
+        agent_fs.write_tenant_skill_code(tenant_root, item["filename"], item["code"])
+    agent_fs.write_tenant_skills_manifest(tenant_root, manifest_items)
+    return TenantSkillsOut(skills=[SkillCatalogItemOut(**item) for item in manifest_items])
+
+
+@router.get("/api/community-skills/search", response_model=CommunitySkillsOut)
+async def search_community_skills(
+    query: str,
+    tenant: Annotated[models.Tenant, Depends(require_tenant)],
+    limit: int = 5,
+) -> CommunitySkillsOut:
+    _ = tenant
+    if not query.strip():
+        raise HTTPException(status_code=400, detail="query required")
+    if limit <= 0:
+        raise HTTPException(status_code=400, detail="limit must be positive")
+    skills = config_loader.search_community_skills(query, limit=limit)
+    return CommunitySkillsOut(skills=[CommunitySkillOut(**item) for item in skills])
+
+
 @router.get("/api/runs/{run_id}/agents/{agent_id}/skills", response_model=AgentSkillsOut)
 async def get_agent_skills(
     run_id: str,
@@ -561,9 +799,43 @@ async def install_community_skill(
     tenant: Annotated[models.Tenant, Depends(require_tenant)],
     session: DbSessionDep,
 ) -> AgentSkillsOut:
+    run_id_int = _parse_int_id(run_id, "run_id")
+    agent_id_int = _parse_int_id(agent_id, "agent_id")
+    agent = (
+        session.query(models.AgentInstance)
+        .filter(
+            models.AgentInstance.id == agent_id_int,
+            models.AgentInstance.tenant_id == tenant.id,
+            models.AgentInstance.run_id == run_id_int,
+        )
+        .first()
+    )
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    tenant_id = cast(int, getattr(tenant, "id"))
     skill_key = body.skill_key.strip()
-    if not skill_key:
-        raise HTTPException(status_code=400, detail="skill_key required")
+    return _install_community_skill_by_key(
+        skill_key=skill_key,
+        tenant_id=tenant_id,
+        run_id_int=run_id_int,
+        agent_id_int=agent_id_int,
+    )
+
+
+@router.post(
+    "/api/runs/{run_id}/agents/{agent_id}/skills/install-nl",
+    response_model=AgentSkillsOut,
+)
+async def install_community_skill_nl(
+    run_id: str,
+    agent_id: str,
+    body: CommunitySkillInstallNlIn,
+    tenant: Annotated[models.Tenant, Depends(require_tenant)],
+    session: DbSessionDep,
+) -> AgentSkillsOut:
+    query = body.query.strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="query required")
 
     run_id_int = _parse_int_id(run_id, "run_id")
     agent_id_int = _parse_int_id(agent_id, "agent_id")
@@ -579,44 +851,112 @@ async def install_community_skill(
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    registry_item = _find_community_skill(skill_key)
-    if not registry_item:
+    matches = config_loader.search_community_skills(query, limit=1)
+    if not matches:
         raise HTTPException(status_code=404, detail="Skill not found")
 
-    name = _normalize_skill_name(registry_item["name"])
-    filename = _normalize_skill_filename(registry_item["filename"])
-
-    repo_root = _get_roboard_root()
-    skill_path = repo_root / "community_skills" / filename
-    if not skill_path.exists():
-        raise HTTPException(status_code=404, detail="Skill file not found")
-    code = skill_path.read_text(encoding="utf-8")
-    code = _normalize_skill_code(code)
-
-    roboard_root = _get_roboard_root()
     tenant_id = cast(int, getattr(tenant, "id"))
-    agent_root = project_fs.agent_root_for(roboard_root, tenant_id, run_id_int, str(agent_id_int))
-    agent_fs.ensure_agent_layout(agent_root)
+    return _install_community_skill_by_key(
+        skill_key=matches[0]["key"],
+        tenant_id=tenant_id,
+        run_id_int=run_id_int,
+        agent_id_int=agent_id_int,
+    )
 
-    existing = agent_fs.read_skills_manifest(agent_root)
-    manifest_items: list[dict[str, str]] = []
-    seen: set[str] = set()
-    for item in existing:
-        existing_filename = item.get("filename")
-        existing_name = item.get("name")
-        if not existing_filename or not existing_name:
-            continue
-        if existing_filename in seen:
-            continue
-        seen.add(existing_filename)
-        manifest_items.append({"name": existing_name, "filename": existing_filename})
 
-    if filename not in seen:
-        manifest_items.append({"name": name, "filename": filename})
+@router.post(
+    "/api/runs/{run_id}/agents/{agent_id}/skills/bootstrap",
+    response_model=SkillBootstrapOut,
+)
+async def bootstrap_skill(
+    run_id: str,
+    agent_id: str,
+    body: SkillBootstrapIn,
+    request: Request,
+    tenant: Annotated[models.Tenant, Depends(require_tenant)],
+    session: DbSessionDep,
+) -> SkillBootstrapOut:
+    spec = body.spec.strip()
+    if not spec:
+        raise HTTPException(status_code=400, detail="spec required")
 
-    agent_fs.write_skill_code(agent_root, filename, code)
-    agent_fs.write_skills_manifest(agent_root, manifest_items)
-    return AgentSkillsOut(skills=[SkillItemOut(**item) for item in manifest_items])
+    run_id_int = _parse_int_id(run_id, "run_id")
+    agent_id_int = _parse_int_id(agent_id, "agent_id")
+    agent = (
+        session.query(models.AgentInstance)
+        .filter(
+            models.AgentInstance.id == agent_id_int,
+            models.AgentInstance.tenant_id == tenant.id,
+            models.AgentInstance.run_id == run_id_int,
+        )
+        .first()
+    )
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    redis_client = getattr(request.app.state, "redis_client", None)
+    if redis_client is None or not getattr(request.app.state, "redis_ok", False):
+        raise HTTPException(status_code=503, detail="Redis unavailable")
+
+    from . import main as app_main
+
+    tenant_id = cast(int, getattr(tenant, "id"))
+    payload = {
+        "tenant_id": str(tenant_id),
+        "run_id": str(run_id_int),
+        "agent_id": str(agent_id_int),
+        "spec_json": json.dumps({"spec": spec}),
+        "enqueued_at": app_main.utcnow_iso(),
+        "trace_id": app_main.TRACE_ID_CONTEXT.get() or "",
+    }
+    await redis_client.xadd("queue:skill-create", payload)
+    return SkillBootstrapOut(status="queued")
+
+
+@router.post("/api/skills/{skill_key}/invoke", response_model=SkillInvokeOut)
+async def invoke_skill(
+    skill_key: str,
+    body: SkillInvokeIn,
+    request: Request,
+    tenant: Annotated[models.Tenant, Depends(require_tenant)],
+    session: DbSessionDep,
+) -> SkillInvokeOut:
+    key = skill_key.strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="skill_key required")
+
+    run_id_int = _parse_int_id(body.run_id, "run_id")
+    agent_id_int = _parse_int_id(body.agent_id, "agent_id")
+    agent = (
+        session.query(models.AgentInstance)
+        .filter(
+            models.AgentInstance.id == agent_id_int,
+            models.AgentInstance.tenant_id == tenant.id,
+            models.AgentInstance.run_id == run_id_int,
+        )
+        .first()
+    )
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    redis_client = getattr(request.app.state, "redis_client", None)
+    if redis_client is None or not getattr(request.app.state, "redis_ok", False):
+        raise HTTPException(status_code=503, detail="Redis unavailable")
+
+    from . import main as app_main
+
+    tenant_id = cast(int, getattr(tenant, "id"))
+    payload = {
+        "tenant_id": str(tenant_id),
+        "run_id": str(run_id_int),
+        "agent_id": str(agent_id_int),
+        "skill_key": key,
+        "input_json": json.dumps({"skill_key": key, "input": body.input}),
+        "enqueued_at": app_main.utcnow_iso(),
+        "trace_id": app_main.TRACE_ID_CONTEXT.get() or "",
+    }
+    await redis_client.xadd("queue:skill-exec", payload)
+    return SkillInvokeOut(status="queued")
 
 
 @router.get("/api/runs/{run_id}/team/export", response_model=TeamTemplateExportOut)
@@ -624,7 +964,11 @@ async def export_team_yaml(
     run_id: str,
     tenant: Annotated[models.Tenant, Depends(require_tenant)],
     session: DbSessionDep,
+    format: str = "yaml",
 ) -> TeamTemplateExportOut:
+    normalized_format = format.strip().lower()
+    if normalized_format not in {"yaml", "json"}:
+        raise HTTPException(status_code=400, detail="format must be yaml or json")
     run_id_int = _parse_int_id(run_id, "run_id")
     agents = (
         session.query(models.AgentInstance)
@@ -685,8 +1029,12 @@ async def export_team_yaml(
         "name": f"run-{run_id_int}",
         "agents": template_agents,
     }
+    if normalized_format == "json":
+        json_text = json.dumps(template, ensure_ascii=False)
+        return TeamTemplateExportOut(format="json", content=json_text)
+
     yaml_text = yaml.safe_dump(template, sort_keys=False, allow_unicode=True)
-    return TeamTemplateExportOut(yaml=yaml_text)
+    return TeamTemplateExportOut(format="yaml", yaml=yaml_text)
 
 
 @router.post("/api/runs/team/import", response_model=TeamTemplateImportOut)
