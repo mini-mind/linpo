@@ -11,7 +11,6 @@ Files:
 
 ### 顶部栏
 - **品牌标识**: `.brand` 和 `.brand-name` 显示 RoBoard 品牌
-- **视图切换**: `.view-toggle` 包含 Task Tree 和 Kanban 视图切换按钮
 - **用户下拉菜单**: `.user-dropdown` 包含用户信息和操作
   - **下拉触发器**: `#user-dropdown-trigger` 显示会话标签和连接状态
   - **会话标签**: `#session-label` 显示当前会话信息（在触发器内）
@@ -42,12 +41,13 @@ Files:
 
 - `POST /api/runs` - 创建新运行
 - `GET /api/runs/{run_id}/tree` - 获取运行的任务树
-- `PATCH /api/runs/{run_id}/agents/{agent_id}/state` - 更新 Kanban 卡片状态（用于拖拽移动列）
 
 ## WebSocket 连接
 
 WebSocket 端点格式:
 ```
+wss://roboard.duckdns.org/ws/runs/{run_id}
+# or (if gateway is bound to localhost:8082)
 ws://localhost:8082/ws/runs/{run_id}
 ```
 
@@ -58,6 +58,9 @@ ws://localhost:8082/ws/runs/{run_id}
 
 ### 推荐方式 (使用 gateway)
 
+注意：项目根 `docker-compose.yml` 默认不会把 gateway 暴露到宿主机端口；
+本地开发如果不能直接访问 `https://roboard.duckdns.org/`，需要额外绑定 gateway 端口（例如 `127.0.0.1:8082->80`）或在目标部署机上验证。
+
 1. 启动所有服务:
 ```bash
 docker compose up -d
@@ -65,6 +68,8 @@ docker compose up -d
 
 2. 在浏览器中打开:
 ```
+https://roboard.duckdns.org/
+# or (if gateway is bound to localhost:8082)
 http://localhost:8082/
 ```
 
