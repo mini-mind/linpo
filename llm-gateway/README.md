@@ -1,6 +1,6 @@
 # llm-gateway
 
-Platform-level LLM gateway for internal services.
+Platform-level LLM gateway for internal services, powered by LiteLLM.
 
 ## Environment Variables
 
@@ -51,5 +51,5 @@ Request body:
 }
 ```
 
-The gateway forwards the request to the Ark provider using an OpenAI-compatible
-`/chat/completions` call with the configured `base_url` and `api_key`.
+The gateway uses LiteLLM to forward OpenAI-compatible chat requests with the
+configured `base_url` and `api_key`.
