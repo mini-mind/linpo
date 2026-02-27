@@ -18,12 +18,11 @@ def test_create_run_hires_default_team_and_writes_sop(tmp_path, monkeypatch) -> 
     sops_dir.mkdir(parents=True)
     config_dir.mkdir(parents=True)
     
-    # Create CEO template with unique marker
-    ceo_template_content = "# CEO Template from External File\n\nUnique marker: EXTERNAL-CEO-TEMPLATE-12345"
-    (sops_dir / "ceo.md").write_text(ceo_template_content)
+    lead_template_content = "# Lead Template from External File\n\nUnique marker: EXTERNAL-LEAD-TEMPLATE-12345"
+    (sops_dir / "lead.md").write_text(lead_template_content)
     
     # Create minimal config files so _find_repo_root() works
-    (config_dir / "decision_rules.json").write_text('{"agent_type_allowlist": ["ceo", "pm", "engineer"]}')
+    (config_dir / "decision_rules.json").write_text('{"agent_type_allowlist": ["lead", "pm", "engineer"]}')
 
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin")
     monkeypatch.setenv("INTERNAL_API_KEY", "test-internal")
@@ -70,8 +69,8 @@ def test_create_run_hires_default_team_and_writes_sop(tmp_path, monkeypatch) -> 
     
         # Verify the SOP content matches the external template
         written_content = sop_path.read_text()
-        assert "EXTERNAL-CEO-TEMPLATE-12345" in written_content, "SOP should contain content from external template file"
-        assert "CEO Template from External File" in written_content, "SOP should contain template header from external file"
+        assert "EXTERNAL-LEAD-TEMPLATE-12345" in written_content, "SOP should contain content from external template file"
+        assert "Lead Template from External File" in written_content, "SOP should contain template header from external file"
 
     finally:
         # Clear the override
