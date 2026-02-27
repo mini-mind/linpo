@@ -5,6 +5,9 @@ services:
     depends_on:
       - web-frontend
       - api-backend
+    environment:
+      - API_BACKEND_URL=${API_BACKEND_URL:-http://api-backend:8000}
+      - NGINX_ENVSUBST_VARS=$$API_BACKEND_URL
     networks:
       - app-net
     restart: unless-stopped
@@ -60,6 +63,7 @@ services:
       - ./sops:/app/sops
     ports:
       - "127.0.0.1:8005:8000"
+      - "0.0.0.0:8000:8000"
     depends_on:
       - postgres
       - redis
@@ -88,6 +92,7 @@ services:
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:?set}
       - WORKER_URL=${WORKER_URL:-http://worker-playwright:7100}
       - API_BACKEND_URL=${API_BACKEND_URL:-http://api-backend:8000}
+      - SKILL_GATEWAY_URL=${SKILL_GATEWAY_URL:-http://skill-gateway:7400}
       # Redis Streams consumer configuration
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - DISPATCH_STREAM=${DISPATCH_STREAM:-queue:dispatch}
@@ -116,6 +121,25 @@ services:
       - agent-manager
       - redis
       - mcp-server
+    networks:
+      - app-net
+    restart: unless-stopped
+
+  skill-gateway:
+    build:
+      context: ./skill-gateway
+    environment:
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:?set}
+      - SKILL_RUNNER_IMAGE=${SKILL_RUNNER_IMAGE:-}
+    networks:
+      - app-net
+    restart: unless-stopped
+
+  sandbox-template:
+    build:
+      context: ./sandbox-template
+    environment:
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:?set}
     networks:
       - app-net
     restart: unless-stopped
