@@ -1,7 +1,7 @@
 # agent-manager
 
 ## OVERVIEW
-Orchestrates agent dispatch and A2A messaging using Redis streams.
+Orchestrates agent dispatch using Redis streams.
 Built on FastAPI + Redis; orchestration logic is custom to RoBoard.
 
 ## STRUCTURE
@@ -16,12 +16,12 @@ agent-manager/
 ## WHERE TO LOOK
 | Task | Location | Notes |
 |------|----------|-------|
-| Dispatch + A2A | agent-manager/app/main.py | Stream consumers + internal endpoints |
+| Dispatch | agent-manager/app/main.py | Stream consumers + internal endpoints |
 | Agent FS helper | agent-manager/app/agent_fs.py | Identity/state files under data/ |
 
 ## CONVENTIONS
 - Internal auth uses `X-Internal-Key` (`INTERNAL_API_KEY` supports comma-separated keys).
-- Redis streams: `DISPATCH_*` and `A2A_*` env vars define stream/group behavior.
+- Redis streams: `DISPATCH_*` env vars define stream/group behavior.
 - 每改完一个服务就立即更新相关的 `AGENTS.md` 并完成该服务测试。
 
 ## ANTI-PATTERNS
