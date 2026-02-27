@@ -126,11 +126,6 @@
       "taskTree.msg.fetchSopFailed": "Fetch SOP failed",
       "taskTree.msg.chatSendFailed": "Send message failed",
 
-      "taskTree.kanban.todo": "To Do",
-      "taskTree.kanban.inProgress": "In Progress",
-      "taskTree.kanban.blocked": "Blocked",
-      "taskTree.kanban.done": "Done",
-      "taskTree.msg.updateAgentStateFailed": "Update status failed"
     },
     zh: {
       "login.pageTitle": "RoBoard 登录",
@@ -248,11 +243,6 @@
       "taskTree.msg.fetchSopFailed": "获取 SOP 失败",
       "taskTree.msg.chatSendFailed": "发送消息失败",
 
-      "taskTree.kanban.todo": "待办",
-      "taskTree.kanban.inProgress": "进行中",
-      "taskTree.kanban.blocked": "阻塞",
-      "taskTree.kanban.done": "完成",
-      "taskTree.msg.updateAgentStateFailed": "更新状态失败"
     }
   };
 
@@ -287,14 +277,6 @@
       if (key) el.setAttribute("placeholder", t(key));
     });
 
-    const kanbanTodo = document.querySelector('.kanban-column[data-column="todo"] .kanban-column-title');
-    if (kanbanTodo) kanbanTodo.textContent = t("taskTree.kanban.todo");
-    const kanbanInProgress = document.querySelector('.kanban-column[data-column="inProgress"] .kanban-column-title');
-    if (kanbanInProgress) kanbanInProgress.textContent = t("taskTree.kanban.inProgress");
-    const kanbanBlocked = document.querySelector('.kanban-column[data-column="blocked"] .kanban-column-title');
-    if (kanbanBlocked) kanbanBlocked.textContent = t("taskTree.kanban.blocked");
-    const kanbanDone = document.querySelector('.kanban-column[data-column="done"] .kanban-column-title');
-    if (kanbanDone) kanbanDone.textContent = t("taskTree.kanban.done");
   };
 
   const setLang = (next) => {
@@ -1175,7 +1157,6 @@
     // Manual QA checklist:
     // 1) Create/connect a run and verify agent tree shows name/state/current_step.
     // 2) Select an agent and confirm plan subtasks list renders with statuses.
-    // 3) Switch to Kanban view and verify subtasks are grouped by status columns.
 
     void bootstrapAuth();
     window.addEventListener("beforeunload", () => disconnectWs());
@@ -1208,8 +1189,7 @@
       taskSopDisplay: byId("task-sop-display"),
       taskChatMessages: byId("task-chat-messages"),
       taskChatForm: byId("task-chat-form"),
-      taskChatInput: byId("task-chat-input"),
-      kanbanContent: byId("kanban-content")
+      taskChatInput: byId("task-chat-input")
     };
 
     const state = {
@@ -1607,100 +1587,6 @@
       };
 
       order.forEach((id) => { renderNode(id, 0); });
-      renderKanban({ agents, edges });
-    };
-
-    const renderKanban = (data) => {
-      if (!ui.kanbanContent) return;
-      const columns = {
-        todo: { title: t("taskTree.kanban.todo"), cards: [] },
-        inProgress: { title: t("taskTree.kanban.inProgress"), cards: [] },
-        blocked: { title: t("taskTree.kanban.blocked"), cards: [] },
-        done: { title: t("taskTree.kanban.done"), cards: [] }
-      };
-
-      const agents = Array.isArray(data?.agents) ? data.agents : [];
-      const cards = [];
-
-      agents.forEach((agent) => {
-        const agentId = agent && agent.id != null ? String(agent.id) : "";
-        const agentLabel = labelForAgent(agent, agentId);
-        const subtasks = Array.isArray(agent?.plan_subtasks) ? agent.plan_subtasks : [];
-
-        subtasks.forEach((subtask, index) => {
-          const normalized = normalizePlanSubtask(subtask, index);
-          cards.push({
-            agentId,
-            agentLabel,
-            label: normalized.label,
-            status: normalized.status,
-            category: getSubtaskCategory(normalized.status)
-          });
-        });
-      });
-
-      if (!cards.length) {
-        ui.kanbanContent.innerHTML = `<div class="kanban-empty">${safeText(t("taskTree.plan.empty"))}</div>`;
-        return;
-      }
-
-      cards.forEach((card) => {
-        columns[card.category].cards.push(card);
-      });
-
-      ui.kanbanContent.innerHTML = "";
-
-      const boardEl = document.createElement("div");
-      boardEl.className = "kanban-board";
-
-      Object.entries(columns).forEach(([key, column]) => {
-        const columnEl = document.createElement("div");
-        columnEl.className = "kanban-column";
-        columnEl.dataset.column = key;
-
-        const headerEl = document.createElement("div");
-        headerEl.className = "kanban-column-header";
-
-        const titleEl = document.createElement("div");
-        titleEl.className = "kanban-column-title";
-        titleEl.textContent = safeText(column.title);
-
-        const countEl = document.createElement("div");
-        countEl.className = "kanban-column-count";
-        countEl.textContent = String(column.cards.length);
-
-        headerEl.appendChild(titleEl);
-        headerEl.appendChild(countEl);
-        columnEl.appendChild(headerEl);
-
-        const cardsContainer = document.createElement("div");
-        cardsContainer.className = "kanban-cards";
-
-        column.cards.forEach((card) => {
-          const cardEl = document.createElement("div");
-          cardEl.className = "kanban-card";
-
-          const cardTitle = document.createElement("div");
-          cardTitle.className = "kanban-card-title";
-          cardTitle.textContent = safeText(card.label);
-
-          const metaEl = document.createElement("div");
-          metaEl.className = "kanban-card-meta";
-
-          const metaText = document.createElement("span");
-          metaText.textContent = `${safeText(card.agentLabel)}${card.status ? ` — ${card.status}` : ""}`.trim();
-          metaEl.appendChild(metaText);
-
-          cardEl.appendChild(cardTitle);
-          cardEl.appendChild(metaEl);
-          cardsContainer.appendChild(cardEl);
-        });
-
-        columnEl.appendChild(cardsContainer);
-        boardEl.appendChild(columnEl);
-      });
-
-      ui.kanbanContent.appendChild(boardEl);
     };
 
     const handleDelta = (data) => {
@@ -1957,31 +1843,6 @@
       });
     }
 
-    // View toggle functionality
-    const viewTaskTreeBtn = byId("view-task-tree");
-    const viewKanbanBtn = byId("view-kanban");
-    const taskTreeView = byId("task-tree-view");
-    const kanbanView = byId("kanban-view");
-
-    const toggleView = (showTree) => {
-      if (taskTreeView) toggleHidden(taskTreeView, !showTree);
-      if (kanbanView) toggleHidden(kanbanView, showTree);
-      if (viewTaskTreeBtn) viewTaskTreeBtn.classList.toggle("is-active", showTree);
-      if (viewKanbanBtn) viewKanbanBtn.classList.toggle("is-active", !showTree);
-    };
-
-    if (viewTaskTreeBtn) {
-      viewTaskTreeBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        toggleView(true);
-      });
-    }
-    if (viewKanbanBtn) {
-      viewKanbanBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        toggleView(false);
-      });
-    }
     // User dropdown behavior
     const setupUserDropdown = () => {
       if (!ui.userDropdownTrigger || !ui.userDropdownMenu) return;

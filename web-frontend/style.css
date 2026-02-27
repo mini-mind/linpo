@@ -94,39 +94,6 @@ a {
   background: var(--panel-2);
 }
 
-.view-toggle {
-  display: inline-flex;
-  gap: 4px;
-  padding: 4px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: var(--panel-2);
-  justify-self: center;
-}
-
-.view-toggle .btn {
-  width: auto;
-  padding: 8px 14px;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--muted);
-  font-size: 13px;
-  transition: all 0.18s ease;
-}
-
-.view-toggle .btn:hover {
-  background: rgba(0, 0, 0, 0.04);
-  color: var(--text);
-}
-
-.view-toggle .btn.is-active {
-  background: var(--accent);
-  color: white;
-  border-color: var(--accent);
-  box-shadow: 0 2px 6px rgba(196, 106, 42, 0.3);
-}
-
 .lang-toggle .btn {
   width: auto;
   padding: 8px 10px;
@@ -609,10 +576,6 @@ details[open] > .panel-summary::after {
     justify-items: start;
   }
 
-  .view-toggle {
-    justify-self: start;
-  }
-
   .topbar-right {
     width: 100%;
     justify-content: space-between;
@@ -691,7 +654,7 @@ details[open] > .panel-summary::after {
   background: rgba(196, 106, 42, 0.16);
 }
 
-.sop-display {
+.task-tree-shell .sop-display {
   margin: 0;
   padding: 12px 14px;
   border-radius: 14px;
@@ -769,181 +732,6 @@ details[open] > .panel-summary::after {
 .task-tree-main {
   flex: 1;
   min-height: 0;
-}
-
-.task-tree-shell .kanban-view {
-  flex: 1;
-  min-height: 0;
-  background:
-    radial-gradient(900px 520px at 15% 0%, rgba(196, 106, 42, 0.12), transparent 55%),
-    radial-gradient(900px 520px at 90% 10%, rgba(59, 110, 122, 0.10), transparent 55%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.75), rgba(255, 255, 255, 0)),
-    var(--bg);
-}
-
-.task-tree-shell .kanban-container {
-  height: 100%;
-  min-height: 0;
-  padding: var(--space-4);
-}
-
-.task-tree-shell .kanban-content {
-  height: 100%;
-  min-height: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scroll-snap-type: x mandatory;
-  -webkit-overflow-scrolling: touch;
-  padding-bottom: var(--space-3);
-}
-
-.task-tree-shell .kanban-board {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-  min-height: 60vh;
-}
-
-.task-tree-shell .kanban-column {
-  flex: 0 0 320px;
-  min-width: 280px;
-  scroll-snap-align: start;
-  border-radius: 16px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  background: rgba(255, 255, 255, 0.78);
-  box-shadow: 0 1px 0 rgba(16, 24, 40, 0.04);
-  overflow: clip;
-  transition: border-color 0.18s ease, box-shadow 0.18s ease;
-}
-
-.task-tree-shell .kanban-column[data-column="done"] {
-  border-color: rgba(6, 118, 71, 0.20);
-}
-
-.task-tree-shell .kanban-column[data-column="blocked"] {
-  border-color: rgba(220, 53, 69, 0.20);
-}
-
-.task-tree-shell .kanban-column.is-drop-target {
-  border-color: rgba(196, 106, 42, 0.45);
-  box-shadow: 0 10px 24px rgba(16, 24, 40, 0.10);
-}
-
-.task-tree-shell .kanban-column-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-3) var(--space-2);
-  background: rgba(255, 255, 255, 0.55);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-  backdrop-filter: blur(10px);
-}
-
-.task-tree-shell .kanban-column-title {
-  font-size: 13px;
-  font-weight: 650;
-  letter-spacing: 0.02em;
-  color: var(--text);
-}
-
-.task-tree-shell .kanban-column-count {
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.06);
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  color: rgba(0, 0, 0, 0.66);
-}
-
-.task-tree-shell .kanban-cards {
-  padding: var(--space-3);
-  display: grid;
-  gap: var(--space-2);
-}
-
-.task-tree-shell .kanban-card {
-  border-radius: 12px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  background: var(--panel-2);
-  padding: 12px 12px;
-  cursor: pointer;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 1px rgba(16, 24, 40, 0.04);
-  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
-  user-select: none;
-}
-
-.task-tree-shell .kanban-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 10px 24px rgba(16, 24, 40, 0.10);
-  border-color: rgba(196, 106, 42, 0.22);
-}
-
-.task-tree-shell .kanban-card.is-dragging {
-  opacity: 0.65;
-  transform: rotate(-0.6deg);
-}
-
-.task-tree-shell .kanban-card-title {
-  font-size: 13.5px;
-  font-weight: 640;
-  line-height: 1.35;
-  color: var(--text);
-  margin-bottom: 4px;
-}
-
-.task-tree-shell .kanban-card-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  font-size: 12px;
-  color: var(--muted-2);
-  line-height: 1.35;
-}
-
-.task-tree-shell .kanban-status-chip {
-  appearance: none;
-  border: 1px solid rgba(0, 0, 0, 0.10);
-  background: rgba(0, 0, 0, 0.04);
-  color: rgba(0, 0, 0, 0.68);
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  letter-spacing: 0.02em;
-  cursor: pointer;
-  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
-}
-
-.task-tree-shell .kanban-status-chip:hover {
-  border-color: rgba(196, 106, 42, 0.28);
-  background: rgba(196, 106, 42, 0.10);
-  transform: translateY(-1px);
-}
-
-.task-tree-shell .kanban-status-chip:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(196, 106, 42, 0.22);
-}
-
-.task-tree-shell .kanban-empty {
-  padding: var(--space-5);
-  border-radius: 16px;
-  border: 1px dashed rgba(0, 0, 0, 0.14);
-  background: rgba(255, 255, 255, 0.62);
-  color: var(--muted-2);
-  text-align: center;
-  font-style: italic;
-}
-
-@media (max-width: 640px) {
-  .task-tree-shell .kanban-container {
-    padding: var(--space-3);
-  }
-
-  .task-tree-shell .kanban-column {
-    flex-basis: 86vw;
-  }
 }
 
 .task-tree-container {
@@ -1182,22 +970,6 @@ details[open] > .panel-summary::after {
   background: var(--bg-2);
   font-size: 13px;
   color: var(--text);
-}
-
-.sop-display {
-  margin: 0;
-  padding: 12px 14px;
-  border-radius: 14px;
-  border: 1px solid var(--line);
-  background: var(--bg-2);
-  color: var(--text);
-  overflow: auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  font-size: 12.5px;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  min-height: 120px;
-  max-height: 30vh;
 }
 
 .chat-messages {
@@ -1498,8 +1270,4 @@ details[open] > .panel-summary::after {
   height: 52px;
   font-size: 22px;
   box-shadow: 0 3px 10px rgba(196, 106, 42, 0.35);
-}
-
-.task-tree-shell .view-toggle .btn {
-  padding: 6px 12px;
 }
