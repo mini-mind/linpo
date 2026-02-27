@@ -18,7 +18,7 @@
 
 ## 拆分部署边界
 
-- **ravin 主机**: 只跑 `edge/gateway/web-frontend/searxng`
+- **ravin 主机**: `68.64.179.125`，只跑 `edge/gateway/web-frontend/searxng`
   - searxng 稳定不重启
 - **本机/worker**: 跑重服务 (api-backend, agent-manager, worker-playwright 等)
 
