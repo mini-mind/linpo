@@ -27,6 +27,7 @@ except ImportError:  # pragma: no cover - optional dependency
 # Configuration
 WORKER_URL = os.getenv("WORKER_URL", "http://worker-playwright:7100")
 API_BACKEND_URL = os.getenv("API_BACKEND_URL", "http://api-backend:8000")
+SKILL_GATEWAY_URL = os.getenv("SKILL_GATEWAY_URL", "http://skill-gateway:7400")
 INTERNAL_API_KEY_ENV = os.getenv("INTERNAL_API_KEY", "")
 INTERNAL_API_KEYS = [key.strip() for key in INTERNAL_API_KEY_ENV.split(",") if key.strip()]
 if not INTERNAL_API_KEYS:
@@ -38,6 +39,12 @@ DISPATCH_DEAD_STREAM = os.getenv("DISPATCH_DEAD_STREAM", "queue:dispatch:dead")
 DISPATCH_GROUP = os.getenv("DISPATCH_GROUP", "agent-manager")
 DISPATCH_CONSUMER = os.getenv("DISPATCH_CONSUMER", os.getenv("HOSTNAME", "agent-manager"))
 DISPATCH_MAX_ATTEMPTS = int(os.getenv("DISPATCH_MAX_ATTEMPTS", "3"))
+SKILL_CREATE_STREAM = os.getenv("SKILL_CREATE_STREAM", "queue:skill-create")
+SKILL_CREATE_GROUP = os.getenv("SKILL_CREATE_GROUP", "agent-manager-skill-create")
+SKILL_CREATE_CONSUMER = os.getenv("SKILL_CREATE_CONSUMER", DISPATCH_CONSUMER)
+SKILL_EXEC_STREAM = os.getenv("SKILL_EXEC_STREAM", "queue:skill-exec")
+SKILL_EXEC_GROUP = os.getenv("SKILL_EXEC_GROUP", "agent-manager-skill-exec")
+SKILL_EXEC_CONSUMER = os.getenv("SKILL_EXEC_CONSUMER", DISPATCH_CONSUMER)
 LLM_GATEWAY_URL = os.getenv("LLM_GATEWAY_URL", "http://llm-gateway:7300")
 
 # Setup logging
@@ -549,6 +556,137 @@ async def handle_dispatch_failure(
         pass
 
 
+async def handle_skill_create_message(
+    redis_client: RedisClient,
+    message_id: str,
+    fields: dict[object, object],
+) -> None:
+    trace_id_value = fields.get(b"trace_id") or fields.get("trace_id")
+    tenant_id_value = fields.get(b"tenant_id") or fields.get("tenant_id")
+    run_id_value = fields.get(b"run_id") or fields.get("run_id")
+    agent_id_value = fields.get(b"agent_id") or fields.get("agent_id")
+    spec_json_value = fields.get(b"spec_json") or fields.get("spec_json")
+
+    trace_id = decode_field(trace_id_value) if trace_id_value is not None else str(uuid.uuid4())
+    tenant_id = decode_field(tenant_id_value) if tenant_id_value is not None else None
+    run_id = decode_field(run_id_value) if run_id_value is not None else None
+    agent_id = decode_field(agent_id_value) if agent_id_value is not None else None
+
+    tokens = set_request_context(trace_id=trace_id, tenant_id=tenant_id, task_id=run_id)
+    try:
+        if not tenant_id or not run_id or not agent_id:
+            logger.error("Skill create message missing tenant/run/agent; acking")
+            _ = await redis_client.xack(SKILL_CREATE_STREAM, SKILL_CREATE_GROUP, message_id)
+            return
+
+        spec_json = decode_field(spec_json_value) if spec_json_value is not None else "{}"
+        spec_payload = _parse_params_json(spec_json)
+
+        payload = {
+            "tenant_id": tenant_id,
+            "run_id": run_id,
+            "agent_id": agent_id,
+            "spec": spec_payload,
+        }
+        headers = build_internal_headers()
+        response = requests.post(
+            f"{SKILL_GATEWAY_URL}/skills/create",
+            json=payload,
+            headers=headers,
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        result = coerce_to_dict(cast(object, response.json()))
+        post_event(
+            tenant_id=tenant_id,
+            task_id=run_id,
+            event_type="skill.create.succeeded",
+            data={"agent_id": agent_id, "result": result},
+        )
+        _ = await redis_client.xack(SKILL_CREATE_STREAM, SKILL_CREATE_GROUP, message_id)
+    except Exception as exc:
+        logger.error("Skill create failed: %s", exc)
+        try:
+            post_event(
+                tenant_id=tenant_id or "",
+                task_id=run_id or "",
+                event_type="skill.create.failed",
+                data={"agent_id": agent_id, "error": str(exc)},
+            )
+        except Exception:
+            pass
+        _ = await redis_client.xack(SKILL_CREATE_STREAM, SKILL_CREATE_GROUP, message_id)
+    finally:
+        reset_request_context(tokens)
+
+
+async def handle_skill_exec_message(
+    redis_client: RedisClient,
+    message_id: str,
+    fields: dict[object, object],
+) -> None:
+    trace_id_value = fields.get(b"trace_id") or fields.get("trace_id")
+    tenant_id_value = fields.get(b"tenant_id") or fields.get("tenant_id")
+    run_id_value = fields.get(b"run_id") or fields.get("run_id")
+    agent_id_value = fields.get(b"agent_id") or fields.get("agent_id")
+    skill_key_value = fields.get(b"skill_key") or fields.get("skill_key")
+    input_json_value = fields.get(b"input_json") or fields.get("input_json")
+
+    trace_id = decode_field(trace_id_value) if trace_id_value is not None else str(uuid.uuid4())
+    tenant_id = decode_field(tenant_id_value) if tenant_id_value is not None else None
+    run_id = decode_field(run_id_value) if run_id_value is not None else None
+    agent_id = decode_field(agent_id_value) if agent_id_value is not None else None
+    skill_key = decode_field(skill_key_value) if skill_key_value is not None else None
+
+    tokens = set_request_context(trace_id=trace_id, tenant_id=tenant_id, task_id=run_id)
+    try:
+        if not tenant_id or not run_id or not agent_id or not skill_key:
+            logger.error("Skill exec message missing tenant/run/agent/skill_key; acking")
+            _ = await redis_client.xack(SKILL_EXEC_STREAM, SKILL_EXEC_GROUP, message_id)
+            return
+
+        input_json = decode_field(input_json_value) if input_json_value is not None else "{}"
+        input_payload = _parse_params_json(input_json)
+        if not input_payload:
+            input_payload = {"skill_key": skill_key, "input": {}}
+
+        payload = {
+            "tenant_id": tenant_id,
+            "task_id": run_id,
+            "input": input_payload,
+        }
+        headers = build_internal_headers()
+        response = requests.post(
+            f"{SKILL_GATEWAY_URL}/skills/execute",
+            json=payload,
+            headers=headers,
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        result = coerce_to_dict(cast(object, response.json()))
+        post_event(
+            tenant_id=tenant_id,
+            task_id=run_id,
+            event_type="skill.execute.succeeded",
+            data={"agent_id": agent_id, "skill_key": skill_key, "result": result},
+        )
+        _ = await redis_client.xack(SKILL_EXEC_STREAM, SKILL_EXEC_GROUP, message_id)
+    except Exception as exc:
+        logger.error("Skill execute failed: %s", exc)
+        try:
+            post_event(
+                tenant_id=tenant_id or "",
+                task_id=run_id or "",
+                event_type="skill.execute.failed",
+                data={"agent_id": agent_id, "skill_key": skill_key, "error": str(exc)},
+            )
+        except Exception:
+            pass
+        _ = await redis_client.xack(SKILL_EXEC_STREAM, SKILL_EXEC_GROUP, message_id)
+    finally:
+        reset_request_context(tokens)
+
+
 async def dispatch_consumer_loop(redis_client: RedisClient) -> None:
     try:
         _ = await redis_client.xgroup_create(DISPATCH_STREAM, DISPATCH_GROUP, id="0", mkstream=True)
@@ -583,6 +721,74 @@ async def dispatch_consumer_loop(redis_client: RedisClient) -> None:
             await asyncio.sleep(1)
 
 
+async def skill_create_consumer_loop(redis_client: RedisClient) -> None:
+    try:
+        _ = await redis_client.xgroup_create(SKILL_CREATE_STREAM, SKILL_CREATE_GROUP, id="0", mkstream=True)
+    except Exception as exc:
+        if "BUSYGROUP" not in str(exc):
+            logger.error("Failed to create skill create group: %s", exc)
+            return
+
+    logger.info("Skill create consumer started for stream %s", SKILL_CREATE_STREAM)
+    while True:
+        try:
+            result = await redis_client.xreadgroup(
+                groupname=SKILL_CREATE_GROUP,
+                consumername=SKILL_CREATE_CONSUMER,
+                streams={SKILL_CREATE_STREAM: ">"},
+                count=1,
+                block=1000,
+            )
+            if not result:
+                continue
+            for _stream, messages in result:
+                for message_id, fields in messages:
+                    await handle_skill_create_message(
+                        redis_client=redis_client,
+                        message_id=decode_field(message_id),
+                        fields=fields,
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("Skill create consumer error: %s", exc)
+            await asyncio.sleep(1)
+
+
+async def skill_exec_consumer_loop(redis_client: RedisClient) -> None:
+    try:
+        _ = await redis_client.xgroup_create(SKILL_EXEC_STREAM, SKILL_EXEC_GROUP, id="0", mkstream=True)
+    except Exception as exc:
+        if "BUSYGROUP" not in str(exc):
+            logger.error("Failed to create skill exec group: %s", exc)
+            return
+
+    logger.info("Skill exec consumer started for stream %s", SKILL_EXEC_STREAM)
+    while True:
+        try:
+            result = await redis_client.xreadgroup(
+                groupname=SKILL_EXEC_GROUP,
+                consumername=SKILL_EXEC_CONSUMER,
+                streams={SKILL_EXEC_STREAM: ">"},
+                count=1,
+                block=1000,
+            )
+            if not result:
+                continue
+            for _stream, messages in result:
+                for message_id, fields in messages:
+                    await handle_skill_exec_message(
+                        redis_client=redis_client,
+                        message_id=decode_field(message_id),
+                        fields=fields,
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("Skill exec consumer error: %s", exc)
+            await asyncio.sleep(1)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     consumer_tasks: list[asyncio.Task[None]] = []
@@ -595,6 +801,8 @@ async def lifespan(_app: FastAPI):
             redis_from_url = cast(Callable[[str], object], getattr(redis_async, "from_url"))
             redis_client = cast(RedisClient, redis_from_url(REDIS_URL))
             consumer_tasks.append(asyncio.create_task(dispatch_consumer_loop(redis_client)))
+            consumer_tasks.append(asyncio.create_task(skill_create_consumer_loop(redis_client)))
+            consumer_tasks.append(asyncio.create_task(skill_exec_consumer_loop(redis_client)))
         except Exception as exc:
             logger.error("Failed to start Redis consumers: %s", exc)
 
