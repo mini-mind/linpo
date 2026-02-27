@@ -1,5 +1,7 @@
 # Externalize Hardcoded Configurations Implementation Plan
 
+> 注意：此计划为历史记录，包含 CEO/A2A 旧流程描述；当前 PRD v3 已改为 lead + intervention。
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Externalize hardcoded SOP templates, decision rules, agent_type allowlist, and agent state rules into repo files with fixed paths, update tests accordingly, and ensure deployment follows `docs/CONSTITUTION.md`.
