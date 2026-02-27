@@ -92,24 +92,70 @@ Body:
 4. Test with LLM calls to verify the new key works
 5. Revoke old key after successful deployment
 
-### Agent-to-Agent (A2A) Communication
+### 自然语言干预（Intervention）
 
-**Thread Access:**
-- A2A provides tenant-wide access to conversation threads
-- Access via GET `/api/a2a/threads/{id}`
-- Thread IDs are shared across agents within the same tenant
-- Enables context continuity between agent handoffs
+**事件驱动干预：**
+- 通过 `POST /api/runs/{run_id}/interventions` 提交干预
+- 干预会生成 `task.requires_input` 事件并广播到 `/ws/runs/{run_id}`
+- 干预消息用于调整目标、计划或执行策略
+
+### 可信来源（Sources）
+
+**来源绑定 API：**
+- `GET /api/runs/{run_id}/agents/{agent_id}/sources` 获取来源列表
+- `PUT /api/runs/{run_id}/agents/{agent_id}/sources` 更新来源列表
+- 来源清单写入 agent FS 的 `context/sources/manifest.json`
+
+### 控制动作（Pause/Resume/Retry）
+
+**控制动作 API：**
+- `POST /api/runs/{run_id}/actions` 提交控制动作
+- `action_type` 支持 `run.pause` / `run.resume` / `run.retry`
+- 生成 `action.requested` 事件并广播到 `/ws/runs/{run_id}`
+
+### 技能清单与社区技能
+
+**Agent 技能 API：**
+- `GET /api/runs/{run_id}/agents/{agent_id}/skills` 获取技能清单
+- `PUT /api/runs/{run_id}/agents/{agent_id}/skills` 覆盖技能清单（写入 `agent_fs/skills/*.py` + `manifest.json`）
+
+**社区技能 API：**
+- `GET /api/community-skills` 获取社区技能注册表（来自 `config/community_skills.yaml`）
+- `POST /api/runs/{run_id}/agents/{agent_id}/skills/install` 安装指定技能
+
+### 团队导出/导入（YAML）
+
+**模板 API：**
+- `GET /api/runs/{run_id}/team/export` 导出 YAML
+- `POST /api/runs/team/import` 导入 YAML 并创建新 run
+
+**YAML Schema（示例）：**
+```yaml
+version: 1
+name: example-team
+agents:
+  - id: lead
+    role: lead
+    sop: "# Lead SOP\n..."
+  - id: pm
+    role: pm
+    parent: lead
+    sop: "# PM SOP\n..."
+  - id: engineer
+    role: engineer
+    parent: lead
+    sop: "# Engineer SOP\n..."
+```
 
 ### Integration Examples
 
-**GitHub Trending Demo:**
-- CEO chat triggers browser automation pipeline
+**Intervention Demo:**
+- 用户提交干预让执行重新聚焦
 - Flow:
-  1. CEO requests GitHub trending analysis
-  2. Agent spawns browser automation via Playwright gateway
-  3. Playwright fetches trending repositories
-  4. Results returned to CEO context
-  5. Analysis performed and presented
+  1. 用户创建 run 并获取 `agent_id`
+  2. 调用 `/api/runs/{run_id}/interventions` 提交消息
+  3. 前端通过 WebSocket 收到 `task.requires_input`
+  4. 任务树 UI 更新状态并展示干预内容
 
 ### Worker Constraints
 
