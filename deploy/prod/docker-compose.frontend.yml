@@ -1,6 +1,9 @@
 services:
   gateway:
     image: registry.cn-hangzhou.aliyuncs.com/ravin/web3d-gateway:${TAG:?set}
+    environment:
+      - API_BACKEND_URL=${API_BACKEND_URL:-http://175.178.213.10:8000}
+      - NGINX_ENVSUBST_VARS=$$API_BACKEND_URL
     depends_on:
       - web-frontend
     ports:
