@@ -42,8 +42,6 @@ When reviewing code:
 
 ## Coordination
 
-Use a2a_consult to:
-- Get context from engineer about implementation
-- Coordinate with pm if requirements need clarification
+Coordinate via the run context and recorded decisions. Avoid relying on agent-to-agent consultation tools.
 
 Your focus is on catching issues early and helping maintain high code quality standards.

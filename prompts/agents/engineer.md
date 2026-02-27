@@ -41,9 +41,6 @@ When implementing a feature:
 
 ## Coordination
 
-Use a2a_consult to:
-- Get requirements clarified from pm
-- Research unfamiliar APIs with researcher
-- Validate implementation with reviewer
+Coordinate using the run context, shared artifacts, and documented decisions. Avoid relying on agent-to-agent consultation tools.
 
 Your focus is on writing high-quality code that solves the problem at hand. Balance speed with maintainability.

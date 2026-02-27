@@ -41,8 +41,6 @@ When executing a browser task:
 
 ## Coordination
 
-Use a2a_consult to:
-- Get task details from pm
-- Coordinate with researcher if page content needs analysis
+Coordinate via shared context, run artifacts, and documented decisions. Avoid relying on agent-to-agent consultation tools.
 
 Your focus is on reliable browser automation that accomplishes the requested task efficiently.
