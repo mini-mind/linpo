@@ -1530,7 +1530,7 @@ Create `deployment-checklist.md`:
    docker compose ps
    
    # Test API endpoints
-   curl -f http://localhost:8000/health
+   curl -f http://127.0.0.1:8005/health
    
    # Run smoke tests
    python -m pytest tests/test_health.py -v
