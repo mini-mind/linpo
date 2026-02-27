@@ -2,6 +2,7 @@
 
 ## OVERVIEW
 Internal worker API that routes browser jobs to the Playwright gateway or forwards search queries to MCP.
+Built on FastAPI + Playwright; worker protocol and routing are RoBoard-specific.
 
 ## STRUCTURE
 ```
@@ -22,6 +23,7 @@ worker-playwright/
 - Internal auth uses `X-Internal-Key` (`INTERNAL_API_KEY` required, comma-separated allowed).
 - Env vars: `MCP_URL`, `PLAYWRIGHT_GATEWAY_URL`, `SERVICE_NAME`.
 - Request context uses `X-Request-ID` + contextvars for trace/tenant/task.
+- 每改完一个服务就立即更新相关的 `AGENTS.md` 并完成该服务测试。
 
 ## ANTI-PATTERNS
 - Do not allow unauthenticated `/run` calls.

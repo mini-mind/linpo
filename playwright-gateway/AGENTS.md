@@ -2,6 +2,7 @@
 
 ## OVERVIEW
 Gateway that runs Playwright jobs by spawning runner containers via Docker API.
+Built on FastAPI + Playwright runner images; orchestration logic is RoBoard-specific.
 
 ## STRUCTURE
 ```
@@ -22,6 +23,7 @@ playwright-gateway/
 - Internal auth via `X-Internal-Key` against `INTERNAL_API_KEY` (comma-separated allowed).
 - Runner image from `PW_RUNNER_IMAGE` env var.
 - Per-tenant volumes named `pw_ws_t_{tenant_id}`.
+- 每改完一个服务就立即更新相关的 `AGENTS.md` 并完成该服务测试。
 
 ## ANTI-PATTERNS
 - Do not pull runner images on worker host at runtime; pre-pull in deploy script.

@@ -2,6 +2,7 @@
 
 ## OVERVIEW
 FastAPI service providing external API, internal admin endpoints, and WebSocket event streams.
+Built on FastAPI + PostgreSQL + Redis; Agent execution logic remains custom.
 
 ## STRUCTURE
 ```
@@ -26,6 +27,7 @@ api-backend/
 - External auth uses `X-API-Key`; internal auth uses `X-Internal-Key` + `X-Tenant-ID`; admin uses `X-Admin-Key`.
 - WS connects send a `snapshot` first, then stream incremental events.
 - Task event types are mapped to status (`queued|running|needs_human|completed|failed`).
+- 每改完一个服务就立即更新相关的 `AGENTS.md` 并完成该服务测试。
 
 ## ANTI-PATTERNS
 - Do not expose `/internal/*` via gateway.

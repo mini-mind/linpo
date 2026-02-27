@@ -2,6 +2,7 @@
 
 ## OVERVIEW
 Orchestrates agent dispatch and A2A messaging using Redis streams.
+Built on FastAPI + Redis; orchestration logic is custom to RoBoard.
 
 ## STRUCTURE
 ```
@@ -21,6 +22,7 @@ agent-manager/
 ## CONVENTIONS
 - Internal auth uses `X-Internal-Key` (`INTERNAL_API_KEY` supports comma-separated keys).
 - Redis streams: `DISPATCH_*` and `A2A_*` env vars define stream/group behavior.
+- 每改完一个服务就立即更新相关的 `AGENTS.md` 并完成该服务测试。
 
 ## ANTI-PATTERNS
 - Do not call external APIs without `X-Request-ID` propagation.
