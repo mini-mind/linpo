@@ -3,6 +3,7 @@
 *.pyc
 *.pyo
 *.pyd
+.pytest_cache/
 .venv/
 .venv-*/
 searxng/.env
@@ -12,6 +13,8 @@ searxng/.env
 backups/
 # Runtime data outputs
 data/
+# Temp artifacts
+.tmp/
 .sisyphus/notepads/
 .opencode/
 sops/*/

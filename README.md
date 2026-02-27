@@ -19,16 +19,16 @@
 
 ### 服务组件
 - **edge**: 80/443 (公网入口，Caddy 反向代理 + HTTPS)
-- **gateway**: 8082 (内部，统一入口，反向代理)
+- **gateway**: 80 (内部，统一入口，Nginx 反向代理；在 `deploy/prod/docker-compose.frontend.yml` 中会绑定 `127.0.0.1:8082->80` 便于本机调试)
 - **web-frontend**: 80 (内部，静态文件服务)
-- **api-backend**: 8000 (内部，FastAPI 后端)
-- **agent-manager**: 7000 (内部，任务调度)
-- **worker-playwright**: (内部，浏览器执行)
-- **mcp-server**: (内部，MCP 协议服务)
+- **api-backend**: 8000 (内部，FastAPI 后端；本地 `docker-compose.yml` 默认绑定 `127.0.0.1:8005->8000` 供调试)
+- **agent-manager**: 7000 (内部，任务调度；默认不暴露到宿主机)
+- **worker-playwright**: 7100 (内部，浏览器执行；默认不暴露到宿主机)
+- **mcp-server**: 9000 (内部，MCP 协议服务；默认不暴露到宿主机)
 - **postgres**: (内部，数据持久化，绑定 127.0.0.1:5432)
 - **redis**: (内部，速率限制，绑定 127.0.0.1:6379)
-- **searxng**: 127.0.0.1:8081 (搜索引擎)
-- **mailhog**: 127.0.0.1:8025 (邮件测试)
+- **mailhog**: 127.0.0.1:8025 (邮件测试；需要时启动)
+- **searxng**: 127.0.0.1:8081 (搜索引擎；仅在 `deploy/prod/docker-compose.frontend.yml` / legacy compose 中提供)
 
 ### 访问入口/端口暴露
 
@@ -37,14 +37,15 @@
   - UI: `https://roboard.duckdns.org/`
   - API: `https://roboard.duckdns.org/api/...`
   - WebSocket: `wss://roboard.duckdns.org/ws/events?...`
-- **不暴露的端口**: 8082/8000/7000/7100/9000 等均不对外暴露
+- **不对公网暴露的端口**: 127.0.0.1 绑定的 8082/8005/5432/6379/8025/8081 等（按部署形态启用），以及仅在 compose 网络内可达的 7000/7100/9000 等
 
 **内部管理访问**：
 - **内部管理服务**: 绑定 127.0.0.1，仅本地访问
   - MailHog: `http://127.0.0.1:8025` (邮件测试)
-  - SearXNG: `http://127.0.0.1:8081` (搜索引擎)
+  - SearXNG: `http://127.0.0.1:8081` (搜索引擎；如果启用了 searxng)
+- `api-backend` 本地调试端口: `http://127.0.0.1:8005/health`
 - **内部管理端点**: 使用 `docker compose exec` 进入容器
-  - 临时端口映射 (仅本地调试): 修改 docker-compose.yml 添加 `127.0.0.1:端口号:端口号`
+  - 临时端口映射 (仅本地调试): 修改 docker-compose.yml 添加 `127.0.0.1:端口号:端口号`（当前默认已映射 `api-backend:127.0.0.1:8005->8000`）
 
 ## Quick Start
 
@@ -121,6 +122,9 @@ For tool-calling to work, `llm-gateway` must pass through OpenAI-compatible mess
 docker compose exec -T api-backend python3 - <<'PY'
 import urllib.request, json, time
 
+# NOTE: This snippet runs inside the api-backend container.
+# - So BASE=http://localhost:8000 is correct here.
+# - From the host, api-backend is bound to http://127.0.0.1:8005 by default.
 BASE = "http://localhost:8000"
 
 # 1. Register
@@ -162,7 +166,7 @@ PY
 ### 必填环境变量
 - `ADMIN_API_KEY`: Admin 认证密钥 (用于创建租户)
 - `INTERNAL_API_KEY`: 内部服务认证密钥 (服务间通信)
-- `SEARXNG_SECRET_KEY`: SearXng 搜索引擎密钥
+- `SEARXNG_SECRET_KEY`: SearXng 搜索引擎密钥（仅在部署 `searxng` 服务时需要）
 
 ### 可选环境变量 (有默认值)
 - `DATABASE_URL`: PostgreSQL 连接字符串
@@ -203,8 +207,8 @@ echo "Tenant ID: $TENANT_ID"
 #   -d '{"name": "test-tenant"}'
 
 # 方式 3: 临时端口映射 (仅用于本地调试)
-# 在 docker-compose.yml 中临时添加 "127.0.0.1:8000:8000" 到 api-backend ports
-# curl -s -X POST http://localhost:8000/internal/tenants ...
+# 本地 `docker-compose.yml` 默认已映射 "127.0.0.1:8005:8000" 到 api-backend ports
+# curl -s -X POST http://127.0.0.1:8005/internal/tenants ...
 
 # 2. 创建任务 (会自动触发执行) - 通过公网域名
 TASK_RESPONSE=$(curl -s -X POST https://roboard.duckdns.org/api/tasks \
@@ -231,7 +235,7 @@ curl -s https://roboard.duckdns.org/api/tasks/$TASK_ID/notifications \
 
 **注意**：
 - `/internal/tenants` 端点通过 `docker compose exec` 进入容器执行 (推荐方式)
-  或临时添加 `127.0.0.1:8000:8000` 端口映射 (本地调试)
+  或直接使用本地默认映射 `127.0.0.1:8005:8000` (本地调试)
 - 外部 API 访问 `https://roboard.duckdns.org/api/...` (经过 edge/Caddy + HTTPS)
 - WebSocket 连接使用 `api_key` + `task_id` 参数，通过 `wss://` 安全连接
 - 创建任务后会自动触发执行，无需手动调用 agent-manager
@@ -305,7 +309,7 @@ Playwright 浏览器执行任务已迁移至独立 worker 服务器以提升性�
   - `scripts/push_worker_images.sh` - 推送 worker 镜像到远程
   - `scripts/deploy_worker.sh` - 在 worker 主机上部署服务
 
-提示：项目根目录 `.env` 需要设置 `PLAYWRIGHT_GATEWAY_URL=http://175.178.213.10:7200`（以及 `ADMIN_API_KEY`/`INTERNAL_API_KEY`/`SEARXNG_SECRET_KEY`）。
+提示：项目根目录 `.env` 需要设置 `PLAYWRIGHT_GATEWAY_URL=http://175.178.213.10:7200`（并确保 `ADMIN_API_KEY`/`INTERNAL_API_KEY` 已配置；`SEARXNG_SECRET_KEY` 仅在部署 searxng 服务时需要）。
 
 ## 免费域名/DDNS
 
@@ -358,20 +362,20 @@ edge 服务使用 Caddy 作为反向代理，自动通过 Let's Encrypt 获取�
 
 当前配置下，edge 服务仅支持通过域名 `https://roboard.duckdns.org` 的 HTTPS 访问。
 
-- **生产环境端口 8082/8000/7000 不对外暴露**
-  - 内部服务端口 (gateway:8082, api-backend:8000, agent-manager:7000) 仅绑定在 Docker 网络内
-  - 内部管理服务 (mailhog:8025, searxng:8081) 绑定 127.0.0.1
-  - 访问内部管理端点使用 `docker compose exec` 或临时添加 `127.0.0.1:端口号:端口号` 映射
+- **生产环境端口不对公网暴露**
+  - 内部服务端口（容器内）仅在 Docker 网络内可达（gateway:80, api-backend:8000, agent-manager:7000, ...）
+  - frontend host 可能会把 gateway/searxng 绑定到 `127.0.0.1` 用于本机调试（例如 `127.0.0.1:8082` / `127.0.0.1:8081`）
+  - 访问内部管理端点推荐使用 `docker compose exec`；本地调试可使用已绑定的 `127.0.0.1:*` 端口
 
 - **临时测试**：本地调试时可在 docker-compose.yml 添加端口映射
   ```yaml
   services:
     api-backend:
       ports:
-        - "127.0.0.1:8000:8000"  # 临时添加，测试后移除
+        - "127.0.0.1:8005:8000"  # 临时添加，测试后移除
   ```
   ```bash
-  curl http://localhost:8000/internal/tenants ...
+  curl http://127.0.0.1:8005/internal/tenants ...
   ```
 
 - **生产环境**：建议使用域名 `https://roboard.duckdns.org` 以获得完整的 HTTPS 支持
