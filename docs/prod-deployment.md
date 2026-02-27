@@ -1,13 +1,13 @@
 # 生产环境部署指南 (Split Deployment)
 
-**目标**: 让 `https://roboard.duckdns.org/` 的前端（ravin）与后端/worker（ubuntu@175.178.213.10）分离部署，并通过固定 TAG 从阿里云 ACR 拉取镜像。
+**目标**: 让 `https://roboard.duckdns.org/` 的前端（ravin，`68.64.179.125`）与后端/worker（ubuntu@175.178.213.10）分离部署，并通过固定 TAG 从阿里云 ACR 拉取镜像。
 
 ## 当前运行位置 (务必先确认)
 
 本仓库存在两种部署形态。当前常见资源形态是：
 
 - 本机（开发）
-- `ravin`（frontend host，跑 edge/gateway/web-frontend/searxng）
+- `ravin`（frontend host，`68.64.179.125`，跑 edge/gateway/web-frontend/searxng）
 - `ubuntu@175.178.213.10`（worker host，跑后端/worker）
 
 1) **双机拆分部署 (split deployment)**
@@ -50,7 +50,7 @@ docker ps --format "{{.Names}}\t{{.Image}}\t{{.Ports}}"
 - ACR: `registry.cn-hangzhou.aliyuncs.com/<namespace>/...`
 - 推荐 TAG: `YYYY-MM-DD-<git-short-sha>`（可追溯、可回滚）
 
-## 部署：frontend host (ravin)
+## 部署：frontend host (ravin, 68.64.179.125)
 
 frontend host 负责：edge(Caddy) + gateway + web-frontend + searxng。
 

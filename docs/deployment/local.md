@@ -67,7 +67,7 @@ bash scripts/deploy_local.sh
 对于资源受限或需要分离负载的场景，可以使用拆分部署：
 
 - **`scripts/deploy_local.sh`**（单主机部署）：在单个主机上部署所有服务，适合开发环境或小型部署
-- **`scripts/deploy_worker_host.sh`**（拆分部署）：在 worker 主机上部署后端服务（`api-backend agent-manager llm-gateway mcp-server worker-playwright redis postgres`），前端（`edge gateway web-frontend`）部署在其他主机（如 ravin）
+- **`scripts/deploy_worker_host.sh`**（拆分部署）：在 worker 主机上部署后端服务（`api-backend agent-manager llm-gateway mcp-server worker-playwright redis postgres`），前端（`edge gateway web-frontend`）部署在其他主机（如 ravin `68.64.179.125`）
 
 使用拆分部署脚本：
 
@@ -80,7 +80,7 @@ bash scripts/deploy_worker_host.sh
 ```
 
 拆分部署适用于：
-- 前端服务（edge/gateway/web-frontend）运行在资源有限的主机（如 ravin）
+- 前端服务（edge/gateway/web-frontend）运行在资源有限的主机（如 ravin `68.64.179.125`）
 - 后端服务（数据库、LLM 网关等）运行在性能更强的 worker 主机
 - 需要隔离前端和后端资源使用场景
 
