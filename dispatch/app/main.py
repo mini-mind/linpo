@@ -26,7 +26,7 @@ except ImportError:  # pragma: no cover - optional dependency
 
 # Configuration
 WORKER_URL = os.getenv("WORKER_URL", "http://worker-playwright:7100")
-API_BACKEND_URL = os.getenv("API_BACKEND_URL", "http://api-backend:8000")
+API_BACKEND_URL = os.getenv("API_BACKEND_URL", "http://api:8000")
 SKILL_GATEWAY_URL = os.getenv("SKILL_GATEWAY_URL", "http://skill-gateway:7400")
 INTERNAL_API_KEY_ENV = os.getenv("INTERNAL_API_KEY", "")
 INTERNAL_API_KEYS = [key.strip() for key in INTERNAL_API_KEY_ENV.split(",") if key.strip()]
@@ -36,14 +36,14 @@ if not INTERNAL_API_KEYS:
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 DISPATCH_STREAM = os.getenv("DISPATCH_STREAM", "queue:dispatch")
 DISPATCH_DEAD_STREAM = os.getenv("DISPATCH_DEAD_STREAM", "queue:dispatch:dead")
-DISPATCH_GROUP = os.getenv("DISPATCH_GROUP", "agent-manager")
-DISPATCH_CONSUMER = os.getenv("DISPATCH_CONSUMER", os.getenv("HOSTNAME", "agent-manager"))
+DISPATCH_GROUP = os.getenv("DISPATCH_GROUP", "dispatch")
+DISPATCH_CONSUMER = os.getenv("DISPATCH_CONSUMER", os.getenv("HOSTNAME", "dispatch"))
 DISPATCH_MAX_ATTEMPTS = int(os.getenv("DISPATCH_MAX_ATTEMPTS", "3"))
 SKILL_CREATE_STREAM = os.getenv("SKILL_CREATE_STREAM", "queue:skill-create")
-SKILL_CREATE_GROUP = os.getenv("SKILL_CREATE_GROUP", "agent-manager-skill-create")
+SKILL_CREATE_GROUP = os.getenv("SKILL_CREATE_GROUP", "dispatch-skill-create")
 SKILL_CREATE_CONSUMER = os.getenv("SKILL_CREATE_CONSUMER", DISPATCH_CONSUMER)
 SKILL_EXEC_STREAM = os.getenv("SKILL_EXEC_STREAM", "queue:skill-exec")
-SKILL_EXEC_GROUP = os.getenv("SKILL_EXEC_GROUP", "agent-manager-skill-exec")
+SKILL_EXEC_GROUP = os.getenv("SKILL_EXEC_GROUP", "dispatch-skill-exec")
 SKILL_EXEC_CONSUMER = os.getenv("SKILL_EXEC_CONSUMER", DISPATCH_CONSUMER)
 LLM_GATEWAY_URL = os.getenv("LLM_GATEWAY_URL", "http://llm-gateway:7300")
 
@@ -70,7 +70,7 @@ else:
     _JsonFormatterBase = JsonFormatterClass
 
 
-class AgentManagerJsonFormatter(_JsonFormatterBase):
+class DispatchJsonFormatter(_JsonFormatterBase):
     @override
     def add_fields(
         self,
@@ -79,7 +79,7 @@ class AgentManagerJsonFormatter(_JsonFormatterBase):
         message_dict: dict[str, object]
     ) -> None:
         super().add_fields(log_record, record, message_dict)
-        log_record["service"] = "agent-manager"
+        log_record["service"] = "dispatch"
         log_record["level"] = record.levelname
         log_record["logger"] = record.name
         log_record["message"] = record.getMessage()
@@ -94,10 +94,10 @@ class AgentManagerJsonFormatter(_JsonFormatterBase):
         if task_id is not None and "task_id" not in log_record:
             log_record["task_id"] = task_id
 
-logger = logging.getLogger("agent-manager")
+logger = logging.getLogger("dispatch")
 if not logger.handlers:
     handler = logging.StreamHandler()
-    formatter = AgentManagerJsonFormatter()
+    formatter = DispatchJsonFormatter()
     _ = handler.setFormatter(formatter)
     _ = logger.addHandler(handler)
 
@@ -162,23 +162,23 @@ generate_latest = cast(Callable[[], bytes], getattr(_prometheus_client, "generat
 CONTENT_TYPE_LATEST = cast(str, getattr(_prometheus_client, "CONTENT_TYPE_LATEST"))
 
 DISPATCH_MESSAGES_CONSUMED_TOTAL: CounterLike = Counter(
-    "web3d_dispatch_messages_consumed_total",
+    "roboard_dispatch_messages_consumed_total",
     "Total number of dispatch messages consumed"
 )
 DISPATCH_MESSAGES_RETRIED_TOTAL: CounterLike = Counter(
-    "web3d_dispatch_messages_retried_total",
+    "roboard_dispatch_messages_retried_total",
     "Total number of dispatch messages retried"
 )
 DISPATCH_MESSAGES_DEAD_TOTAL: CounterLike = Counter(
-    "web3d_dispatch_messages_dead_total",
+    "roboard_dispatch_messages_dead_total",
     "Total number of dispatch messages sent to dead letter stream"
 )
 DISPATCH_MESSAGES_SKIPPED_DONE_TOTAL: CounterLike = Counter(
-    "web3d_dispatch_messages_skipped_done_total",
+    "roboard_dispatch_messages_skipped_done_total",
     "Total number of dispatch messages skipped because already done"
 )
 DISPATCH_HTTP_REQUESTS_TOTAL: CounterLike = Counter(
-    "web3d_dispatch_http_requests_total",
+    "roboard_dispatch_http_requests_total",
     "Total number of dispatch HTTP requests",
     ["status"]
 )

@@ -4,11 +4,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    DATABASE_URL: str = Field(default="postgresql://postgres:postgres@postgres:5432/web3d")
+    DATABASE_URL: str = Field(default="postgresql://postgres:postgres@postgres:5432/roboard")
     REDIS_URL: str = Field(default="redis://redis:6379/0")
     ADMIN_API_KEY: str = Field(...)
     INTERNAL_API_KEY: str = Field(...)
-    AGENT_MANAGER_URL: str | None = Field(default=None)
+    DISPATCH_URL: str | None = Field(default=None)
     SEARXNG_SECRET_KEY: str | None = Field(default=None)
     LLM_PROVIDERS_HOST_PATH: str | None = Field(default=None)
     TENANT_CONCURRENCY_LIMIT: int = Field(default=2)

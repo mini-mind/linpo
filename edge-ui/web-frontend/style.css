@@ -180,10 +180,6 @@ a {
   text-transform: uppercase;
 }
 
-.cockpit {
-  padding: clamp(12px, 2.4vw, 28px);
-}
-
 .auth {
   padding: clamp(12px, 2.4vw, 28px);
   display: grid;
@@ -198,53 +194,6 @@ a {
 
 .auth-card .panel-meta {
   color: var(--muted);
-}
-
-.cockpit-grid {
-  display: grid;
-  gap: var(--space-3);
-  grid-template-columns: 1fr;
-  grid-template-areas:
-    "run"
-    "agents"
-    "sop"
-    "events";
-  align-items: start;
-}
-
-#run-panel {
-  grid-area: run;
-}
-
-#agent-panel {
-  grid-area: agents;
-}
-
-.sop {
-  grid-area: sop;
-}
-
-#run-events {
-  grid-area: events;
-}
-
-@media (min-width: 920px) {
-  .cockpit-grid {
-    grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
-    grid-template-areas:
-      "run sop"
-      "agents sop"
-      "events events";
-  }
-}
-
-@media (min-width: 1260px) {
-  .cockpit-grid {
-    grid-template-columns: minmax(320px, 420px) minmax(320px, 420px) minmax(0, 1fr);
-    grid-template-areas:
-      "run agents sop"
-      "events events events";
-  }
 }
 
 .panel {

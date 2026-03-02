@@ -8,6 +8,7 @@ Shared repo assets used by multiple services (configs, prompts, observability, S
 shared/
 ├── config/
 ├── prompts/
+├── agent-templates/    # 预制 Agent 模板 (YAML)
 ├── observability/
 ├── redis/
 └── sops/
@@ -18,6 +19,7 @@ shared/
 |------|----------|-------|
 | Runtime configs | shared/config/ | Mounted read-only into services |
 | Runtime prompts | shared/prompts/ | Agent role/skill prompts (runtime-only) |
+| Agent templates | shared/agent-templates/ | 预制 Agent 模板 (searcher/analyzer/writer/reviewer) |
 | Monitoring | shared/observability/ | Prometheus scrape + alerts |
 | SOP templates | shared/sops/templates/ | Markdown templates |
 

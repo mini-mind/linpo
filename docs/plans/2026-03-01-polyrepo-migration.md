@@ -13,7 +13,7 @@
 ## Phase 0: 契约冻结与子项目清单
 
 **Files:**
-- Modify: `session-a-docs/specs/*-api-contract.md` (如不存在, 创建)
+- Modify: `docs/specs/*-api-contract.md` (如不存在, 创建)
 - Modify: `subprojects/manifest.json`
 
 **Steps:**
@@ -23,7 +23,7 @@
 ## Phase 1: 生成可验证的拆仓产物 (本地)
 
 **Files:**
-- Use: `session-g-ops/scripts/polyrepo_split_subtree.py`
+- Use: `ops/scripts/polyrepo_split_subtree.py`
 
 **Steps:**
 1. 在 clean working tree 上运行 split 工具 (优先).
@@ -33,8 +33,8 @@
 
 **Files:**
 - Modify: `docker-compose.yml`
-- Modify: `session-g-ops/deploy/**`
-- Modify: `session-g-ops/scripts/push_*`
+- Modify: `ops/deploy/**`
+- Modify: `ops/scripts/push_*`
 
 **Steps:**
 1. 将 compose build.context 改为 image 引用 (TAG pin).

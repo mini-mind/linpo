@@ -77,6 +77,8 @@ ws://localhost:8082/ws/runs/{run_id}
 - 使用 gateway 同源策略
 - 建立连接后可实时接收运行事件
 
+接口契约规范（对外约定统一口径）：`docs/specs/2026-03-02-interface-contract.md`
+
 ## 如何运行
 
 ### 推荐方式 (使用 gateway)

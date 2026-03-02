@@ -46,7 +46,7 @@ fi
 # Start services
 echo "Starting services..."
 $DOCKER_COMPOSE_CMD up -d --build \
-    gateway api-backend agent-manager worker-playwright \
+    gateway api dispatch worker-playwright \
     mcp-server redis postgres searxng mailhog
 
 # Wait for services to be ready
@@ -347,8 +347,7 @@ fi
 
 echo "Task 2 ID: $TASK2_ID"
 
-# Wait for agent-manager retries (DISPATCH_MAX_ATTEMPTS=3 with retry delays)
-echo "Waiting for agent-manager retries..."
+echo "Waiting for dispatch retries..."
 sleep 25
 
 # Check dead-letter queue

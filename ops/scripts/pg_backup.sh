@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PG_DB="${PG_DB:-web3d}"
+PG_DB="${PG_DB:-roboard}"
 PG_USER="${PG_USER:-postgres}"
 BACKUP_DIR="${BACKUP_DIR:-backups}"
 SERVICE="${SERVICE:-postgres}"

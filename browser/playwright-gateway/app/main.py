@@ -9,7 +9,7 @@ from typing import Dict, Any
 app = FastAPI()
 
 INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
-PW_RUNNER_IMAGE = os.getenv("PW_RUNNER_IMAGE", "registry.cn-hangzhou.aliyuncs.com/ravin/web3d-playwright-runner:latest")
+PW_RUNNER_IMAGE = os.getenv("PW_RUNNER_IMAGE", "registry.cn-hangzhou.aliyuncs.com/ravin/roboard-playwright-runner:latest")
 
 docker_client = docker.from_env()
 

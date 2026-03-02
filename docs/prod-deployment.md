@@ -7,12 +7,12 @@
 本仓库存在两种部署形态。当前常见资源形态是：
 
 - 本机（开发）
-- `ravin`（frontend host，`68.64.179.125`，跑 edge/gateway/session-f-edge-ui/web-frontend/searxng）
+- `ravin`（frontend host，`68.64.179.125`，跑 edge/gateway/web-frontend/searxng）
 - `ubuntu@175.178.213.10`（worker host，跑后端/worker）
 
 1) **双机拆分部署 (split deployment)**
-   - 特征：frontend host 运行 edge/gateway/session-f-edge-ui/web-frontend/searxng；worker host 运行 session-b-api/session-c-dispatch/worker-playwright/...。
-   - Compose：`session-g-ops/deploy/prod/docker-compose.frontend.yml`（frontend）；worker 侧以 `session-a-docs/worker-deployment.md` / 实际运维 SOP 为准。
+   - 特征：frontend host 运行 edge/gateway/web-frontend/searxng；worker host 运行 api/dispatch/worker-playwright/...。
+   - Compose：`ops/deploy/prod/docker-compose.frontend.yml`（frontend）；worker 侧以 `docs/worker-deployment.md` / 实际运维 SOP 为准。
    - 适用：前后端分离、worker 资源隔离。
 
 备注：如果你只有一台生产机（例如只有 ravin），则 split deployment 的 "worker host" 可能与 frontend host 是同一台机器；这种情况下按实际 compose 落地为准。
@@ -23,11 +23,11 @@
 docker ps --format "{{.Names}}\t{{.Image}}\t{{.Ports}}"
 ```
 
-看到同时存在 `edge` 与 `session-b-api`（以及 postgres/redis）通常意味着 single-host；只看到 edge/gateway/session-f-edge-ui/web-frontend 通常意味着 split。
+看到同时存在 `edge` 与 `api`（以及 postgres/redis）通常意味着 single-host；只看到 edge/gateway/web-frontend 通常意味着 split。
 
 **相关文档**:
-- `session-a-docs/worker-deployment.md`
-- `session-a-docs/worker-ops.md`
+- `docs/worker-deployment.md`
+- `docs/worker-ops.md`
 
 ---
 
@@ -62,14 +62,14 @@ export TAG="<your-tag>"
 export API_BACKEND_URL="http://175.178.213.10:8000"
 
 cd "$ROBOARD_ROOT"
-docker compose -f session-g-ops/deploy/prod/docker-compose.frontend.yml pull
-docker compose -f session-g-ops/deploy/prod/docker-compose.frontend.yml up -d
-docker compose -f session-g-ops/deploy/prod/docker-compose.frontend.yml ps
+docker compose -f ops/deploy/prod/docker-compose.frontend.yml pull
+docker compose -f ops/deploy/prod/docker-compose.frontend.yml up -d
+docker compose -f ops/deploy/prod/docker-compose.frontend.yml ps
 ```
 
 ## 部署：worker host (ubuntu@175.178.213.10)
 
-worker host 负责：session-b-api/session-c-dispatch/worker-playwright/mcp-server/postgres/redis/llm-gateway 等核心后端组件，以及与 ravin 的隧道桥接。
+worker host 负责：api/dispatch/worker-playwright/mcp-server/postgres/redis/llm-gateway 等核心后端组件，以及与 ravin 的隧道桥接。
 
 此部分以实际运维 SOP 为准（不同部署可能存在差异）：
 - 若使用 docker compose：在 worker 上 `docker compose pull && docker compose up -d`
@@ -85,7 +85,7 @@ curl -fsS https://roboard.duckdns.org/ >/dev/null
 
 端口固定约定（split 部署）：
 - 前端 host：80/443 由 edge 占用；gateway 仅本机 127.0.0.1:8082
-- worker host：session-b-api 对外 `0.0.0.0:8000->8000`，必须可被前端 host 访问
+- worker host：api 对外 `0.0.0.0:8000->8000`，必须可被前端 host 访问
 ```
 
 浏览器人工验收：

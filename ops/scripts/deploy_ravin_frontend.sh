@@ -16,7 +16,7 @@ if [ -z "${TAG:-}" ]; then
   fi
 fi
 
-REMOTE_CMDS="cd ${ROBOARD_ROOT} && ROBOARD_ROOT=${ROBOARD_ROOT} TAG=${TAG} API_BACKEND_URL=${API_BACKEND_URL} docker compose -f session-g-ops/deploy/prod/docker-compose.frontend.yml pull gateway web-frontend && ROBOARD_ROOT=${ROBOARD_ROOT} TAG=${TAG} API_BACKEND_URL=${API_BACKEND_URL} docker compose -f session-g-ops/deploy/prod/docker-compose.frontend.yml up -d gateway web-frontend && ROBOARD_ROOT=${ROBOARD_ROOT} TAG=${TAG} API_BACKEND_URL=${API_BACKEND_URL} docker compose -f session-g-ops/deploy/prod/docker-compose.frontend.yml ps"
+REMOTE_CMDS="cd ${ROBOARD_ROOT} && ROBOARD_ROOT=${ROBOARD_ROOT} TAG=${TAG} API_BACKEND_URL=${API_BACKEND_URL} docker compose -f ops/deploy/prod/docker-compose.frontend.yml pull gateway web-frontend && ROBOARD_ROOT=${ROBOARD_ROOT} TAG=${TAG} API_BACKEND_URL=${API_BACKEND_URL} docker compose -f ops/deploy/prod/docker-compose.frontend.yml up -d gateway web-frontend && ROBOARD_ROOT=${ROBOARD_ROOT} TAG=${TAG} API_BACKEND_URL=${API_BACKEND_URL} docker compose -f ops/deploy/prod/docker-compose.frontend.yml ps"
 
 if [ "${DRY_RUN}" = "1" ]; then
   echo "DRY RUN - Would execute:"

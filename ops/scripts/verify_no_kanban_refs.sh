@@ -7,7 +7,7 @@ if ! command -v rg >/dev/null 2>&1; then
 fi
 
 set +e
-matches=$(rg -n "view-toggle|task-view-toggle" session-f-edge-ui/web-frontend session-f-edge-ui/web-frontend/README.md session-f-edge-ui/web-frontend/AGENTS.md 2>&1)
+matches=$(rg -n "view-toggle|task-view-toggle" edge-ui/web-frontend edge-ui/web-frontend/README.md edge-ui/web-frontend/AGENTS.md 2>&1)
 rg_status=$?
 set -e
 

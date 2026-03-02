@@ -5,7 +5,7 @@ Static HTML/CSS/JS Task Tree UI served via nginx or gateway.
 
 ## STRUCTURE
 ```
-session-f-edge-ui/web-frontend/
+edge-ui/web-frontend/
 ├── index.html
 ├── login.html
 ├── app.js
@@ -17,14 +17,20 @@ session-f-edge-ui/web-frontend/
 ## WHERE TO LOOK
 | Task | Location | Notes |
 |------|----------|-------|
-| UI markup | session-f-edge-ui/web-frontend/index.html | Main UI page |
-| App logic | session-f-edge-ui/web-frontend/app.js | Client state + WS handling |
-| Styles | session-f-edge-ui/web-frontend/style.css | UI styling |
-| Static serving | session-f-edge-ui/web-frontend/nginx.conf | Routes + caching |
+| UI markup | edge-ui/web-frontend/index.html | Main UI page |
+| App logic | edge-ui/web-frontend/app.js | Client state + WS handling |
+| Styles | edge-ui/web-frontend/style.css | UI styling |
+| Static serving | edge-ui/web-frontend/nginx.conf | Routes + caching |
 
 ## CONVENTIONS
 - No build step; assets are served as-is.
 - WebSocket connects via gateway `/ws/*` (same origin).
+
+## OWNERSHIP
+- Owned paths: `edge-ui/web-frontend/**`
+- 禁止跨目录修改：默认不修改非 `edge-ui/web-frontend/**` 的文件；如需变更 API/WS 契约先更新 `docs/specs/`。
+- 放弃向后兼容：文档与示例以当前语义目录/服务名为准。
+- 验证要求：修改静态资源后至少运行一次 `docker compose up -d web-frontend gateway edge` 并做手动冒烟（页面加载 + WS 连接）。
 
 ## ANTI-PATTERNS
 - Do not add bundler assumptions or npm build steps.

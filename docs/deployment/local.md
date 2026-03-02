@@ -15,9 +15,9 @@
 默认部署目标（支持 `roboard.duckdns.org` 的服务）：
 - `edge` - Caddy 反向代理（端口 80/443）
 - `gateway` - 内部 Nginx 网关（容器内监听 80；仅 compose 网络内访问）
-- `session-f-edge-ui/web-frontend` - 静态文件服务
-- `session-b-api` - FastAPI 后端（容器内 8000；本地默认绑定 `127.0.0.1:8005->8000` 供调试）
-- `session-c-dispatch` - 任务调度器（端口 7000）
+- `web-frontend` - 静态文件服务（代码目录：`edge-ui/web-frontend/`）
+- `api` - FastAPI 后端（容器内 8000；本地默认绑定 `127.0.0.1:8005->8000` 供调试）
+- `dispatch` - 任务调度器（端口 7000）
 - `llm-gateway` - LLM 提供商多路复用（端口 7300）
 - `mcp-server` - MCP 协议服务
 
@@ -25,7 +25,7 @@
 - `postgres` - PostgreSQL 数据库
 - `redis` - Redis 缓存和消息代理
 - `mailhog` - 邮件测试（开发环境，端口 8025；本仓库 `docker-compose.yml` 提供该服务，但脚本默认不启动）
-- `searxng` - 搜索引擎（端口 8081；在 `session-g-ops/deploy/prod/docker-compose.frontend.yml` / legacy compose 中提供。若本地不跑该服务，可通过 `SEARXNG_URL` 让 `mcp-server` 指向一个外部 SearXNG 实例）
+- `searxng` - 搜索引擎（端口 8081；在 `ops/deploy/prod/docker-compose.frontend.yml` 中提供。若本地不跑该服务，可通过 `SEARXNG_URL` 让 `mcp-server` 指向一个外部 SearXNG 实例）
 
 ## 端口映射清单（固定约定）
 
@@ -35,8 +35,8 @@
 | --- | --- | --- | --- |
 | edge | 80/443 | 80/443 | 统一公网入口（可能与本机其他服务冲突） |
 | gateway | 80 | 127.0.0.1:8082 | 本机调试入口（前端 host 上使用） |
-| api-backend | 8000 | 127.0.0.1:8005 | 本机调试入口 |
-| api-backend | 8000 | 0.0.0.0:8000 | split 部署 worker 对外入口 |
+| api | 8000 | 127.0.0.1:8005 | 本机调试入口 |
+| api | 8000 | 0.0.0.0:8000 | split 部署 worker 对外入口 |
 | searxng | 8080 | 127.0.0.1:8081 | 仅本机访问 |
 | playwright-gateway | 7200 | 7200 | worker 对外入口（限制来源 IP） |
 
@@ -45,7 +45,7 @@
 ## 端口冲突与规避
 
 - 若 80/443 被占用：先停止旧 edge/nginx/caddy 服务，或改用 split 部署（前端 host 持有 80/443）。
-- 若 8000 被占用：停止旧的 session-b-api / 反向代理进程，避免网关连错服务。
+- 若 8000 被占用：停止旧的 api / 反向代理进程，避免网关连错服务。
 - 若 8082/8081 被占用：仅影响本机调试，不影响公网入口。
 
 ## 部署策略
@@ -64,50 +64,50 @@ INTERNAL_API_KEY=...
 # SEARXNG_SECRET_KEY=...  # only required if you deploy the searxng service
 ```
 
-SOP 存储默认挂载在宿主机目录 `./session-h-shared/sops/`（容器内为 `/app/sops`）。如果你要自定义路径，可设置 `ROBOARD_SOP_ROOT`（默认 `/app/sops`）。
+SOP 存储默认挂载在宿主机目录 `./shared/sops/`（容器内为 `/app/sops`）。如果你要自定义路径，可设置 `ROBOARD_SOP_ROOT`（默认 `/app/sops`）。
 
 ### 快速部署脚本（推荐）
 
-项目提供了 `session-g-ops/scripts/deploy_local.sh` 脚本，用于快速迭代部署：
+项目提供了 `ops/scripts/deploy_local.sh` 脚本，用于快速迭代部署：
 
 ```bash
 # 预览部署命令（不实际执行）
-DRY_RUN=1 bash session-g-ops/scripts/deploy_local.sh
+DRY_RUN=1 bash ops/scripts/deploy_local.sh
 
 # 执行部署
-bash session-g-ops/scripts/deploy_local.sh
+bash ops/scripts/deploy_local.sh
 ```
 
 该脚本会自动：
 - 检测 `docker compose` 或 `docker-compose` 命令
-- 构建并启动核心服务：`edge gateway session-f-edge-ui/web-frontend session-b-api session-c-dispatch llm-gateway mcp-server redis postgres`
+- 构建并启动核心服务：`edge gateway web-frontend api dispatch llm-gateway mcp-server redis postgres`
 - 执行 `docker compose up -d --build ...`
 
 #### 拆分部署（前端与后端分离）
 
 对于资源受限或需要分离负载的场景，可以使用拆分部署：
 
-- **`session-g-ops/scripts/deploy_local.sh`**（单主机部署）：在单个主机上部署所有服务，适合开发环境或小型部署
-- **`session-g-ops/scripts/deploy_worker_host.sh`**（拆分部署）：在 worker 主机上部署后端服务（`session-b-api session-c-dispatch llm-gateway mcp-server worker-playwright redis postgres`），前端（`edge gateway session-f-edge-ui/web-frontend`）部署在其他主机（如 ravin `68.64.179.125`）
+- **`ops/scripts/deploy_local.sh`**（单主机部署）：在单个主机上部署所有服务，适合开发环境或小型部署
+- **`ops/scripts/deploy_worker_host.sh`**（拆分部署）：在 worker 主机上部署后端服务（`api dispatch llm-gateway mcp-server worker-playwright redis postgres`），前端（`edge gateway web-frontend`）部署在其他主机（如 ravin `68.64.179.125`）
 
 使用拆分部署脚本：
 
 ```bash
 # 预览部署命令（不实际执行）
-DRY_RUN=1 bash session-g-ops/scripts/deploy_worker_host.sh
+DRY_RUN=1 bash ops/scripts/deploy_worker_host.sh
 
 # 在 worker 主机上执行部署（后端服务）
-bash session-g-ops/scripts/deploy_worker_host.sh
+bash ops/scripts/deploy_worker_host.sh
 ```
 
 拆分部署适用于：
-- 前端服务（edge/gateway/session-f-edge-ui/web-frontend）运行在资源有限的主机（如 ravin `68.64.179.125`）
+- 前端服务（edge/gateway/web-frontend）运行在资源有限的主机（如 ravin `68.64.179.125`）
 - 后端服务（数据库、LLM 网关等）运行在性能更强的 worker 主机
 - 需要隔离前端和后端资源使用场景
 
 该脚本会自动：
 - 检测 `docker compose` 或 `docker-compose` 命令
-- 构建并启动核心服务：`session-b-api session-c-dispatch llm-gateway mcp-server worker-playwright redis postgres`
+- 构建并启动核心服务：`api dispatch llm-gateway mcp-server worker-playwright redis postgres`
 - 执行 `docker compose up -d --build ...`
 
 ### 1. 验证 Compose 配置（快速失败）
@@ -137,7 +137,7 @@ docker compose config
 
 ```bash
 # 构建并启动所有默认服务
-docker compose up -d --build edge gateway session-f-edge-ui/web-frontend session-b-api session-c-dispatch llm-gateway mcp-server
+docker compose up -d --build edge gateway web-frontend api dispatch llm-gateway mcp-server
 
 # 检查部署状态
 docker compose ps
@@ -148,10 +148,10 @@ docker compose ps
 当只有特定服务变更时，仅重部署这些服务：
 ```bash
 # 仅重部署 API 后端
-docker compose up -d --build session-b-api
+docker compose up -d --build api
 
 # 重部署前端和 API
-docker compose up -d --build session-f-edge-ui/web-frontend session-b-api
+docker compose up -d --build web-frontend api
 ```
 
 **数据库/基础设施优先部署**：
@@ -165,7 +165,7 @@ docker compose up -d postgres redis
 docker compose logs -f postgres
 
 # 然后部署应用服务
-docker compose up -d --build edge gateway session-f-edge-ui/web-frontend session-b-api session-c-dispatch llm-gateway mcp-server
+docker compose up -d --build edge gateway web-frontend api dispatch llm-gateway mcp-server
 ```
 
 ### 3. 检查失败
@@ -177,13 +177,13 @@ docker compose up -d --build edge gateway session-f-edge-ui/web-frontend session
 docker compose ps
 
 # 查看特定服务的日志
-docker compose logs session-b-api
+docker compose logs api
 
 # 实时跟踪日志
-docker compose logs -f session-b-api
+docker compose logs -f api
 
 # 查看最近的日志（最后 50 行）
-docker compose logs --tail=50 session-b-api
+docker compose logs --tail=50 api
 
 # 检查所有服务的日志
 docker compose logs
@@ -206,7 +206,7 @@ docker compose ps
 # 预期：所有服务显示 "Up" 或 "running" 状态
 
 # Compose 网络内健康检查（不依赖公网域名；适合本地/开发机验证）
-docker compose exec -T session-b-api curl -fsS http://localhost:8000/health
+docker compose exec -T api curl -fsS http://localhost:8000/health
 docker compose exec -T gateway curl -fsS http://localhost/api/health
 
 # 如果你是在真实线上机器部署（域名已解析到该机器），可额外做一次公网验证：
@@ -214,17 +214,18 @@ docker compose exec -T gateway curl -fsS http://localhost/api/health
 # curl -I https://roboard.duckdns.org/ >/dev/null
 ```
 
-**Bootstrap 验证**（如果适用）：
+**Run/WS 验证（推荐）**：
 ```bash
-# 检查 bootstrap 端点返回 ws_url
-docker compose exec -T gateway curl -fsS http://localhost/api/bootstrap
-# 预期：返回 JSON，包含 "ws_url" 字段（生产环境通常为 wss://roboard.duckdns.org/...）
+# 当前实现未提供 /api/bootstrap 端点。
+# 推荐按 run-centric 流程做端到端验证：register -> create run -> tree -> interventions。
+# 直接复用根 README 的“自然语言干预（Intervention）/快速验证（本地）”脚本：
+#   ../README.md#intervention
 ```
 
 **内部服务连接**（从 compose 网络内）：
 ```bash
 # 通过 docker compose exec 访问内部服务
-docker compose exec -T session-b-api curl -fsS http://localhost:8000/health
+docker compose exec -T api curl -fsS http://localhost:8000/health
 docker compose exec gateway curl http://localhost/api/health
 ```
 
@@ -237,8 +238,8 @@ docker compose exec gateway curl http://localhost/api/health
 docker compose down
 
 # 仅停止特定服务
-docker compose stop session-b-api
-docker compose rm -f session-b-api
+docker compose stop api
+docker compose rm -f api
 
 # 重新部署之前已知良好的状态（如果已版本化）
 # git restore 需要较新的 git；如不可用可回退为 git checkout

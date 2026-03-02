@@ -5,7 +5,7 @@ server:
   bind_address: 0.0.0.0
   port: 8080
   secret_key: "CHANGE_ME"
-  limiter: true
+  limiter: false
 
 general:
   instance_name: "SearXNG"
@@ -15,6 +15,33 @@ general:
 redis:
   url: redis://redis:6379/0
 search:
+  default_lang: zh-CN
+  formats:
+    - html
+    - json
+
+# 禁用不可达的搜索引擎（GFW 阻断）
+engines:
+  - name: google
+    disabled: true
+  - name: duckduckgo
+    disabled: true
+  - name: startpage
+    disabled: true
+  - name: brave
+    disabled: true
+  - name: wikipedia
+    disabled: true
+  - name: bing
+    disabled: false
+  - name: baidu
+    disabled: false
+  - name: sogou
+    disabled: false
+  - name: quark
+    disabled: false
+  - name: wolframalpha
+    disabled: false
   formats:
     - html
     - json

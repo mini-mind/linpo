@@ -1,4 +1,4 @@
-# Web3D 多Agent游戏化控制台 MVP 计划
+# RoBoard 多智能体指挥舱 MVP 计划
 
 > 语言：中文
 > 架构风格：多 Docker 服务拆分（前端/后端/Agent 管理/Redis/MCP/网关）
@@ -57,8 +57,8 @@
 
 ### 服务列表（多容器）
 - **web-frontend**：React/Vite + Three.js 或 R3F（3D 视图）
-- **api-backend**：FastAPI（鉴权/任务管理/事件流/通知编排）
-- **agent-manager**：任务执行编排（LLM规划/步骤拆解/队列）
+- **api**：FastAPI（鉴权/任务管理/事件流/通知编排）
+- **dispatch**：任务执行编排（LLM规划/步骤拆解/队列）
 - **worker-playwright**：Playwright 执行器（或 Playwright MCP 代理）
 - **mcp-server**：Playwright MCP 服务
 - **searxng**：搜索服务（当前唯一接入的 MCP 任务来源）

@@ -7,13 +7,13 @@ Goal: Fix the "stuck queued" perception in Task Tree/Kanban, make agent chat rel
 ### A. Confirm Current Contracts (No Code Changes)
 - [x] Identify server-side WebSocket handlers for `/ws/runs/{runId}` and `/ws/events`; document which one the UI should use. (Evidence: .sisyphus/notepads/task-tree-chat-stability/learnings.md - "UI should use `/ws/runs/{run_id}`")
 - [x] Identify edge/gateway proxy routing for WebSocket paths; confirm `/ws/runs/*` is upgraded and forwarded to the correct upstream. (Evidence: .sisyphus/notepads/task-tree-chat-stability/learnings.md - "WebSocket upgrade headers properly configured")
-- [x] Identify backend auth requirements for `/api/agents/{agentType}/chat` and what the frontend actually sends (header vs cookie). (Evidence: .sisyphus/notepads/task-tree-chat-stability/learnings.md - "Backend accepts both header and cookie")
+- [x] Identify backend auth requirements for the UI's intervention submission and what the frontend actually sends (header vs cookie). (Evidence: .sisyphus/notepads/task-tree-chat-stability/learnings.md - "Backend accepts both header and cookie")
 
 ### B. Fix Chat Auth End-to-End (Smallest Viable Change)
 - [x] Verify login/register returns `session_token` JSON and `web-frontend/app.js` stores it to `localStorage['roboard_session_token']`. (Evidence: .sisyphus/notepads/task-tree-chat-stability/learnings.md - "Frontend stores token in localStorage")
 - [x] Verify `apiFetch()` attaches `X-Session-Token` automatically when token exists. (Evidence: .sisyphus/notepads/task-tree-chat-stability/learnings.md - "apiFetch sets X-Session-Token header")
 - [x] If cookie-only login is possible, ensure chat endpoint works for cookie-auth users (either frontend always uses header, or backend accepts cookie session). (Evidence: .sisyphus/notepads/task-tree-chat-stability/learnings.md - "Backend accepts cookie fallback")
-- [x] Verification: Local flow can chat with `POST /api/agents/ceo/chat` and receives a non-error JSON response. (Evidence: .sisyphus/notepads/task-tree-chat-stability/learnings.md - "Backend accepts both header and cookie")
+- [x] Verification: Local flow can submit an intervention with `POST /api/runs/{run_id}/interventions` and receives a non-error JSON response. (Evidence: .sisyphus/notepads/task-tree-chat-stability/learnings.md - "Backend accepts both header and cookie")
 
 ### C. Fix `/ws/runs/{id}` Connection Reset
 - [x] Reproduce locally: connect to WebSocket URL the UI uses; confirm server accepts and pushes `snapshot` + `delta` frames. (Evidence: .sisyphus/notepads/task-tree-chat-stability/learnings.md - "Runtime test confirmed delta frames")

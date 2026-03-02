@@ -24,7 +24,7 @@ This document provides operational guidance for maintaining the Tencent worker h
 
 - **IP Address**: `175.178.213.10`
 - **SSH User**: `ubuntu`
-- **Working Directory**: `~/web3d-worker`
+- **Working Directory**: `~/roboard-worker`
 - **Docker Installation**: Ubuntu packages (system-managed)
 - **Swap Configuration**: 16GB at `/swap.img`, swappiness 10
 
@@ -37,7 +37,7 @@ cat /proc/sys/vm/swappiness  # Should be 10
 
 ## Services on Worker
 
-The worker runs two core services via Docker Compose in `~/web3d-worker/docker-compose.yml`:
+The worker runs two core services via Docker Compose in `~/roboard-worker/docker-compose.yml`:
 
 1. **playwright-gateway**: API gateway that accepts browser automation requests
    - Port: `7200` (exposed for HK server access)
@@ -48,13 +48,13 @@ The worker runs two core services via Docker Compose in `~/web3d-worker/docker-c
    - Allows only `POST` operations (create containers)
    - Blocks destructive operations (`DELETE`, `PUT`, `PATCH`, `GET`)
 
-Compose file location: `session-g-ops/deploy/worker/docker-compose.yml` in the repository.
+Compose file location: `ops/deploy/worker/docker-compose.yml` in the repository.
 
 ## Port Mapping Summary
 
 | Service | Host Port | Access |
 | --- | --- | --- |
-| api-backend | 8000 | Split 部署时供前端 host 访问 |
+| api | 8000 | Split 部署时供前端 host 访问 |
 | playwright-gateway | 7200 | 仅 HK 主机访问 |
 
 Conflict prevention:
@@ -70,7 +70,7 @@ All third-party images must be mirrored into Aliyun Container Registry (ACR) bef
 **Mirrored Image**:
 - `docker-socket-proxy`: `registry.cn-hangzhou.aliyuncs.com/ravin/docker-socket-proxy:0.1.1`
   - Source: `tecnativa/docker-socket-proxy:0.1.1`
-  - Automatically mirrored by `session-g-ops/scripts/push_worker_images.sh`
+  - Automatically mirrored by `ops/scripts/push_worker_images.sh`
 
 **Never reference Docker Hub images directly in the worker compose file.**
 
@@ -78,9 +78,9 @@ All third-party images must be mirrored into Aliyun Container Registry (ACR) bef
 
 Worker images are stored in `registry.cn-hangzhou.aliyuncs.com/ravin/`:
 
-- `web3d-playwright-runner:${TAG}` - Browser automation runner container
-- `web3d-playwright-gateway:${TAG}` - API gateway service
-- `web3d-worker-playwright:${TAG}` - Worker playbook (if applicable)
+- `roboard-playwright-runner:${TAG}` - Browser automation runner container
+- `roboard-playwright-gateway:${TAG}` - API gateway service
+- `roboard-worker-playwright:${TAG}` - Worker playbook (if applicable)
 
 ## Tag Strategy
 
@@ -109,7 +109,7 @@ The worker uses `INTERNAL_API_KEY` as a shared secret for service-to-service aut
 
 **Secret Management**:
 - Store in HK main server's `.env` file (`.gitignore` prevents commits)
-- Set during deployment: `INTERNAL_API_KEY=your-secret ./session-g-ops/scripts/deploy_worker.sh`
+- Set during deployment: `INTERNAL_API_KEY=your-secret ./ops/scripts/deploy_worker.sh`
 - Never include actual keys in documentation or configuration files
 
 ## Firewall Configuration
@@ -145,7 +145,7 @@ The worker gateway should only be accessible from the HK main server. Direct int
 
 Generate tag and push to ACR:
 ```bash
-TAG=20260209-0277415 ./session-g-ops/scripts/push_worker_images.sh
+TAG=20260209-0277415 ./ops/scripts/push_worker_images.sh
 ```
 
 The script:
@@ -157,12 +157,12 @@ The script:
 
 Deploy with tag and shared secret:
 ```bash
-INTERNAL_API_KEY=your-secret-key TAG=20260209-0277415 ./session-g-ops/scripts/deploy_worker.sh
+INTERNAL_API_KEY=your-secret-key TAG=20260209-0277415 ./ops/scripts/deploy_worker.sh
 ```
 
 The script:
-- Creates `~/web3d-worker` directory
-- Copies `session-g-ops/deploy/worker/docker-compose.yml`
+- Creates `~/roboard-worker` directory
+- Copies `ops/deploy/worker/docker-compose.yml`
 - Pre-pulls runner image (see critical gotcha below)
 - Runs `docker compose up -d` with environment variables
 
@@ -171,7 +171,7 @@ The script:
 SSH into worker and check status:
 ```bash
 ssh ubuntu@175.178.213.10
-cd ~/web3d-worker
+cd ~/roboard-worker
 
 # Check running containers
 docker compose ps
@@ -189,7 +189,7 @@ curl -H "X-Internal-Key: your-secret-key" http://localhost:7200/health
 
 **Solution**: The deploy script pre-pulls the runner image on the host before starting services:
 ```bash
-docker pull registry.cn-hangzhou.aliyuncs.com/ravin/web3d-playwright-runner:${TAG}
+docker pull registry.cn-hangzhou.aliyuncs.com/ravin/roboard-playwright-runner:${TAG}
 ```
 
 **Manual Workaround**: If you manually restart services, ensure the runner image exists:
@@ -197,7 +197,7 @@ docker pull registry.cn-hangzhou.aliyuncs.com/ravin/web3d-playwright-runner:${TA
 ssh ubuntu@175.178.213.10
 docker images | grep playwright-runner
 # If missing, pull with ACR credentials
-docker pull registry.cn-hangzhou.aliyuncs.com/ravin/web3d-playwright-runner:<TAG>
+docker pull registry.cn-hangzhou.aliyuncs.com/ravin/roboard-playwright-runner:<TAG>
 ```
 
 ## Troubleshooting Checklist
@@ -206,7 +206,7 @@ docker pull registry.cn-hangzhou.aliyuncs.com/ravin/web3d-playwright-runner:<TAG
 
 ```bash
 ssh ubuntu@175.178.213.10
-cd ~/web3d-worker
+cd ~/roboard-worker
 
 # Running containers
 docker compose ps
@@ -358,12 +358,12 @@ To quickly revert to a previous version:
 1. **Identify previous tag** from deployment history or Git log
 2. **Deploy with previous tag**:
    ```bash
-INTERNAL_API_KEY=your-secret TAG=<previous-tag> ./session-g-ops/scripts/deploy_worker.sh
+INTERNAL_API_KEY=your-secret TAG=<previous-tag> ./ops/scripts/deploy_worker.sh
    ```
 3. **Verify rollback**:
    ```bash
    ssh ubuntu@175.178.213.10
-   cd ~/web3d-worker
+   cd ~/roboard-worker
    docker compose ps
    docker compose logs -f
    ```
@@ -376,7 +376,7 @@ The tag strategy (`YYYYMMDD-<git-short-sha>`) makes identifying rollback targets
 
 ```bash
 ssh ubuntu@175.178.213.10
-cd ~/web3d-worker
+cd ~/roboard-worker
 docker compose restart
 ```
 
@@ -413,7 +413,7 @@ nc -zv 175.178.213.10 7200
 
 ## References
 
-- Deployment guide: `session-a-docs/worker-deployment.md`
-- Push script: `session-g-ops/scripts/push_worker_images.sh`
-- Deploy script: `session-g-ops/scripts/deploy_worker.sh`
-- Compose file: `session-g-ops/deploy/worker/docker-compose.yml`
+- Deployment guide: `docs/worker-deployment.md`
+- Push script: `ops/scripts/push_worker_images.sh`
+- Deploy script: `ops/scripts/deploy_worker.sh`
+- Compose file: `ops/deploy/worker/docker-compose.yml`

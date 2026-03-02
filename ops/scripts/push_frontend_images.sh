@@ -17,8 +17,8 @@ ACR_REGISTRY="${ACR_REGISTRY:-registry.cn-hangzhou.aliyuncs.com}"
 ACR_NAMESPACE="${ACR_NAMESPACE:-ravin}"
 
 # Image names
-WEB_FRONTEND_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/web3d-web-frontend:${TAG}"
-GATEWAY_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/web3d-gateway:${TAG}"
+WEB_FRONTEND_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/roboard-web-frontend:${TAG}"
+GATEWAY_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/roboard-gateway:${TAG}"
 
 echo "================================"
 echo "PUSH FRONTEND IMAGES TO ACR"
@@ -42,20 +42,20 @@ fi
 # Build and push web-frontend
 echo "[1/2] Building and pushing web-frontend..."
 if [ "${DRY_RUN:-0}" = "1" ]; then
-  echo "DRY RUN: docker build -t \"${WEB_FRONTEND_IMAGE}\" ./session-f-edge-ui/web-frontend"
+  echo "DRY RUN: docker build -t \"${WEB_FRONTEND_IMAGE}\" ./edge-ui/web-frontend"
   echo "DRY RUN: docker push \"${WEB_FRONTEND_IMAGE}\""
 else
-  docker build -t "${WEB_FRONTEND_IMAGE}" ./session-f-edge-ui/web-frontend
+  docker build -t "${WEB_FRONTEND_IMAGE}" ./edge-ui/web-frontend
   docker push "${WEB_FRONTEND_IMAGE}"
 fi
 
 # Build and push gateway
 echo "[2/2] Building and pushing gateway..."
 if [ "${DRY_RUN:-0}" = "1" ]; then
-  echo "DRY RUN: docker build -t \"${GATEWAY_IMAGE}\" ./session-f-edge-ui/gateway"
+  echo "DRY RUN: docker build -t \"${GATEWAY_IMAGE}\" ./edge-ui/gateway"
   echo "DRY RUN: docker push \"${GATEWAY_IMAGE}\""
 else
-  docker build -t "${GATEWAY_IMAGE}" ./session-f-edge-ui/gateway
+  docker build -t "${GATEWAY_IMAGE}" ./edge-ui/gateway
   docker push "${GATEWAY_IMAGE}"
 fi
 

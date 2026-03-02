@@ -63,7 +63,7 @@ def _find_repo_root() -> Path:
 
     candidates = [
         Path.cwd(),  # Current working directory
-        Path(__file__).parent.parent.parent,  # api-backend/app -> repo root
+        Path(__file__).parent.parent.parent,
         Path("/app"),  # Container mount point
     ]
 

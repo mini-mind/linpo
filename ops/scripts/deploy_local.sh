@@ -13,7 +13,7 @@ else
 fi
 
 # Default services for local deployment
-SERVICES="edge gateway web-frontend api-backend agent-manager llm-gateway mcp-server skill-gateway sandbox-template redis postgres"
+SERVICES="edge gateway web-frontend api dispatch llm-gateway mcp-server skill-gateway sandbox-template redis postgres"
 
 # Build the docker compose command
 CMD="$DOCKER_COMPOSE_CMD up -d --build $SERVICES"

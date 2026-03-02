@@ -13,7 +13,7 @@ else
 fi
 
 # Worker-side services only (resource-heavy backend services)
-SERVICES="api-backend agent-manager llm-gateway mcp-server worker-playwright redis postgres"
+SERVICES="api dispatch llm-gateway mcp-server worker-playwright redis postgres"
 
 # Build the docker compose command
 CMD="$DOCKER_COMPOSE_CMD up -d --build $SERVICES"

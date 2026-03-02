@@ -8,9 +8,9 @@ ACR_REGISTRY="${ACR_REGISTRY:-registry.cn-hangzhou.aliyuncs.com}"
 ACR_NAMESPACE="${ACR_NAMESPACE:-ravin}"
 
 # Image names
-PLAYWRIGHT_RUNNER_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/web3d-playwright-runner:${TAG}"
-PLAYWRIGHT_GATEWAY_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/web3d-playwright-gateway:${TAG}"
-WORKER_PLAYWRIGHT_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/web3d-worker-playwright:${TAG}"
+PLAYWRIGHT_RUNNER_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/roboard-playwright-runner:${TAG}"
+PLAYWRIGHT_GATEWAY_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/roboard-playwright-gateway:${TAG}"
+WORKER_PLAYWRIGHT_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/roboard-worker-playwright:${TAG}"
 DOCKER_SOCKET_PROXY_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/docker-socket-proxy:0.1.1"
 
 echo "================================"
@@ -36,17 +36,17 @@ fi
 
 # Build and push playwright-runner
 echo "[1/4] Building and pushing playwright-runner..."
-docker build -t "${PLAYWRIGHT_RUNNER_IMAGE}" ./session-d-browser/playwright-runner
+docker build -t "${PLAYWRIGHT_RUNNER_IMAGE}" ./browser/playwright-runner
 docker push "${PLAYWRIGHT_RUNNER_IMAGE}"
 
 # Build and push playwright-gateway
 echo "[2/4] Building and pushing playwright-gateway..."
-docker build -t "${PLAYWRIGHT_GATEWAY_IMAGE}" ./session-d-browser/playwright-gateway
+docker build -t "${PLAYWRIGHT_GATEWAY_IMAGE}" ./browser/playwright-gateway
 docker push "${PLAYWRIGHT_GATEWAY_IMAGE}"
 
 # Build and push worker-playwright
 echo "[3/4] Building and pushing worker-playwright..."
-docker build -t "${WORKER_PLAYWRIGHT_IMAGE}" ./session-d-browser/worker-playwright
+docker build -t "${WORKER_PLAYWRIGHT_IMAGE}" ./browser/worker-playwright
 docker push "${WORKER_PLAYWRIGHT_IMAGE}"
 
 # Mirror docker-socket-proxy to ACR

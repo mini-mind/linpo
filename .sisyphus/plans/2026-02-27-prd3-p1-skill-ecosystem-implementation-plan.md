@@ -4,7 +4,7 @@
 
 **Goal:** 落地 PRD v3 P1：Skill 自举（初版）、社区技能安装（初版）、团队架构导出/导入（YAML）、移动端基础查看与轻量干预。
 
-**Architecture:** 以 api-backend 提供最小可用 API（技能清单、技能安装、团队导出/导入），数据落盘到 agent FS；web-frontend 提供对应 UI 与基础移动端体验。导出/导入使用 YAML（引入 PyYAML），导入时基于模板创建一条新的 run 与 agent 树。
+**Architecture:** 以 api 提供最小可用 API（技能清单、技能安装、团队导出/导入），数据落盘到 agent FS；web-frontend 提供对应 UI 与基础移动端体验。导出/导入使用 YAML（引入 PyYAML），导入时基于模板创建一条新的 run 与 agent 树。
 
 **Tech Stack:** FastAPI, SQLAlchemy, pytest, PyYAML, vanilla JS/CSS/HTML
 
@@ -13,10 +13,10 @@
 ### Task 1: Skill 自举（API + FS 落盘）
 
 **Files:**
-- Modify: `api-backend/app/agent_fs.py`
-- Modify: `api-backend/tests/test_agent_fs.py`
-- Modify: `api-backend/app/tree_api.py`
-- Create: `api-backend/tests/test_agent_skills.py`
+- Modify: `api/app/agent_fs.py`
+- Modify: `api/tests/test_agent_fs.py`
+- Modify: `api/app/tree_api.py`
+- Create: `api/tests/test_agent_skills.py`
 
 **Step 1: Write the failing test**
 
@@ -31,26 +31,26 @@ def test_agent_skills_roundtrip(tmp_path, monkeypatch):
 
 **Step 2: Run test to verify it fails**
 
-Run: `cd api-backend && .venv/bin/python -m pytest -q tests/test_agent_skills.py::test_agent_skills_roundtrip`
+Run: `cd api && .venv/bin/python -m pytest -q tests/test_agent_skills.py::test_agent_skills_roundtrip`
 
 Expected: FAIL (endpoint not found)
 
 **Step 3: Write minimal implementation**
 
 ```python
-# api-backend/app/agent_fs.py
+# api/app/agent_fs.py
 def read_skills_manifest(agent_root: Path) -> list[dict[str, str]]: ...
 def write_skills_manifest(agent_root: Path, skills: list[dict[str, str]]) -> None: ...
 def write_skill_code(agent_root: Path, filename: str, code: str) -> None: ...
 ```
 
 ```python
-# api-backend/app/agent_fs.py
+# api/app/agent_fs.py
 # ensure_agent_layout 增加 skills 目录
 ```
 
 ```python
-# api-backend/app/tree_api.py
+# api/app/tree_api.py
 @router.get("/api/runs/{run_id}/agents/{agent_id}/skills")
 async def get_agent_skills(...):
     # return manifest list
@@ -62,14 +62,14 @@ async def put_agent_skills(...):
 
 **Step 4: Run test to verify it passes**
 
-Run: `cd api-backend && .venv/bin/python -m pytest -q tests/test_agent_skills.py::test_agent_skills_roundtrip`
+Run: `cd api && .venv/bin/python -m pytest -q tests/test_agent_skills.py::test_agent_skills_roundtrip`
 
 Expected: PASS
 
 **Step 5: Commit**
 
 ```bash
-git add api-backend/app/agent_fs.py api-backend/app/tree_api.py api-backend/tests/test_agent_skills.py
+git add api/app/agent_fs.py api/app/tree_api.py api/tests/test_agent_skills.py
 git commit -m "feat: add agent skills manifest api"
 ```
 
@@ -80,9 +80,9 @@ git commit -m "feat: add agent skills manifest api"
 **Files:**
 - Create: `config/community_skills.yaml`
 - Create: `community_skills/hello_world.py`
-- Modify: `api-backend/app/config_loader.py`
-- Modify: `api-backend/app/tree_api.py`
-- Create: `api-backend/tests/test_community_skills.py`
+- Modify: `api/app/config_loader.py`
+- Modify: `api/app/tree_api.py`
+- Create: `api/tests/test_community_skills.py`
 
 **Step 1: Write the failing test**
 
@@ -97,7 +97,7 @@ def test_install_community_skill(tmp_path, monkeypatch):
 
 **Step 2: Run test to verify it fails**
 
-Run: `cd api-backend && .venv/bin/python -m pytest -q tests/test_community_skills.py::test_install_community_skill`
+Run: `cd api && .venv/bin/python -m pytest -q tests/test_community_skills.py::test_install_community_skill`
 
 Expected: FAIL (endpoint not found)
 
@@ -113,12 +113,12 @@ skills:
 ```
 
 ```python
-# api-backend/app/config_loader.py
+# api/app/config_loader.py
 def load_community_skills() -> list[dict[str, str]]: ...
 ```
 
 ```python
-# api-backend/app/tree_api.py
+# api/app/tree_api.py
 @router.post("/api/runs/{run_id}/agents/{agent_id}/skills/install")
 async def install_community_skill(...):
     # lookup skill by key, copy file into agent skills/, update manifest
@@ -130,14 +130,14 @@ async def list_community_skills(...):
 
 **Step 4: Run test to verify it passes**
 
-Run: `cd api-backend && .venv/bin/python -m pytest -q tests/test_community_skills.py::test_install_community_skill`
+Run: `cd api && .venv/bin/python -m pytest -q tests/test_community_skills.py::test_install_community_skill`
 
 Expected: PASS
 
 **Step 5: Commit**
 
 ```bash
-git add config/community_skills.yaml community_skills/hello_world.py api-backend/app/config_loader.py api-backend/app/tree_api.py api-backend/tests/test_community_skills.py
+git add config/community_skills.yaml community_skills/hello_world.py api/app/config_loader.py api/app/tree_api.py api/tests/test_community_skills.py
 git commit -m "feat: add community skill install"
 ```
 
@@ -146,10 +146,10 @@ git commit -m "feat: add community skill install"
 ### Task 3: 团队架构导出/导入（YAML）
 
 **Files:**
-- Modify: `api-backend/requirements.txt`
-- Modify: `api-backend/app/agent_hiring.py`
-- Modify: `api-backend/app/tree_api.py`
-- Create: `api-backend/tests/test_team_templates.py`
+- Modify: `api/requirements.txt`
+- Modify: `api/app/agent_hiring.py`
+- Modify: `api/app/tree_api.py`
+- Create: `api/tests/test_team_templates.py`
 
 **Step 1: Write the failing test**
 
@@ -164,24 +164,24 @@ def test_team_export_import_yaml(tmp_path, monkeypatch):
 
 **Step 2: Run test to verify it fails**
 
-Run: `cd api-backend && .venv/bin/python -m pytest -q tests/test_team_templates.py::test_team_export_import_yaml`
+Run: `cd api && .venv/bin/python -m pytest -q tests/test_team_templates.py::test_team_export_import_yaml`
 
 Expected: FAIL (endpoint not found)
 
 **Step 3: Write minimal implementation**
 
 ```text
-# api-backend/requirements.txt
+# api/requirements.txt
 PyYAML>=6.0,<7
 ```
 
 ```python
-# api-backend/app/agent_hiring.py
+# api/app/agent_hiring.py
 def hire_team_from_template(session: Session, *, tenant_id: int, run_id: int, template: dict[str, object]) -> int: ...
 ```
 
 ```python
-# api-backend/app/tree_api.py
+# api/app/tree_api.py
 @router.get("/api/runs/{run_id}/team/export")
 async def export_team_yaml(...):
     # build template from AgentInstance + edges, return YAML
@@ -212,14 +212,14 @@ agents:
 
 **Step 4: Run test to verify it passes**
 
-Run: `cd api-backend && .venv/bin/python -m pytest -q tests/test_team_templates.py::test_team_export_import_yaml`
+Run: `cd api && .venv/bin/python -m pytest -q tests/test_team_templates.py::test_team_export_import_yaml`
 
 Expected: PASS
 
 **Step 5: Commit**
 
 ```bash
-git add api-backend/requirements.txt api-backend/app/agent_hiring.py api-backend/app/tree_api.py api-backend/tests/test_team_templates.py
+git add api/requirements.txt api/app/agent_hiring.py api/app/tree_api.py api/tests/test_team_templates.py
 git commit -m "feat: add team export/import yaml"
 ```
 
@@ -289,13 +289,13 @@ git commit -m "feat: add skills and team import/export ui"
 ### Task 5: 服务验证与文档更新
 
 **Files:**
-- Modify: `api-backend/AGENTS.md`
+- Modify: `api/AGENTS.md`
 - Modify: `web-frontend/AGENTS.md`
 - Modify: `docs/agent-framework.md`
 
 **Step 1: Run service tests**
 
-Run: `cd api-backend && .venv/bin/python -m pytest -q`
+Run: `cd api && .venv/bin/python -m pytest -q`
 
 Expected: PASS
 
@@ -308,6 +308,6 @@ Expected: PASS
 **Step 3: Commit**
 
 ```bash
-git add api-backend/AGENTS.md web-frontend/AGENTS.md docs/agent-framework.md
+git add api/AGENTS.md web-frontend/AGENTS.md docs/agent-framework.md
 git commit -m "docs: note P1 skills and team export/import"
 ```

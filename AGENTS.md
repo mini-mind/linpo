@@ -11,55 +11,56 @@ Each service owns its own `app/main.py` entrypoint and `requirements*.txt` depen
 ## STRUCTURE
 ```
 ./
-├── session-a-docs/       # Human docs and plans
-├── session-b-api/        # api-backend service
-├── session-c-dispatch/   # agent-manager service
-├── session-d-browser/    # worker-playwright + playwright-gateway + runner
-├── session-e-internal/   # llm-gateway + mcp-server + skill-gateway + sandbox-template + searxng
-├── session-f-edge-ui/    # edge + gateway + web-frontend
-├── session-g-ops/        # deploy + scripts + runtime artifacts
-└── session-h-shared/     # shared configs/prompts/templates/observability
+├── docs/       # Human docs and plans
+├── api/        # api service
+├── dispatch/   # dispatch service
+├── browser/    # worker-playwright + playwright-gateway + runner
+├── internal/   # llm-gateway + mcp-server + skill-gateway + sandbox-template + searxng
+├── edge-ui/    # edge + gateway + web-frontend
+├── ops/        # deploy + scripts + runtime artifacts
+└── shared/     # shared configs/prompts/templates/observability
 ```
 
 ## WHERE TO LOOK
 | Task | Location | Notes |
 |------|----------|-------|
-| API/WS behavior | session-b-api/app/main.py | FastAPI app, auth, WS events/snapshots |
-| Dispatch | session-c-dispatch/app/main.py | Redis streams, scheduler, dispatch |
-| LLM proxy | session-e-internal/llm-gateway/app/main.py | `/internal/llm/chat` only |
-| SearXNG proxy | session-e-internal/mcp-server/app/main.py | `/search` only |
-| Worker API | session-d-browser/worker-playwright/app/main.py | `/run` internal-only |
-| Playwright runner | session-d-browser/playwright-gateway/app/main.py | Docker runner orchestration |
-| Skill gateway | session-e-internal/skill-gateway/app/main.py | `/skills/*` internal-only |
-| Sandbox template | session-e-internal/sandbox-template/app/main.py | `/templates/*` internal-only |
-| UI | session-f-edge-ui/web-frontend/index.html + app.js | No build step |
-| Routing | session-f-edge-ui/gateway/nginx.conf + session-f-edge-ui/edge/Caddyfile | `/api`, `/ws`, `/` routing |
-| Deployment | session-g-ops/deploy/* | prod/worker/legacy compose |
-| Ops scripts | session-g-ops/scripts/* | deploy/push/backup/verify |
+| API/WS behavior | api/app/main.py | FastAPI app, auth, WS events/snapshots |
+| Dispatch | dispatch/app/main.py | Redis streams, scheduler, dispatch |
+| LLM proxy | internal/llm-gateway/app/main.py | `/internal/llm/chat` only |
+| SearXNG proxy | internal/mcp-server/app/main.py | `/search` only |
+| Worker API | browser/worker-playwright/app/main.py | `/run` internal-only |
+| Playwright runner | browser/playwright-gateway/app/main.py | Docker runner orchestration |
+| Skill gateway | internal/skill-gateway/app/main.py | `/skills/*` internal-only |
+| Sandbox template | internal/sandbox-template/app/main.py | `/templates/*` internal-only |
+| UI | edge-ui/web-frontend/index.html + app.js | No build step |
+| Routing | edge-ui/gateway/nginx.conf + edge-ui/edge/Caddyfile | `/api`, `/ws`, `/` routing |
+| Deployment | ops/deploy/* | prod/worker compose |
+| Ops scripts | ops/scripts/* | deploy/push/backup/verify |
 
 ## CODE MAP
 | Symbol | Type | Location | Refs | Role |
 |--------|------|----------|------|------|
-| app | FastAPI | session-b-api/app/main.py | high | Core API + WS entrypoint |
-| app | FastAPI | session-c-dispatch/app/main.py | high | Dispatch + scheduler entrypoint |
-| app | FastAPI | session-d-browser/worker-playwright/app/main.py | high | Worker API entrypoint |
-| app | FastAPI | session-d-browser/playwright-gateway/app/main.py | high | Runner orchestration entry |
-| app | FastAPI | session-e-internal/llm-gateway/app/main.py | high | LLM proxy entrypoint |
-| app | FastAPI | session-e-internal/mcp-server/app/main.py | high | SearXNG proxy entry |
+| app | FastAPI | api/app/main.py | high | Core API + WS entrypoint |
+| app | FastAPI | dispatch/app/main.py | high | Dispatch + scheduler entrypoint |
+| app | FastAPI | browser/worker-playwright/app/main.py | high | Worker API entrypoint |
+| app | FastAPI | browser/playwright-gateway/app/main.py | high | Runner orchestration entry |
+| app | FastAPI | internal/llm-gateway/app/main.py | high | LLM proxy entrypoint |
+| app | FastAPI | internal/mcp-server/app/main.py | high | SearXNG proxy entry |
 
 ## CONVENTIONS
 - Services use `app/main.py` + `tests/` with pytest-style `test_*.py`.
 - Auth headers are split by boundary: `X-API-Key`, `X-Internal-Key`, `X-Admin-Key`.
-- Local compose binds `api-backend` to `127.0.0.1:8005->8000` by default.
+- Local compose binds `api` to `127.0.0.1:8005->8000` by default.
 - No CI config files; builds are via Docker Compose + scripts.
 - 每改完一个服务就立即更新相关的 `AGENTS.md` 并完成该服务测试。
 - 每次完成版本更新（TAG/镜像）必须完成测试、commit、部署。
 - 复杂任务尽量拆分给子代理并行推进。
-- 2026-03-01: Multi-session 并行推进规则见 `session-a-docs/process/multi-session-ownership.md`。
+- 2026-03-01: 多子项目并行推进规则见 `docs/process/multi-session-ownership.md`。
 - 必须用中文交流与写文档，除非用户明确要求使用其他语言。
 - 禁止多轮压缩；仅允许在执行过程中“不得已”压缩一次，且必须在任务完成后明确告知是否发生压缩。
 - 若已发生压缩：必须及时补齐交接文档，并提供新 session 的开头指令模板。
 - 每个 agent 必须使用 ReAct 框架执行分配任务（先推理，再行动，最后复盘）。
+- 问题一律先追根因：任何“测不通/卡住/报错/没效果”的问题，必须先定位根因并把根因修掉；禁止用“兜底/降级/绕过”把问题掩盖成“好像能用”。如确实需要临时兜底来不中断演示/验收，需要记录到文档中并说明问题的原因，并告知用户。
 
 交接新 session 开头指令模板（发生压缩时必须提供）：
 ```text
@@ -71,7 +72,7 @@ Each service owns its own `app/main.py` entrypoint and `requirements*.txt` depen
 ```
 
 ## ANTI-PATTERNS (THIS PROJECT)
-- Never commit secrets (see `session-a-docs/agent-framework.md`).
+- Never commit secrets (see `docs/agent-framework.md`).
 - Do not log secrets; keep provider keys out of repo.
 - Worker images must not pull from Docker Hub on the worker host.
 - Do not assume `npx playwright test` is configured.
@@ -87,14 +88,14 @@ Each service owns its own `app/main.py` entrypoint and `requirements*.txt` depen
 docker compose up -d
 
 # Deploy helpers
-bash session-g-ops/scripts/deploy_local.sh
-bash session-g-ops/scripts/deploy_worker_host.sh
+bash ops/scripts/deploy_local.sh
+bash ops/scripts/deploy_worker_host.sh
 
 # Worker deployment
-INTERNAL_API_KEY=... TAG=YYYYMMDD-<sha> ./session-g-ops/scripts/deploy_worker.sh
+INTERNAL_API_KEY=... TAG=YYYYMMDD-<sha> ./ops/scripts/deploy_worker.sh
 
 # Tests (per service)
-cd session-b-api && .venv/bin/python -m pytest -q
+cd api && .venv/bin/python -m pytest -q
 ```
 
 ## CONSTITUTION
@@ -111,7 +112,7 @@ cd session-b-api && .venv/bin/python -m pytest -q
 - 经用户授权，可通过 SSH 登录 ravin（68.64.179.125）执行前端/网关/searxng 部署命令（遵守拆分部署：ravin 只跑 edge/gateway/web-frontend/searxng，本机跑重服务）。
 
 ### 部署原则
-- 拆分部署架构：ravin（68.64.179.125）运行轻量级边缘服务（edge/gateway/web-frontend/searxng），本地机器运行重型服务（api-backend、agent-manager、worker-playwright 等）。
+- 拆分部署架构：ravin（68.64.179.125）运行轻量级边缘服务（edge/gateway/web-frontend/searxng），本地机器运行重型服务（api、dispatch、worker-playwright 等）。
 - Agent 执行规范：所有 agent 执行任务必须采用 ReAct（先推理、再行动、最后复盘）。
 - SSH 授权状态：用户已明确授权通过 SSH 登录 ravin 执行部署命令。
 
@@ -134,4 +135,4 @@ cd session-b-api && .venv/bin/python -m pytest -q
 - `.env` is required for secrets; `.env` and `.env.*` are gitignored.
 - `.gitignore` also ignores `backups/`, `data/`, `screenshots/`, and `sops/*` (except templates).
 - Root `package.json` exists for Playwright tooling; it is ignored by `.gitignore` so changes may not show.
-- `session-a-docs/` uses dated filenames (`YYYY-MM-DD-*`) for plans/specs/decisions.
+- `docs/` uses dated filenames (`YYYY-MM-DD-*`) for plans/specs/decisions.

@@ -18,7 +18,7 @@ The worker stack consists of three services running on a dedicated worker host:
 
 - **IP Address**: `175.178.213.10`
 - **SSH User**: `ubuntu`
-- **Working Directory**: `~/web3d-worker`
+- **Working Directory**: `~/roboard-worker`
 - **Swap Size**: 16GB (prevents OOM during heavy browser workloads)
 - **Public Port**: `7200` (Playwright Gateway API)
 
@@ -26,7 +26,7 @@ The worker stack consists of three services running on a dedicated worker host:
 
 | Service | Container Port | Host Port | Notes |
 | --- | --- | --- | --- |
-| api-backend | 8000 | 0.0.0.0:8000 | Split 部署时必须对前端 host 可达 |
+| api | 8000 | 0.0.0.0:8000 | Split 部署时必须对前端 host 可达 |
 | playwright-gateway | 7200 | 7200 | 仅允许 HK 主机访问 |
 
 Conflict prevention:
@@ -66,7 +66,7 @@ Conflict prevention:
 Docker Compose will automatically load variables from the project root `.env`. This repo expects (at minimum):
 
 ```bash
-ADMIN_API_KEY=...            # required by api-backend
+ADMIN_API_KEY=...            # required by api
 INTERNAL_API_KEY=...         # required by internal service-to-service auth
 SEARXNG_SECRET_KEY=...        # required by searxng
 PLAYWRIGHT_GATEWAY_URL=http://175.178.213.10:7200
@@ -90,9 +90,9 @@ All worker images are stored in the Aliyun Container Registry:
 
 - **Registry**: `registry.cn-hangzhou.aliyuncs.com/ravin/`
 - **Repositories**:
-  - `web3d-playwright-runner:${TAG}` - Playwright runner container
-  - `web3d-playwright-gateway:${TAG}` - Playwright gateway service
-  - `web3d-worker-playwright:${TAG}` - Worker playbook (if any)
+- `roboard-playwright-runner:${TAG}` - Playwright runner container
+- `roboard-playwright-gateway:${TAG}` - Playwright gateway service
+- `roboard-worker-playwright:${TAG}` - Worker playbook (if any)
   - `docker-socket-proxy:0.1.1` - Docker socket proxy (mirror from tecnativa)
 
 **Important**: The worker host cannot access Docker Hub directly. Therefore, `docker-socket-proxy` must be mirrored to ACR, and the compose file must reference the ACR image (`registry.cn-hangzhou.aliyuncs.com/ravin/docker-socket-proxy:0.1.1`).
@@ -105,7 +105,7 @@ From the project root, run:
 
 ```bash
 # Recommended tag: YYYYMMDD-<git-short-sha> (script defaults to this)
-TAG=20260209-0277415 ./session-g-ops/scripts/push_worker_images.sh
+TAG=20260209-0277415 ./ops/scripts/push_worker_images.sh
 ```
 
 The script performs the following:
@@ -127,9 +127,9 @@ ACR_REGISTRY: registry.cn-hangzhou.aliyuncs.com
 ACR_NAMESPACE: ravin
 
 Images to push:
-  - registry.cn-hangzhou.aliyuncs.com/ravin/web3d-playwright-runner:20260210-28d14cd
-  - registry.cn-hangzhou.aliyuncs.com/ravin/web3d-playwright-gateway:20260210-28d14cd
-  - registry.cn-hangzhou.aliyuncs.com/ravin/web3d-worker-playwright:20260210-28d14cd
+- registry.cn-hangzhou.aliyuncs.com/ravin/roboard-playwright-runner:20260210-28d14cd
+- registry.cn-hangzhou.aliyuncs.com/ravin/roboard-playwright-gateway:20260210-28d14cd
+- registry.cn-hangzhou.aliyuncs.com/ravin/roboard-worker-playwright:20260210-28d14cd
   - registry.cn-hangzhou.aliyuncs.com/ravin/docker-socket-proxy:0.1.1
 
 [1/4] Building and pushing playwright-runner...
@@ -148,13 +148,13 @@ From the project root, run:
 
 ```bash
 # Set the shared secret and tag
-INTERNAL_API_KEY=your-secret-key TAG=20260209-0277415 ./session-g-ops/scripts/deploy_worker.sh
+INTERNAL_API_KEY=your-secret-key TAG=20260209-0277415 ./ops/scripts/deploy_worker.sh
 ```
 
 The script performs the following:
 
-1. Creates `~/web3d-worker` directory on the worker host
-2. Copies `session-g-ops/deploy/worker/docker-compose.yml` to the worker host
+1. Creates `~/roboard-worker` directory on the worker host
+2. Copies `ops/deploy/worker/docker-compose.yml` to the worker host
 3. Runs `docker compose up -d` with environment variables:
    - `TAG=YYYYMMDD-<git-short-sha>` (used by compose file for image selection)
    - `INTERNAL_API_KEY=your-secret-key` (authentication secret)
@@ -163,7 +163,7 @@ The script performs the following:
 
 - `WORKER_HOST`: Worker host IP (default: `175.178.213.10`)
 - `WORKER_USER`: SSH user (default: `ubuntu`)
-- `REMOTE_DIR`: Remote working directory (default: `~/web3d-worker`)
+- `REMOTE_DIR`: Remote working directory (default: `~/roboard-worker`)
 - `TAG`: Image tag (default: `latest`)
 - `INTERNAL_API_KEY`: Shared secret between main server and worker (required)
 
@@ -175,7 +175,7 @@ SSH into the worker host and check the status:
 ssh ubuntu@175.178.213.10
 
 # Check running containers
-cd ~/web3d-worker
+cd ~/roboard-worker
 docker compose ps
 
 # Check logs
@@ -187,7 +187,7 @@ curl -H "X-Internal-Key: your-secret-key" http://localhost:7200/health
 
 ## Docker Compose Configuration
 
-The `session-g-ops/deploy/worker/docker-compose.yml` defines the worker stack:
+The `ops/deploy/worker/docker-compose.yml` defines the worker stack:
 
 ```yaml
 services:
@@ -209,10 +209,10 @@ services:
       - worker-net
 
   playwright-gateway:
-    image: registry.cn-hangzhou.aliyuncs.com/ravin/web3d-playwright-gateway:${TAG:-latest}
+    image: registry.cn-hangzhou.aliyuncs.com/ravin/roboard-playwright-gateway:${TAG:-latest}
     environment:
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?set}
-      PW_RUNNER_IMAGE: registry.cn-hangzhou.aliyuncs.com/ravin/web3d-playwright-runner:${TAG:-latest}
+      PW_RUNNER_IMAGE: registry.cn-hangzhou.aliyuncs.com/ravin/roboard-playwright-runner:${TAG:-latest}
       DOCKER_HOST: tcp://docker-socket-proxy:2375
     ports:
       - "7200:7200"
@@ -285,7 +285,7 @@ docker compose pull
 **Solution**:
 ```bash
 ssh ubuntu@175.178.213.10
-cd ~/web3d-worker
+cd ~/roboard-worker
 docker compose logs docker-socket-proxy
 docker compose restart docker-socket-proxy
 ```
@@ -319,7 +319,7 @@ docker compose restart docker-socket-proxy
 1. Verify the key is set in compose file:
    ```bash
    ssh ubuntu@175.178.213.10
-   cd ~/web3d-worker
+   cd ~/roboard-worker
    docker compose exec playwright-gateway env | grep INTERNAL_API_KEY
    ```
 2. Ensure main server uses the same key in requests:
@@ -335,12 +335,12 @@ docker compose restart docker-socket-proxy
 Ensure compose file uses ACR images and `docker-socket-proxy` is mirrored:
 ```yaml
 environment:
-  PW_RUNNER_IMAGE: registry.cn-hangzhou.aliyuncs.com/ravin/web3d-playwright-runner:${TAG}
+  PW_RUNNER_IMAGE: registry.cn-hangzhou.aliyuncs.com/ravin/roboard-playwright-runner:${TAG}
 ```
 
 Re-run the push script to mirror images:
 ```bash
-TAG=20260210-28d14cd ./session-g-ops/scripts/push_worker_images.sh
+TAG=20260210-28d14cd ./ops/scripts/push_worker_images.sh
 ```
 
 ## Updating the Worker Stack
@@ -349,18 +349,18 @@ To update the worker stack with new images:
 
 1. **Build and push new images**:
    ```bash
-   TAG=20260211-3b8c3d1 ./session-g-ops/scripts/push_worker_images.sh
+   TAG=20260211-3b8c3d1 ./ops/scripts/push_worker_images.sh
    ```
 
 2. **Deploy with new tag**:
    ```bash
-   INTERNAL_API_KEY=your-secret-key TAG=20260211-3b8c3d1 ./session-g-ops/scripts/deploy_worker.sh
+   INTERNAL_API_KEY=your-secret-key TAG=20260211-3b8c3d1 ./ops/scripts/deploy_worker.sh
    ```
 
 3. **Verify deployment**:
    ```bash
    ssh ubuntu@175.178.213.10
-   cd ~/web3d-worker
+   cd ~/roboard-worker
    docker compose ps
    docker compose logs -f
    ```
@@ -373,13 +373,13 @@ To rollback to a previous version:
 
 2. **Deploy with previous tag**:
    ```bash
-   INTERNAL_API_KEY=your-secret-key TAG=20260210-28d14cd ./session-g-ops/scripts/deploy_worker.sh
+   INTERNAL_API_KEY=your-secret-key TAG=20260210-28d14cd ./ops/scripts/deploy_worker.sh
    ```
 
 3. **Verify rollback**:
    ```bash
    ssh ubuntu@175.178.213.10
-   cd ~/web3d-worker
+   cd ~/roboard-worker
    docker compose ps
    ```
 
@@ -391,14 +391,14 @@ TAG=20260210-28d14cd
 INTERNAL_API_KEY="your-32-character-random-secret-key"
 
 # 2. Build and push images to ACR
-TAG=$TAG ./session-g-ops/scripts/push_worker_images.sh
+TAG=$TAG ./ops/scripts/push_worker_images.sh
 
 # 3. Deploy to worker host
-INTERNAL_API_KEY=$INTERNAL_API_KEY TAG=$TAG ./session-g-ops/scripts/deploy_worker.sh
+INTERNAL_API_KEY=$INTERNAL_API_KEY TAG=$TAG ./ops/scripts/deploy_worker.sh
 
 # 4. Verify deployment
 ssh ubuntu@175.178.213.10
-cd ~/web3d-worker
+cd ~/roboard-worker
 docker compose ps
 docker compose logs -f
 
@@ -424,19 +424,19 @@ git rev-parse --short HEAD
 ### Step 2: 构建并推送镜像
 
 ```bash
-TAG=20260210-28d14cd ./session-g-ops/scripts/push_worker_images.sh
+TAG=20260210-28d14cd ./ops/scripts/push_worker_images.sh
 ```
 
 **注意**：如果脚本在镜像 `tecnativa/docker-socket-proxy:0.1.1` 时失败，需先确保该镜像在本地存在：
 ```bash
 docker pull tecnativa/docker-socket-proxy:0.1.1
-TAG=20260210-28d14cd ./session-g-ops/scripts/push_worker_images.sh
+TAG=20260210-28d14cd ./ops/scripts/push_worker_images.sh
 ```
 
 ### Step 3: 部署到 Worker 主机
 
 ```bash
-INTERNAL_API_KEY=your-secret-key TAG=20260210-28d14cd ./session-g-ops/scripts/deploy_worker.sh
+INTERNAL_API_KEY=your-secret-key TAG=20260210-28d14cd ./ops/scripts/deploy_worker.sh
 ```
 
 ### Step 4: 验证镜像 Tag
@@ -447,9 +447,9 @@ INTERNAL_API_KEY=your-secret-key TAG=20260210-28d14cd ./session-g-ops/scripts/de
 ssh ubuntu@175.178.213.10 'docker ps --format "{{.Names}}\t{{.Image}}" | grep playwright-gateway'
 ```
 
-预期输出应包含你部署的 tag（检查 `...web3d-playwright-gateway:<TAG>`）：
+预期输出应包含你部署的 tag（检查 `...roboard-playwright-gateway:<TAG>`）：
 ```
-...web3d-playwright-gateway:20260210-28d14cd
+...roboard-playwright-gateway:20260210-28d14cd
 ```
 
 ### Step 5: 功能验证

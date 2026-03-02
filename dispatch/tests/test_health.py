@@ -16,6 +16,5 @@ def test_health(monkeypatch) -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert isinstance(data, dict)
-    # agent-manager currently returns {"status": "healthy"}
     assert isinstance(data.get("status"), str)
     assert data.get("status")

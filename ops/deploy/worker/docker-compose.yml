@@ -17,10 +17,10 @@ services:
       - worker-net
 
   playwright-gateway:
-    image: registry.cn-hangzhou.aliyuncs.com/ravin/web3d-playwright-gateway:${TAG:-latest}
+    image: registry.cn-hangzhou.aliyuncs.com/ravin/roboard-playwright-gateway:${TAG:-latest}
     environment:
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?set}
-      PW_RUNNER_IMAGE: registry.cn-hangzhou.aliyuncs.com/ravin/web3d-playwright-runner:${TAG:-latest}
+      PW_RUNNER_IMAGE: registry.cn-hangzhou.aliyuncs.com/ravin/roboard-playwright-runner:${TAG:-latest}
       DOCKER_HOST: tcp://docker-socket-proxy:2375
     ports:
       - "7200:7200"

@@ -1,4 +1,4 @@
-# api-backend
+# api
 
 ## OVERVIEW
 FastAPI service providing external API, internal admin endpoints, and WebSocket event streams.
@@ -6,7 +6,7 @@ Built on FastAPI + PostgreSQL + Redis; Agent execution logic remains custom.
 
 ## STRUCTURE
 ```
-api-backend/
+api/
 ├── app/              # FastAPI app, models, WS handlers
 ├── alembic/          # DB migrations
 ├── tests/            # pytest tests
@@ -17,11 +17,11 @@ api-backend/
 ## WHERE TO LOOK
 | Task | Location | Notes |
 |------|----------|-------|
-| HTTP + WS handlers | api-backend/app/main.py | Large entrypoint, auth + WS snapshots |
-| Agent tree API | api-backend/app/tree_api.py | Tree endpoints + FS integration |
-| SOP storage | api-backend/app/sop_store.py | SOP reads/writes in agent FS |
-| Migrations | api-backend/alembic/versions/ | Schema history |
-| Tests | api-backend/tests/ | pytest `test_*.py` |
+| HTTP + WS handlers | api/app/main.py | Large entrypoint, auth + WS snapshots |
+| Agent tree API | api/app/tree_api.py | Tree endpoints + FS integration |
+| SOP storage | api/app/sop_store.py | SOP reads/writes in agent FS |
+| Migrations | api/alembic/versions/ | Schema history |
+| Tests | api/tests/ | pytest `test_*.py` |
 
 ## CONVENTIONS
 - External auth uses `X-API-Key`; internal auth uses `X-Internal-Key` + `X-Tenant-ID`; admin uses `X-Admin-Key`.
@@ -29,13 +29,19 @@ api-backend/
 - Task event types are mapped to status (`queued|running|needs_human|completed|failed`).
 - 每改完一个服务就立即更新相关的 `AGENTS.md` 并完成该服务测试。
 
+## OWNERSHIP
+- Owned paths: `api/**`
+- 禁止跨目录修改：默认不修改非 `api/**` 的文件；跨服务契约变更先落到 `docs/specs/`，再由各 owner 分别实现。
+- 放弃向后兼容：文档与脚本示例统一使用当前语义目录/服务名（不保留旧目录名示例）。
+- 验证要求：至少运行一次 `python -m pytest -q`（见 COMMANDS）。
+
 ## ANTI-PATTERNS
 - Do not expose `/internal/*` via gateway.
 - Do not log or store secrets in task events or notifications.
 
 ## COMMANDS
 ```bash
-cd api-backend
+cd api
 . .venv/bin/activate
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 python -m pytest -q
@@ -44,7 +50,7 @@ python -m pytest -q
 ## NOTES
 - Local compose binds `127.0.0.1:8005->8000` for host access.
 - Migrations are Alembic-driven; keep schema changes in `alembic/versions`.
-- 2026-02-27: Removed legacy agent chat/A2A; switched root role to lead; keep intervention endpoint `/api/runs/{run_id}/interventions`.
+- 2026-02-27: Removed legacy agent chat flow; switched root role to lead; keep intervention endpoint `/api/runs/{run_id}/interventions`.
 - 2026-02-27: Added agent sources API (`/api/runs/{run_id}/agents/{agent_id}/sources`) and run control actions (`/api/runs/{run_id}/actions`); pytest `47 passed`.
 - 2026-02-27: run 控制动作补全：`run.pause` 触发 `task.requires_input` 并标记 `action.applied`；`run.resume`/`run.retry` 触发重新入队派发；新增 `tests/test_run_controls.py` 覆盖。
 - 2026-02-27: Added agent skills manifest API + FS layout for skills, with tests for roundtrip and layout.
@@ -57,4 +63,4 @@ python -m pytest -q
 - 2026-02-28: 补齐接口文档说明，覆盖 auth、社区技能搜索、NL 安装与 `/ws/runs/{run_id}`。
 - 2026-02-28: `/api/agents/{agent_id}/sop` 增加 `version` 返回；默认读取 `mission.md`，显式 version 参数读取对应版本；更新 `test_tree_api.py` 与 `test_actions_sop_replace.py`。
 - 2026-02-28: API README 补充 SOP 术语说明（与计划列表并存）。
-- 2026-02-28: 新增可选 AGENT_MANAGER_URL, 后台调用 /internal/dispatch; 未配置则回退 Redis queue:dispatch。
+- 2026-02-28: 新增可选 DISPATCH_URL, 后台调用 /internal/dispatch; 未配置则回退 Redis queue:dispatch。

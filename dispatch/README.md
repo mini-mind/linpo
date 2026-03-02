@@ -1,4 +1,4 @@
-agent-manager: Orchestrates agents/jobs and multi-tenant limits.
+dispatch: Orchestrates agents/jobs and multi-tenant limits.
 
 Environment Variables:
 - WORKER_URL: URL of the worker service
@@ -14,7 +14,7 @@ Environment Variables:
 Endpoints:
 POST /internal/dispatch
   Receives dispatch requests and forwards them to workers.
-  Posts task events to api-backend at /api/tasks/{id}/events
+  Posts task events to api at /api/tasks/{id}/events
   Requires X-Internal-Key header with INTERNAL_API_KEY value
 
 Dispatch stream payload (queue:dispatch):

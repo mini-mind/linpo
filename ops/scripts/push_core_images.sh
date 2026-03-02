@@ -12,13 +12,13 @@ ACR_REGISTRY="${ACR_REGISTRY:-registry.cn-hangzhou.aliyuncs.com}"
 ACR_NAMESPACE="${ACR_NAMESPACE:-ravin}"
 
 # Image names
-WEB_FRONTEND_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/web3d-web-frontend:${TAG}"
-GATEWAY_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/web3d-gateway:${TAG}"
-API_BACKEND_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/web3d-api-backend:${TAG}"
-AGENT_MANAGER_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/web3d-agent-manager:${TAG}"
-WORKER_PLAYWRIGHT_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/web3d-worker-playwright:${TAG}"
-MCP_SERVER_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/web3d-mcp-server:${TAG}"
-LLM_GATEWAY_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/web3d-llm-gateway:${TAG}"
+WEB_FRONTEND_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/roboard-web-frontend:${TAG}"
+GATEWAY_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/roboard-gateway:${TAG}"
+API_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/roboard-api:${TAG}"
+DISPATCH_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/roboard-dispatch:${TAG}"
+WORKER_PLAYWRIGHT_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/roboard-worker-playwright:${TAG}"
+MCP_SERVER_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/roboard-mcp-server:${TAG}"
+LLM_GATEWAY_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/roboard-llm-gateway:${TAG}"
 
 echo "================================"
 echo "PUSH CORE IMAGES TO ACR"
@@ -31,8 +31,8 @@ echo ""
 echo "Images to push:"
 echo "  - ${WEB_FRONTEND_IMAGE}"
 echo "  - ${GATEWAY_IMAGE}"
-echo "  - ${API_BACKEND_IMAGE}"
-echo "  - ${AGENT_MANAGER_IMAGE}"
+echo "  - ${API_IMAGE}"
+echo "  - ${DISPATCH_IMAGE}"
 echo "  - ${WORKER_PLAYWRIGHT_IMAGE}"
 echo "  - ${MCP_SERVER_IMAGE}"
 echo "  - ${LLM_GATEWAY_IMAGE}"
@@ -46,37 +46,37 @@ fi
 
 # Build and push web-frontend
 echo "[1/7] Building and pushing web-frontend..."
-docker build -t "${WEB_FRONTEND_IMAGE}" ./session-f-edge-ui/web-frontend
+docker build -t "${WEB_FRONTEND_IMAGE}" ./edge-ui/web-frontend
 docker push "${WEB_FRONTEND_IMAGE}"
 
 # Build and push gateway
 echo "[2/7] Building and pushing gateway..."
-docker build -t "${GATEWAY_IMAGE}" ./session-f-edge-ui/gateway
+docker build -t "${GATEWAY_IMAGE}" ./edge-ui/gateway
 docker push "${GATEWAY_IMAGE}"
 
-# Build and push api-backend
-echo "[3/7] Building and pushing api-backend..."
-docker build -t "${API_BACKEND_IMAGE}" ./session-b-api
-docker push "${API_BACKEND_IMAGE}"
+# Build and push api
+echo "[3/7] Building and pushing api..."
+docker build -t "${API_IMAGE}" ./api
+docker push "${API_IMAGE}"
 
-# Build and push agent-manager
-echo "[4/7] Building and pushing agent-manager..."
-docker build -t "${AGENT_MANAGER_IMAGE}" ./session-c-dispatch
-docker push "${AGENT_MANAGER_IMAGE}"
+# Build and push dispatch
+echo "[4/7] Building and pushing dispatch..."
+docker build -t "${DISPATCH_IMAGE}" ./dispatch
+docker push "${DISPATCH_IMAGE}"
 
 # Build and push worker-playwright
 echo "[5/7] Building and pushing worker-playwright..."
-docker build -t "${WORKER_PLAYWRIGHT_IMAGE}" ./session-d-browser/worker-playwright
+docker build -t "${WORKER_PLAYWRIGHT_IMAGE}" ./browser/worker-playwright
 docker push "${WORKER_PLAYWRIGHT_IMAGE}"
 
 # Build and push mcp-server
 echo "[6/7] Building and pushing mcp-server..."
-docker build -t "${MCP_SERVER_IMAGE}" ./session-e-internal/mcp-server
+docker build -t "${MCP_SERVER_IMAGE}" ./internal/mcp-server
 docker push "${MCP_SERVER_IMAGE}"
 
 # Build and push llm-gateway
 echo "[7/7] Building and pushing llm-gateway..."
-docker build -t "${LLM_GATEWAY_IMAGE}" ./session-e-internal/llm-gateway
+docker build -t "${LLM_GATEWAY_IMAGE}" ./internal/llm-gateway
 docker push "${LLM_GATEWAY_IMAGE}"
 
 echo ""
@@ -91,8 +91,8 @@ echo ""
 echo "Summary of pushed images:"
 echo "  - ${WEB_FRONTEND_IMAGE}"
 echo "  - ${GATEWAY_IMAGE}"
-echo "  - ${API_BACKEND_IMAGE}"
-echo "  - ${AGENT_MANAGER_IMAGE}"
+echo "  - ${API_IMAGE}"
+echo "  - ${DISPATCH_IMAGE}"
 echo "  - ${WORKER_PLAYWRIGHT_IMAGE}"
 echo "  - ${MCP_SERVER_IMAGE}"
 echo "  - ${LLM_GATEWAY_IMAGE}"
@@ -109,10 +109,10 @@ echo "#     web-frontend:"
 echo "#       image: ${WEB_FRONTEND_IMAGE}"
 echo "#     gateway:"
 echo "#       image: ${GATEWAY_IMAGE}"
-echo "#     api-backend:"
-echo "#       image: ${API_BACKEND_IMAGE}"
-echo "#     agent-manager:"
-echo "#       image: ${AGENT_MANAGER_IMAGE}"
+echo "#     api:"
+echo "#       image: ${API_IMAGE}"
+echo "#     dispatch:"
+echo "#       image: ${DISPATCH_IMAGE}"
 echo "#     worker-playwright:"
 echo "#       image: ${WORKER_PLAYWRIGHT_IMAGE}"
 echo "#     mcp-server:"

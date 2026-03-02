@@ -6,10 +6,10 @@ patterns=(
   'updateAgentState'
 )
 targets=(
-  "session-f-edge-ui/web-frontend/app.js"
-  "session-f-edge-ui/web-frontend/README.md"
-  "session-a-docs/README.md"
-  "session-a-docs/agent-framework.md"
+  "edge-ui/web-frontend/app.js"
+  "edge-ui/web-frontend/README.md"
+  "docs/README.md"
+  "docs/agent-framework.md"
 )
 
 if ! command -v rg >/dev/null 2>&1; then

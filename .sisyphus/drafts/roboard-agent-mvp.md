@@ -1,4 +1,4 @@
-# Draft: Web 3D 多Agent游戏化 + FastAPI + Playwright 的MVP设计
+# Draft: RoBoard 多智能体指挥舱 MVP 设计
 
 ## 目标（用户原话/意图）
 - 方向：把“配置、查看日志、查看状态”等工程师动作，尽量用游戏化元素承载（角色、心情/状态、关卡、掉落、收集）。
@@ -107,4 +107,4 @@
 
 ## 下一步输出（目标产物）
 - 一份“完整MVP设计”（产品体验→功能清单→信息架构→后端架构→数据模型→任务模板→商业化→里程碑→风险与降级策略）。
-- 写入计划文件：`.sisyphus/plans/web3d-agent-mvp.md`（在关键问题确认后）。
+- 写入计划文件：`.sisyphus/plans/roboard-agent-mvp.md`（在关键问题确认后）。

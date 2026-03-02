@@ -26,9 +26,9 @@
 ### Task 1: 可信来源 API（后端）
 
 **Files:**
-- Modify: `session-b-api/app/tree_api.py`
-- Modify: `session-b-api/app/agent_fs.py`
-- Create: `session-b-api/tests/test_agent_sources.py`
+- Modify: `api/app/tree_api.py`
+- Modify: `api/app/agent_fs.py`
+- Create: `api/tests/test_agent_sources.py`
 
 **Step 1: Write the failing test**
 
@@ -43,14 +43,14 @@ def test_agent_sources_roundtrip(tmp_path, monkeypatch):
 
 **Step 2: Run test to verify it fails**
 
-Run: `cd api-backend && .venv/bin/python -m pytest -q tests/test_agent_sources.py::test_agent_sources_roundtrip`
+Run: `cd api && .venv/bin/python -m pytest -q tests/test_agent_sources.py::test_agent_sources_roundtrip`
 
 Expected: FAIL (endpoint not found)
 
 **Step 3: Write minimal implementation**
 
 ```python
-# session-b-api/app/tree_api.py
+# api/app/tree_api.py
 @router.get("/api/runs/{run_id}/agents/{agent_id}/sources")
 async def get_agent_sources(...):
     # return manifest list, default []
@@ -61,21 +61,21 @@ async def put_agent_sources(...):
 ```
 
 ```python
-# session-b-api/app/agent_fs.py
+# api/app/agent_fs.py
 def read_sources_manifest(agent_root: Path) -> list[dict[str, str]]: ...
 def write_sources_manifest(agent_root: Path, sources: list[dict[str, str]]) -> None: ...
 ```
 
 **Step 4: Run test to verify it passes**
 
-Run: `cd api-backend && .venv/bin/python -m pytest -q tests/test_agent_sources.py::test_agent_sources_roundtrip`
+Run: `cd api && .venv/bin/python -m pytest -q tests/test_agent_sources.py::test_agent_sources_roundtrip`
 
 Expected: PASS
 
 **Step 5: Commit**
 
 ```bash
-git add session-b-api/app/tree_api.py session-b-api/app/agent_fs.py session-b-api/tests/test_agent_sources.py
+git add api/app/tree_api.py api/app/agent_fs.py api/tests/test_agent_sources.py
 git commit -m "feat: add agent source bindings API"
 ```
 
@@ -84,10 +84,10 @@ git commit -m "feat: add agent source bindings API"
 ### Task 2: 可信来源 UI（前端）
 
 **Files:**
-- Modify: `session-f-edge-ui/web-frontend/index.html`
-- Modify: `session-f-edge-ui/web-frontend/app.js`
-- Modify: `session-f-edge-ui/web-frontend/style.css`
-- Modify: `session-f-edge-ui/web-frontend/README.md`
+- Modify: `edge-ui/web-frontend/index.html`
+- Modify: `edge-ui/web-frontend/app.js`
+- Modify: `edge-ui/web-frontend/style.css`
+- Modify: `edge-ui/web-frontend/README.md`
 
 **Step 1: Write the failing test (manual check)**
 
@@ -108,7 +108,7 @@ Expected: UI 无 “Sources” 面板
 **Step 3: Write minimal implementation**
 
 ```html
-<!-- session-f-edge-ui/web-frontend/index.html -->
+<!-- edge-ui/web-frontend/index.html -->
 <section class="panel sources">
   <h3>Sources</h3>
   <div class="sources-list" id="sourcesList"></div>
@@ -117,7 +117,7 @@ Expected: UI 无 “Sources” 面板
 ```
 
 ```javascript
-// session-f-edge-ui/web-frontend/app.js
+// edge-ui/web-frontend/app.js
 async function loadSources(runId, agentId) { ... }
 async function saveSources(runId, agentId, sources) { ... }
 ```
@@ -131,7 +131,7 @@ Expected: Sources 面板可编辑并保存
 **Step 5: Commit**
 
 ```bash
-git add session-f-edge-ui/web-frontend/index.html session-f-edge-ui/web-frontend/app.js session-f-edge-ui/web-frontend/style.css session-f-edge-ui/web-frontend/README.md
+git add edge-ui/web-frontend/index.html edge-ui/web-frontend/app.js edge-ui/web-frontend/style.css edge-ui/web-frontend/README.md
 git commit -m "feat: add trusted sources panel"
 ```
 
@@ -140,13 +140,13 @@ git commit -m "feat: add trusted sources panel"
 ### Task 3: 干预控制按钮（暂停/继续/重试）
 
 **Files:**
-- Modify: `session-b-api/app/actions.py`
-- Modify: `session-b-api/app/main.py`
-- Modify: `session-b-api/tests/test_actions_sop_patch.py`
-- Create: `session-b-api/tests/test_run_controls.py`
-- Modify: `session-f-edge-ui/web-frontend/index.html`
-- Modify: `session-f-edge-ui/web-frontend/app.js`
-- Modify: `session-f-edge-ui/web-frontend/style.css`
+- Modify: `api/app/actions.py`
+- Modify: `api/app/main.py`
+- Modify: `api/tests/test_actions_sop_patch.py`
+- Create: `api/tests/test_run_controls.py`
+- Modify: `edge-ui/web-frontend/index.html`
+- Modify: `edge-ui/web-frontend/app.js`
+- Modify: `edge-ui/web-frontend/style.css`
 
 **Step 1: Write the failing test**
 
@@ -159,33 +159,33 @@ def test_run_control_action_emits_events(tmp_path, monkeypatch):
 
 **Step 2: Run test to verify it fails**
 
-Run: `cd api-backend && .venv/bin/python -m pytest -q tests/test_run_controls.py::test_run_control_action_emits_events`
+Run: `cd api && .venv/bin/python -m pytest -q tests/test_run_controls.py::test_run_control_action_emits_events`
 
 Expected: FAIL (unsupported action_type)
 
 **Step 3: Write minimal implementation**
 
 ```python
-# session-b-api/app/actions.py
+# api/app/actions.py
 if body.action_type in {"run.pause", "run.resume", "run.retry"}:
     # create action + action.requested event, update agent/task state where needed
 ```
 
 ```javascript
-// session-f-edge-ui/web-frontend/app.js
+// edge-ui/web-frontend/app.js
 await apiFetch(`/api/runs/${runId}/actions`, { action_type: "run.pause", ... })
 ```
 
 **Step 4: Run test to verify it passes**
 
-Run: `cd api-backend && .venv/bin/python -m pytest -q tests/test_run_controls.py::test_run_control_action_emits_events`
+Run: `cd api && .venv/bin/python -m pytest -q tests/test_run_controls.py::test_run_control_action_emits_events`
 
 Expected: PASS
 
 **Step 5: Commit**
 
 ```bash
-git add session-b-api/app/actions.py session-b-api/app/main.py session-b-api/tests/test_run_controls.py session-f-edge-ui/web-frontend/index.html session-f-edge-ui/web-frontend/app.js session-f-edge-ui/web-frontend/style.css
+git add api/app/actions.py api/app/main.py api/tests/test_run_controls.py edge-ui/web-frontend/index.html edge-ui/web-frontend/app.js edge-ui/web-frontend/style.css
 git commit -m "feat: add run control actions and UI buttons"
 ```
 
@@ -194,13 +194,13 @@ git commit -m "feat: add run control actions and UI buttons"
 ### Task 4: Service verification + docs note
 
 **Files:**
-- Modify: `session-b-api/AGENTS.md`
-- Modify: `session-f-edge-ui/web-frontend/AGENTS.md`
-- Modify: `session-a-docs/agent-framework.md`
+- Modify: `api/AGENTS.md`
+- Modify: `edge-ui/web-frontend/AGENTS.md`
+- Modify: `docs/agent-framework.md`
 
 **Step 1: Run service tests**
 
-Run: `cd api-backend && .venv/bin/python -m pytest -q`
+Run: `cd api && .venv/bin/python -m pytest -q`
 
 Expected: PASS
 
@@ -217,6 +217,6 @@ Expected: No errors
 **Step 3: Commit**
 
 ```bash
-git add session-b-api/AGENTS.md session-f-edge-ui/web-frontend/AGENTS.md session-a-docs/agent-framework.md
+git add api/AGENTS.md edge-ui/web-frontend/AGENTS.md docs/agent-framework.md
 git commit -m "docs: note trusted sources and controls"
 ```

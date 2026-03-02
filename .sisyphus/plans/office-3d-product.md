@@ -19,7 +19,7 @@
 - **前端**: 保持 Vanilla JS/CSS/HTML 无构建框架，Three.js 通过 CDN 加载
 - **路由**: 使用轻量级客户端路由（History API）在 `/` 和 `/world` 之间切换
 - **3D 场景**: 使用 Three.js 构建办公室环境（桌椅、Agent、看板）
-- **Auth 后端**: 扩展 api-backend 添加用户认证（email + password），现有 tenant/auth 并行存在
+- **Auth 后端**: 扩展 api 添加用户认证（email + password），现有 tenant/auth 并行存在
 - **WebSocket**: 复用现有 `/ws/events` 端点模式，新增 `/ws/conversations` 用于聊天流式响应
 - **Agent 逻辑**: 新增 agent-runtime 服务处理 LLM 对话和工具调用
 - **MCP**: 扩展现有 mcp-server 支持工具调用协议（JSON-RPC over HTTP）
@@ -54,7 +54,7 @@
 
 ### 新增/修改服务
 - **web-frontend** (修改): 添加 Landing 页面、Auth Modal、客户端路由、3D 场景扩展
-- **api-backend** (扩展): 添加用户认证 endpoints (`/api/auth/login`, `/api/auth/register`)
+- **api** (扩展): 添加用户认证 endpoints (`/api/auth/login`, `/api/auth/register`)
 - **agent-runtime** (新增): 处理 Agent 对话逻辑，LLM 调用，工具绑定
 - **mcp-server** (扩展): 实现工具调用协议，添加工具 catalog
 
@@ -103,7 +103,7 @@
 
 #### 4. Agent Logic & Tool Calling
 **决策**: 新增 agent-runtime 服务，调用 LLM + MCP 工具
-- **原因**: agent-manager 专注任务编排，对话逻辑需要独立服务
+- **原因**: dispatch 专注任务编排，对话逻辑需要独立服务
 - **实现**:
   - agent-runtime: `/api/conversations` endpoints, 处理消息生成
   - LLM: OpenAI/Anthropic API（环境变量配置）
@@ -161,12 +161,12 @@
 - [ ] **Commit**: `git commit -m "M0: Landing Cover + Auth Modal UI (no backend yet)"`
 
 ### M1: Auth Backend + User/Session Model
-- [ ] 添加 `api-backend/app/models/user.py`（User, Session 模型）
+- [ ] 添加 `api/app/models/user.py`（User, Session 模型）
 - [ ] 添加数据库 migrations（alembic revision for users/sessions tables）
 - [ ] 实现 `/api/auth/register` endpoint（创建 User + Session，返回 session_token）
 - [ ] 实现 `/api/auth/login` endpoint（验证密码，创建 Session，返回 session_token）
 - [ ] 实现 `/api/auth/me` endpoint（通过 X-Session-Token header 返回用户信息）
-- [ ] 更新 `api-backend/app/main.py` 添加 auth 路由
+- [ ] 更新 `api/app/main.py` 添加 auth 路由
 - [ ] 测试：`curl -X POST http://localhost:8000/api/auth/register` 创建用户
 - [ ] 测试：`curl -X POST http://localhost:8000/api/auth/login` 登录获取 token
 - [ ] 测试：`curl -H "X-Session-Token: $TOKEN" http://localhost:8000/api/auth/me` 返回用户
@@ -201,7 +201,7 @@
 - [ ] **Commit**: `git commit -m "M3: 3D click interactions (raycasting + chat UI + kanban zoom)"`
 
 ### M4: Conversation Backend + Chat Endpoints
-- [ ] 添加 `api-backend/app/models/conversation.py`（Conversation, Message 模型）
+- [ ] 添加 `api/app/models/conversation.py`（Conversation, Message 模型）
 - [ ] 添加数据库 migrations（alembic revision for conversations/messages tables）
 - [ ] 实现 `/api/conversations` endpoint（创建对话）
 - [ ] 实现 `/api/conversations/{id}` endpoint（获取对话详情）
@@ -217,7 +217,7 @@
 - [ ] **Commit**: `git commit -m "M4: Conversation backend + agent-runtime service (LLM integration)"`
 
 ### M5: WebSocket Streaming + MCP Tool Calling
-- [ ] 扩展 `api-backend/app/main.py` 添加 `/ws/conversations` WebSocket endpoint
+- [ ] 扩展 `api/app/main.py` 添加 `/ws/conversations` WebSocket endpoint
 - [ ] WebSocket 参数：`conversation_id`, `session_token`
 - [ ] WebSocket 连接后推送新消息（agent_runtime 写入 messages 后触发）
 - [ ] 扩展 `mcp-server` 添加 `/tools` endpoint（返回工具 catalog）

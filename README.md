@@ -1,35 +1,39 @@
-# 搜索基础设施
+# RoBoard（灵板）
+
+多智能体团队指挥平台：自然语言创建 run，树状可视化进度，WebSocket 实时推送，支持随时干预，并可通过安装/自建技能扩展能力。
 
 ## 文档目录结构
 
 本项目明确分离人类文档与运行时角色提示词：
 
-- **`session-a-docs/`** - 人类/操作员/开发者文档
-  - [本地部署指南](session-a-docs/deployment/local.md) - Docker Compose 本地部署流程
-  - [生产部署指南](session-a-docs/prod-deployment.md) - 生产环境部署配置
-  - [文档中心](session-a-docs/README.md) - 完整的项目文档入口
-  - [多 Session 并行推进规则](session-a-docs/process/multi-session-ownership.md) - 目录所有权 + 契约同步 + handoff
-- [Sisyphus 工作流](session-a-docs/process/sisyphus-workflow.md) - 流程说明（`.sisyphus/` 位于仓库根目录，不在 `session-a-docs/` 中）
+- **`docs/`** - 人类/操作员/开发者文档
+  - [本地部署指南](docs/deployment/local.md) - Docker Compose 本地部署流程
+  - [生产部署指南](docs/prod-deployment.md) - 生产环境部署配置
+  - [文档中心](docs/README.md) - 完整的项目文档入口
+- [多子项目并行推进规则](docs/process/multi-session-ownership.md) - 目录所有权 + 契约同步 + handoff
+- [Sisyphus 工作流](docs/process/sisyphus-workflow.md) - 流程说明（`.sisyphus/` 位于仓库根目录，不在 `docs/` 中）
 
-- **`session-h-shared/prompts/`** - 运行时角色提示词（仅供应用内 Agent 使用）
-  - `session-h-shared/prompts/agents/*.md` - Agent 角色定义
-  - `session-h-shared/prompts/skills/*.md` - Agent 技能提示词（如 `chat_user.md`, `search_web.md`, `browser_run.md` 等）
+- **`shared/prompts/`** - 运行时角色提示词（仅供应用内 Agent 使用）
+  - `shared/prompts/agents/*.md` - Agent 角色定义
+  - `shared/prompts/skills/*.md` - Agent 技能提示词（如 `chat_user.md`, `search_web.md`, `browser_run.md` 等）
   - 这些文件仅供 LLM 在运行时使用，不包含人类操作手册或部署指南
 
 ## 服务架构
 
+对外接口与鉴权/WS 的推荐约定见：`docs/specs/2026-03-02-interface-contract.md`。
+
 ### 服务组件
 - **edge**: 80/443 (公网入口，Caddy 反向代理 + HTTPS)
-- **gateway**: 80 (内部，统一入口，Nginx 反向代理；在 `session-g-ops/deploy/prod/docker-compose.frontend.yml` 中会绑定 `127.0.0.1:8082->80` 便于本机调试)
+- **gateway**: 80 (内部，统一入口，Nginx 反向代理；在 `ops/deploy/prod/docker-compose.frontend.yml` 中会绑定 `127.0.0.1:8082->80` 便于本机调试)
 - **web-frontend**: 80 (内部，静态文件服务)
-- **api-backend**: 8000 (内部，FastAPI 后端；本地 `docker-compose.yml` 默认绑定 `127.0.0.1:8005->8000` 供调试；split 部署时对外绑定 `0.0.0.0:8000->8000`)
-- **agent-manager**: 7000 (内部，任务调度；默认不暴露到宿主机)
+- **api**: 8000 (内部，FastAPI 后端；本地 `docker-compose.yml` 默认绑定 `127.0.0.1:8005->8000` 供调试；split 部署时对外绑定 `0.0.0.0:8000->8000`)
+- **dispatch**: 7000 (内部，任务调度；默认不暴露到宿主机)
 - **worker-playwright**: 7100 (内部，浏览器执行；默认不暴露到宿主机)
 - **mcp-server**: 9000 (内部，MCP 协议服务；默认不暴露到宿主机)
 - **postgres**: (内部，数据持久化，绑定 127.0.0.1:5432)
 - **redis**: (内部，速率限制，绑定 127.0.0.1:6379)
 - **mailhog**: 127.0.0.1:8025 (邮件测试；需要时启动)
-- **searxng**: 127.0.0.1:8081 (搜索引擎；仅在 `session-g-ops/deploy/prod/docker-compose.frontend.yml` / legacy compose 中提供)
+- **searxng**: 127.0.0.1:8081 (搜索引擎；仅在 `ops/deploy/prod/docker-compose.frontend.yml` 中提供)
 
 ### 访问入口/端口暴露
 
@@ -37,7 +41,7 @@
 - **唯一公网入口**: `https://roboard.duckdns.org` (edge 80/443)
   - UI: `https://roboard.duckdns.org/`
   - API: `https://roboard.duckdns.org/api/...`
-  - WebSocket: `wss://roboard.duckdns.org/ws/events?...`
+  - WebSocket: `wss://roboard.duckdns.org/ws/runs/{run_id}`
 - **不对公网暴露的端口**: 127.0.0.1 绑定的 8082/8005/5432/6379/8025/8081 等（按部署形态启用），以及仅在 compose 网络内可达的 7000/7100/9000 等
 
 **冲突规避（固定约定）**：
@@ -48,9 +52,9 @@
 - **内部管理服务**: 绑定 127.0.0.1，仅本地访问
   - MailHog: `http://127.0.0.1:8025` (邮件测试)
   - SearXNG: `http://127.0.0.1:8081` (搜索引擎；如果启用了 searxng)
-- `api-backend` 本地调试端口: `http://127.0.0.1:8005/health`
+- `api` 本地调试端口: `http://127.0.0.1:8005/health`
 - **内部管理端点**: 使用 `docker compose exec` 进入容器
-  - 临时端口映射 (仅本地调试): 修改 docker-compose.yml 添加 `127.0.0.1:端口号:端口号`（当前默认已映射 `api-backend:127.0.0.1:8005->8000`）
+  - 临时端口映射 (仅本地调试): 修改 docker-compose.yml 添加 `127.0.0.1:端口号:端口号`（当前默认已映射 `api:127.0.0.1:8005->8000`）
 
 ## 快速开始
 
@@ -97,7 +101,7 @@ docker compose logs -f
 ### 快速验证（本地）
 
 ```bash
-docker compose exec -T api-backend python3 - <<'PY'
+docker compose exec -T api python3 - <<'PY'
 import urllib.request, json, time
 
 BASE = "http://localhost:8000"
@@ -148,7 +152,7 @@ PY
 
 ### 可选环境变量（有默认值）
 - `DATABASE_URL`: PostgreSQL 连接字符串
-  - 默认值: `postgresql://postgres:postgres@postgres:5432/web3d` (仅适用于 compose 网络内)
+- 默认值: `postgresql://postgres:postgres@postgres:5432/roboard` (仅适用于 compose 网络内)
 - `REDIS_URL`: Redis 连接字符串
   - 默认值: `redis://redis:6379/0` (仅适用于 compose 网络内)
 - `ALLOW_ORIGINS`: CORS 允许的源
@@ -157,7 +161,7 @@ PY
 ## 认证方式
 
 - **外部 API**: 使用 `X-API-Key` 头部认证
-- **内部服务**: 使用 `X-Internal-Key` 头部认证
+- **内部服务**: 使用 `X-Internal-Key` 头部认证（租户范围接口通常还需要 `X-Tenant-ID`）
 - **管理端点**: 使用 `X-Admin-Key` 头部认证
 
 ## 快速验证
@@ -167,7 +171,7 @@ PY
 ```bash
 # 1. 创建租户 (获取 api_key) - 使用 docker compose exec 进入容器
 ADMIN_KEY="your-admin-key-here"
-TENANT_RESPONSE=$(docker compose exec -T api-backend python3 -c "
+TENANT_RESPONSE=$(docker compose exec -T api python3 -c "
 import requests, json, os
 resp = requests.post('http://localhost:8000/internal/tenants',
     headers={'Content-Type': 'application/json', 'X-Admin-Key': os.environ['ADMIN_KEY']},
@@ -180,12 +184,12 @@ echo "API Key: $API_KEY"
 echo "Tenant ID: $TENANT_ID"
 
 # 方式 2: 使用 docker compose exec -T 直接调用 curl (容器内)
-# docker compose exec -T api-backend curl -s -X POST http://localhost:8000/internal/tenants \
+# docker compose exec -T api curl -s -X POST http://localhost:8000/internal/tenants \
 #   -H "Content-Type: application/json" -H "X-Admin-Key: $ADMIN_KEY" \
 #   -d '{"name": "test-tenant"}'
 
 # 方式 3: 临时端口映射 (仅用于本地调试)
-# 本地 `docker-compose.yml` 默认已映射 "127.0.0.1:8005:8000" 到 api-backend ports
+# 本地 `docker-compose.yml` 默认已映射 "127.0.0.1:8005:8000" 到 api ports
 # curl -s -X POST http://127.0.0.1:8005/internal/tenants ...
 
 # 2. 创建任务 (会自动触发执行) - 通过公网域名
@@ -216,7 +220,7 @@ curl -s https://roboard.duckdns.org/api/tasks/$TASK_ID/notifications \
   或直接使用本地默认映射 `127.0.0.1:8005:8000` (本地调试)
 - 外部 API 访问 `https://roboard.duckdns.org/api/...` (经过 edge/Caddy + HTTPS)
 - WebSocket 连接使用 `wss://roboard.duckdns.org/ws/runs/{run_id}`，支持 session cookie 或 `session_token`
-- 创建任务后会自动触发执行，无需手动调用 agent-manager
+- 创建任务后会自动触发执行，无需手动调用 dispatch
 
 ## 生产配置建议
 
@@ -227,7 +231,7 @@ curl -s https://roboard.duckdns.org/api/tasks/$TASK_ID/notifications \
 - 生产环境推荐使用 Docker Secrets：
   ```yaml
   services:
-    api-backend:
+    api:
       secrets:
         - admin_api_key
         - internal_api_key
@@ -253,8 +257,8 @@ curl -s https://roboard.duckdns.org/api/tasks/$TASK_ID/notifications \
 
 ### Gateway 限流
 
-- **IP 级别限流**：已在 `session-f-edge-ui/gateway/nginx.conf` 配置基础限流和连接限制，作为兜底保护
-- **租户级别限流**：应用层（api-backend）以 tenant 为单位进行速率限制，优先实现业务隔离
+- **IP 级别限流**：已在 `edge-ui/gateway/nginx.conf` 配置基础限流和连接限制，作为兜底保护
+- **租户级别限流**：应用层（api）以 tenant 为单位进行速率限制，优先实现业务隔离
 - 生产环境可根据实际流量调整 `nginx.conf` 中的 `limit_req_zone` 和 `limit_conn_zone` 参数
 
 ### 邮件配置
@@ -282,10 +286,10 @@ curl -s https://roboard.duckdns.org/api/tasks/$TASK_ID/notifications \
 Playwright 浏览器执行任务已迁移至独立 worker 服务器以提升性能和隔离性。
 
 - **Worker 主机**: `175.178.213.10` (用户: `ubuntu`)
-- **部署文档**: [session-a-docs/worker-deployment.md](session-a-docs/worker-deployment.md)
+- **部署文档**: [docs/worker-deployment.md](docs/worker-deployment.md)
 - **部署脚本**:
-  - `session-g-ops/scripts/push_worker_images.sh` - 推送 worker 镜像到远程
-  - `session-g-ops/scripts/deploy_worker.sh` - 在 worker 主机上部署服务
+  - `ops/scripts/push_worker_images.sh` - 推送 worker 镜像到远程
+  - `ops/scripts/deploy_worker.sh` - 在 worker 主机上部署服务
 
 提示：项目根目录 `.env` 需要设置 `PLAYWRIGHT_GATEWAY_URL=http://175.178.213.10:7200`（并确保 `ADMIN_API_KEY`/`INTERNAL_API_KEY` 已配置；`SEARXNG_SECRET_KEY` 仅在部署 searxng 服务时需要）。
 
@@ -341,14 +345,14 @@ edge 服务使用 Caddy 作为反向代理，自动通过 Let's Encrypt 获取�
 当前配置下，edge 服务仅支持通过域名 `https://roboard.duckdns.org` 的 HTTPS 访问。
 
 - **生产环境端口不对公网暴露**
-  - 内部服务端口（容器内）仅在 Docker 网络内可达（gateway:80, api-backend:8000, agent-manager:7000, ...）
+  - 内部服务端口（容器内）仅在 Docker 网络内可达（gateway:80, api:8000, dispatch:7000, ...）
   - frontend host 可能会把 gateway/searxng 绑定到 `127.0.0.1` 用于本机调试（例如 `127.0.0.1:8082` / `127.0.0.1:8081`）
   - 访问内部管理端点推荐使用 `docker compose exec`；本地调试可使用已绑定的 `127.0.0.1:*` 端口
 
 - **临时测试**：本地调试时可在 docker-compose.yml 添加端口映射
   ```yaml
   services:
-    api-backend:
+    api:
       ports:
         - "127.0.0.1:8005:8000"  # 临时添加，测试后移除
   ```
@@ -391,45 +395,45 @@ certbot renew --deploy-hook "docker exec edge reload-nginx"
 
 ### 备份脚本
 
-使用 `session-g-ops/scripts/pg_backup.sh` 备份 PostgreSQL 数据库：
+使用 `ops/scripts/pg_backup.sh` 备份 PostgreSQL 数据库：
 
 ```bash
-# 使用默认配置备份（数据库名: web3d）
-./session-g-ops/scripts/pg_backup.sh
+# 使用默认配置备份（数据库名: roboard）
+./ops/scripts/pg_backup.sh
 
 # 使用环境变量自定义备份
-PG_DB=mydb PG_USER=myuser BACKUP_DIR=./my_backups ./session-g-ops/scripts/pg_backup.sh
+PG_DB=mydb PG_USER=myuser BACKUP_DIR=./my_backups ./ops/scripts/pg_backup.sh
 ```
 
 - 备份文件命名：`{database_name}_YYYYMMDD_HHMMSS.dump`
 - 备份格式：PostgreSQL custom format (`-Fc`)
 - 默认配置：
-  - `PG_DB`: `web3d`（数据库名）
+  - `PG_DB`: `roboard`（数据库名）
   - `PG_USER`: `postgres`（数据库用户）
   - `BACKUP_DIR`: `./backups`（备份目录）
   - `SERVICE`: `postgres`（Docker 服务名）
 
 ### 恢复脚本
 
-使用 `session-g-ops/scripts/pg_restore.sh` 恢复数据库：
+使用 `ops/scripts/pg_restore.sh` 恢复数据库：
 
 ```bash
 # 恢复指定备份文件
-./session-g-ops/scripts/pg_restore.sh session-g-ops/backups/web3d_20250207_120000.dump
+./ops/scripts/pg_restore.sh ops/backups/roboard_20250207_120000.dump
 
 # 使用环境变量指定数据库
-PG_DB=mydb PG_USER=myuser ./session-g-ops/scripts/pg_restore.sh session-g-ops/backups/web3d_20250207_120000.dump
+PG_DB=mydb PG_USER=myuser ./ops/scripts/pg_restore.sh ops/backups/roboard_20250207_120000.dump
 ```
 
 - **注意**：恢复操作会完全删除并重建目标数据库，所有现有数据将丢失
 - 恢复流程：
-  1. 停止依赖服务（api-backend、agent-manager）
+  1. 停止依赖服务（api、dispatch）
   2. 删除现有数据库
   3. 创建空数据库
   4. 从备份文件恢复数据
   5. 重启依赖服务
 - 默认配置：
-  - `PG_DB`: `web3d`（恢复的目标数据库名）
+  - `PG_DB`: `roboard`（恢复的目标数据库名）
   - `PG_USER`: `postgres`（数据库用户）
   - `SERVICE`: `postgres`（Docker 服务名）
 

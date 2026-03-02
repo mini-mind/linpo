@@ -14,12 +14,12 @@
 .sisyphus/
 ├── boulder.json          # 追踪当前激活的计划/会话 ID（Git 追踪）
 ├── plans/                # 已批准的计划（Git 追踪，只读）
-│   ├── web3d-agent-mvp.md
-│   └── office-3d-product.md
+│   ├── <plan-name>.md
+│   └── ...
 ├── drafts/               # 计划草稿（Git 追踪）
-│   └── web3d-agent-mvp.md
+│   └── <plan-name>.md
 └── notepads/             # 笔记（Git 忽略，本地仅存）
-    ├── web3d-agent-mvp/
+    ├── <plan-name>/
     │   ├── learnings.md   # 模式/成功经验
     │   ├── decisions.md   # 架构选择与理由
     │   ├── issues.md      # 问题/阻塞点
@@ -85,6 +85,6 @@
 
 ## 快速链接
 
-- [当前主计划: web3d-agent-mvp](../../.sisyphus/plans/web3d-agent-mvp.md)
-- [草稿版本: web3d-agent-mvp](../../.sisyphus/drafts/web3d-agent-mvp.md)
-- [所有计划目录](../../.sisyphus/plans/)
+- 当前激活计划：查看 `../../.sisyphus/boulder.json`
+- 所有计划目录：`../../.sisyphus/plans/`
+- 草稿目录：`../../.sisyphus/drafts/`

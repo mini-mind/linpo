@@ -3,16 +3,16 @@ set -euo pipefail
 
 WORKER_HOST="${WORKER_HOST:-175.178.213.10}"
 WORKER_USER="${WORKER_USER:-ubuntu}"
-REMOTE_DIR="${REMOTE_DIR:-~/web3d-worker}"
+REMOTE_DIR="${REMOTE_DIR:-~/roboard-worker}"
 TAG="${TAG:-latest}"
 
 if [ -z "${INTERNAL_API_KEY:-}" ]; then
   echo "Error: INTERNAL_API_KEY environment variable is not set"
-  echo "Please run: INTERNAL_API_KEY=your-secret-key ./session-g-ops/scripts/deploy_worker.sh"
+  echo "Please run: INTERNAL_API_KEY=your-secret-key ./ops/scripts/deploy_worker.sh"
   exit 1
 fi
 
-LOCAL_COMPOSE_FILE="session-g-ops/deploy/worker/docker-compose.yml"
+LOCAL_COMPOSE_FILE="ops/deploy/worker/docker-compose.yml"
 
 echo "Creating remote directory on ${WORKER_USER}@${WORKER_HOST}:${REMOTE_DIR}..."
 ssh "${WORKER_USER}@${WORKER_HOST}" "mkdir -p ${REMOTE_DIR}"
@@ -24,7 +24,7 @@ echo "Pre-pulling Playwright runner image on worker host..."
 # Pre-pull the runner image because the playwright-gateway container cannot supply 
 # ACR credentials to the Docker Engine when it attempts to pull the image via Docker API.
 # Pulling it on the host first ensures the image is available locally.
-ssh "${WORKER_USER}@${WORKER_HOST}" "docker pull registry.cn-hangzhou.aliyuncs.com/ravin/web3d-playwright-runner:${TAG}"
+ssh "${WORKER_USER}@${WORKER_HOST}" "docker pull registry.cn-hangzhou.aliyuncs.com/ravin/roboard-playwright-runner:${TAG}"
 
 echo "Deploying worker stack..."
 ssh "${WORKER_USER}@${WORKER_HOST}" "cd ${REMOTE_DIR} && TAG=${TAG} INTERNAL_API_KEY=${INTERNAL_API_KEY} docker compose up -d"

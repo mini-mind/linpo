@@ -84,7 +84,7 @@ def _render_readme(name: str, description: str, paths: list[str]) -> str:
         f"## Included Paths\n{joined}\n\n"
         "## Notes\n"
         "- This export is generated under dist/ and is not committed.\n"
-        "- Use session-a-docs/specs API contract as the source of truth for cross-service changes.\n"
+        "- Use docs/specs API contract as the source of truth for cross-service changes.\n"
     )
 
 

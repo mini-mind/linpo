@@ -9,7 +9,6 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 
 def test_health(monkeypatch) -> None:
-    # api-backend loads Settings at import time.
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin")
     monkeypatch.setenv("INTERNAL_API_KEY", "test-internal")
 

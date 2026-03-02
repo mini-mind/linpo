@@ -6,7 +6,7 @@
 
 ## L0: 这是什么？从哪里开始
 
-**项目简介**: 多服务搜索基础设施，包含 Agent 框架、自然语言干预、浏览器自动化等组件。
+**项目简介**: RoBoard（灵板）是一个多服务的多智能体团队指挥平台，包含 Agent 框架、自然语言干预、浏览器自动化等组件。
 
 **产品需求文档（最新）**:
 - [灵板 PRD v3.0](prd/2026-02-26-lingban-prd-v3.0.md)
@@ -19,6 +19,11 @@
 **端到端验证**:
 - [快速验证 - 租户创建、任务执行、WebSocket 连接](../README.md#快速验证)
 - [快速验证（本地） - 自然语言干预](../README.md#intervention)
+
+**对外契约（推荐口径）**:
+- [接口契约规范 (2026-03-02)](specs/2026-03-02-interface-contract.md) - 对齐 PRD v3 的对外接口/鉴权/WS
+- [Agent 模板库规格 (2026-03-02)](specs/2026-03-02-agent-template-library.md) - 预制 Agent 与模板库设计
+- [接口契约规范 (2026-03-02)](specs/2026-03-02-interface-contract.md) - 对齐 PRD v3 的对外接口/鉴权/WS
 
 **服务组件概述**: 参考 [README.md 服务架构](../README.md#服务架构)
 
@@ -47,14 +52,14 @@
 - [Local Deployment Guide](deployment/local.md) - Docker Compose 本地部署快速指南
 
 **部署脚本**:
-- `session-g-ops/scripts/deploy_local.sh` - 本地/单机快速部署核心服务（本地构建镜像）
-- `session-g-ops/scripts/deploy_worker_host.sh` - 本地/拆分部署：仅部署后端重服务（本地构建镜像）
-- `session-g-ops/scripts/push_worker_images.sh` - 推送 worker 镜像到 Aliyun ACR
-- `session-g-ops/scripts/deploy_worker.sh` - 在 worker 主机上部署服务
-- `session-g-ops/scripts/push_frontend_images.sh` - 推送 frontend 镜像到 Aliyun ACR
-- `session-g-ops/scripts/deploy_ravin_frontend.sh` - 在 ravin(frontend host) 部署 gateway/web-frontend
-- `session-g-ops/scripts/push_core_images.sh` - 推送全量 core 镜像到 Aliyun ACR
-- `session-g-ops/scripts/pg_backup.sh` / `session-g-ops/scripts/pg_restore.sh` - 数据库备份与恢复
+- `ops/scripts/deploy_local.sh` - 本地/单机快速部署核心服务（本地构建镜像）
+- `ops/scripts/deploy_worker_host.sh` - 本地/拆分部署：仅部署后端重服务（本地构建镜像）
+- `ops/scripts/push_worker_images.sh` - 推送 worker 镜像到 Aliyun ACR
+- `ops/scripts/deploy_worker.sh` - 在 worker 主机上部署服务
+- `ops/scripts/push_frontend_images.sh` - 推送 frontend 镜像到 Aliyun ACR
+- `ops/scripts/deploy_ravin_frontend.sh` - 在 ravin(frontend host) 部署 gateway/web-frontend
+- `ops/scripts/push_core_images.sh` - 推送全量 core 镜像到 Aliyun ACR
+- `ops/scripts/pg_backup.sh` / `ops/scripts/pg_restore.sh` - 数据库备份与恢复
 
 **生产配置**（根 README）:
 - [生产配置建议 - Secrets 管理、限流、邮件配置](../README.md#生产配置建议)
@@ -69,6 +74,6 @@
 
 - [项目章程](CONSTITUTION.md) - 项目治理与沟通规则
 - [Sisyphus 工作流](process/sisyphus-workflow.md) - 计划、草稿、决策记录系统（`.sisyphus/` 在仓库根目录）
-- [多 Session 并行推进规则](process/multi-session-ownership.md) - 目录所有权、接口契约同步与并行协作约定
+- [多子项目并行推进规则](process/multi-session-ownership.md) - 目录所有权、接口契约同步与并行协作约定
 - [产品定位决策记录 (2026-02-13)](decisions/positioning-2026-02-13.md) - 业务专家构建权、长期服务与 P0 方向
 - [前端 UI 与版本管理规范 (2026-02-21)](specs/2026-02-21-ui-and-versioning.md) - Task Tree UI 形态、版本 TAG 规则、拆分部署边界

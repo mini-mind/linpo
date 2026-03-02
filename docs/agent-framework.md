@@ -22,8 +22,8 @@ API keys are stored in a platform-private file outside tenant workspaces. The LL
 
 **Gateway Configuration:**
 1. Copy `config/llm-providers.example.json` to your platform's private location
-   - Production: `/etc/web3d/llm-providers.json` (platform-admin only)
-   - Development: `/run/secrets/llm-providers.json` (mounted as Docker secret)
+- Production: `/etc/roboard/llm-providers.json` (platform-admin only)
+  - Development: `/run/secrets/llm-providers.json` (mounted as Docker secret)
 2. Fill in your actual values:
    - `providers.ark-code-latest.base_url`: VolcEngine ARK endpoint URL
    - `providers.ark-code-latest.api_key`: Your VolcEngine ARK API key
@@ -32,11 +32,11 @@ API keys are stored in a platform-private file outside tenant workspaces. The LL
 
 **Development (HK):**
 For local development with the platform-private secrets file:
-1. Create the directory: `mkdir -p /home/ravin/.web3d-secrets`
-2. Store the real file at: `/home/ravin/.web3d-secrets/llm-providers.json`
+1. Create the directory: `mkdir -p /home/ravin/.roboard-secrets`
+2. Store the real file at: `/home/ravin/.roboard-secrets/llm-providers.json`
 3. Restart llm-gateway with the path override:
    ```bash
-   LLM_PROVIDERS_HOST_PATH=/home/ravin/.web3d-secrets/llm-providers.json docker compose up -d --no-deps llm-gateway
+   LLM_PROVIDERS_HOST_PATH=/home/ravin/.roboard-secrets/llm-providers.json docker compose up -d --no-deps llm-gateway
    ```
 **Important:** This file is platform-private, not in any tenant workspace, and must never be committed to version control.
 
@@ -55,7 +55,7 @@ For local development with the platform-private secrets file:
 **Tenant/Agent Usage:**
 - Tenants and agents never read API keys directly
 - Agents select models by `model_ref` (e.g., "ark-code-latest")
-- LLM calls go through the gateway's internal endpoint: `POST /internal/llm/chat`
+- LLM calls go through `internal/llm-gateway`'s internal endpoint: `POST /internal/llm/chat`
 - The gateway maps `model_ref` to the provider's `base_url` and `api_key`
 - This enables centralized key management and multi-tenant isolation
 
@@ -177,8 +177,8 @@ agents:
 | File | Purpose | Git Status |
 |------|---------|------------|
 | `config/llm-providers.example.json` | LLM provider template | Tracked |
-| `/etc/web3d/llm-providers.json` | Production provider API keys (platform-private) | Outside git (NEVER COMMIT) |
-| `/home/ravin/.web3d-secrets/llm-providers.json` | HK dev provider API keys (platform-private) | Outside git (NEVER COMMIT) |
+| `/etc/roboard/llm-providers.json` | Production provider API keys (platform-private) | Outside git (NEVER COMMIT) |
+| `/home/ravin/.roboard-secrets/llm-providers.json` | HK dev provider API keys (platform-private) | Outside git (NEVER COMMIT) |
 | `config/runtime.example.json` | Runtime template | Tracked |
 | `config/runtime.local.json` | Local runtime settings | Ignored (NEVER COMMIT) |
 | `config/*.yaml` | Agent configuration | Tracked |

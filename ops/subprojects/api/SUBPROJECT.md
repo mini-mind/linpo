@@ -12,7 +12,7 @@
 
 ## Consumes
 - Redis (rate limit + dispatch fallback)
-- (可选) dispatch: `POST /internal/dispatch` (当配置 `AGENT_MANAGER_URL`)
+- (可选) dispatch: `POST /internal/dispatch` (当配置 `DISPATCH_URL`)
 
 ## Local Verification
 - `cd api && . .venv/bin/activate && python -m pytest -q`

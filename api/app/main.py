@@ -58,7 +58,7 @@ class ServiceJsonFormatter(jsonlogger.JsonFormatter):
         message_dict: dict[str, object],
     ) -> None:
         super().add_fields(log_record, record, message_dict)
-        log_record.setdefault("service", "api-backend")
+        log_record.setdefault("service", "api")
         log_record.setdefault("level", record.levelname)
         log_record.setdefault("logger", record.name)
         log_record.setdefault("message", record.getMessage())
@@ -98,22 +98,22 @@ def _get_counter(name: str, description: str, labelnames: list[str]) -> Counter:
 
 
 TASKS_CREATED_TOTAL = _get_counter(
-    "web3d_tasks_created_total",
+    "roboard_tasks_created_total",
     "Total number of tasks created.",
     ["tenant_id"],
 )
 DISPATCH_ENQUEUED_TOTAL = _get_counter(
-    "web3d_dispatch_enqueued_total",
+    "roboard_dispatch_enqueued_total",
     "Total number of dispatch messages enqueued.",
     ["tenant_id"],
 )
 DISPATCH_ENQUEUE_FAILURES_TOTAL = _get_counter(
-    "web3d_dispatch_enqueue_failures_total",
+    "roboard_dispatch_enqueue_failures_total",
     "Total number of dispatch enqueue failures.",
     ["tenant_id"],
 )
 TASK_EVENTS_WRITTEN_TOTAL = _get_counter(
-    "web3d_task_events_written_total",
+    "roboard_task_events_written_total",
     "Total number of task events written.",
     ["tenant_id"],
 )
@@ -749,16 +749,16 @@ def _parse_input_json(raw: object) -> dict[str, object]:
     return _coerce_task_input(parsed)
 
 
-async def _dispatch_via_agent_manager(task_id: str, tenant_id: str, task_input: dict[str, object]) -> None:
-    agent_manager_url = (APP_SETTINGS.AGENT_MANAGER_URL or "").strip()
-    if not agent_manager_url:
+async def _dispatch_via_dispatch(task_id: str, tenant_id: str, task_input: dict[str, object]) -> None:
+    dispatch_url = (APP_SETTINGS.DISPATCH_URL or "").strip()
+    if not dispatch_url:
         return
     internal_keys = [k.strip() for k in APP_SETTINGS.INTERNAL_API_KEY.split(",") if k.strip()]
     if not internal_keys:
-        logger.warning("Missing INTERNAL_API_KEY for agent-manager dispatch")
+        logger.warning("Missing INTERNAL_API_KEY for dispatch dispatch")
         return
 
-    url = f"{agent_manager_url.rstrip('/')}/internal/dispatch"
+    url = f"{dispatch_url.rstrip('/')}/internal/dispatch"
     headers: dict[str, str] = {"X-Internal-Key": internal_keys[0]}
     trace_id = TRACE_ID_CONTEXT.get() or ""
     if trace_id:
@@ -770,24 +770,24 @@ async def _dispatch_via_agent_manager(task_id: str, tenant_id: str, task_input: 
             resp = await client.post(url, json=payload, headers=headers)
             resp.raise_for_status()
         DISPATCH_ENQUEUED_TOTAL.labels(tenant_id=tenant_id).inc()
-        logger.info("Dispatched via agent-manager for task %s tenant %s", task_id, tenant_id)
+        logger.info("Dispatched via dispatch for task %s tenant %s", task_id, tenant_id)
     except Exception as exc:
         DISPATCH_ENQUEUE_FAILURES_TOTAL.labels(tenant_id=tenant_id).inc()
-        logger.warning("Agent-manager dispatch failed for task %s tenant %s: %s", task_id, tenant_id, exc)
+        logger.warning("Dispatch failed for task %s tenant %s: %s", task_id, tenant_id, exc)
 
 
-def _schedule_agent_manager_dispatch(task_id: str, tenant_id: str, task_input: dict[str, object]) -> bool:
-    agent_manager_url = (APP_SETTINGS.AGENT_MANAGER_URL or "").strip()
-    if not agent_manager_url:
+def _schedule_dispatch_dispatch(task_id: str, tenant_id: str, task_input: dict[str, object]) -> bool:
+    dispatch_url = (APP_SETTINGS.DISPATCH_URL or "").strip()
+    if not dispatch_url:
         return False
 
-    task = asyncio.create_task(_dispatch_via_agent_manager(task_id, tenant_id, task_input))
+    task = asyncio.create_task(_dispatch_via_dispatch(task_id, tenant_id, task_input))
 
     def _log_exception(t: asyncio.Task[None]) -> None:
         try:
             t.result()
         except Exception as exc:
-            logger.warning("Agent-manager dispatch task failed: %s", exc)
+            logger.warning("Dispatch task failed: %s", exc)
 
     task.add_done_callback(_log_exception)
     return True
@@ -832,7 +832,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await _cancel_background_task(email_task)
 
 
-app = FastAPI(title="api-backend", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="api", version="0.1.0", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -1376,7 +1376,7 @@ async def create_task(
     await WS_MANAGER.broadcast(str(tenant_id), str(getattr(task, "id")), event_out.model_dump())
 
     task_input = _coerce_task_input(input_data)
-    if _schedule_agent_manager_dispatch(str(task_id), str(tenant_id), task_input):
+    if _schedule_dispatch_dispatch(str(task_id), str(tenant_id), task_input):
         return _task_to_out(task)
 
     # Enqueue dispatch message to Redis Streams (non-blocking)
@@ -1538,8 +1538,8 @@ async def create_run(
                 _event_to_out(admission_event).model_dump(),
             )
 
-    if _schedule_agent_manager_dispatch(str(run_id), str(tenant_id), _coerce_task_input(run_input)):
-        return _run_to_out(task)
+        if _schedule_dispatch_dispatch(str(run_id), str(tenant_id), _coerce_task_input(run_input)):
+            return _run_to_out(task)
 
     # Enqueue dispatch message to Redis Streams (non-blocking)
     redis_client = getattr(app.state, "redis_client", None)
@@ -1670,7 +1670,7 @@ async def create_action(
     if body.action_type in {"run.resume", "run.retry"}:
         input_json = getattr(task, "input_json", None)
         task_input = _parse_input_json(input_json)
-        if _schedule_agent_manager_dispatch(str(run_id_int), str(getattr(tenant, "id")), task_input):
+        if _schedule_dispatch_dispatch(str(run_id_int), str(getattr(tenant, "id")), task_input):
             return ActionOut(
                 action_id=str(getattr(action, "id")),
                 status=cast(str, getattr(action, "status")),

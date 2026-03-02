@@ -6,7 +6,7 @@ Built on OSS Nginx; routing rules are RoBoard-specific.
 
 ## STRUCTURE
 ```
-session-f-edge-ui/gateway/
+edge-ui/gateway/
 ├── nginx.conf
 ├── Dockerfile
 └── README.md
@@ -15,17 +15,23 @@ session-f-edge-ui/gateway/
 ## WHERE TO LOOK
 | Task | Location | Notes |
 |------|----------|-------|
-| Routing rules | session-f-edge-ui/gateway/nginx.conf | `/`, `/api/`, `/ws/` mappings |
-| Template config | session-f-edge-ui/gateway/default.conf.template | `API_BACKEND_URL` via envsubst |
-| Access notes | session-f-edge-ui/gateway/README.md | Port binding + usage |
+| Routing rules | edge-ui/gateway/nginx.conf | `/`, `/api/`, `/ws/` mappings |
+| Template config | edge-ui/gateway/default.conf.template | `API_BACKEND_URL` via envsubst |
+| Access notes | edge-ui/gateway/README.md | Port binding + usage |
 
 ## CONVENTIONS
-- `/api/health` is an exact match to `api-backend:8000/health`.
-- `/api/` and `/ws/` proxy to `api-backend:8000` with headers.
+- `/api/health` is an exact match to `api:8000/health`.
+- `/api/` and `/ws/` proxy to `api:8000` with headers.
 - `API_BACKEND_URL` can override upstream for split deployment.
 - Gateway config now uses envsubst template `default.conf.template` for upstream override.
 - Gateway is container-only by default; prod frontend compose binds `127.0.0.1:8082->80`.
 - 每改完一个服务就立即更新相关的 `AGENTS.md` 并完成该服务测试。
+
+## OWNERSHIP
+- Owned paths: `edge-ui/gateway/**`
+- 禁止跨目录修改：默认不修改非 `edge-ui/gateway/**` 的文件；如需调整对外路由契约先更新 `docs/specs/`。
+- 安全边界：禁止代理 `/internal/*`（见 ANTI-PATTERNS）。
+- 验证要求：更新路由/模板后，至少运行一次 `python -m pytest -q`（`edge-ui/gateway/tests/test_gateway_template.py`）。
 
 ## ANTI-PATTERNS
 - Do not route `/internal/*` through gateway.

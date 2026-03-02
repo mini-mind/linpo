@@ -1,10 +1,11 @@
-api-backend: FastAPI HTTP API with Postgres persistence.
+api: FastAPI HTTP API with Postgres persistence.
 
 This service is the backend API for creating tasks, posting task events, streaming events over WebSocket, and exposing notification/result placeholders.
 
 Notes:
 - Current MVP execution plumbing is intended to integrate with MCP.
 - The API is intentionally shaped to be reusable from a Godot client.
+- Interface contract (recommended): `docs/specs/2026-03-02-interface-contract.md`
 
 ## Install
 
@@ -27,7 +28,7 @@ Required:
 Optional:
 - ALLOW_ORIGINS: CORS allowed origins
 - RATE_LIMIT: Rate limit requests per minute
-- AGENT_MANAGER_URL: Optional URL for agent-manager /internal/dispatch
+- DISPATCH_URL: Optional URL for dispatch /internal/dispatch
 
 ## Run
 
@@ -125,7 +126,7 @@ Response:
 
 `POST /api/tasks` (requires `X-API-Key` OR `X-Internal-Key` + `X-Tenant-ID`)
 
-创建任务后会**自动触发执行**，无需手动调用 agent-manager。系统会在后台调用 agent-manager 的 `/internal/dispatch` 端点进行任务派发；若未配置 `AGENT_MANAGER_URL`，则退回 Redis `queue:dispatch`。
+创建任务后会**自动触发执行**，无需手动调用 dispatch。系统会在后台调用 dispatch 的 `/internal/dispatch` 端点进行任务派发；若未配置 `DISPATCH_URL`，则退回 Redis `queue:dispatch`。
 
 Request:
 ```json
@@ -148,7 +149,7 @@ Response:
 
 `POST /api/runs` (requires `X-API-Key` OR `X-Internal-Key` + `X-Tenant-ID`)
 
-创建 run, 返回 `run_id` 并立刻进入派发流程。若配置 `AGENT_MANAGER_URL`，会调用 agent-manager `/internal/dispatch`；否则使用 Redis `queue:dispatch`。
+创建 run, 返回 `run_id` 并立刻进入派发流程。若配置 `DISPATCH_URL`，会调用 dispatch `/internal/dispatch`；否则使用 Redis `queue:dispatch`。
 
 Request:
 ```json
@@ -365,39 +366,30 @@ Request:
 
 订阅任务事件流，连接时发送快照，之后广播新事件。
 
-### 外部客户端 (推荐)
+### Run 事件流
+`WS /ws/runs/{run_id}`
+
+- 推荐用于指挥舱 UI 与 run 级别的实时状态订阅。
+- 认证方式：
+  - 外部客户端：`?api_key=...`
+  - 内部服务：`?internal_key=...&tenant_id=...`
+  - 浏览器会话：`?session_token=...` 或会话 Cookie
+- 连接后发送 `snapshot`，包含 `run`、`agents`、`edges`、`recent_events`、`cursor`。
+- 后续以 `delta` 消息推送增量事件，字段包含 `recent_events` 和 `cursor`。
+
+### Task 事件流（任务视角，不推荐）
 `WS /ws/events?api_key=...&task_id=...`
 
-- 使用 `api_key` 查询参数进行认证
-- 系统会自动根据 api_key 查找对应的租户
+- 这是 task 视角的事件流，主要用于调试或对接仍基于 `task_id` 的消费者。
+- 外部客户端认证：`api_key` 查询参数。
 
-### 内部服务
 `WS /ws/events?internal_key=...&tenant_id=...&task_id=...`
 
-- 使用 `internal_key` + `tenant_id` 查询参数进行认证
-- 用于服务内部监听特定租户的任务事件
-
-### Run 事件流
-`WS /ws/runs/{run_id}?api_key=...`
-
-- 支持 `api_key` 或 `internal_key` + `tenant_id` 认证
-- 支持 `session_token` 查询参数或会话 Cookie 认证
-- 连接后发送 `snapshot`，包含 `run`、`agents`、`edges`、`recent_events`、`cursor`
-- 后续以 `delta` 消息推送增量事件，字段包含 `recent_events` 和 `cursor`
+- 内部服务认证：`internal_key` + `tenant_id` 查询参数。
+- 用于服务内部监听特定租户的 task 事件。
 
 ### 消息格式
-- 连接成功后，服务器发送 `snapshot` 消息，包含当前任务状态和所有历史事件
-- 之后每当有新事件提交，都会以 JSON 格式广播给所有连接的 WebSocket 客户端
-
-示例消息:
-```json
-{
-  "type": "snapshot",
-  "data": {
-    "task": { "id": "...", "status": "queued", ... },
-    "events": [
-      { "id": "...", "type": "task.created", "timestamp": "...", ... }
-    ]
-  }
-}
-```
+- 连接成功后，服务器发送 `snapshot` 消息。
+  - 对 `WS /ws/runs/{run_id}`：`data` 包含 `run`、`agents`、`edges`、`recent_events`、`cursor`。
+  - 对 `WS /ws/events`：`data` 包含 `task` 与 `events`。
+- 之后每当有新事件提交，会以 `delta`（run）或事件广播（task）方式推送给所有连接的客户端。

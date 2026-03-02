@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PG_DB="${PG_DB:-web3d}"
+PG_DB="${PG_DB:-roboard}"
 PG_USER="${PG_USER:-postgres}"
 SERVICE="${SERVICE:-postgres}"
 
 if [ $# -ne 1 ]; then
   echo "Usage: $0 <backup_file>"
-  echo "Example: $0 backups/web3d_20250207_120000.dump"
+  echo "Example: $0 backups/roboard_20250207_120000.dump"
   exit 1
 fi
 
@@ -40,7 +40,7 @@ fi
 echo ""
 echo "[1/4] Stopping dependent services..."
 
-DEPENDENT_SERVICES="api-backend agent-manager"
+DEPENDENT_SERVICES="api dispatch"
 for svc in $DEPENDENT_SERVICES; do
   echo "  Stopping $svc..."
   docker compose stop "$svc" || true

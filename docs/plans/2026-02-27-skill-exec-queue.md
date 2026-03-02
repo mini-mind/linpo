@@ -2,9 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Add a skill execution queue that enqueues from api-backend and is consumed by agent-manager, calling skill-gateway `/skills/execute` and posting `skill.execute.*` events.
+**Goal:** Add a skill execution queue that enqueues from api and is consumed by dispatch, calling skill-gateway `/skills/execute` and posting `skill.execute.*` events.
 
-**Architecture:** api-backend exposes a new invoke endpoint to validate tenant/run/agent and enqueue a Redis stream message to `queue:skill-exec`. agent-manager adds a consumer loop similar to `queue:skill-create`, calls skill-gateway with internal auth, and posts `skill.execute.succeeded` or `skill.execute.failed` task events back to api-backend. The enqueue payload and event data remain minimal and mirror the existing skill-create pattern.
+**Architecture:** api exposes a new invoke endpoint to validate tenant/run/agent and enqueue a Redis stream message to `queue:skill-exec`. dispatch adds a consumer loop similar to `queue:skill-create`, calls skill-gateway with internal auth, and posts `skill.execute.succeeded` or `skill.execute.failed` task events back to api. The enqueue payload and event data remain minimal and mirror the existing skill-create pattern.
 
 **Tech Stack:** FastAPI, Redis Streams, requests, pytest, SQLAlchemy.
 
@@ -13,8 +13,8 @@
 ### Task 1: API enqueue endpoint + failing test (TDD)
 
 **Files:**
-- Create: `session-b-api/tests/test_skill_invoke.py`
-- Modify: `session-b-api/app/tree_api.py`
+- Create: `api/tests/test_skill_invoke.py`
+- Modify: `api/app/tree_api.py`
 
 **Step 1: Write the failing test**
 
@@ -32,7 +32,7 @@ Test expectations:
 
 **Step 2: Run test to verify it fails**
 
-Run: `cd api-backend && .venv/bin/python -m pytest -q tests/test_skill_invoke.py::test_skill_invoke_enqueues`
+Run: `cd api && .venv/bin/python -m pytest -q tests/test_skill_invoke.py::test_skill_invoke_enqueues`
 Expected: FAIL (endpoint not found)
 
 **Step 3: Write minimal implementation**
@@ -50,7 +50,7 @@ Design assumptions:
 
 **Step 4: Run test to verify it passes**
 
-Run: `cd api-backend && .venv/bin/python -m pytest -q tests/test_skill_invoke.py::test_skill_invoke_enqueues`
+Run: `cd api && .venv/bin/python -m pytest -q tests/test_skill_invoke.py::test_skill_invoke_enqueues`
 Expected: PASS
 
 **Step 5: Refactor (if needed)**
@@ -59,11 +59,11 @@ Expected: PASS
 
 ---
 
-### Task 2: Agent-manager consumer + failing test (TDD)
+### Task 2: Dispatch consumer + failing test (TDD)
 
 **Files:**
-- Create: `session-c-dispatch/tests/test_skill_exec_consumer.py`
-- Modify: `session-c-dispatch/app/main.py`
+- Create: `dispatch/tests/test_skill_exec_consumer.py`
+- Modify: `dispatch/app/main.py`
 
 **Step 1: Write the failing test**
 
@@ -82,14 +82,14 @@ Test expectations:
 
 **Step 2: Run test to verify it fails**
 
-Run: `cd agent-manager && .venv/bin/python -m pytest -q tests/test_skill_exec_consumer.py::test_skill_exec_posts_event`
+Run: `cd dispatch && .venv/bin/python -m pytest -q tests/test_skill_exec_consumer.py::test_skill_exec_posts_event`
 Expected: FAIL (function missing)
 
 **Step 3: Write minimal implementation**
 
 ```python
 SKILL_EXEC_STREAM = os.getenv("SKILL_EXEC_STREAM", "queue:skill-exec")
-SKILL_EXEC_GROUP = os.getenv("SKILL_EXEC_GROUP", "agent-manager-skill-exec")
+SKILL_EXEC_GROUP = os.getenv("SKILL_EXEC_GROUP", "dispatch-skill-exec")
 SKILL_EXEC_CONSUMER = os.getenv("SKILL_EXEC_CONSUMER", DISPATCH_CONSUMER)
 
 async def handle_skill_exec_message(...):
@@ -102,7 +102,7 @@ async def skill_exec_consumer_loop(...):
 
 **Step 4: Run test to verify it passes**
 
-Run: `cd agent-manager && .venv/bin/python -m pytest -q tests/test_skill_exec_consumer.py::test_skill_exec_posts_event`
+Run: `cd dispatch && .venv/bin/python -m pytest -q tests/test_skill_exec_consumer.py::test_skill_exec_posts_event`
 Expected: PASS
 
 **Step 5: Refactor (if needed)**
@@ -114,18 +114,18 @@ Expected: PASS
 ### Task 3: Service metadata + verification
 
 **Files:**
-- Modify: `session-b-api/AGENTS.md`
-- Modify: `session-c-dispatch/AGENTS.md`
+- Modify: `api/AGENTS.md`
+- Modify: `dispatch/AGENTS.md`
 
 **Step 1: Update AGENTS.md**
 
-- Add entry for skill invoke enqueue endpoint in api-backend
-- Add entry for skill exec consumer in agent-manager
+- Add entry for skill invoke enqueue endpoint in api
+- Add entry for skill exec consumer in dispatch
 
 **Step 2: Run service tests**
 
 Run:
-- `cd api-backend && .venv/bin/python -m pytest -q tests/test_skill_invoke.py`
-- `cd agent-manager && .venv/bin/python -m pytest -q tests/test_skill_exec_consumer.py`
+- `cd api && .venv/bin/python -m pytest -q tests/test_skill_invoke.py`
+- `cd dispatch && .venv/bin/python -m pytest -q tests/test_skill_exec_consumer.py`
 
 Expected: PASS

@@ -79,7 +79,7 @@
 ## 实施拆分
 
 ### Task 1: 前端 UI 重构
-- 修改 `session-f-edge-ui/web-frontend/index.html`/`style.css`/`app.js`。
+- 修改 `edge-ui/web-frontend/index.html`/`style.css`/`app.js`。
 - 增加三视图容器与切换逻辑，保持现有 id 绑定。
 
 ### Task 2: 后端支持（可选）
