@@ -129,6 +129,8 @@ Body:
 - `GET /api/runs/{run_id}/team/export` 导出 YAML
 - `POST /api/runs/team/import` 导入 YAML 并创建新 run
 
+**术语说明：** 产品语境中的 SOP 指 TODO/计划列表，来源为 `plan.md` 并解析为 `plan_subtasks`。当前实现仍保留 SOP 模板（`sops/templates/*.md` + `mission.md` + `/api/agents/{agent_id}/sop`），与计划列表并存。
+
 **YAML Schema（示例）：**
 ```yaml
 version: 1

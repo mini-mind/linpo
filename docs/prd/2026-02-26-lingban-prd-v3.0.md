@@ -91,7 +91,7 @@
 
 3.7 团队架构导出/导入
 
-· 团队树（角色、SOP、依赖）可导出为 YAML/JSON。
+· 团队树（角色、TODO/计划列表、依赖）可导出为 YAML/JSON。
 · 导入后可一键复用团队能力。
 
 3.8 多端协同基础
@@ -179,7 +179,7 @@ P2（后续迭代）
 
 · 智能体（Agent）：独立运行的 AI 单元，拥有文件系统与执行循环。
 · Skill：智能体可调用的工具函数，来源可为内置/社区/自建。
-· SOP：定义 Agent 行为的说明文档。
+· SOP：产品语境下指 TODO/计划列表，来源为 `plan.md`，前端展示为 `plan_subtasks`。当前实现仍保留 SOP 模板（`sops/templates/*.md` + `mission.md` + `/api/agents/{agent_id}/sop`），与计划列表并存。
 · Session Key：Agent 标识与权限依据。
 · 可信来源：Agent 执行时必须遵守的文档目录。
 

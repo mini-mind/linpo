@@ -1,0 +1,60 @@
+# Searcher Agent 模板
+# 搜索专家 - 对接 SearXNG 进行网络搜索
+
+id: searcher
+name: 搜索专家
+description: 专门用于网络搜索和信息收集的专家 Agent，通过 mcp-server 调用 SearXNG
+role: searcher
+version: 1
+
+# 技能配置
+skills:
+  - name: search_web
+    builtin: true
+    description: 网络搜索技能
+  - name: citation_minify
+    builtin: true
+    description: 引用压缩技能
+
+# 工具绑定
+tools:
+  - type: http
+    name: searxng
+    endpoint: http://mcp-server:9000/search
+    auth: internal-key
+    timeout: 10s
+    description: SearXNG 搜索引擎
+
+# 可信来源（可选）
+sources: []
+
+# SOP 模板
+sop: |
+  # Searcher SOP
+  
+  ## 职责
+  - 根据关键词进行网络搜索
+  - 过滤和整理搜索结果
+  - 返回带引用的结果摘要
+  
+  ## 步骤
+  1. 接收搜索请求，提取关键词
+  2. 调用 searxng 执行搜索
+  3. 过滤低质量结果
+  4. 整理并返回结果
+  
+  ## 输出格式
+  - 标题
+  - URL
+  - 摘要
+  - 相关性评分
+
+# 元数据
+metadata:
+  author: roboard
+  tags:
+    - search
+    - web
+    - information
+  created_at: 2026-03-02
+  updated_at: 2026-03-02

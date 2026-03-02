@@ -7,7 +7,8 @@
 
 - **Task Tree UI**: 当前生产环境前端形态
   - 关键 DOM id: `add-task-btn`, `task-tree-root`, `task-sop-display`
-  - 功能: 目录树 + SOP 展示
+  - 功能: 目录树 + TODO/计划列表展示
+  - 术语说明: 本文 SOP 指 TODO/计划列表，来源为 `plan.md` 并解析为 `plan_subtasks`。当前实现仍保留 SOP 模板与计划列表并存。
 - **Cockpit**: 历史术语/旧 UI，已不再使用
 
 ## 版本与 TAG 规则
@@ -18,12 +19,12 @@
 
 ## 拆分部署边界
 
-- **ravin 主机**: `68.64.179.125`，只跑 `edge/gateway/web-frontend/searxng`
+- **ravin 主机**: `68.64.179.125`，只跑 `edge/gateway/session-f-edge-ui/web-frontend/searxng`
   - searxng 稳定不重启
-- **本机/worker**: 跑重服务 (api-backend, agent-manager, worker-playwright 等)
+- **本机/worker**: 跑重服务 (session-b-api, session-c-dispatch, worker-playwright 等)
 
 ## 操作入口
 
-- `scripts/push_frontend_images.sh` - 推送前端镜像
-- `scripts/deploy_ravin_frontend.sh` - 部署 ravin 前端
-- `scripts/deploy_worker_host.sh` - 部署 worker 服务
+- `session-g-ops/scripts/push_frontend_images.sh` - 推送前端镜像
+- `session-g-ops/scripts/deploy_ravin_frontend.sh` - 部署 ravin 前端
+- `session-g-ops/scripts/deploy_worker_host.sh` - 部署 worker 服务

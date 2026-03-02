@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "note": "Logical subprojects in the monorepo; used for exports/splitting.",
+  "projects": [
+    {"name": "api", "prefixes": ["api"], "default_branch": "main"},
+    {"name": "dispatch", "prefixes": ["dispatch"], "default_branch": "main"},
+    {
+      "name": "browser-exec-worker-playwright",
+      "prefixes": ["worker-playwright"],
+      "default_branch": "main"
+    },
+    {
+      "name": "browser-exec-playwright-gateway",
+      "prefixes": ["playwright-gateway"],
+      "default_branch": "main"
+    },
+    {"name": "playwright-runner", "prefixes": ["playwright-runner"], "default_branch": "main"},
+    {"name": "skill-gateway", "prefixes": ["skill-gateway"], "default_branch": "main"},
+    {"name": "sandbox-template", "prefixes": ["sandbox-template"], "default_branch": "main"},
+    {"name": "llm-gateway", "prefixes": ["llm-gateway"], "default_branch": "main"},
+    {"name": "mcp-server", "prefixes": ["mcp-server"], "default_branch": "main"},
+    {"name": "searxng", "prefixes": ["searxng"], "default_branch": "main"},
+    {"name": "web-frontend", "prefixes": ["web-frontend"], "default_branch": "main"},
+    {"name": "gateway", "prefixes": ["gateway"], "default_branch": "main"},
+    {"name": "edge", "prefixes": ["edge"], "default_branch": "main"},
+    {"name": "roboard-config", "prefixes": ["config"], "default_branch": "main"},
+    {"name": "roboard-prompts", "prefixes": ["prompts"], "default_branch": "main"},
+    {"name": "roboard-community-skills", "prefixes": ["community_skills"], "default_branch": "main"},
+    {"name": "roboard-redis", "prefixes": ["redis"], "default_branch": "main"},
+    {"name": "roboard-observability", "prefixes": ["observability"], "default_branch": "main"},
+    {"name": "roboard-sops-templates", "prefixes": ["sops/templates"], "default_branch": "main"}
+  ]
+}

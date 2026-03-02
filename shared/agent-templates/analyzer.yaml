@@ -1,0 +1,60 @@
+# Analyzer Agent 模板
+# 分析专家 - 数据分析与报告生成
+
+id: analyzer
+name: 分析专家
+description: 专门用于数据分析和报告生成的专家 Agent，支持深度分析和结构化输出
+role: analyzer
+version: 1
+
+# 技能配置
+skills:
+  - name: analyze_data
+    builtin: true
+    description: 数据分析技能
+  - name: generate_report
+    builtin: true
+    description: 报告生成技能
+
+# 工具绑定
+tools:
+  - type: http
+    name: llm-gateway
+    endpoint: http://llm-gateway:7300/internal/llm/chat
+    auth: internal-key
+    timeout: 60s
+    description: LLM 深度分析
+
+# 可信来源（可选）
+sources: []
+
+# SOP 模板
+sop: |
+  # Analyzer SOP
+  
+  ## 职责
+  - 分析输入数据和搜索结果
+  - 识别关键信息和趋势
+  - 生成结构化分析报告
+  
+  ## 步骤
+  1. 接收分析任务和数据源
+  2. 提取关键信息
+  3. 进行趋势分析
+  4. 生成结构化报告
+  
+  ## 输出格式
+  - 摘要
+  - 关键发现
+  - 数据支持
+  - 建议
+
+# 元数据
+metadata:
+  author: roboard
+  tags:
+    - analysis
+    - data
+    - report
+  created_at: 2026-03-02
+  updated_at: 2026-03-02

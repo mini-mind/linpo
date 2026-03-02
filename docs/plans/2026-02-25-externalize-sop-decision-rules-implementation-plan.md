@@ -4,7 +4,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Externalize hardcoded SOP templates, decision rules, agent_type allowlist, and agent state rules into repo files with fixed paths, update tests accordingly, and ensure deployment follows `docs/CONSTITUTION.md`.
+**Goal:** Externalize hardcoded SOP templates, decision rules, agent_type allowlist, and agent state rules into repo files with fixed paths, update tests accordingly, and ensure deployment follows `session-a-docs/CONSTITUTION.md`.
 
 **Architecture:** Load configurations from fixed-path files (`sops/templates/*.md`, `config/decision_rules.json`, `config/state_rules.json`) with fallback behavior for missing/invalid files. Update all hardcoded references to use externalized configs and modify tests to verify the externalization works correctly.
 
@@ -161,12 +161,12 @@ git commit -m "feat: externalize SOP templates and configuration rules
 ## Task 2: Create Configuration Loader Module
 
 **Files:**
-- Create: `api-backend/app/config_loader.py`
-- Test: `api-backend/tests/test_config_loader.py`
+- Create: `session-b-api/app/config_loader.py`
+- Test: `session-b-api/tests/test_config_loader.py`
 
 **Step 1: Write failing test for config loader**
 
-Create `api-backend/tests/test_config_loader.py`:
+Create `session-b-api/tests/test_config_loader.py`:
 ```python
 import json
 import pathlib
@@ -393,7 +393,7 @@ Expected: FAIL with "ModuleNotFoundError: No module named 'app.config_loader'"
 
 **Step 3: Implement config loader module**
 
-Create `api-backend/app/config_loader.py`:
+Create `session-b-api/app/config_loader.py`:
 ```python
 import json
 import os
@@ -539,7 +539,7 @@ Expected: All tests PASS
 **Step 5: Commit config loader**
 
 ```bash
-git add api-backend/app/config_loader.py api-backend/tests/test_config_loader.py
+git add session-b-api/app/config_loader.py session-b-api/tests/test_config_loader.py
 git commit -m "feat: add configuration loader module with tests
 
 - Load SOP templates from sops/templates/*.md
@@ -554,12 +554,12 @@ git commit -m "feat: add configuration loader module with tests
 ## Task 3: Update agent_hiring.py to Use Externalized SOPs
 
 **Files:**
-- Modify: `api-backend/app/agent_hiring.py`
-- Test: `api-backend/tests/test_agent_hiring.py`
+- Modify: `session-b-api/app/agent_hiring.py`
+- Test: `session-b-api/tests/test_agent_hiring.py`
 
 **Step 1: Write failing test for externalized SOPs**
 
-Modify `api-backend/tests/test_agent_hiring.py` to verify external SOPs are used:
+Modify `session-b-api/tests/test_agent_hiring.py` to verify external SOPs are used:
 
 ```python
 import pathlib
@@ -761,7 +761,7 @@ Expected: FAIL (current implementation uses hardcoded SOPs)
 
 **Step 3: Update agent_hiring.py to use external SOPs**
 
-Modify `api-backend/app/agent_hiring.py`:
+Modify `session-b-api/app/agent_hiring.py`:
 
 ```python
 import hashlib
@@ -888,7 +888,7 @@ Expected: All tests PASS
 **Step 6: Commit changes**
 
 ```bash
-git add api-backend/app/agent_hiring.py api-backend/tests/test_agent_hiring.py
+git add session-b-api/app/agent_hiring.py session-b-api/tests/test_agent_hiring.py
 git commit -m "feat: update agent_hiring to use externalized SOP templates
 
 - Load SOPs from external files in sops/templates/
@@ -902,8 +902,8 @@ git commit -m "feat: update agent_hiring to use externalized SOP templates
 ## Task 4: Update main.py to Use Externalized Decision Rules
 
 **Files:**
-- Modify: `api-backend/app/main.py`
-- Test: Create `api-backend/tests/test_externalized_decisions.py`
+- Modify: `session-b-api/app/main.py`
+- Test: Create `session-b-api/tests/test_externalized_decisions.py`
 
 **Step 1: Identify hardcoded decision logic in main.py**
 
@@ -921,7 +921,7 @@ if not is_github_trending and "github" in message_lower:
 
 **Step 2: Write failing test for externalized decision rules**
 
-Create `api-backend/tests/test_externalized_decisions.py`:
+Create `session-b-api/tests/test_externalized_decisions.py`:
 
 ```python
 import pathlib
@@ -1065,7 +1065,7 @@ Expected: All existing tests still PASS
 **Step 8: Commit changes**
 
 ```bash
-git add api-backend/app/main.py api-backend/tests/test_externalized_decisions.py
+git add session-b-api/app/main.py session-b-api/tests/test_externalized_decisions.py
 git commit -m "feat: update main.py to use externalized decision rules
 
 - Replace hardcoded GitHub trending detection with external config
@@ -1079,8 +1079,8 @@ git commit -m "feat: update main.py to use externalized decision rules
 ## Task 5: Update tree_api.py to Use Externalized State Rules
 
 **Files:**
-- Modify: `api-backend/app/tree_api.py`
-- Test: Create `api-backend/tests/test_externalized_state_rules.py`
+- Modify: `session-b-api/app/tree_api.py`
+- Test: Create `session-b-api/tests/test_externalized_state_rules.py`
 
 **Step 1: Identify hardcoded state rules in tree_api.py**
 
@@ -1103,7 +1103,7 @@ if next_state not in allowed:
 
 **Step 2: Write failing test for externalized state rules**
 
-Create `api-backend/tests/test_externalized_state_rules.py`:
+Create `session-b-api/tests/test_externalized_state_rules.py`:
 
 ```python
 import pathlib
@@ -1163,7 +1163,7 @@ Expected: Tests PASS for config loader functions
 
 **Step 4: Update tree_api.py to use external state rules**
 
-Modify `api-backend/app/tree_api.py`:
+Modify `session-b-api/app/tree_api.py`:
 
 ```python
 from collections.abc import Generator
@@ -1265,7 +1265,7 @@ Expected: All tests PASS
 **Step 7: Commit changes**
 
 ```bash
-git add api-backend/app/tree_api.py api-backend/tests/test_externalized_state_rules.py
+git add session-b-api/app/tree_api.py session-b-api/tests/test_externalized_state_rules.py
 git commit -m "feat: update tree_api to use externalized state rules
 
 - Replace hardcoded state synonyms with external config_loader
@@ -1279,9 +1279,9 @@ git commit -m "feat: update tree_api to use externalized state rules
 ## Task 6: Update Tests to Reflect Externalized Configurations
 
 **Files:**
-- Modify: `api-backend/tests/test_tree_api.py`
-- Modify: `api-backend/tests/test_actions_sop_replace.py`
-- Modify: `api-backend/tests/test_actions_sop_patch.py`
+- Modify: `session-b-api/tests/test_tree_api.py`
+- Modify: `session-b-api/tests/test_actions_sop_replace.py`
+- Modify: `session-b-api/tests/test_actions_sop_patch.py`
 
 **Step 1: Update test_tree_api.py to verify external SOP content**
 
@@ -1323,7 +1323,7 @@ Expected: All tests PASS
 **Step 6: Commit any documentation updates**
 
 ```bash
-git add api-backend/tests/test_tree_api.py
+git add session-b-api/tests/test_tree_api.py
 # Add comments documenting external SOP usage
 git commit -m "docs: update tests to document externalized SOP usage
 
@@ -1485,11 +1485,11 @@ Create `deployment-checklist.md`:
   - [ ] `sops/templates/engineer.md`
   - [ ] `config/decision_rules.json`
   - [ ] `config/state_rules.json`
-- [ ] Config loader module implemented: `api-backend/app/config_loader.py`
+- [ ] Config loader module implemented: `session-b-api/app/config_loader.py`
 - [ ] All modules updated to use external configs:
-  - [ ] `api-backend/app/agent_hiring.py`
-  - [ ] `api-backend/app/main.py`
-  - [ ] `api-backend/app/tree_api.py`
+  - [ ] `session-b-api/app/agent_hiring.py`
+  - [ ] `session-b-api/app/main.py`
+  - [ ] `session-b-api/app/tree_api.py`
 - [ ] Fallback behavior tested and working
 - [ ] No hardcoded configurations remain
 
@@ -1504,18 +1504,18 @@ Create `deployment-checklist.md`:
 
 2. **Build and push images**:
    ```bash
-   # Build api-backend image
-   docker build -t api-backend:$TAG -f api-backend/Dockerfile api-backend/
+   # Build session-b-api image
+docker build -t session-b-api:$TAG -f session-b-api/Dockerfile session-b-api/
    
    # Push to registry (if using one)
-   docker tag api-backend:$TAG your-registry/api-backend:$TAG
-   docker push your-registry/api-backend:$TAG
+   docker tag session-b-api:$TAG your-registry/session-b-api:$TAG
+   docker push your-registry/session-b-api:$TAG
    ```
 
 3. **Deploy to ravin (frontend/gateway)**:
    ```bash
    # SSH to ravin and deploy edge/gateway services
-   ssh ravin "cd /path/to/roboard && git pull && docker compose up -d edge gateway web-frontend"
+   ssh ravin "cd /path/to/roboard && git pull && docker compose up -d edge gateway session-f-edge-ui/web-frontend"
    ```
 
 4. **Deploy locally (heavy services)**:
@@ -1523,7 +1523,7 @@ Create `deployment-checklist.md`:
    # On local machine
    cd /home/ubuntu/projects/roboard
    git pull
-   docker compose up -d api-backend agent-manager worker-playwright
+   docker compose up -d session-b-api session-c-dispatch worker-playwright
    ```
 
 5. **Verify deployment**:
@@ -1579,8 +1579,8 @@ git push origin $TAG
 python -m pytest tests/ -v --tb=short
 
 # Check for any remaining hardcoded configs
-grep -r "github trending" api-backend/app/ --include="*.py" | grep -v config_loader
-grep -r "CEO SOP" api-backend/app/ --include="*.py" | grep -v config_loader
+grep -r "github trending" session-b-api/app/ --include="*.py" | grep -v config_loader
+grep -r "CEO SOP" session-b-api/app/ --include="*.py" | grep -v config_loader
 
 # Should return no results (all externalized)
 ```
@@ -1616,7 +1616,7 @@ All changes follow TDD principles with:
 - Comprehensive test coverage
 - Fallback behavior for missing/invalid files
 
-Deployment follows `docs/CONSTITUTION.md` with:
+Deployment follows `session-a-docs/CONSTITUTION.md` with:
 - Date-based tags (`YYYYMMDD-<git-short-sha>`)
 - Split deployment (ravin frontend/gateway, local heavy services)
 - Proper verification and rollback procedures

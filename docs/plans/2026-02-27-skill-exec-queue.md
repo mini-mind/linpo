@@ -13,8 +13,8 @@
 ### Task 1: API enqueue endpoint + failing test (TDD)
 
 **Files:**
-- Create: `api-backend/tests/test_skill_invoke.py`
-- Modify: `api-backend/app/tree_api.py`
+- Create: `session-b-api/tests/test_skill_invoke.py`
+- Modify: `session-b-api/app/tree_api.py`
 
 **Step 1: Write the failing test**
 
@@ -62,8 +62,8 @@ Expected: PASS
 ### Task 2: Agent-manager consumer + failing test (TDD)
 
 **Files:**
-- Create: `agent-manager/tests/test_skill_exec_consumer.py`
-- Modify: `agent-manager/app/main.py`
+- Create: `session-c-dispatch/tests/test_skill_exec_consumer.py`
+- Modify: `session-c-dispatch/app/main.py`
 
 **Step 1: Write the failing test**
 
@@ -114,8 +114,8 @@ Expected: PASS
 ### Task 3: Service metadata + verification
 
 **Files:**
-- Modify: `api-backend/AGENTS.md`
-- Modify: `agent-manager/AGENTS.md`
+- Modify: `session-b-api/AGENTS.md`
+- Modify: `session-c-dispatch/AGENTS.md`
 
 **Step 1: Update AGENTS.md**
 

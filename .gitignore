@@ -6,25 +6,35 @@
 .pytest_cache/
 .venv/
 .venv-*/
-searxng/.env
+session-e-internal/searxng/.env
 .env
 .env.*
 *.dump
-backups/
+session-g-ops/backups/
 # Runtime data outputs
-data/
+session-g-ops/data/
 # Temp artifacts
 .tmp/
 .sisyphus/notepads/
 .opencode/
-sops/*/
-!sops/templates/
-!sops/templates/*.md
+session-h-shared/sops/*/
+!session-h-shared/sops/templates/
+!session-h-shared/sops/templates/*.md
 .smoke/
 *.yml.new
 node_modules/
 package-lock.json
 package.json
-config/runtime.local.json
-screenshots/
+session-h-shared/config/runtime.local.json
+session-g-ops/screenshots/
 .worktrees/
+
+# Polyrepo exports
+dist/
+exports/
+
+session-g-ops/dist/
+
+# Per-service runtime project data
+session-b-api/data/
+session-e-internal/searxng/data/

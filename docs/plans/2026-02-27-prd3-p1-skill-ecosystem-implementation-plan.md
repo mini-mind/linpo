@@ -13,10 +13,10 @@
 ### Task 1: Skill 自举（API + FS 落盘）
 
 **Files:**
-- Modify: `api-backend/app/agent_fs.py`
-- Modify: `api-backend/tests/test_agent_fs.py`
-- Modify: `api-backend/app/tree_api.py`
-- Create: `api-backend/tests/test_agent_skills.py`
+- Modify: `session-b-api/app/agent_fs.py`
+- Modify: `session-b-api/tests/test_agent_fs.py`
+- Modify: `session-b-api/app/tree_api.py`
+- Create: `session-b-api/tests/test_agent_skills.py`
 
 **Step 1: Write the failing test**
 
@@ -38,19 +38,19 @@ Expected: FAIL (endpoint not found)
 **Step 3: Write minimal implementation**
 
 ```python
-# api-backend/app/agent_fs.py
+# session-b-api/app/agent_fs.py
 def read_skills_manifest(agent_root: Path) -> list[dict[str, str]]: ...
 def write_skills_manifest(agent_root: Path, skills: list[dict[str, str]]) -> None: ...
 def write_skill_code(agent_root: Path, filename: str, code: str) -> None: ...
 ```
 
 ```python
-# api-backend/app/agent_fs.py
+# session-b-api/app/agent_fs.py
 # ensure_agent_layout 增加 skills 目录
 ```
 
 ```python
-# api-backend/app/tree_api.py
+# session-b-api/app/tree_api.py
 @router.get("/api/runs/{run_id}/agents/{agent_id}/skills")
 async def get_agent_skills(...):
     # return manifest list
@@ -69,7 +69,7 @@ Expected: PASS
 **Step 5: Commit**
 
 ```bash
-git add api-backend/app/agent_fs.py api-backend/app/tree_api.py api-backend/tests/test_agent_skills.py
+git add session-b-api/app/agent_fs.py session-b-api/app/tree_api.py session-b-api/tests/test_agent_skills.py
 git commit -m "feat: add agent skills manifest api"
 ```
 
@@ -80,9 +80,9 @@ git commit -m "feat: add agent skills manifest api"
 **Files:**
 - Create: `config/community_skills.yaml`
 - Create: `community_skills/hello_world.py`
-- Modify: `api-backend/app/config_loader.py`
-- Modify: `api-backend/app/tree_api.py`
-- Create: `api-backend/tests/test_community_skills.py`
+- Modify: `session-b-api/app/config_loader.py`
+- Modify: `session-b-api/app/tree_api.py`
+- Create: `session-b-api/tests/test_community_skills.py`
 
 **Step 1: Write the failing test**
 
@@ -113,12 +113,12 @@ skills:
 ```
 
 ```python
-# api-backend/app/config_loader.py
+# session-b-api/app/config_loader.py
 def load_community_skills() -> list[dict[str, str]]: ...
 ```
 
 ```python
-# api-backend/app/tree_api.py
+# session-b-api/app/tree_api.py
 @router.post("/api/runs/{run_id}/agents/{agent_id}/skills/install")
 async def install_community_skill(...):
     # lookup skill by key, copy file into agent skills/, update manifest
@@ -137,7 +137,7 @@ Expected: PASS
 **Step 5: Commit**
 
 ```bash
-git add config/community_skills.yaml community_skills/hello_world.py api-backend/app/config_loader.py api-backend/app/tree_api.py api-backend/tests/test_community_skills.py
+git add config/community_skills.yaml community_skills/hello_world.py session-b-api/app/config_loader.py session-b-api/app/tree_api.py session-b-api/tests/test_community_skills.py
 git commit -m "feat: add community skill install"
 ```
 
@@ -146,10 +146,10 @@ git commit -m "feat: add community skill install"
 ### Task 3: 团队架构导出/导入（YAML）
 
 **Files:**
-- Modify: `api-backend/requirements.txt`
-- Modify: `api-backend/app/agent_hiring.py`
-- Modify: `api-backend/app/tree_api.py`
-- Create: `api-backend/tests/test_team_templates.py`
+- Modify: `session-b-api/requirements.txt`
+- Modify: `session-b-api/app/agent_hiring.py`
+- Modify: `session-b-api/app/tree_api.py`
+- Create: `session-b-api/tests/test_team_templates.py`
 
 **Step 1: Write the failing test**
 
@@ -171,17 +171,17 @@ Expected: FAIL (endpoint not found)
 **Step 3: Write minimal implementation**
 
 ```text
-# api-backend/requirements.txt
+# session-b-api/requirements.txt
 PyYAML>=6.0,<7
 ```
 
 ```python
-# api-backend/app/agent_hiring.py
+# session-b-api/app/agent_hiring.py
 def hire_team_from_template(session: Session, *, tenant_id: int, run_id: int, template: dict[str, object]) -> int: ...
 ```
 
 ```python
-# api-backend/app/tree_api.py
+# session-b-api/app/tree_api.py
 @router.get("/api/runs/{run_id}/team/export")
 async def export_team_yaml(...):
     # build template from AgentInstance + edges, return YAML
@@ -219,7 +219,7 @@ Expected: PASS
 **Step 5: Commit**
 
 ```bash
-git add api-backend/requirements.txt api-backend/app/agent_hiring.py api-backend/app/tree_api.py api-backend/tests/test_team_templates.py
+git add session-b-api/requirements.txt session-b-api/app/agent_hiring.py session-b-api/app/tree_api.py session-b-api/tests/test_team_templates.py
 git commit -m "feat: add team export/import yaml"
 ```
 
@@ -228,10 +228,10 @@ git commit -m "feat: add team export/import yaml"
 ### Task 4: 前端技能与导入/导出 UI（含移动端轻量流程）
 
 **Files:**
-- Modify: `web-frontend/index.html`
-- Modify: `web-frontend/app.js`
-- Modify: `web-frontend/style.css`
-- Modify: `web-frontend/README.md`
+- Modify: `session-f-edge-ui/web-frontend/index.html`
+- Modify: `session-f-edge-ui/web-frontend/app.js`
+- Modify: `session-f-edge-ui/web-frontend/style.css`
+- Modify: `session-f-edge-ui/web-frontend/README.md`
 
 **Step 1: Write the failing test (manual check)**
 
@@ -253,13 +253,13 @@ Expected: UI 无 Skills 面板与导入/导出按钮
 **Step 3: Write minimal implementation**
 
 ```html
-<!-- web-frontend/index.html -->
+<!-- session-f-edge-ui/web-frontend/index.html -->
 <section class="task-skills-section"> ... </section>
 <section class="task-export-section"> ... </section>
 ```
 
 ```javascript
-// web-frontend/app.js
+// session-f-edge-ui/web-frontend/app.js
 async function loadSkills(runId, agentId) { ... }
 async function installCommunitySkill(runId, agentId, skillKey) { ... }
 async function exportTeamYaml(runId) { ... }
@@ -267,7 +267,7 @@ async function importTeamYaml(yamlText) { ... }
 ```
 
 ```css
-/* web-frontend/style.css */
+/* session-f-edge-ui/web-frontend/style.css */
 @media (max-width: 768px) { /* keep details panel usable */ }
 ```
 
@@ -280,7 +280,7 @@ Expected: Skills + 导入/导出 UI 可用，手机端能查看并触发轻量�
 **Step 5: Commit**
 
 ```bash
-git add web-frontend/index.html web-frontend/app.js web-frontend/style.css web-frontend/README.md
+git add session-f-edge-ui/web-frontend/index.html session-f-edge-ui/web-frontend/app.js session-f-edge-ui/web-frontend/style.css session-f-edge-ui/web-frontend/README.md
 git commit -m "feat: add skills and team import/export ui"
 ```
 
@@ -289,9 +289,9 @@ git commit -m "feat: add skills and team import/export ui"
 ### Task 5: 服务验证与文档更新
 
 **Files:**
-- Modify: `api-backend/AGENTS.md`
-- Modify: `web-frontend/AGENTS.md`
-- Modify: `docs/agent-framework.md`
+- Modify: `session-b-api/AGENTS.md`
+- Modify: `session-f-edge-ui/web-frontend/AGENTS.md`
+- Modify: `session-a-docs/agent-framework.md`
 
 **Step 1: Run service tests**
 
@@ -308,6 +308,6 @@ Expected: PASS
 **Step 3: Commit**
 
 ```bash
-git add api-backend/AGENTS.md web-frontend/AGENTS.md docs/agent-framework.md
+git add session-b-api/AGENTS.md session-f-edge-ui/web-frontend/AGENTS.md session-a-docs/agent-framework.md
 git commit -m "docs: note P1 skills and team export/import"
 ```

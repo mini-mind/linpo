@@ -1,11 +1,11 @@
-# docs
+# session-a-docs
 
 ## OVERVIEW
 Human documentation hub with layered navigation and dated records.
 
 ## STRUCTURE
 ```
-docs/
+session-a-docs/
 ├── README.md          # L0-L4 navigation
 ├── deployment/        # local/prod guides
 ├── plans/             # implementation plans (YYYY-MM-DD-*)
@@ -19,10 +19,10 @@ docs/
 ## WHERE TO LOOK
 | Task | Location | Notes |
 |------|----------|-------|
-| Doc index | docs/README.md | L0-L4 navigation |
-| Workflow rules | docs/process/sisyphus-workflow.md | `.sisyphus` conventions |
-| Governance | docs/CONSTITUTION.md | Project rules |
-| Deployment | docs/deployment/local.md | Local compose flows |
+| Doc index | session-a-docs/README.md | L0-L4 navigation |
+| Workflow rules | session-a-docs/process/sisyphus-workflow.md | `.sisyphus` conventions |
+| Governance | session-a-docs/CONSTITUTION.md | Project rules |
+| Deployment | session-a-docs/deployment/local.md | Local compose flows |
 
 ## CONVENTIONS
 - Dated files use `YYYY-MM-DD-<topic>.md`.

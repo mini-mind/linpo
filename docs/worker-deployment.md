@@ -105,7 +105,7 @@ From the project root, run:
 
 ```bash
 # Recommended tag: YYYYMMDD-<git-short-sha> (script defaults to this)
-TAG=20260209-0277415 ./scripts/push_worker_images.sh
+TAG=20260209-0277415 ./session-g-ops/scripts/push_worker_images.sh
 ```
 
 The script performs the following:
@@ -148,13 +148,13 @@ From the project root, run:
 
 ```bash
 # Set the shared secret and tag
-INTERNAL_API_KEY=your-secret-key TAG=20260209-0277415 ./scripts/deploy_worker.sh
+INTERNAL_API_KEY=your-secret-key TAG=20260209-0277415 ./session-g-ops/scripts/deploy_worker.sh
 ```
 
 The script performs the following:
 
 1. Creates `~/web3d-worker` directory on the worker host
-2. Copies `deploy/worker/docker-compose.yml` to the worker host
+2. Copies `session-g-ops/deploy/worker/docker-compose.yml` to the worker host
 3. Runs `docker compose up -d` with environment variables:
    - `TAG=YYYYMMDD-<git-short-sha>` (used by compose file for image selection)
    - `INTERNAL_API_KEY=your-secret-key` (authentication secret)
@@ -187,7 +187,7 @@ curl -H "X-Internal-Key: your-secret-key" http://localhost:7200/health
 
 ## Docker Compose Configuration
 
-The `deploy/worker/docker-compose.yml` defines the worker stack:
+The `session-g-ops/deploy/worker/docker-compose.yml` defines the worker stack:
 
 ```yaml
 services:
@@ -340,7 +340,7 @@ environment:
 
 Re-run the push script to mirror images:
 ```bash
-TAG=20260210-28d14cd ./scripts/push_worker_images.sh
+TAG=20260210-28d14cd ./session-g-ops/scripts/push_worker_images.sh
 ```
 
 ## Updating the Worker Stack
@@ -349,12 +349,12 @@ To update the worker stack with new images:
 
 1. **Build and push new images**:
    ```bash
-   TAG=20260211-3b8c3d1 ./scripts/push_worker_images.sh
+   TAG=20260211-3b8c3d1 ./session-g-ops/scripts/push_worker_images.sh
    ```
 
 2. **Deploy with new tag**:
    ```bash
-   INTERNAL_API_KEY=your-secret-key TAG=20260211-3b8c3d1 ./scripts/deploy_worker.sh
+   INTERNAL_API_KEY=your-secret-key TAG=20260211-3b8c3d1 ./session-g-ops/scripts/deploy_worker.sh
    ```
 
 3. **Verify deployment**:
@@ -373,7 +373,7 @@ To rollback to a previous version:
 
 2. **Deploy with previous tag**:
    ```bash
-   INTERNAL_API_KEY=your-secret-key TAG=20260210-28d14cd ./scripts/deploy_worker.sh
+   INTERNAL_API_KEY=your-secret-key TAG=20260210-28d14cd ./session-g-ops/scripts/deploy_worker.sh
    ```
 
 3. **Verify rollback**:
@@ -391,10 +391,10 @@ TAG=20260210-28d14cd
 INTERNAL_API_KEY="your-32-character-random-secret-key"
 
 # 2. Build and push images to ACR
-TAG=$TAG ./scripts/push_worker_images.sh
+TAG=$TAG ./session-g-ops/scripts/push_worker_images.sh
 
 # 3. Deploy to worker host
-INTERNAL_API_KEY=$INTERNAL_API_KEY TAG=$TAG ./scripts/deploy_worker.sh
+INTERNAL_API_KEY=$INTERNAL_API_KEY TAG=$TAG ./session-g-ops/scripts/deploy_worker.sh
 
 # 4. Verify deployment
 ssh ubuntu@175.178.213.10
@@ -424,19 +424,19 @@ git rev-parse --short HEAD
 ### Step 2: 构建并推送镜像
 
 ```bash
-TAG=20260210-28d14cd ./scripts/push_worker_images.sh
+TAG=20260210-28d14cd ./session-g-ops/scripts/push_worker_images.sh
 ```
 
 **注意**：如果脚本在镜像 `tecnativa/docker-socket-proxy:0.1.1` 时失败，需先确保该镜像在本地存在：
 ```bash
 docker pull tecnativa/docker-socket-proxy:0.1.1
-TAG=20260210-28d14cd ./scripts/push_worker_images.sh
+TAG=20260210-28d14cd ./session-g-ops/scripts/push_worker_images.sh
 ```
 
 ### Step 3: 部署到 Worker 主机
 
 ```bash
-INTERNAL_API_KEY=your-secret-key TAG=20260210-28d14cd ./scripts/deploy_worker.sh
+INTERNAL_API_KEY=your-secret-key TAG=20260210-28d14cd ./session-g-ops/scripts/deploy_worker.sh
 ```
 
 ### Step 4: 验证镜像 Tag

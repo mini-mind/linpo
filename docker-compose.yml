@@ -1,7 +1,7 @@
 services:
   gateway:
     build:
-      context: ./gateway
+      context: ./session-f-edge-ui/gateway
     depends_on:
       - web-frontend
       - api-backend
@@ -18,7 +18,7 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./edge/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./session-f-edge-ui/edge/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
     environment:
@@ -31,14 +31,14 @@ services:
 
   web-frontend:
     build:
-      context: ./web-frontend
+      context: ./session-f-edge-ui/web-frontend
     networks:
       - app-net
     restart: unless-stopped
 
   api-backend:
     build:
-      context: ./api-backend
+      context: ./session-b-api
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/web3d}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
@@ -58,9 +58,10 @@ services:
       - LLM_DEFAULT_MODEL=${LLM_DEFAULT_MODEL:-}
       - ROBOARD_SOP_ROOT=${ROBOARD_SOP_ROOT:-/app/sops}
     volumes:
-      - ./config:/app/config:ro
-      - ./prompts:/app/prompts:ro
-      - ./sops:/app/sops
+      - ./session-h-shared/config:/app/config:ro
+      - ./session-h-shared/prompts:/app/prompts:ro
+      - ./session-g-ops/data/sops-runtime:/app/sops
+      - ./session-h-shared/sops/templates:/app/sops/templates:ro
     ports:
       - "127.0.0.1:8005:8000"
       - "0.0.0.0:8000:8000"
@@ -85,7 +86,7 @@ services:
 
   agent-manager:
     build:
-      context: ./agent-manager
+      context: ./session-c-dispatch
     environment:
       # MVP guardrail: per-tenant concurrent runs cap (reserved for future wiring).
       - TENANT_CONCURRENCY_LIMIT=2
@@ -110,7 +111,7 @@ services:
 
   worker-playwright:
     build:
-      context: ./worker-playwright
+      context: ./session-d-browser/worker-playwright
     environment:
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:?set}
       - WORKER_URL=${WORKER_URL:-http://worker-playwright:7100}
@@ -127,7 +128,7 @@ services:
 
   skill-gateway:
     build:
-      context: ./skill-gateway
+      context: ./session-e-internal/skill-gateway
     environment:
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:?set}
       - SKILL_RUNNER_IMAGE=${SKILL_RUNNER_IMAGE:-}
@@ -137,7 +138,7 @@ services:
 
   sandbox-template:
     build:
-      context: ./sandbox-template
+      context: ./session-e-internal/sandbox-template
     environment:
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:?set}
     networks:
@@ -146,7 +147,7 @@ services:
 
   mcp-server:
     build:
-      context: ./mcp-server
+      context: ./session-e-internal/mcp-server
     environment:
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:?set}
       - WORKER_URL=${WORKER_URL:-http://worker-playwright:7100}
@@ -214,12 +215,12 @@ services:
 
   llm-gateway:
     build:
-      context: ./llm-gateway
+      context: ./session-e-internal/llm-gateway
     environment:
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:?set}
       - LLM_PROVIDERS_PATH=/run/secrets/llm-providers.json
     volumes:
-      - ${LLM_PROVIDERS_HOST_PATH:-./config/llm-providers.example.json}:/run/secrets/llm-providers.json:ro
+      - ${LLM_PROVIDERS_HOST_PATH:-./session-h-shared/config/llm-providers.example.json}:/run/secrets/llm-providers.json:ro
     expose:
       - "7300"
     networks:

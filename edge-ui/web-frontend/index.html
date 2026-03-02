@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RoBoard Task Tree</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23c46a2a'/%3E%3Ctext x='50' y='70' font-family='Arial, sans-serif' font-size='60' font-weight='bold' text-anchor='middle' fill='white'%3ER%3C/text%3E%3C/svg%3E" type="image/svg+xml" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="app" class="task-tree-shell" x-data="window.taskTreeState || {}" x-cloak x-init="init && init()">
+      <header class="header topbar" aria-label="RoBoard Task Tree">
+        <a class="brand logo" href="/" aria-label="RoBoard">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">RoBoard</span>
+        </a>
+
+        <div class="user-status user-dropdown" aria-label="User menu">
+          <button id="user-dropdown-trigger" class="user-dropdown-trigger" type="button" aria-haspopup="menu" aria-expanded="false">
+            <span id="session-label" class="session-label user-name" x-text="sessionLabel"></span>
+            <span class="connect-status">
+              <span class="connect-dot" aria-hidden="true"></span>
+              <span id="task-connection-pill" class="status-pill neutral" aria-label="Connection status" data-i18n="taskTree.statusIdle">Idle</span>
+            </span>
+          </button>
+          <div id="user-dropdown-menu" class="user-dropdown-menu is-hidden" role="menu">
+            <div class="lang-toggle" role="group" aria-label="Language">
+              <button id="lang-zh" class="btn btn-ghost" type="button" role="menuitem">中文</button>
+              <button id="lang-en" class="btn btn-ghost" type="button" role="menuitem">English</button>
+            </div>
+            <button id="logout-btn" class="btn btn-ghost" type="button" role="menuitem" data-i18n="taskTree.logout">Logout</button>
+          </div>
+        </div>
+      </header>
+
+      <nav class="nav-tabs task-view-switcher" role="tablist" aria-label="主导航">
+        <a href="/" class="nav-tab view-tab is-active" aria-label="任务树">
+          <span class="view-tab-label" data-i18n="taskTree.title">任务树</span>
+        </a>
+        <a href="/templates" class="nav-tab view-tab" aria-label="模板库">
+          <span class="view-tab-label" data-i18n="templates.nav">模板库</span>
+        </a>
+      </nav>
+
+      <main id="task-tree-view" class="task-tree-main" aria-label="Task Tree">
+        <div class="task-tree-container">
+          <section class="task-viewer" aria-label="Task views">
+            <div class="task-view-panels">
+              <section id="task-tree-section" class="task-view-panel task-tree-panel tree-view" role="tabpanel" aria-label="Task Tree" data-view="tree" x-show="activeView === 'tree'">
+                <div class="tree-container">
+                  <div id="task-tree-root" class="task-tree-root" role="tree" aria-label="Task hierarchy">
+                    <div class="task-tree-empty-state" data-i18n="taskTree.empty" x-show="treeNodes.length === 0">No tasks yet. Create a new task to get started.</div>
+                    <template x-for="node in treeNodes" :key="node.id">
+                      <div class="task-tree-node tree-node" :class="[node.depth === 0 ? 'parent' : 'child', node.id === selectedNodeId ? 'is-selected' : '']" :style="{ marginLeft: (node.depth * 24) + 'px' }" @click="selectNode(node)">
+                        <div class="node-content">
+                          <div class="node-dot" :class="dotClass(node.status)"></div>
+                          <div class="node-title" x-text="node.label"></div>
+                          <div class="node-time task-tree-node-state" x-text="node.currentStep || node.status"></div>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+                <p id="task-message" class="panel-message" role="status" aria-live="polite"></p>
+              </section>
+
+              <section id="task-log-section" class="task-view-panel task-log-panel log-view" role="tabpanel" aria-label="Event log" data-view="log" x-show="activeView === 'log'">
+                <div class="log-box">
+                  <div id="task-log-empty" class="task-log-empty" x-show="logItems.length === 0">No events yet.</div>
+                  <ul id="task-log-list" class="task-log-list" aria-live="polite">
+                    <template x-for="item in logItems" :key="item.id">
+                      <li class="task-log-item log-item">
+                        <span class="log-time" x-text="item.time"></span>
+                        <span x-text="item.text"></span>
+                      </li>
+                    </template>
+                  </ul>
+                </div>
+              </section>
+
+              <section id="task-kanban-section" class="task-view-panel task-kanban-panel kanban-view" role="tabpanel" aria-label="Task board" data-view="kanban" x-show="activeView === 'kanban'">
+                <div class="kanban-columns" id="task-kanban-board">
+                  <template x-for="column in kanbanColumns" :key="column.status">
+                    <div class="kanban-column" :data-status="column.status">
+                      <div class="kanban-column-head" x-text="column.title"></div>
+                      <div class="kanban-column-body">
+                        <template x-for="card in column.items" :key="card.id">
+                          <div class="kanban-card" @click="selectNode(card)">
+                            <div class="kanban-card-title" x-text="card.label"></div>
+                            <div class="kanban-card-time" x-show="card.status" x-text="card.status"></div>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+                <div id="task-kanban-empty" class="task-kanban-empty" x-show="!kanbanHasItems">No tasks yet.</div>
+              </section>
+            </div>
+
+            <section id="task-mobile-toolbar" class="task-mobile-toolbar" aria-label="Mobile actions">
+              <div class="task-mobile-controls">
+                <button id="task-mobile-pause" class="btn btn-ghost" type="button" data-i18n="taskTree.pause">Pause</button>
+                <button id="task-mobile-resume" class="btn btn-ghost" type="button" data-i18n="taskTree.resume">Resume</button>
+                <button id="task-mobile-retry" class="btn btn-ghost" type="button" data-i18n="taskTree.retry">Retry</button>
+              </div>
+              <form id="task-mobile-intervention-form" class="task-mobile-intervention">
+                <input
+                  id="task-mobile-intervention-input"
+                  type="text"
+                  placeholder="Intervention message..."
+                  data-i18n-placeholder="taskTree.mobileInterventionPlaceholder"
+                  autocomplete="off"
+                />
+                <button id="task-mobile-intervention-submit" type="submit" class="btn btn-primary" data-i18n="taskTree.send">Send</button>
+              </form>
+            </section>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <section id="task-details-section" class="modal modal-mask task-details-modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="task-details-title">
+      <div class="modal-overlay"></div>
+      <div class="modal-content task-details-card">
+        <div class="modal-header">
+          <h3 class="panel-title modal-title" id="task-details-title" data-i18n="taskTree.detailsTitle">Task Details</h3>
+          <button id="close-details-btn" class="btn btn-ghost modal-close" type="button" aria-label="Close details">×</button>
+        </div>
+
+        <div class="task-details-content">
+          <div class="task-status-section modal-section">
+            <h4 class="section-title modal-section-title" data-i18n="taskTree.status">Status</h4>
+            <div id="task-status-display" class="status-display status-tag"></div>
+          </div>
+
+          <div class="task-summary-section modal-section">
+            <h4 class="section-title modal-section-title">Summary</h4>
+            <div id="task-summary-display" class="desc-text"></div>
+          </div>
+
+          <div class="task-plan-section modal-section">
+            <h4 class="section-title modal-section-title" data-i18n="taskTree.plan">Plan</h4>
+            <div id="task-plan-empty" class="plan-empty" data-i18n="taskTree.plan.empty">No plan subtasks yet.</div>
+            <ul id="task-plan-list" class="plan-list todo-list" aria-live="polite"></ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="bottom-bar command-bar" aria-label="Quick command">
+      <input class="command-input" type="text" placeholder="Enter command..." aria-label="Quick command" />
+      <button class="btn btn-primary" type="button" aria-label="Send command">→</button>
+    </section>
+
+    <div id="add-task-modal" class="modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-overlay"></div>
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 id="modal-title" class="modal-title" data-i18n="taskTree.createTask">Create New Task</h2>
+          <button id="close-modal-btn" class="btn btn-ghost modal-close" type="button" aria-label="Close modal">×</button>
+        </div>
+
+        <form id="add-task-form" class="ui-form">
+          <label for="task-input-nl" data-i18n="taskTree.inputLabel">Task Description</label>
+          <textarea
+            id="task-input-nl"
+            name="input_nl"
+            rows="4"
+            placeholder="Describe what you want this task to accomplish..."
+            data-i18n-placeholder="taskTree.inputPlaceholder"
+            spellcheck="false"
+            required
+          ></textarea>
+
+          <div class="ui-row ui-row-single">
+            <button type="submit" class="btn btn-primary" data-i18n="taskTree.create">Create Task</button>
+            <button type="button" id="cancel-task-btn" class="btn btn-ghost" data-i18n="taskTree.cancel">Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <button id="add-task-btn" class="btn btn-primary add-task-btn is-hidden" type="button" aria-label="Add new task" title="Add new task">
+      <span class="add-task-icon">+</span>
+    </button>
+    <script src="https://unpkg.com/alpinejs@3.13.5/dist/cdn.min.js" defer></script>
+    <script src="app.js" defer></script>
+  </body>
+</html>

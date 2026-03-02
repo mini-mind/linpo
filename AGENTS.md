@@ -11,47 +11,41 @@ Each service owns its own `app/main.py` entrypoint and `requirements*.txt` depen
 ## STRUCTURE
 ```
 ./
-├── api-backend/         # FastAPI API + DB + WS
-├── agent-manager/       # Orchestrator, Redis streams, scheduler
-├── llm-gateway/          # LLM proxy with internal auth
-├── mcp-server/           # SearXNG proxy
-├── worker-playwright/    # Worker API (calls MCP/Playwright)
-├── playwright-gateway/   # Playwright runner orchestration
-├── skill-gateway/        # Docker sandbox executor gateway
-├── sandbox-template/     # Sandbox template generator
-├── web-frontend/         # Static HTML/CSS/JS UI
-├── gateway/              # Nginx reverse proxy rules
-├── edge/                 # Caddy/Nginx edge proxy
-├── deploy/               # Compose variants (prod/worker/legacy)
-├── scripts/              # Deploy, push, backup, verify helpers
-└── docs/                 # Human docs and plans
+├── session-a-docs/       # Human docs and plans
+├── session-b-api/        # api-backend service
+├── session-c-dispatch/   # agent-manager service
+├── session-d-browser/    # worker-playwright + playwright-gateway + runner
+├── session-e-internal/   # llm-gateway + mcp-server + skill-gateway + sandbox-template + searxng
+├── session-f-edge-ui/    # edge + gateway + web-frontend
+├── session-g-ops/        # deploy + scripts + runtime artifacts
+└── session-h-shared/     # shared configs/prompts/templates/observability
 ```
 
 ## WHERE TO LOOK
 | Task | Location | Notes |
 |------|----------|-------|
-| API/WS behavior | api-backend/app/main.py | FastAPI app, auth, WS events/snapshots |
-| Dispatch | agent-manager/app/main.py | Redis streams, scheduler, dispatch |
-| LLM proxy | llm-gateway/app/main.py | `/internal/llm/chat` only |
-| SearXNG proxy | mcp-server/app/main.py | `/search` only |
-| Worker API | worker-playwright/app/main.py | `/run` internal-only |
-| Playwright runner | playwright-gateway/app/main.py | Docker runner orchestration |
-| Skill gateway | skill-gateway/app/main.py | `/skills/*` internal-only |
-| Sandbox template | sandbox-template/app/main.py | `/templates/*` internal-only |
-| UI | web-frontend/index.html + app.js | No build step |
-| Routing | gateway/nginx.conf + edge/Caddyfile | `/api`, `/ws`, `/` routing |
-| Deployment | deploy/* | prod/worker/legacy compose |
-| Ops scripts | scripts/* | deploy/push/backup/verify |
+| API/WS behavior | session-b-api/app/main.py | FastAPI app, auth, WS events/snapshots |
+| Dispatch | session-c-dispatch/app/main.py | Redis streams, scheduler, dispatch |
+| LLM proxy | session-e-internal/llm-gateway/app/main.py | `/internal/llm/chat` only |
+| SearXNG proxy | session-e-internal/mcp-server/app/main.py | `/search` only |
+| Worker API | session-d-browser/worker-playwright/app/main.py | `/run` internal-only |
+| Playwright runner | session-d-browser/playwright-gateway/app/main.py | Docker runner orchestration |
+| Skill gateway | session-e-internal/skill-gateway/app/main.py | `/skills/*` internal-only |
+| Sandbox template | session-e-internal/sandbox-template/app/main.py | `/templates/*` internal-only |
+| UI | session-f-edge-ui/web-frontend/index.html + app.js | No build step |
+| Routing | session-f-edge-ui/gateway/nginx.conf + session-f-edge-ui/edge/Caddyfile | `/api`, `/ws`, `/` routing |
+| Deployment | session-g-ops/deploy/* | prod/worker/legacy compose |
+| Ops scripts | session-g-ops/scripts/* | deploy/push/backup/verify |
 
 ## CODE MAP
 | Symbol | Type | Location | Refs | Role |
 |--------|------|----------|------|------|
-| app | FastAPI | api-backend/app/main.py | high | Core API + WS entrypoint |
-| app | FastAPI | agent-manager/app/main.py | high | Dispatch + scheduler entrypoint |
-| app | FastAPI | worker-playwright/app/main.py | high | Worker API entrypoint |
-| app | FastAPI | playwright-gateway/app/main.py | high | Runner orchestration entry |
-| app | FastAPI | llm-gateway/app/main.py | high | LLM proxy entrypoint |
-| app | FastAPI | mcp-server/app/main.py | high | SearXNG proxy entry |
+| app | FastAPI | session-b-api/app/main.py | high | Core API + WS entrypoint |
+| app | FastAPI | session-c-dispatch/app/main.py | high | Dispatch + scheduler entrypoint |
+| app | FastAPI | session-d-browser/worker-playwright/app/main.py | high | Worker API entrypoint |
+| app | FastAPI | session-d-browser/playwright-gateway/app/main.py | high | Runner orchestration entry |
+| app | FastAPI | session-e-internal/llm-gateway/app/main.py | high | LLM proxy entrypoint |
+| app | FastAPI | session-e-internal/mcp-server/app/main.py | high | SearXNG proxy entry |
 
 ## CONVENTIONS
 - Services use `app/main.py` + `tests/` with pytest-style `test_*.py`.
@@ -61,6 +55,7 @@ Each service owns its own `app/main.py` entrypoint and `requirements*.txt` depen
 - 每改完一个服务就立即更新相关的 `AGENTS.md` 并完成该服务测试。
 - 每次完成版本更新（TAG/镜像）必须完成测试、commit、部署。
 - 复杂任务尽量拆分给子代理并行推进。
+- 2026-03-01: Multi-session 并行推进规则见 `session-a-docs/process/multi-session-ownership.md`。
 - 必须用中文交流与写文档，除非用户明确要求使用其他语言。
 - 禁止多轮压缩；仅允许在执行过程中“不得已”压缩一次，且必须在任务完成后明确告知是否发生压缩。
 - 若已发生压缩：必须及时补齐交接文档，并提供新 session 的开头指令模板。
@@ -76,7 +71,7 @@ Each service owns its own `app/main.py` entrypoint and `requirements*.txt` depen
 ```
 
 ## ANTI-PATTERNS (THIS PROJECT)
-- Never commit secrets (see `docs/agent-framework.md`).
+- Never commit secrets (see `session-a-docs/agent-framework.md`).
 - Do not log secrets; keep provider keys out of repo.
 - Worker images must not pull from Docker Hub on the worker host.
 - Do not assume `npx playwright test` is configured.
@@ -92,14 +87,14 @@ Each service owns its own `app/main.py` entrypoint and `requirements*.txt` depen
 docker compose up -d
 
 # Deploy helpers
-bash scripts/deploy_local.sh
-bash scripts/deploy_worker_host.sh
+bash session-g-ops/scripts/deploy_local.sh
+bash session-g-ops/scripts/deploy_worker_host.sh
 
 # Worker deployment
-INTERNAL_API_KEY=... TAG=YYYYMMDD-<sha> ./scripts/deploy_worker.sh
+INTERNAL_API_KEY=... TAG=YYYYMMDD-<sha> ./session-g-ops/scripts/deploy_worker.sh
 
 # Tests (per service)
-cd api-backend && .venv/bin/python -m pytest -q
+cd session-b-api && .venv/bin/python -m pytest -q
 ```
 
 ## CONSTITUTION
@@ -139,4 +134,4 @@ cd api-backend && .venv/bin/python -m pytest -q
 - `.env` is required for secrets; `.env` and `.env.*` are gitignored.
 - `.gitignore` also ignores `backups/`, `data/`, `screenshots/`, and `sops/*` (except templates).
 - Root `package.json` exists for Playwright tooling; it is ignored by `.gitignore` so changes may not show.
-- `docs/` uses dated filenames (`YYYY-MM-DD-*`) for plans/specs/decisions.
+- `session-a-docs/` uses dated filenames (`YYYY-MM-DD-*`) for plans/specs/decisions.

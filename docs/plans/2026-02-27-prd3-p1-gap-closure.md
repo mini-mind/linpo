@@ -22,9 +22,9 @@
 ### Task 1: 社区技能搜索 + NL 安装 API
 
 **Files:**
-- Modify: `api-backend/app/config_loader.py`
-- Modify: `api-backend/app/tree_api.py`
-- Create: `api-backend/tests/test_community_skills_search.py`
+- Modify: `session-b-api/app/config_loader.py`
+- Modify: `session-b-api/app/tree_api.py`
+- Create: `session-b-api/tests/test_community_skills_search.py`
 
 **Step 1: Write the failing test**
 
@@ -45,12 +45,12 @@ Expected: FAIL (endpoint not found)
 **Step 3: Write minimal implementation**
 
 ```python
-# api-backend/app/config_loader.py
+# session-b-api/app/config_loader.py
 def search_community_skills(query: str, *, limit: int = 5) -> list[dict[str, str]]: ...
 ```
 
 ```python
-# api-backend/app/tree_api.py
+# session-b-api/app/tree_api.py
 @router.get("/api/community-skills/search")
 async def search_community_skills(...):
     # query + limit -> ranked list
@@ -76,10 +76,10 @@ Expected: PASS
 
 **Files:**
 - Create: `config/builtin_skills.yaml`
-- Modify: `api-backend/app/project_fs.py`
-- Modify: `api-backend/app/agent_fs.py`
-- Modify: `api-backend/app/tree_api.py`
-- Create: `api-backend/tests/test_skill_tiers.py`
+- Modify: `session-b-api/app/project_fs.py`
+- Modify: `session-b-api/app/agent_fs.py`
+- Modify: `session-b-api/app/tree_api.py`
+- Create: `session-b-api/tests/test_skill_tiers.py`
 
 **Step 1: Write the failing test**
 
@@ -107,18 +107,18 @@ skills:
 ```
 
 ```python
-# api-backend/app/project_fs.py
+# session-b-api/app/project_fs.py
 def tenant_root_for(base: Path, tenant_id: int) -> Path: ...
 ```
 
 ```python
-# api-backend/app/agent_fs.py
+# session-b-api/app/agent_fs.py
 def read_tenant_skills_manifest(tenant_root: Path) -> list[dict[str, str]]: ...
 def write_tenant_skills_manifest(tenant_root: Path, skills: list[dict[str, str]]) -> None: ...
 ```
 
 ```python
-# api-backend/app/tree_api.py
+# session-b-api/app/tree_api.py
 @router.get("/api/skills/catalog")
 async def get_skill_catalog(...):
     # builtin + platform (community) + tenant
@@ -143,9 +143,9 @@ Expected: PASS
 ### Task 3: Skill-creator 自举任务 + 任务队列
 
 **Files:**
-- Modify: `api-backend/app/tree_api.py`
-- Modify: `agent-manager/app/main.py`
-- Create: `api-backend/tests/test_skill_bootstrap.py`
+- Modify: `session-b-api/app/tree_api.py`
+- Modify: `session-c-dispatch/app/main.py`
+- Create: `session-b-api/tests/test_skill_bootstrap.py`
 
 **Step 1: Write the failing test**
 
@@ -164,14 +164,14 @@ Expected: FAIL
 **Step 3: Write minimal implementation**
 
 ```python
-# api-backend/app/tree_api.py
+# session-b-api/app/tree_api.py
 @router.post("/api/runs/{run_id}/agents/{agent_id}/skills/bootstrap")
 async def bootstrap_skill(...):
     # enqueue to redis stream queue:skill-create
 ```
 
 ```python
-# agent-manager/app/main.py
+# session-c-dispatch/app/main.py
 # add consumer loop for queue:skill-create
 # call skill-gateway /skills/create
 # post event skill.create.succeeded/failed
@@ -244,9 +244,9 @@ Expected: PASS
 ### Task 5: 技能自动执行队列（调用不依赖前端点击）
 
 **Files:**
-- Modify: `api-backend/app/tree_api.py`
-- Modify: `agent-manager/app/main.py`
-- Create: `api-backend/tests/test_skill_invoke.py`
+- Modify: `session-b-api/app/tree_api.py`
+- Modify: `session-c-dispatch/app/main.py`
+- Create: `session-b-api/tests/test_skill_invoke.py`
 
 **Step 1: Write the failing test**
 
@@ -264,14 +264,14 @@ Expected: FAIL
 **Step 3: Write minimal implementation**
 
 ```python
-# api-backend/app/tree_api.py
+# session-b-api/app/tree_api.py
 @router.post("/api/runs/{run_id}/agents/{agent_id}/skills/{skill_key}/invoke")
 async def invoke_skill(...):
     # enqueue to queue:skill-exec
 ```
 
 ```python
-# agent-manager/app/main.py
+# session-c-dispatch/app/main.py
 # add consumer loop for queue:skill-exec
 # call skill-gateway /skills/execute
 # post event skill.execute.succeeded/failed
@@ -292,10 +292,10 @@ Expected: PASS
 ### Task 6: 前端搜索 + NL 安装 + 自动执行提示
 
 **Files:**
-- Modify: `web-frontend/index.html`
-- Modify: `web-frontend/app.js`
-- Modify: `web-frontend/style.css`
-- Modify: `web-frontend/README.md`
+- Modify: `session-f-edge-ui/web-frontend/index.html`
+- Modify: `session-f-edge-ui/web-frontend/app.js`
+- Modify: `session-f-edge-ui/web-frontend/style.css`
+- Modify: `session-f-edge-ui/web-frontend/README.md`
 
 **Step 1: Write the failing test (manual check)**
 
@@ -337,10 +337,10 @@ Expected: 搜索 + NL 安装可用
 ### Task 7: 团队架构导出/导入（YAML）
 
 **Files:**
-- Modify: `api-backend/requirements.txt`
-- Modify: `api-backend/app/agent_hiring.py`
-- Modify: `api-backend/app/tree_api.py`
-- Create: `api-backend/tests/test_team_templates.py`
+- Modify: `session-b-api/requirements.txt`
+- Modify: `session-b-api/app/agent_hiring.py`
+- Modify: `session-b-api/app/tree_api.py`
+- Create: `session-b-api/tests/test_team_templates.py`
 
 **Step 1: Write the failing test**
 
@@ -361,17 +361,17 @@ Expected: FAIL (endpoint not found)
 **Step 3: Write minimal implementation**
 
 ```text
-# api-backend/requirements.txt
+# session-b-api/requirements.txt
 PyYAML>=6.0,<7
 ```
 
 ```python
-# api-backend/app/agent_hiring.py
+# session-b-api/app/agent_hiring.py
 def hire_team_from_template(session: Session, *, tenant_id: int, run_id: int, template: dict[str, object]) -> int: ...
 ```
 
 ```python
-# api-backend/app/tree_api.py
+# session-b-api/app/tree_api.py
 @router.get("/api/runs/{run_id}/team/export")
 async def export_team_yaml(...):
     # build template from AgentInstance + edges, return YAML
@@ -415,10 +415,10 @@ Expected: PASS
 ### Task 8: 多端协同（移动端基础查看 + 轻量干预）
 
 **Files:**
-- Modify: `web-frontend/index.html`
-- Modify: `web-frontend/app.js`
-- Modify: `web-frontend/style.css`
-- Modify: `web-frontend/README.md`
+- Modify: `session-f-edge-ui/web-frontend/index.html`
+- Modify: `session-f-edge-ui/web-frontend/app.js`
+- Modify: `session-f-edge-ui/web-frontend/style.css`
+- Modify: `session-f-edge-ui/web-frontend/README.md`
 
 **Step 1: Write the failing test (manual check)**
 
@@ -436,17 +436,17 @@ Expected: 手机端交互不完整或遮挡
 **Step 3: Write minimal implementation**
 
 ```html
-<!-- web-frontend/index.html -->
+<!-- session-f-edge-ui/web-frontend/index.html -->
 <section class="task-mobile-toolbar"> ... </section>
 ```
 
 ```javascript
-// web-frontend/app.js
+// session-f-edge-ui/web-frontend/app.js
 function applyMobileLayout() { ... }
 ```
 
 ```css
-/* web-frontend/style.css */
+/* session-f-edge-ui/web-frontend/style.css */
 @media (max-width: 768px) {
   /* reduce panel width, keep tree visible, sticky actions */
 }
@@ -467,19 +467,19 @@ Expected: 手机端可查看状态并触发轻量干预
 ### Task 9: 文档与 AGENTS 更新 + 服务测试
 
 **Files:**
-- Modify: `docs/prd/2026-02-26-lingban-prd-v3.0.md`
-- Modify: `docs/agent-framework.md`
-- Modify: `api-backend/AGENTS.md`
-- Modify: `agent-manager/AGENTS.md`
+- Modify: `session-a-docs/prd/2026-02-26-lingban-prd-v3.0.md`
+- Modify: `session-a-docs/agent-framework.md`
+- Modify: `session-b-api/AGENTS.md`
+- Modify: `session-c-dispatch/AGENTS.md`
 - Modify: `skill-gateway/AGENTS.md`
-- Modify: `web-frontend/AGENTS.md`
+- Modify: `session-f-edge-ui/web-frontend/AGENTS.md`
 
 **Step 1: Run service tests**
 
-Run: `cd api-backend && .venv/bin/python -m pytest -q`
+Run: `cd session-b-api && .venv/bin/python -m pytest -q`
 Expected: PASS
 
-Run: `cd agent-manager && .venv/bin/python -m pytest -q`
+Run: `cd session-c-dispatch && .venv/bin/python -m pytest -q`
 Expected: PASS
 
 Run: `cd skill-gateway && .venv/bin/python -m pytest -q`

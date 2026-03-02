@@ -13,12 +13,12 @@
 ### Task 1: 介入与角色调整的测试（RED）
 
 **Files:**
-- Modify: `api-backend/tests/test_config_loader.py`
-- Modify: `api-backend/tests/test_agent_hiring.py`
-- Modify: `api-backend/tests/test_tree_api.py`
-- Modify: `api-backend/tests/test_actions_sop_patch.py`
-- Modify: `api-backend/tests/test_actions_sop_replace.py`
-- Create: `api-backend/tests/test_agent_chat_removed.py`
+- Modify: `session-b-api/tests/test_config_loader.py`
+- Modify: `session-b-api/tests/test_agent_hiring.py`
+- Modify: `session-b-api/tests/test_tree_api.py`
+- Modify: `session-b-api/tests/test_actions_sop_patch.py`
+- Modify: `session-b-api/tests/test_actions_sop_replace.py`
+- Create: `session-b-api/tests/test_agent_chat_removed.py`
 
 **Step 1: Write the failing test**
 
@@ -30,7 +30,7 @@ def test_agent_chat_endpoints_removed(tmp_path, monkeypatch) -> None:
 
 **Step 2: Run test to verify it fails**
 
-Run: `cd api-backend && .venv/bin/python -m pytest -q tests/test_agent_chat_removed.py::test_agent_chat_endpoints_removed`
+Run: `cd session-b-api && .venv/bin/python -m pytest -q tests/test_agent_chat_removed.py::test_agent_chat_endpoints_removed`
 Expected: FAIL (returns 200 before removal)
 
 **Step 3: Update role/allowlist test expectations**
@@ -42,22 +42,22 @@ assert result == ["lead", "pm", "engineer"]
 
 **Step 4: Run updated tests to verify they fail**
 
-Run: `cd api-backend && .venv/bin/python -m pytest -q tests/test_config_loader.py::test_get_allowed_agent_types_from_rules`
+Run: `cd session-b-api && .venv/bin/python -m pytest -q tests/test_config_loader.py::test_get_allowed_agent_types_from_rules`
 Expected: FAIL (still returns ceo)
 
 **Step 5: Commit**
 
 ```bash
-git add api-backend/tests/test_*.py
+git add session-b-api/tests/test_*.py
 git commit -m "test: cover lead roles and remove agent chat endpoints"
 ```
 
 ### Task 2: 后端移除 CEO/A2A + 角色替换（GREEN）
 
 **Files:**
-- Modify: `api-backend/app/main.py`
-- Modify: `api-backend/app/agent_hiring.py`
-- Modify: `api-backend/app/config_loader.py`
+- Modify: `session-b-api/app/main.py`
+- Modify: `session-b-api/app/agent_hiring.py`
+- Modify: `session-b-api/app/config_loader.py`
 - Modify: `config/decision_rules.json`
 - Modify: `config/agents.yaml`
 - Modify: `config/tools.yaml`
@@ -89,21 +89,21 @@ _FALLBACK_ALLOWED_AGENT_TYPES = ["lead", "pm", "engineer"]
 
 **Step 4: Run tests to verify they pass**
 
-Run: `cd api-backend && .venv/bin/python -m pytest -q tests/test_agent_chat_removed.py tests/test_config_loader.py tests/test_agent_hiring.py tests/test_tree_api.py tests/test_actions_sop_patch.py tests/test_actions_sop_replace.py`
+Run: `cd session-b-api && .venv/bin/python -m pytest -q tests/test_agent_chat_removed.py tests/test_config_loader.py tests/test_agent_hiring.py tests/test_tree_api.py tests/test_actions_sop_patch.py tests/test_actions_sop_replace.py`
 Expected: PASS
 
 **Step 5: Commit**
 
 ```bash
-git add api-backend/app/*.py config/*.yaml config/decision_rules.json prompts/agents/lead.md sops/templates/lead.md
+git add session-b-api/app/*.py config/*.yaml config/decision_rules.json prompts/agents/lead.md sops/templates/lead.md
 git commit -m "feat: switch to lead roles and remove agent chat endpoints"
 ```
 
 ### Task 3: 前端改为介入提交（GREEN）
 
 **Files:**
-- Modify: `web-frontend/app.js`
-- Modify: `web-frontend/README.md`
+- Modify: `session-f-edge-ui/web-frontend/app.js`
+- Modify: `session-f-edge-ui/web-frontend/README.md`
 
 **Step 1: Update chat submission to interventions**
 
@@ -128,18 +128,18 @@ Expected: UI can submit intervention without calling /api/agents/*/chat
 **Step 4: Commit**
 
 ```bash
-git add web-frontend/app.js web-frontend/README.md
+git add session-f-edge-ui/web-frontend/app.js session-f-edge-ui/web-frontend/README.md
 git commit -m "feat: send interventions from task tree UI"
 ```
 
 ### Task 4: 清理 agent-manager A2A 与脚本（GREEN）
 
 **Files:**
-- Modify: `agent-manager/app/main.py`
-- Modify: `agent-manager/README.md`
-- Modify: `agent-manager/AGENTS.md`
+- Modify: `session-c-dispatch/app/main.py`
+- Modify: `session-c-dispatch/README.md`
+- Modify: `session-c-dispatch/AGENTS.md`
 - Modify: `docker-compose.yml`
-- Delete: `scripts/verify_sse_streaming.py`
+- Delete: `session-g-ops/scripts/verify_sse_streaming.py`
 
 **Step 1: Remove A2A stream handling**
 
@@ -155,13 +155,13 @@ git commit -m "feat: send interventions from task tree UI"
 
 **Step 3: Run tests**
 
-Run: `cd agent-manager && .venv/bin/python -m pytest -q`
+Run: `cd session-c-dispatch && .venv/bin/python -m pytest -q`
 Expected: PASS
 
 **Step 4: Commit**
 
 ```bash
-git add agent-manager/app/main.py agent-manager/README.md agent-manager/AGENTS.md docker-compose.yml
+git add session-c-dispatch/app/main.py session-c-dispatch/README.md session-c-dispatch/AGENTS.md docker-compose.yml
 git commit -m "chore: remove A2A stream handling"
 ```
 
@@ -169,11 +169,11 @@ git commit -m "chore: remove A2A stream handling"
 
 **Files:**
 - Modify: `README.md`
-- Modify: `docs/README.md`
-- Modify: `docs/agent-framework.md`
+- Modify: `session-a-docs/README.md`
+- Modify: `session-a-docs/agent-framework.md`
 - Modify: `AGENTS.md`
-- Modify: `docs/AGENTS.md`
-- Modify: `scripts/AGENTS.md`
+- Modify: `session-a-docs/AGENTS.md`
+- Modify: `session-g-ops/scripts/AGENTS.md`
 
 **Step 1: Replace A2A/CEO sections with intervention flow**
 
@@ -191,7 +191,7 @@ POST /api/runs/{run_id}/interventions
 **Step 3: Commit**
 
 ```bash
-git add README.md docs/README.md docs/agent-framework.md AGENTS.md docs/AGENTS.md scripts/AGENTS.md
+git add README.md session-a-docs/README.md session-a-docs/agent-framework.md AGENTS.md session-a-docs/AGENTS.md session-g-ops/scripts/AGENTS.md
 git commit -m "docs: align guidance with intervention flow"
 ```
 
@@ -199,7 +199,7 @@ git commit -m "docs: align guidance with intervention flow"
 
 **Step 1: LSP diagnostics**
 
-Run: `python -m pytest -q` in `api-backend` and `agent-manager`
+Run: `python -m pytest -q` in `session-b-api` and `session-c-dispatch`
 Expected: PASS
 
 **Step 2: Summarize changes**

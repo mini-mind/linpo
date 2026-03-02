@@ -28,6 +28,11 @@
   - 自然语言干预（Intervention）
   - 配置示例与常见错误
 
+**架构与目录索引**:
+- [仓库目录结构 (面向多 Session 并行)](architecture/repo-layout.md)
+- [服务地图 (多 Session 并行推进)](architecture/service-map.md)
+- [子项目化视图 (降低认知成本)](architecture/subprojects.md)
+
 **核心机制**（根 README）:
 - [自然语言干预](../README.md#intervention) - 事件驱动干预流程
 
@@ -42,14 +47,14 @@
 - [Local Deployment Guide](deployment/local.md) - Docker Compose 本地部署快速指南
 
 **部署脚本**:
-- `scripts/deploy_local.sh` - 本地/单机快速部署核心服务（本地构建镜像）
-- `scripts/deploy_worker_host.sh` - 本地/拆分部署：仅部署后端重服务（本地构建镜像）
-- `scripts/push_worker_images.sh` - 推送 worker 镜像到 Aliyun ACR
-- `scripts/deploy_worker.sh` - 在 worker 主机上部署服务
-- `scripts/push_frontend_images.sh` - 推送 frontend 镜像到 Aliyun ACR
-- `scripts/deploy_ravin_frontend.sh` - 在 ravin(frontend host) 部署 gateway/web-frontend
-- `scripts/push_core_images.sh` - 推送全量 core 镜像到 Aliyun ACR
-- `scripts/pg_backup.sh` / `scripts/pg_restore.sh` - 数据库备份与恢复
+- `session-g-ops/scripts/deploy_local.sh` - 本地/单机快速部署核心服务（本地构建镜像）
+- `session-g-ops/scripts/deploy_worker_host.sh` - 本地/拆分部署：仅部署后端重服务（本地构建镜像）
+- `session-g-ops/scripts/push_worker_images.sh` - 推送 worker 镜像到 Aliyun ACR
+- `session-g-ops/scripts/deploy_worker.sh` - 在 worker 主机上部署服务
+- `session-g-ops/scripts/push_frontend_images.sh` - 推送 frontend 镜像到 Aliyun ACR
+- `session-g-ops/scripts/deploy_ravin_frontend.sh` - 在 ravin(frontend host) 部署 gateway/web-frontend
+- `session-g-ops/scripts/push_core_images.sh` - 推送全量 core 镜像到 Aliyun ACR
+- `session-g-ops/scripts/pg_backup.sh` / `session-g-ops/scripts/pg_restore.sh` - 数据库备份与恢复
 
 **生产配置**（根 README）:
 - [生产配置建议 - Secrets 管理、限流、邮件配置](../README.md#生产配置建议)
@@ -64,5 +69,6 @@
 
 - [项目章程](CONSTITUTION.md) - 项目治理与沟通规则
 - [Sisyphus 工作流](process/sisyphus-workflow.md) - 计划、草稿、决策记录系统（`.sisyphus/` 在仓库根目录）
+- [多 Session 并行推进规则](process/multi-session-ownership.md) - 目录所有权、接口契约同步与并行协作约定
 - [产品定位决策记录 (2026-02-13)](decisions/positioning-2026-02-13.md) - 业务专家构建权、长期服务与 P0 方向
 - [前端 UI 与版本管理规范 (2026-02-21)](specs/2026-02-21-ui-and-versioning.md) - Task Tree UI 形态、版本 TAG 规则、拆分部署边界

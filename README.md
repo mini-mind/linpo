@@ -4,22 +4,23 @@
 
 本项目明确分离人类文档与运行时角色提示词：
 
-- **`docs/`** - 人类/操作员/开发者文档
-  - [本地部署指南](docs/deployment/local.md) - Docker Compose 本地部署流程
-  - [生产部署指南](docs/prod-deployment.md) - 生产环境部署配置
-  - [文档中心](docs/README.md) - 完整的项目文档入口
-- [Sisyphus 工作流](docs/process/sisyphus-workflow.md) - 流程说明（`.sisyphus/` 位于仓库根目录，不在 `docs/` 中）
+- **`session-a-docs/`** - 人类/操作员/开发者文档
+  - [本地部署指南](session-a-docs/deployment/local.md) - Docker Compose 本地部署流程
+  - [生产部署指南](session-a-docs/prod-deployment.md) - 生产环境部署配置
+  - [文档中心](session-a-docs/README.md) - 完整的项目文档入口
+  - [多 Session 并行推进规则](session-a-docs/process/multi-session-ownership.md) - 目录所有权 + 契约同步 + handoff
+- [Sisyphus 工作流](session-a-docs/process/sisyphus-workflow.md) - 流程说明（`.sisyphus/` 位于仓库根目录，不在 `session-a-docs/` 中）
 
-- **`prompts/`** - 运行时角色提示词（仅供应用内 Agent 使用）
-  - `prompts/agents/*.md` - Agent 角色定义
-  - `prompts/skills/*.md` - Agent 技能提示词（如 `chat_user.md`, `search_web.md`, `browser_run.md` 等）
+- **`session-h-shared/prompts/`** - 运行时角色提示词（仅供应用内 Agent 使用）
+  - `session-h-shared/prompts/agents/*.md` - Agent 角色定义
+  - `session-h-shared/prompts/skills/*.md` - Agent 技能提示词（如 `chat_user.md`, `search_web.md`, `browser_run.md` 等）
   - 这些文件仅供 LLM 在运行时使用，不包含人类操作手册或部署指南
 
 ## 服务架构
 
 ### 服务组件
 - **edge**: 80/443 (公网入口，Caddy 反向代理 + HTTPS)
-- **gateway**: 80 (内部，统一入口，Nginx 反向代理；在 `deploy/prod/docker-compose.frontend.yml` 中会绑定 `127.0.0.1:8082->80` 便于本机调试)
+- **gateway**: 80 (内部，统一入口，Nginx 反向代理；在 `session-g-ops/deploy/prod/docker-compose.frontend.yml` 中会绑定 `127.0.0.1:8082->80` 便于本机调试)
 - **web-frontend**: 80 (内部，静态文件服务)
 - **api-backend**: 8000 (内部，FastAPI 后端；本地 `docker-compose.yml` 默认绑定 `127.0.0.1:8005->8000` 供调试；split 部署时对外绑定 `0.0.0.0:8000->8000`)
 - **agent-manager**: 7000 (内部，任务调度；默认不暴露到宿主机)
@@ -28,7 +29,7 @@
 - **postgres**: (内部，数据持久化，绑定 127.0.0.1:5432)
 - **redis**: (内部，速率限制，绑定 127.0.0.1:6379)
 - **mailhog**: 127.0.0.1:8025 (邮件测试；需要时启动)
-- **searxng**: 127.0.0.1:8081 (搜索引擎；仅在 `deploy/prod/docker-compose.frontend.yml` / legacy compose 中提供)
+- **searxng**: 127.0.0.1:8081 (搜索引擎；仅在 `session-g-ops/deploy/prod/docker-compose.frontend.yml` / legacy compose 中提供)
 
 ### 访问入口/端口暴露
 
@@ -207,14 +208,14 @@ curl -s https://roboard.duckdns.org/api/tasks/$TASK_ID/notifications \
   -H "X-API-Key: $API_KEY" | jq
 
 # 6. WebSocket 连接 (使用 wscat 或 websocat) - 通过公网域名
-# websocat "wss://roboard.duckdns.org/ws/events?api_key=$API_KEY&task_id=$TASK_ID"
+# websocat "wss://roboard.duckdns.org/ws/runs/$RUN_ID"
 ```
 
 **注意**：
 - `/internal/tenants` 端点通过 `docker compose exec` 进入容器执行 (推荐方式)
   或直接使用本地默认映射 `127.0.0.1:8005:8000` (本地调试)
 - 外部 API 访问 `https://roboard.duckdns.org/api/...` (经过 edge/Caddy + HTTPS)
-- WebSocket 连接使用 `api_key` + `task_id` 参数，通过 `wss://` 安全连接
+- WebSocket 连接使用 `wss://roboard.duckdns.org/ws/runs/{run_id}`，支持 session cookie 或 `session_token`
 - 创建任务后会自动触发执行，无需手动调用 agent-manager
 
 ## 生产配置建议
@@ -252,7 +253,7 @@ curl -s https://roboard.duckdns.org/api/tasks/$TASK_ID/notifications \
 
 ### Gateway 限流
 
-- **IP 级别限流**：已在 `gateway/nginx.conf` 配置基础限流和连接限制，作为兜底保护
+- **IP 级别限流**：已在 `session-f-edge-ui/gateway/nginx.conf` 配置基础限流和连接限制，作为兜底保护
 - **租户级别限流**：应用层（api-backend）以 tenant 为单位进行速率限制，优先实现业务隔离
 - 生产环境可根据实际流量调整 `nginx.conf` 中的 `limit_req_zone` 和 `limit_conn_zone` 参数
 
@@ -281,10 +282,10 @@ curl -s https://roboard.duckdns.org/api/tasks/$TASK_ID/notifications \
 Playwright 浏览器执行任务已迁移至独立 worker 服务器以提升性能和隔离性。
 
 - **Worker 主机**: `175.178.213.10` (用户: `ubuntu`)
-- **部署文档**: [docs/worker-deployment.md](docs/worker-deployment.md)
+- **部署文档**: [session-a-docs/worker-deployment.md](session-a-docs/worker-deployment.md)
 - **部署脚本**:
-  - `scripts/push_worker_images.sh` - 推送 worker 镜像到远程
-  - `scripts/deploy_worker.sh` - 在 worker 主机上部署服务
+  - `session-g-ops/scripts/push_worker_images.sh` - 推送 worker 镜像到远程
+  - `session-g-ops/scripts/deploy_worker.sh` - 在 worker 主机上部署服务
 
 提示：项目根目录 `.env` 需要设置 `PLAYWRIGHT_GATEWAY_URL=http://175.178.213.10:7200`（并确保 `ADMIN_API_KEY`/`INTERNAL_API_KEY` 已配置；`SEARXNG_SECRET_KEY` 仅在部署 searxng 服务时需要）。
 
@@ -332,7 +333,7 @@ edge 服务使用 Caddy 作为反向代理，自动通过 Let's Encrypt 获取�
   curl https://roboard.duckdns.org/api/health
 
   # WebSocket 连接
-  wscat -c "wss://roboard.duckdns.org/ws/events?api_key=YOUR_KEY"
+  wscat -c "wss://roboard.duckdns.org/ws/runs/YOUR_RUN_ID"
   ```
 
 ### IP 访问（HTTP 仅支持）
@@ -390,14 +391,14 @@ certbot renew --deploy-hook "docker exec edge reload-nginx"
 
 ### 备份脚本
 
-使用 `scripts/pg_backup.sh` 备份 PostgreSQL 数据库：
+使用 `session-g-ops/scripts/pg_backup.sh` 备份 PostgreSQL 数据库：
 
 ```bash
 # 使用默认配置备份（数据库名: web3d）
-./scripts/pg_backup.sh
+./session-g-ops/scripts/pg_backup.sh
 
 # 使用环境变量自定义备份
-PG_DB=mydb PG_USER=myuser BACKUP_DIR=./my_backups ./scripts/pg_backup.sh
+PG_DB=mydb PG_USER=myuser BACKUP_DIR=./my_backups ./session-g-ops/scripts/pg_backup.sh
 ```
 
 - 备份文件命名：`{database_name}_YYYYMMDD_HHMMSS.dump`
@@ -410,14 +411,14 @@ PG_DB=mydb PG_USER=myuser BACKUP_DIR=./my_backups ./scripts/pg_backup.sh
 
 ### 恢复脚本
 
-使用 `scripts/pg_restore.sh` 恢复数据库：
+使用 `session-g-ops/scripts/pg_restore.sh` 恢复数据库：
 
 ```bash
 # 恢复指定备份文件
-./scripts/pg_restore.sh backups/web3d_20250207_120000.dump
+./session-g-ops/scripts/pg_restore.sh session-g-ops/backups/web3d_20250207_120000.dump
 
 # 使用环境变量指定数据库
-PG_DB=mydb PG_USER=myuser ./scripts/pg_restore.sh backups/web3d_20250207_120000.dump
+PG_DB=mydb PG_USER=myuser ./session-g-ops/scripts/pg_restore.sh session-g-ops/backups/web3d_20250207_120000.dump
 ```
 
 - **注意**：恢复操作会完全删除并重建目标数据库，所有现有数据将丢失

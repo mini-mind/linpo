@@ -28,7 +28,7 @@ Verification philosophy:
 ### Task 1: Add auth API tests (RED)
 
 **Files:**
-- Create: `api-backend/tests/test_auth_sessions.py`
+- Create: `session-b-api/tests/test_auth_sessions.py`
 
 **Step 1: Write the failing tests**
 
@@ -54,9 +54,9 @@ Expected: FAIL (endpoints missing / auth not wired).
 ### Task 2: Implement auth endpoints (GREEN)
 
 **Files:**
-- Create: `api-backend/app/auth_api.py`
-- Modify: `api-backend/app/main.py`
-- Modify (if needed): `api-backend/app/auth.py`
+- Create: `session-b-api/app/auth_api.py`
+- Modify: `session-b-api/app/main.py`
+- Modify (if needed): `session-b-api/app/auth.py`
 
 **Implementation requirements:**
 
@@ -78,7 +78,7 @@ Implement session token creation:
 - DB stores hash: `auth.hash_session_token(raw)`
 
 Implement password hashing:
-- Use existing PBKDF2 helper in `api-backend/app/auth.py` (`hash_password`, `verify_password`).
+- Use existing PBKDF2 helper in `session-b-api/app/auth.py` (`hash_password`, `verify_password`).
 
 **Step 2: Run tests**
 
@@ -94,7 +94,7 @@ Expected: PASS.
 ### Task 3: Accept cookie session in tenant auth dependency (HTTP)
 
 **Files:**
-- Modify: `api-backend/app/main.py`
+- Modify: `session-b-api/app/main.py`
 
 **Behavior:**
 - Existing behavior preserved: if `X-API-Key` header is present, authenticate by API key.
@@ -114,7 +114,7 @@ cd api-backend
 ### Task 4: Accept cookie session in websocket auth (WS)
 
 **Files:**
-- Modify: `api-backend/app/main.py`
+- Modify: `session-b-api/app/main.py`
 
 **Behavior:**
 - `/ws/runs/{run_id}` (and optionally `/ws/events`) should accept either:
@@ -129,9 +129,9 @@ cd api-backend
 ### Task 5: Update cockpit frontend to use login and cookies (no key pasting)
 
 **Files:**
-- Modify: `web-frontend/index.html`
-- Modify: `web-frontend/style.css`
-- Modify: `web-frontend/app.js`
+- Modify: `session-f-edge-ui/web-frontend/index.html`
+- Modify: `session-f-edge-ui/web-frontend/style.css`
+- Modify: `session-f-edge-ui/web-frontend/app.js`
 
 **Behavior:**
 - Add a simple auth screen (email+password): Register / Login.
@@ -149,7 +149,7 @@ cd api-backend
 
 **Files:**
 - Modify: `.sisyphus/notepads/prod-ops/ops.md`
-- Modify: `docs/deployment/local.md`
+- Modify: `session-a-docs/deployment/local.md`
 
 **Behavior:**
 - Document auth endpoints and required env vars.

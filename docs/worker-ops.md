@@ -48,7 +48,7 @@ The worker runs two core services via Docker Compose in `~/web3d-worker/docker-c
    - Allows only `POST` operations (create containers)
    - Blocks destructive operations (`DELETE`, `PUT`, `PATCH`, `GET`)
 
-Compose file location: `deploy/worker/docker-compose.yml` in the repository.
+Compose file location: `session-g-ops/deploy/worker/docker-compose.yml` in the repository.
 
 ## Port Mapping Summary
 
@@ -70,7 +70,7 @@ All third-party images must be mirrored into Aliyun Container Registry (ACR) bef
 **Mirrored Image**:
 - `docker-socket-proxy`: `registry.cn-hangzhou.aliyuncs.com/ravin/docker-socket-proxy:0.1.1`
   - Source: `tecnativa/docker-socket-proxy:0.1.1`
-  - Automatically mirrored by `scripts/push_worker_images.sh`
+  - Automatically mirrored by `session-g-ops/scripts/push_worker_images.sh`
 
 **Never reference Docker Hub images directly in the worker compose file.**
 
@@ -109,7 +109,7 @@ The worker uses `INTERNAL_API_KEY` as a shared secret for service-to-service aut
 
 **Secret Management**:
 - Store in HK main server's `.env` file (`.gitignore` prevents commits)
-- Set during deployment: `INTERNAL_API_KEY=your-secret ./scripts/deploy_worker.sh`
+- Set during deployment: `INTERNAL_API_KEY=your-secret ./session-g-ops/scripts/deploy_worker.sh`
 - Never include actual keys in documentation or configuration files
 
 ## Firewall Configuration
@@ -145,7 +145,7 @@ The worker gateway should only be accessible from the HK main server. Direct int
 
 Generate tag and push to ACR:
 ```bash
-TAG=20260209-0277415 ./scripts/push_worker_images.sh
+TAG=20260209-0277415 ./session-g-ops/scripts/push_worker_images.sh
 ```
 
 The script:
@@ -157,12 +157,12 @@ The script:
 
 Deploy with tag and shared secret:
 ```bash
-INTERNAL_API_KEY=your-secret-key TAG=20260209-0277415 ./scripts/deploy_worker.sh
+INTERNAL_API_KEY=your-secret-key TAG=20260209-0277415 ./session-g-ops/scripts/deploy_worker.sh
 ```
 
 The script:
 - Creates `~/web3d-worker` directory
-- Copies `deploy/worker/docker-compose.yml`
+- Copies `session-g-ops/deploy/worker/docker-compose.yml`
 - Pre-pulls runner image (see critical gotcha below)
 - Runs `docker compose up -d` with environment variables
 
@@ -358,7 +358,7 @@ To quickly revert to a previous version:
 1. **Identify previous tag** from deployment history or Git log
 2. **Deploy with previous tag**:
    ```bash
-   INTERNAL_API_KEY=your-secret TAG=<previous-tag> ./scripts/deploy_worker.sh
+INTERNAL_API_KEY=your-secret TAG=<previous-tag> ./session-g-ops/scripts/deploy_worker.sh
    ```
 3. **Verify rollback**:
    ```bash
@@ -413,7 +413,7 @@ nc -zv 175.178.213.10 7200
 
 ## References
 
-- Deployment guide: `docs/worker-deployment.md`
-- Push script: `scripts/push_worker_images.sh`
-- Deploy script: `scripts/deploy_worker.sh`
-- Compose file: `deploy/worker/docker-compose.yml`
+- Deployment guide: `session-a-docs/worker-deployment.md`
+- Push script: `session-g-ops/scripts/push_worker_images.sh`
+- Deploy script: `session-g-ops/scripts/deploy_worker.sh`
+- Compose file: `session-g-ops/deploy/worker/docker-compose.yml`

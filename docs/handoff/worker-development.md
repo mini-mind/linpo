@@ -44,7 +44,7 @@ export PATH="$HOME/.opencode/bin:$PATH"
 ## 开发约束（务必遵守）
 
 1. 人类文档与运行时 prompts 分离
-   - `docs/`：面向人类/产品/研发/运维
+   - `session-a-docs/`：面向人类/产品/研发/运维
    - `prompts/`：运行时角色提示词（仅供应用内 Agent 使用）
 
 2. P0 优先级（来自最新决策）
@@ -57,4 +57,4 @@ export PATH="$HOME/.opencode/bin:$PATH"
 
 - worker 上可以运行 `opencode --version`
 - worker 上 `~/projects/roboard` 目录存在且内容为最新
-- 在 worker 上以最新 PRD 为准推进开发：`docs/prd/2026-02-26-lingban-prd-v3.0.md`
+- 在 worker 上以最新 PRD 为准推进开发：`session-a-docs/prd/2026-02-26-lingban-prd-v3.0.md`

@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RoBoard 模板库</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23c46a2a'/%3E%3Ctext x='50' y='70' font-family='Arial, sans-serif' font-size='60' font-weight='bold' text-anchor='middle' fill='white'%3ER%3C/text%3E%3C/svg%3E" type="image/svg+xml" />
+    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="templates.css" />
+  </head>
+  <body>
+    <div id="app" class="template-lib-shell" x-data="window.templateLibState || {}" x-cloak x-init="init && init()">
+      <!-- 顶部栏 -->
+      <header class="header topbar" aria-label="RoBoard 模板库">
+        <a class="brand logo" href="/" aria-label="RoBoard 首页">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">RoBoard</span>
+        </a>
+
+        <nav class="nav-breadcrumbs" aria-label="面包屑导航">
+          <a href="/" class="nav-crumb">任务树</a>
+          <span class="nav-crumb-sep">/</span>
+          <span class="nav-crumb nav-crumb-active">模板库</span>
+        </nav>
+
+        <div class="user-status user-dropdown" aria-label="用户菜单">
+          <button id="user-dropdown-trigger" class="user-dropdown-trigger" type="button" aria-haspopup="menu" aria-expanded="false">
+            <span id="session-label" class="session-label user-name" x-text="sessionLabel"></span>
+          </button>
+          <div id="user-dropdown-menu" class="user-dropdown-menu is-hidden" role="menu">
+            <div class="lang-toggle" role="group" aria-label="语言切换">
+              <button id="lang-zh" class="btn btn-ghost" type="button" role="menuitem">中文</button>
+              <button id="lang-en" class="btn btn-ghost" type="button" role="menuitem">English</button>
+            </div>
+            <button id="logout-btn" class="btn btn-ghost" type="button" role="menuitem" data-i18n="taskTree.logout">退出</button>
+          </div>
+        </div>
+      </header>
+
+      <!-- 主内容区 -->
+      <main class="template-lib-main" aria-label="模板库">
+        <!-- 页面标题区 -->
+        <section class="template-lib-hero">
+          <div class="template-lib-hero-content">
+            <h1 class="template-lib-title" data-i18n="templates.title">Agent 模板库</h1>
+            <p class="template-lib-subtitle" data-i18n="templates.subtitle">选择预制 Agent 模板，快速构建您的智能体团队</p>
+          </div>
+        </section>
+
+        <!-- 模板卡片网格 -->
+        <section class="template-lib-section">
+          <div class="template-grid">
+            <!-- 加载状态 -->
+            <div class="template-loading" x-show="loading">
+              <div class="loading-spinner"></div>
+              <p data-i18n="templates.loading">加载中...</p>
+            </div>
+
+            <!-- 空状态 -->
+            <div class="template-empty" x-show="!loading && templates.length === 0">
+              <div class="empty-icon">📦</div>
+              <p data-i18n="templates.empty">暂无模板</p>
+            </div>
+
+            <!-- 模板卡片列表 -->
+            <template x-for="template in templates" :key="template.id">
+              <article class="template-card" :class="{ 'is-selected': selectedTemplate?.id === template.id }" @click="selectTemplate(template)">
+                <div class="template-card-header">
+                  <div class="template-card-icon" x-text="getTemplateIcon(template.role)"></div>
+                  <div class="template-card-title-group">
+                    <h3 class="template-card-title" x-text="template.name"></h3>
+                    <span class="template-card-role" x-text="template.role"></span>
+                  </div>
+                </div>
+
+                <p class="template-card-description" x-text="template.description"></p>
+
+                <div class="template-card-tags" x-show="template.metadata?.tags?.length">
+                  <template x-for="tag in template.metadata.tags" :key="tag">
+                    <span class="template-tag" x-text="tag"></span>
+                  </template>
+                </div>
+
+                <div class="template-card-skills" x-show="template.skills?.length">
+                  <span class="skills-label" data-i18n="templates.skills">绑定技能:</span>
+                  <div class="skills-list">
+                    <template x-for="skill in template.skills.slice(0, 3)" :key="skill.name">
+                      <span class="skill-badge" x-text="skill.name"></span>
+                    </template>
+                    <span class="skills-more" x-show="template.skills.length > 3" x-text="'+' + (template.skills.length - 3)"></span>
+                  </div>
+                </div>
+
+                <div class="template-card-footer">
+                  <button class="btn btn-primary btn-use-template" @click.stop="useTemplate(template)" data-i18n="templates.useButton">
+                    使用此模板
+                  </button>
+                </div>
+              </article>
+            </template>
+          </div>
+        </section>
+      </main>
+
+      <!-- 模板详情弹窗 -->
+      <section class="modal modal-mask template-details-modal" :class="{ 'is-hidden': !selectedTemplate }" role="dialog" aria-modal="true" aria-labelledby="template-details-title">
+        <div class="modal-overlay" @click="closeDetails"></div>
+        <div class="modal-content template-details-card">
+          <div class="modal-header">
+            <h3 class="panel-title modal-title" id="template-details-title" x-text="selectedTemplate?.name"></h3>
+            <button class="btn btn-ghost modal-close" type="button" aria-label="关闭" @click="closeDetails">×</button>
+          </div>
+
+          <div class="template-details-content" x-show="selectedTemplate">
+            <!-- 基本信息 -->
+            <div class="template-detail-section">
+              <h4 class="detail-section-title" data-i18n="templates.details.overview">基本信息</h4>
+              <div class="detail-grid">
+                <div class="detail-item">
+                  <span class="detail-label" data-i18n="templates.details.id">模板 ID</span>
+                  <span class="detail-value" x-text="selectedTemplate?.id"></span>
+                </div>
+                <div class="detail-item">
+                  <span class="detail-label" data-i18n="templates.details.role">角色</span>
+                  <span class="detail-value" x-text="selectedTemplate?.role"></span>
+                </div>
+                <div class="detail-item">
+                  <span class="detail-label" data-i18n="templates.details.version">版本</span>
+                  <span class="detail-value" x-text="'v' + (selectedTemplate?.version || 1)"></span>
+                </div>
+              </div>
+              <p class="detail-description" x-text="selectedTemplate?.description"></p>
+            </div>
+
+            <!-- 绑定技能 -->
+            <div class="template-detail-section" x-show="selectedTemplate?.skills?.length">
+              <h4 class="detail-section-title" data-i18n="templates.details.skills">绑定技能</h4>
+              <div class="detail-skills-list">
+                <template x-for="skill in selectedTemplate.skills" :key="skill.name">
+                  <div class="detail-skill-item">
+                    <span class="detail-skill-name" x-text="skill.name"></span>
+                    <span class="detail-skill-desc" x-text="skill.description || ''"></span>
+                    <span class="detail-skill-type" x-text="skill.builtin ? '内置' : '自定义'"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <!-- 工具绑定 -->
+            <div class="template-detail-section" x-show="selectedTemplate?.tools?.length">
+              <h4 class="detail-section-title" data-i18n="templates.details.tools">工具绑定</h4>
+              <div class="detail-tools-list">
+                <template x-for="tool in selectedTemplate.tools" :key="tool.name">
+                  <div class="detail-tool-item">
+                    <span class="detail-tool-name" x-text="tool.name"></span>
+                    <span class="detail-tool-endpoint" x-text="tool.endpoint"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <!-- SOP 预览 -->
+            <div class="template-detail-section" x-show="selectedTemplate?.sop">
+              <h4 class="detail-section-title" data-i18n="templates.details.sop">SOP 预览</h4>
+              <pre class="detail-sop-preview" x-text="selectedTemplate?.sop"></pre>
+            </div>
+
+            <!-- 标签 -->
+            <div class="template-detail-section" x-show="selectedTemplate?.metadata?.tags?.length">
+              <h4 class="detail-section-title" data-i18n="templates.details.tags">标签</h4>
+              <div class="detail-tags-list">
+                <template x-for="tag in selectedTemplate.metadata.tags" :key="tag">
+                  <span class="detail-tag" x-text="tag"></span>
+                </template>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-footer template-details-actions">
+            <button class="btn btn-ghost" type="button" @click="closeDetails" data-i18n="templates.cancel">取消</button>
+            <button class="btn btn-primary" type="button" @click="useTemplate(selectedTemplate)" data-i18n="templates.useButton">使用此模板</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 使用模板确认弹窗 -->
+      <section class="modal modal-mask template-use-modal" :class="{ 'is-hidden': !showUseModal }" role="dialog" aria-modal="true" aria-labelledby="template-use-title">
+        <div class="modal-overlay" @click="closeUseModal"></div>
+        <div class="modal-content template-use-card">
+          <div class="modal-header">
+            <h3 class="panel-title modal-title" id="template-use-title" data-i18n="templates.useModal.title">使用模板</h3>
+            <button class="btn btn-ghost modal-close" type="button" aria-label="关闭" @click="closeUseModal">×</button>
+          </div>
+
+          <div class="template-use-content">
+            <p data-i18n="templates.useModal.description">选择此模板将创建一个新的 Agent 实例。</p>
+            <div class="use-template-summary">
+              <div class="use-template-icon" x-text="selectedTemplate ? getTemplateIcon(selectedTemplate.role) : '🤖'"></div>
+              <div class="use-template-info">
+                <strong x-text="selectedTemplate?.name"></strong>
+                <span x-text="selectedTemplate?.description"></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-footer template-use-actions">
+            <button class="btn btn-ghost" type="button" @click="closeUseModal" data-i18n="templates.cancel">取消</button>
+            <button class="btn btn-primary" type="button" @click="confirmUseTemplate" :disabled="usingTemplate" data-i18n="templates.confirm">
+              <span x-show="!usingTemplate" data-i18n="templates.confirm">确认使用</span>
+              <span x-show="usingTemplate" data-i18n="templates.using">使用中...</span>
+            </button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script src="https://unpkg.com/alpinejs@3.13.5/dist/cdn.min.js" defer></script>
+    <script src="templates.js" defer></script>
+  </body>
+</html>

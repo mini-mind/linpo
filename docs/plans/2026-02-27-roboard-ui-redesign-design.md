@@ -32,6 +32,8 @@
 
 ## 交互与数据
 
+**术语说明：** 本文 SOP 指 TODO/计划列表，来源为 `plan.md` 并解析为 `plan_subtasks`，对应页面上的 `task-sop-display` 展示区域。当前实现仍保留 SOP 模板（`sops/templates/*.md` + `mission.md` + `/api/agents/{agent_id}/sop`），与计划列表并存。
+
 **视图切换**：
 - 前端状态切换（无后端参与），默认树视图。
 - 视图切换不触发 API，仅切换容器显示。
@@ -77,7 +79,7 @@
 ## 实施拆分
 
 ### Task 1: 前端 UI 重构
-- 修改 `web-frontend/index.html`/`style.css`/`app.js`。
+- 修改 `session-f-edge-ui/web-frontend/index.html`/`style.css`/`app.js`。
 - 增加三视图容器与切换逻辑，保持现有 id 绑定。
 
 ### Task 2: 后端支持（可选）
