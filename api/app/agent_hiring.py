@@ -1,3 +1,5 @@
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false
+
 import hashlib
 from typing import cast
 
@@ -21,6 +23,7 @@ def _create_agent_with_sop(
     role_label: str,
     sop_text: str,
     created_by_user_id: int | None = None,
+    write_sop_to_fs: bool = True,
 ) -> models.AgentInstance:
     agent = models.AgentInstance()
     setattr(agent, "tenant_id", tenant_id)
@@ -33,7 +36,8 @@ def _create_agent_with_sop(
 
     agent_id = int(getattr(agent, "id"))
     rel = sop_store.build_sop_relpath(str(tenant_id), str(run_id), str(agent_id), 1)
-    sop_store.write_sop_text(rel, sop_text)
+    if write_sop_to_fs:
+        sop_store.write_sop_text(rel, sop_text)
     sha = _sha256_text(sop_text)
 
     sop = models.SopVersion()

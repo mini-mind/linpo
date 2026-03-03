@@ -4,7 +4,7 @@ import pathlib
 import shutil
 import sys
 import uuid
-from typing import Protocol, cast
+from typing import Any, Callable, Protocol, cast
 
 from fastapi.testclient import TestClient
 from starlette.types import ASGIApp
@@ -16,9 +16,11 @@ class _MonkeyPatch(Protocol):
     def setenv(self, name: str, value: str) -> None: ...
     def delenv(self, name: str, raising: bool = True) -> None: ...
     def chdir(self, path: pathlib.Path) -> None: ...
+    def setattr(self, target: object, name: str, value: object) -> None: ...
 
 
 class _SessionLocal(Protocol):
+    def __call__(self) -> object: ...
     def configure(self, *, bind: object) -> None: ...
 
 
@@ -36,6 +38,7 @@ class _Base(Protocol):
 
 class _ModelsModule(Protocol):
     Base: _Base
+    AgentInstance: object
 
 
 class _MainModule(Protocol):
@@ -95,7 +98,7 @@ def _bootstrap_client(tmp_path: pathlib.Path, monkeypatch: _MonkeyPatch) -> _Cli
     for yaml_file in source_templates.glob("*.yaml"):
         shutil.copy2(yaml_file, target_templates / yaml_file.name)
 
-    main = cast(_MainModule, cast(object, importlib.import_module("app.main")))
+    main = cast(Any, importlib.import_module("app.main"))
     sqlalchemy = cast(_SqlAlchemy, cast(object, importlib.import_module("sqlalchemy")))
 
     engine = sqlalchemy.create_engine(f"sqlite+pysqlite:///{db_path}")
@@ -149,6 +152,7 @@ def test_instantiate_agent_from_template_with_overrides(tmp_path: pathlib.Path, 
                     "type": "http",
                     "name": "custom-searxng",
                     "endpoint": "http://mcp-server:9000/search",
+                    "auth": "internal-key",
                 }
             ],
             },
@@ -186,7 +190,100 @@ def test_instantiate_agent_from_template_with_overrides(tmp_path: pathlib.Path, 
     assert (agent_root / "skills" / "custom_skill.py").is_file()
 
     identity = json.loads((agent_root / "identity.json").read_text(encoding="utf-8"))
-    assert identity["tools"] == [{"type": "http", "name": "custom-searxng", "endpoint": "http://mcp-server:9000/search"}]
+    assert identity["tools"] == [
+        {
+            "type": "http",
+            "name": "custom-searxng",
+            "endpoint": "http://mcp-server:9000/search",
+            "auth": "internal-key",
+        }
+    ]
+
+
+def test_instantiate_agent_defaults_parent_to_run_root_agent(tmp_path: pathlib.Path, monkeypatch: _MonkeyPatch) -> None:
+    client = _bootstrap_client(tmp_path, monkeypatch)
+    email = f"instantiate_parent_default_{uuid.uuid4().hex}@example.com"
+    register_resp = client.post(
+        "/api/auth/register",
+        json={"email": email, "password": "testpass", "tenant_name": "t1"},
+    )
+    assert register_resp.status_code == 201
+    session_token = cast(str, register_resp.json()["session_token"])
+
+    run_resp = client.post(
+        "/api/runs",
+        json={"input_nl": "instantiate", "input": {}},
+        headers={"X-Session-Token": session_token},
+    )
+    assert run_resp.status_code == 200
+    run_payload = run_resp.json()
+    run_id = cast(str, run_payload["run_id"])
+    root_agent_id = cast(str, run_payload["root_agent_id"])
+
+    instantiate_resp = client.post(
+        f"/api/runs/{run_id}/agents/instantiate",
+        json={"template_id": "searcher"},
+        headers={"X-Session-Token": session_token},
+    )
+    assert instantiate_resp.status_code == 200
+    instantiate_payload = instantiate_resp.json()
+    assert instantiate_payload["parent_agent_id"] == root_agent_id
+
+
+def test_instantiate_agent_rejects_invalid_override_tools_schema(tmp_path: pathlib.Path, monkeypatch: _MonkeyPatch) -> None:
+    client = _bootstrap_client(tmp_path, monkeypatch)
+    email = f"instantiate_tools_schema_{uuid.uuid4().hex}@example.com"
+    register_resp = client.post(
+        "/api/auth/register",
+        json={"email": email, "password": "testpass", "tenant_name": "t1"},
+    )
+    assert register_resp.status_code == 201
+    session_token = cast(str, register_resp.json()["session_token"])
+
+    run_resp = client.post(
+        "/api/runs",
+        json={"input_nl": "instantiate", "input": {}},
+        headers={"X-Session-Token": session_token},
+    )
+    assert run_resp.status_code == 200
+    run_id = cast(str, run_resp.json()["run_id"])
+
+    instantiate_resp = client.post(
+        f"/api/runs/{run_id}/agents/instantiate",
+        json={
+            "template_id": "searcher",
+            "overrides": {
+                "tools": [
+                    {
+                        "type": "http",
+                        "name": "missing-auth",
+                        "endpoint": "http://mcp-server:9000/search",
+                    },
+                    {
+                        "type": "http",
+                        "name": 123,
+                        "endpoint": "http://mcp-server:9000/search",
+                        "auth": "internal-key",
+                    },
+                    {
+                        "type": "http",
+                        "name": "extra-field",
+                        "endpoint": "http://mcp-server:9000/search",
+                        "auth": "internal-key",
+                        "extra": "not-allowed",
+                    },
+                ]
+            },
+        },
+        headers={"X-Session-Token": session_token},
+    )
+    assert instantiate_resp.status_code == 422
+    payload = instantiate_resp.json()
+    errors = cast(list[dict[str, object]], payload["detail"])
+    locs = {tuple(cast(list[object], item["loc"])) for item in errors}
+    assert ("body", "overrides", "tools", 0, "auth") in locs
+    assert ("body", "overrides", "tools", 1, "name") in locs
+    assert ("body", "overrides", "tools", 2, "extra") in locs
 
 
 def test_instantiate_agent_requires_session_token(tmp_path: pathlib.Path, monkeypatch: _MonkeyPatch) -> None:
@@ -213,3 +310,130 @@ def test_instantiate_agent_requires_session_token(tmp_path: pathlib.Path, monkey
         headers={"X-API-Key": api_key},
     )
     assert instantiate_resp.status_code == 401
+
+
+def test_instantiate_agent_fs_failure_rolls_back_db_after_commit(
+    tmp_path: pathlib.Path,
+    monkeypatch: _MonkeyPatch,
+) -> None:
+    client = _bootstrap_client(tmp_path, monkeypatch)
+    email = f"instantiate_fs_fail_{uuid.uuid4().hex}@example.com"
+    register_resp = client.post(
+        "/api/auth/register",
+        json={"email": email, "password": "testpass", "tenant_name": "t1"},
+    )
+    assert register_resp.status_code == 201
+    session_token = cast(str, register_resp.json()["session_token"])
+
+    me_resp = client.get("/api/auth/me", headers={"X-Session-Token": session_token})
+    assert me_resp.status_code == 200
+    tenant_id = int(cast(str, cast(dict[str, object], me_resp.json()["tenant"])["tenant_id"]))
+
+    run_resp = client.post(
+        "/api/runs",
+        json={"input_nl": "instantiate", "input": {}},
+        headers={"X-Session-Token": session_token},
+    )
+    assert run_resp.status_code == 200
+    run_id = cast(str, run_resp.json()["run_id"])
+
+    main = cast(Any, importlib.import_module("app.main"))
+    db_session = cast(Any, main.db.SessionLocal())
+    try:
+        before_count = int(
+            db_session.query(main.models.AgentInstance)
+            .filter(
+                main.models.AgentInstance.tenant_id == tenant_id,
+                main.models.AgentInstance.run_id == int(run_id),
+            )
+            .count()
+        )
+    finally:
+        db_session.close()
+
+    tree_api = cast(Any, importlib.import_module("app.tree_api"))
+    original_write_text = cast(
+        Callable[[pathlib.Path, str, str], None],
+        getattr(tree_api.agent_fs, "write_text"),
+    )
+
+    def _write_text_fail(agent_root: pathlib.Path, rel_path: str, content: str) -> None:
+        if rel_path == "mission.md":
+            raise RuntimeError("disk full")
+        original_write_text(agent_root, rel_path, content)
+
+    monkeypatch.setattr(tree_api.agent_fs, "write_text", _write_text_fail)
+
+    commit_calls = 0
+    session_cls = type(main.db.SessionLocal())
+    original_commit = cast(Callable[[object], object], getattr(session_cls, "commit"))
+
+    def _counting_commit(self: object) -> object:
+        nonlocal commit_calls
+        commit_calls += 1
+        return original_commit(self)
+
+    monkeypatch.setattr(session_cls, "commit", _counting_commit)
+
+    instantiate_resp = client.post(
+        f"/api/runs/{run_id}/agents/instantiate",
+        json={"template_id": "searcher"},
+        headers={"X-Session-Token": session_token},
+    )
+    assert instantiate_resp.status_code == 500
+    assert commit_calls >= 1
+
+    db_session = cast(Any, main.db.SessionLocal())
+    try:
+        after_count = int(
+            db_session.query(main.models.AgentInstance)
+            .filter(
+                main.models.AgentInstance.tenant_id == tenant_id,
+                main.models.AgentInstance.run_id == int(run_id),
+            )
+            .count()
+        )
+    finally:
+        db_session.close()
+
+    assert after_count == before_count
+
+
+def test_instantiate_agent_duplicate_idempotency_key_returns_409(
+    tmp_path: pathlib.Path,
+    monkeypatch: _MonkeyPatch,
+) -> None:
+    client = _bootstrap_client(tmp_path, monkeypatch)
+    email = f"instantiate_idem_{uuid.uuid4().hex}@example.com"
+    register_resp = client.post(
+        "/api/auth/register",
+        json={"email": email, "password": "testpass", "tenant_name": "t1"},
+    )
+    assert register_resp.status_code == 201
+    session_token = cast(str, register_resp.json()["session_token"])
+
+    run_resp = client.post(
+        "/api/runs",
+        json={"input_nl": "instantiate", "input": {}},
+        headers={"X-Session-Token": session_token},
+    )
+    assert run_resp.status_code == 200
+    run_id = cast(str, run_resp.json()["run_id"])
+
+    payload: dict[str, object] = {
+        "template_id": "searcher",
+        "idempotency_key": "hire-dup-1",
+    }
+    first = client.post(
+        f"/api/runs/{run_id}/agents/instantiate",
+        json=payload,
+        headers={"X-Session-Token": session_token},
+    )
+    assert first.status_code == 200
+
+    second = client.post(
+        f"/api/runs/{run_id}/agents/instantiate",
+        json=payload,
+        headers={"X-Session-Token": session_token},
+    )
+    assert second.status_code == 409

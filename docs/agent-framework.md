@@ -109,11 +109,18 @@ Body:
 - `GET /api/community-skills` 获取社区技能注册表（来自 `config/community_skills.yaml`）
 - `POST /api/runs/{run_id}/agents/{agent_id}/skills/install` 安装指定技能
 
-### 团队导出/导入（YAML）
+### 团队导出/导入（已下线）与 Agent 招募机制
 
-**模板 API：**
-- `GET /api/runs/{run_id}/team/export` 导出 YAML
-- `POST /api/runs/team/import` 导入 YAML 并创建新 run
+**状态说明：**
+- 团队导出/导入（YAML）能力已下线，不再作为对外推荐能力。
+- 历史接口 `GET /api/runs/{run_id}/team/export` 与 `POST /api/runs/team/import` 仅保留在旧文档语境中，不再作为当前功能规划依据。
+
+**当前机制（PRD v3）：**
+- 使用 Agent 招募机制替代团队导入/导出：支持模板招募与自定义招募。
+- 推荐接口以 `docs/specs/2026-03-02-interface-contract.md` 为准，核心为：
+  - `POST /api/recruitments` 创建招募申请
+  - `GET /api/recruitments` / `GET /api/recruitments/{id}` 查询招募
+  - `PUT /api/recruitments/{id}/approve` / `PUT /api/recruitments/{id}/reject` 审核招募
 
 **术语说明：** 产品语境中的 SOP 指 TODO/计划列表，来源为 `plan.md` 并解析为 `plan_subtasks`。当前实现仍保留 SOP 模板（`sops/templates/*.md` + `mission.md` + `/api/agents/{agent_id}/sop`），与计划列表并存。
 

@@ -97,9 +97,43 @@ agents:
 | 端点 | 方法 | 说明 |
 |------|------|------|
 | `/api/agent-templates` | GET | 列出所有预制模板 |
-| `/api/agent-templates/{template_id}` | GET | 获取模板详情 |
-| `/api/agent-templates` | POST | 创建新模板（管理员） |
-| `/api/agent-templates/{template_id}` | PUT | 更新模板（管理员） |
+| `/api/agent-templates/{id}` | GET | 获取模板详情 |
+
+> 说明：模板管理通过 `shared/agent-templates/*.yaml` 文件维护，当前不提供模板创建/更新 API。
+
+**鉴权方式**：
+- 当前实现为公开只读（无需鉴权）。
+
+**响应 schema（`GET /api/agent-templates`，200）**：
+```json
+[
+  {
+    "id": "string",
+    "name": "string",
+    "description": "string",
+    "role": "string",
+    "version": 1
+  }
+]
+```
+
+**响应 schema（`GET /api/agent-templates/{id}`，200）**：
+```json
+{
+  "id": "string",
+  "name": "string",
+  "description": "string",
+  "role": "string",
+  "version": 1,
+  "skills": [{"name": "string"}],
+  "tools": [{"type": "http"}],
+  "sop": "string | null",
+  "metadata": {"key": "value"}
+}
+```
+
+**错误码说明**：
+- `404`：模板不存在（`GET /api/agent-templates/{id}`）
 
 ### 3.2 团队模板导出/导入（保留现有）
 
@@ -108,13 +142,56 @@ agents:
 | `/api/runs/{run_id}/team/export` | GET | 导出团队为 YAML/JSON |
 | `/api/runs/team/import` | POST | 从模板创建新 run |
 
+**鉴权方式**：
+- 租户鉴权（`X-API-Key`，或 `X-Internal-Key + X-Tenant-ID`，或 `X-Session-Token`/会话 Cookie）。
+
+**响应 schema（`GET /api/runs/{run_id}/team/export`，200）**：
+```json
+{
+  "format": "yaml | json",
+  "yaml": "string | null",
+  "content": "string | null"
+}
+```
+
+**请求/响应 schema（`POST /api/runs/team/import`）**：
+```json
+{
+  "yaml": "string"
+}
+```
+```json
+{
+  "run_id": "string",
+  "root_agent_id": "string"
+}
+```
+
+**错误码说明**：
+- `400`：模板 YAML 非法或不满足导入约束（空内容、版本不支持、结构错误等）
+- `404`：导出目标 run 不存在
+
 ### 3.3 Agent 实例化
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
 | `/api/runs/{run_id}/agents/instantiate` | POST | 从模板实例化 Agent |
 
-**请求示例**：
+**鉴权方式**：
+- 必须使用会话鉴权（`session_token`），不支持 `X-API-Key`。
+- 推荐通过 `X-Session-Token` 头传递，或使用浏览器会话 Cookie。
+
+**请求字段说明**：
+- `template_id` (string, 必填)：模板 ID。
+- `parent_agent_id` (string, 可选)：父 Agent ID。不传时默认挂到 `run.root_agent_id`；传入时必须是当前 run 内存在的 Agent。
+- `overrides` (object, 可选)：覆盖模板字段。
+  - `role` (string, 可选)：覆盖角色标识（`role_label`）。
+  - `sop` (string, 可选)：覆盖 SOP 文本（`mission.md` 内容）。
+  - `skills` (array, 可选)：覆盖技能清单（不传则沿用模板技能）。
+  - `tools` (array, 可选)：覆盖工具清单（不传则沿用模板工具）。每个元素必须严格满足 `{type, name, endpoint, auth}` 四个必填字符串字段，且不允许额外字段；非法请求返回 `422` 并包含字段级错误定位。
+  - `name` (string, 可选)：覆盖实例显示名称。
+
+**请求示例（最小）**：
 ```json
 {
   "template_id": "searcher",
@@ -124,6 +201,59 @@ agents:
   }
 }
 ```
+
+**请求示例（完整）**：
+```json
+{
+  "template_id": "searcher",
+  "parent_agent_id": "123",
+  "overrides": {
+    "role": "web_researcher",
+    "sop": "# Web Research SOP\n\n1. 搜索\n2. 过滤\n3. 汇总",
+    "skills": [
+      {
+        "name": "search_web",
+        "filename": "search_web.py",
+        "code": "def run(query: str):\n    return query"
+      },
+      {
+        "name": "citation_minify",
+        "filename": "citation_minify.py"
+      }
+    ],
+    "tools": [
+      {
+        "type": "http",
+        "name": "searxng",
+        "endpoint": "http://mcp-server:9000/search",
+        "auth": "internal-key"
+      }
+    ],
+    "name": "定制搜索专家"
+  }
+}
+```
+
+**响应 schema（`200`）**：
+```json
+{
+  "id": "string",
+  "parent_agent_id": "string | null",
+  "role_label": "string | null",
+  "state": "string",
+  "current_sop_version_id": "string | null",
+  "name": "string | null",
+  "current_step": "string | null",
+  "plan_subtasks": []
+}
+```
+
+**错误码说明**：
+- `401`：缺少或无效会话（仅支持 session 鉴权）
+- `404`：run 不存在、父 Agent 不存在、模板不存在
+- `409`：`idempotency_key` 冲突（重复实例化请求）
+- `400`：请求参数非法（例如 `template_id` 为空、技能文件名非法、技能 code 非法）
+- `500`：实例化后文件落盘失败（`Failed to materialize agent files`）
 
 ## 4. 预制模板清单
 

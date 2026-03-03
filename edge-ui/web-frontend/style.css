@@ -1078,128 +1078,12 @@ details[open] > .panel-summary::after {
 }
 
 .task-status-section,
-.task-controls-section,
 .task-sop-section,
-.task-skills-section,
 .task-team-section,
 .task-chat-section {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-}
-
-.control-buttons {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-2);
-}
-
-.skills-empty {
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px dashed rgba(0, 0, 0, 0.16);
-  background: rgba(255, 255, 255, 0.6);
-  color: var(--muted-2);
-  font-size: 12px;
-  font-style: italic;
-}
-
-.skills-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: var(--space-2);
-}
-
-.skill-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--line);
-  background: var(--panel-2);
-  font-size: 12px;
-}
-
-.skill-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.skill-name {
-  color: var(--text);
-  font-weight: 600;
-}
-
-.skill-filename {
-  color: var(--muted-2);
-  font-size: 11px;
-}
-
-.skills-hint {
-  margin: 0;
-  font-size: 12px;
-  color: var(--muted-2);
-}
-
-.skills-search,
-.skills-nl {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: var(--space-2);
-}
-
-.skills-search input,
-.skills-nl input {
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  background: var(--panel-2);
-  font-size: 12px;
-  color: var(--text);
-}
-
-.skills-search-results {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: var(--space-2);
-}
-
-.skill-result {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--line);
-  background: var(--panel-2);
-  font-size: 12px;
-}
-
-.skill-desc {
-  color: var(--muted-2);
-  font-size: 11px;
-}
-
-.skills-actions {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: var(--space-2);
-}
-
-.skills-actions select {
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  background: var(--panel-2);
-  font-size: 12px;
 }
 
 .team-actions {
@@ -1431,19 +1315,6 @@ details[open] > .panel-summary::after {
     border-right: none;
   }
 
-  .control-buttons {
-    grid-template-columns: 1fr;
-  }
-
-  .skills-actions {
-    grid-template-columns: 1fr;
-  }
-
-  .skills-search,
-  .skills-nl {
-    grid-template-columns: 1fr;
-  }
-
   .task-details-panel {
     flex: 0 0 auto;
     max-width: 100%;
@@ -1614,8 +1485,7 @@ details[open] > .panel-summary::after {
   background: rgba(59, 209, 255, 0.12);
 }
 
-.task-tree-shell .plan-empty,
-.task-tree-shell .skills-empty {
+.task-tree-shell .plan-empty {
   border: 1px dashed rgba(59, 209, 255, 0.22);
   background: rgba(8, 18, 28, 0.65);
   color: var(--muted-2);

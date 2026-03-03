@@ -1,27 +1,34 @@
 from collections.abc import Generator
+from datetime import datetime, timezone
 import json
+import logging
 import os
 from pathlib import Path
 import re
 import yaml
-from typing import Annotated, cast
+from typing import Annotated, Literal, TypeAlias, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Text  # pyright: ignore[reportMissingImports]
+from sqlalchemy.exc import IntegrityError  # pyright: ignore[reportMissingImports]
+from sqlalchemy.orm import Session  # pyright: ignore[reportMissingImports]
 
 from . import agent_fs, config_loader, db, models, project_fs, sop_store
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+RECRUITMENT_INSTANTIATE_FAILED = "RECRUITMENT_INSTANTIATE_FAILED"
 
 
 def _parse_int_id(value: str, label: str) -> int:
     try:
         parsed = int(value)
     except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail=f"Invalid {label}")
+        raise HTTPException(status_code=422, detail=f"Invalid {label}")
     if parsed <= 0:
-        raise HTTPException(status_code=400, detail=f"Invalid {label}")
+        raise HTTPException(status_code=422, detail=f"Invalid {label}")
     return parsed
 
 
@@ -79,6 +86,37 @@ def _is_running_state(state: str) -> bool:
 def _get_roboard_root() -> Path:
     roboard_root = (os.getenv("ROBOARD_ROOT") or ".").strip()
     return Path(roboard_root or ".")
+
+
+def _utcnow_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+class Recruitment(db.Base):
+    __tablename__ = "recruitments"
+
+    id = Column(Integer, primary_key=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    run_id = Column(Integer, ForeignKey("tasks.id"), nullable=False)
+    template_id = Column(String(255), nullable=False)
+    role = Column(String(255), nullable=True)
+    skills_json = Column(Text, nullable=False, default="[]")
+    status = Column(String(20), nullable=False, default="pending")
+    review_comment = Column(Text, nullable=True)
+    reviewed_by = Column(String(255), nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    hired_agent_id = Column(Integer, nullable=True)
+    instantiate_result_json = Column(Text, nullable=True)
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    version = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = Column(DateTime, default=_utcnow_naive, onupdate=_utcnow_naive, nullable=False)
+
+    __table_args__ = (
+        Index("ix_recruitments_tenant_id", "tenant_id"),
+        Index("ix_recruitments_run_id", "run_id"),
+        Index("ix_recruitments_status", "status"),
+    )
 
 
 class PlanSubtaskOut(BaseModel):
@@ -193,18 +231,97 @@ class AgentInstantiateSkillIn(BaseModel):
     code: str | None = None
 
 
+class AgentInstantiateToolIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: StrictStr
+    name: StrictStr
+    endpoint: StrictStr
+    auth: StrictStr
+
+    @field_validator("type", "name", "endpoint", "auth")
+    @classmethod
+    def _validate_non_empty(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("must be a non-empty string")
+        return normalized
+
+
 class AgentInstantiateOverridesIn(BaseModel):
     name: str | None = None
     role: str | None = None
     sop: str | None = None
     skills: list[AgentInstantiateSkillIn] | None = None
-    tools: list[dict[str, object]] | None = None
+    tools: list[AgentInstantiateToolIn] | None = None
 
 
 class AgentInstantiateIn(BaseModel):
     template_id: str
     parent_agent_id: str | None = None
+    idempotency_key: str | None = None
     overrides: AgentInstantiateOverridesIn = Field(default_factory=AgentInstantiateOverridesIn)
+
+
+RecruitmentStatus = Literal["pending", "approved", "rejected"]
+_RECRUITMENT_STATUSES: set[str] = {"pending", "approved", "rejected"}
+_RECRUITMENT_BLOCKED_RUN_STATUSES: set[str] = {"paused", "terminated"}
+
+
+class RecruitmentCreateIn(BaseModel):
+    run_id: str
+    template_id: str
+    role: str | None = None
+    skills: list[str] = Field(default_factory=list)
+
+
+class RecruitmentOverridesIn(BaseModel):
+    role: str | None = None
+    skills: list[AgentInstantiateSkillIn] | None = None
+
+
+class RunRecruitmentCreateIn(BaseModel):
+    template_id: str
+    overrides: RecruitmentOverridesIn = Field(default_factory=RecruitmentOverridesIn)
+
+
+class RecruitmentReviewIn(BaseModel):
+    decision: Literal["approved", "rejected"]
+    comment: str | None = None
+    expected_version: int | None = Field(default=None, ge=1)
+
+
+class RecruitmentDecisionIn(BaseModel):
+    expected_version: int = Field(ge=1)
+
+
+class RecruitmentOverrideSkillOut(BaseModel):
+    name: str
+    filename: str | None = None
+    code: str | None = None
+
+
+class RecruitmentOverridesOut(BaseModel):
+    role: str | None = None
+    skills: list[RecruitmentOverrideSkillOut] = Field(default_factory=list)
+
+
+class RecruitmentOut(BaseModel):
+    id: str
+    run_id: str
+    template_id: str
+    role: str | None = None
+    skills: list[str] = Field(default_factory=list)
+    overrides: RecruitmentOverridesOut = Field(default_factory=RecruitmentOverridesOut)
+    status: RecruitmentStatus
+    review_comment: str | None = None
+    reviewed_by: str | None = None
+    created_by: str | None = None
+    reviewed_at: str | None = None
+    hired_agent_id: str | None = None
+    instantiate_result: dict[str, object] | None = None
+    version: int
+    created_at: datetime
 
 
 class SkillCatalogItemOut(BaseModel):
@@ -330,14 +447,29 @@ def _normalize_template_skills_override(items: list[AgentInstantiateSkillIn]) ->
     return normalized, skill_code_by_filename
 
 
-def _normalize_tools(raw_value: object) -> list[dict[str, object]]:
+def _tool_to_dict(tool: AgentInstantiateToolIn) -> dict[str, str]:
+    return {
+        "type": tool.type,
+        "name": tool.name,
+        "endpoint": tool.endpoint,
+        "auth": tool.auth,
+    }
+
+
+def _normalize_tools(raw_value: object) -> list[dict[str, str]]:
     if not isinstance(raw_value, list):
         return []
-    normalized: list[dict[str, object]] = []
+    normalized: list[dict[str, str]] = []
     for item in raw_value:
+        if isinstance(item, AgentInstantiateToolIn):
+            normalized.append(_tool_to_dict(item))
+            continue
         if not isinstance(item, dict):
             continue
-        normalized.append(dict(item))
+        try:
+            normalized.append(_tool_to_dict(AgentInstantiateToolIn.model_validate(item)))
+        except Exception:
+            continue
     return normalized
 
 
@@ -461,11 +593,182 @@ def get_db() -> Generator[Session, None, None]:
         session.close()
 
 
-DbSessionDep = Annotated[Session, Depends(get_db)]
+DbSessionDep: TypeAlias = Annotated[Session, Depends(get_db)]
 InternalKeyHeader = Annotated[str | None, Header(alias="X-Internal-Key")]
 TenantIdHeader = Annotated[str | None, Header(alias="X-Tenant-ID")]
 ApiKeyHeader = Annotated[str | None, Header(alias="X-API-Key")]
 SessionTokenHeader = Annotated[str | None, Header(alias="X-Session-Token")]
+
+
+def _parse_recruitment_skills(raw_value: object) -> list[str]:
+    skills: list[str] = []
+    for item in _parse_recruitment_skill_items(raw_value):
+        name = item.get("name")
+        if isinstance(name, str) and name.strip():
+            skills.append(name.strip())
+    return skills
+
+
+def _normalize_recruitment_skills(values: list[str]) -> list[str]:
+    skills: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        normalized = item.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        skills.append(normalized)
+    return skills
+
+
+def _normalize_recruitment_skill_items(
+    values: list[AgentInstantiateSkillIn] | None,
+) -> list[dict[str, object]]:
+    if values is None:
+        return []
+    normalized, skill_code_by_filename = _normalize_template_skills_override(values)
+    items: list[dict[str, object]] = []
+    for item in normalized:
+        skill_item: dict[str, object] = {
+            "name": item["name"],
+            "filename": item["filename"],
+        }
+        code = skill_code_by_filename.get(item["filename"])
+        if isinstance(code, str) and code.strip():
+            skill_item["code"] = code
+        items.append(skill_item)
+    return items
+
+
+def _parse_recruitment_skill_items(raw_value: object) -> list[dict[str, object]]:
+    if not isinstance(raw_value, str):
+        return []
+    try:
+        parsed = json.loads(raw_value)
+    except Exception:
+        return []
+    if not isinstance(parsed, list):
+        return []
+
+    items: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for item in parsed:
+        if isinstance(item, str):
+            name = item.strip()
+            if not name:
+                continue
+            filename = _default_skill_filename(name)
+            if filename in seen:
+                continue
+            seen.add(filename)
+            items.append({"name": name, "filename": filename})
+            continue
+
+        if not isinstance(item, dict):
+            continue
+        name_raw = item.get("name")
+        if not isinstance(name_raw, str) or not name_raw.strip():
+            continue
+        name = _normalize_skill_name(name_raw)
+
+        filename_raw = item.get("filename")
+        filename = (
+            _normalize_skill_filename(filename_raw)
+            if isinstance(filename_raw, str) and filename_raw.strip()
+            else _normalize_skill_filename(_default_skill_filename(name))
+        )
+        if filename in seen:
+            continue
+        seen.add(filename)
+
+        skill_item: dict[str, object] = {"name": name, "filename": filename}
+        code_raw = item.get("code")
+        if isinstance(code_raw, str) and code_raw.strip():
+            skill_item["code"] = _normalize_skill_code(code_raw)
+        items.append(skill_item)
+    return items
+
+
+def _parse_recruitment_instantiate_result(raw_value: object) -> dict[str, object] | None:
+    if not isinstance(raw_value, str) or not raw_value:
+        return None
+    try:
+        parsed = json.loads(raw_value)
+    except Exception:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    out: dict[str, object] = {}
+    for key, value in parsed.items():
+        out[str(key)] = value
+    return out
+
+
+def _dt_to_iso(dt: datetime | None) -> str | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt.isoformat(timespec="seconds") + "Z"
+
+
+def _assert_run_allows_recruitment(run: models.Task) -> str:
+    run_status = cast(str, getattr(run, "status", "")).strip().lower()
+    if run_status in _RECRUITMENT_BLOCKED_RUN_STATUSES:
+        raise HTTPException(status_code=409, detail="RUN_STATE_INVALID")
+    return run_status
+
+
+def _recruitment_to_out(recruitment: Recruitment) -> RecruitmentOut:
+    recruitment_id = cast(int, getattr(recruitment, "id"))
+    run_id = cast(int, getattr(recruitment, "run_id"))
+    template_id = cast(str, getattr(recruitment, "template_id"))
+    role = cast(str | None, getattr(recruitment, "role", None))
+    skills_json = cast(str, getattr(recruitment, "skills_json"))
+    status = cast(RecruitmentStatus, getattr(recruitment, "status"))
+    review_comment = cast(str | None, getattr(recruitment, "review_comment", None))
+    reviewed_by = cast(str | None, getattr(recruitment, "reviewed_by", None))
+    created_by_user_id = cast(int | None, getattr(recruitment, "created_by_user_id", None))
+    reviewed_at = cast(datetime | None, getattr(recruitment, "reviewed_at", None))
+    hired_agent_id = cast(int | None, getattr(recruitment, "hired_agent_id", None))
+    instantiate_result_json = getattr(recruitment, "instantiate_result_json", None)
+    version = cast(int, getattr(recruitment, "version", 1))
+    created_at = cast(datetime, getattr(recruitment, "created_at"))
+
+    parsed_skill_items = _parse_recruitment_skill_items(skills_json)
+    override_skills: list[RecruitmentOverrideSkillOut] = []
+    for item in parsed_skill_items:
+        name_raw = item.get("name")
+        if not isinstance(name_raw, str) or not name_raw.strip():
+            continue
+        filename_raw = item.get("filename")
+        code_raw = item.get("code")
+        override_skills.append(
+            RecruitmentOverrideSkillOut(
+                name=name_raw.strip(),
+                filename=filename_raw.strip() if isinstance(filename_raw, str) and filename_raw.strip() else None,
+                code=code_raw if isinstance(code_raw, str) and code_raw.strip() else None,
+            )
+        )
+    overrides = RecruitmentOverridesOut(role=role, skills=override_skills)
+
+    return RecruitmentOut(
+        id=str(recruitment_id),
+        run_id=str(run_id),
+        template_id=template_id,
+        role=role,
+        skills=[item.name for item in override_skills],
+        overrides=overrides,
+        status=status,
+        review_comment=review_comment,
+        reviewed_by=reviewed_by,
+        created_by=str(created_by_user_id) if created_by_user_id is not None else None,
+        reviewed_at=_dt_to_iso(reviewed_at),
+        hired_agent_id=str(hired_agent_id) if hired_agent_id is not None else None,
+        instantiate_result=_parse_recruitment_instantiate_result(instantiate_result_json),
+        version=version,
+        created_at=created_at,
+    )
 
 
 def require_tenant(
@@ -503,6 +806,621 @@ def require_session_tenant(
         None,
         x_session_token,
     )
+
+
+def _append_recruitment_audit_event(
+    session: Session,
+    *,
+    tenant_id: int,
+    run_id: int,
+    status: str,
+    event_type: str,
+    data: dict[str, object],
+) -> None:
+    event = models.Event()
+    setattr(event, "task_id", run_id)
+    setattr(event, "run_id", run_id)
+    setattr(event, "tenant_id", tenant_id)
+    setattr(event, "type", event_type)
+    setattr(event, "status", status)
+    setattr(event, "data_json", json.dumps(data, ensure_ascii=False))
+    setattr(event, "timestamp", _utcnow_naive())
+    session.add(event)
+
+
+def _resolve_session_reviewer(
+    request: Request,
+    session: Session,
+    x_session_token: str | None,
+) -> str:
+    from . import main as app_main
+
+    token = x_session_token or request.cookies.get(app_main.SESSION_COOKIE_NAME)
+    user = app_main._require_session_user(session, token)
+    reviewer_email = getattr(user, "email", None)
+    if isinstance(reviewer_email, str) and reviewer_email.strip():
+        return reviewer_email.strip()
+    return str(getattr(user, "id"))
+
+
+def _resolve_session_reviewer_id(
+    request: Request,
+    session: Session,
+    x_session_token: str | None,
+) -> str:
+    from . import main as app_main
+
+    token = x_session_token or request.cookies.get(app_main.SESSION_COOKIE_NAME)
+    user = app_main._require_session_user(session, token)
+    return str(getattr(user, "id"))
+
+
+def _resolve_session_user_id(
+    request: Request,
+    session: Session,
+    x_session_token: str | None,
+) -> int:
+    from . import main as app_main
+
+    token = x_session_token or request.cookies.get(app_main.SESSION_COOKIE_NAME)
+    user = app_main._require_session_user(session, token)
+    return int(getattr(user, "id"))
+
+
+def _resolve_optional_session_user_id(
+    request: Request,
+    session: Session,
+    x_session_token: str | None,
+) -> int | None:
+    from . import main as app_main
+
+    token = x_session_token or request.cookies.get(app_main.SESSION_COOKIE_NAME)
+    if not token:
+        return None
+    user = app_main._require_session_user(session, token)
+    return int(getattr(user, "id"))
+
+
+def _recruitment_instantiate_payload(recruitment: Recruitment) -> AgentInstantiateIn:
+    template_id = cast(str, getattr(recruitment, "template_id"))
+    role = cast(str | None, getattr(recruitment, "role", None))
+    skills_json = cast(str, getattr(recruitment, "skills_json"))
+
+    overrides = AgentInstantiateOverridesIn()
+    if isinstance(role, str) and role.strip():
+        overrides.role = role.strip()
+
+    skill_items = _parse_recruitment_skill_items(skills_json)
+    if skill_items:
+        skills: list[AgentInstantiateSkillIn] = []
+        for item in skill_items:
+            name_raw = item.get("name")
+            if not isinstance(name_raw, str) or not name_raw.strip():
+                continue
+            filename_raw = item.get("filename")
+            code_raw = item.get("code")
+            skills.append(
+                AgentInstantiateSkillIn(
+                    name=name_raw.strip(),
+                    filename=filename_raw.strip() if isinstance(filename_raw, str) and filename_raw.strip() else None,
+                    code=code_raw if isinstance(code_raw, str) and code_raw.strip() else None,
+                )
+            )
+        if skills:
+            overrides.skills = skills
+
+    return AgentInstantiateIn(template_id=template_id, overrides=overrides)
+
+
+@router.post("/api/recruitments", response_model=RecruitmentOut, status_code=201)
+async def create_recruitment(
+    request: Request,
+    body: RecruitmentCreateIn,
+    tenant: Annotated[models.Tenant, Depends(require_tenant)],
+    session: DbSessionDep,
+    x_session_token: SessionTokenHeader = None,
+) -> RecruitmentOut:
+    run_id_int = _parse_int_id(body.run_id, "run_id")
+    run = (
+        session.query(models.Task)
+        .filter(models.Task.id == run_id_int, models.Task.tenant_id == tenant.id)
+        .first()
+    )
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    _ = _assert_run_allows_recruitment(run)
+
+    template_id = body.template_id.strip()
+    if not template_id:
+        raise HTTPException(status_code=422, detail="template_id required")
+    template = template_loader.load_agent_template(template_id)
+    if not isinstance(template, dict):
+        raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")
+
+    role = body.role.strip() if isinstance(body.role, str) and body.role.strip() else None
+    skills = _normalize_recruitment_skills(body.skills)
+    created_by_user_id = _resolve_optional_session_user_id(request, session, x_session_token)
+
+    recruitment = Recruitment()
+    setattr(recruitment, "tenant_id", int(getattr(tenant, "id")))
+    setattr(recruitment, "run_id", run_id_int)
+    setattr(recruitment, "template_id", template_id)
+    setattr(recruitment, "role", role)
+    setattr(recruitment, "skills_json", json.dumps(skills, ensure_ascii=False))
+    setattr(recruitment, "status", "pending")
+    setattr(recruitment, "created_by_user_id", created_by_user_id)
+
+    session.add(recruitment)
+    session.commit()
+    session.refresh(recruitment)
+    return _recruitment_to_out(recruitment)
+
+
+@router.get("/api/recruitments", response_model=list[RecruitmentOut])
+async def list_recruitments(
+    tenant: Annotated[models.Tenant, Depends(require_tenant)],
+    session: DbSessionDep,
+    run_id: str | None = None,
+    status: str | None = None,
+) -> list[RecruitmentOut]:
+    query = session.query(Recruitment).filter(Recruitment.tenant_id == tenant.id)
+
+    if run_id is not None:
+        run_id_int = _parse_int_id(run_id, "run_id")
+        query = query.filter(Recruitment.run_id == run_id_int)
+
+    if status is not None:
+        normalized_status = status.strip().lower()
+        if normalized_status not in _RECRUITMENT_STATUSES:
+            raise HTTPException(status_code=422, detail="Invalid status")
+        query = query.filter(Recruitment.status == normalized_status)
+
+    recruitments = query.order_by(Recruitment.id.asc()).all()
+    return [_recruitment_to_out(item) for item in recruitments]
+
+
+@router.get("/api/recruitments/{recruitment_id}", response_model=RecruitmentOut)
+async def get_recruitment(
+    recruitment_id: str,
+    tenant: Annotated[models.Tenant, Depends(require_tenant)],
+    session: DbSessionDep,
+) -> RecruitmentOut:
+    recruitment_id_int = _parse_int_id(recruitment_id, "id")
+    recruitment = (
+        session.query(Recruitment)
+        .filter(Recruitment.id == recruitment_id_int, Recruitment.tenant_id == tenant.id)
+        .first()
+    )
+    if not recruitment:
+        raise HTTPException(status_code=404, detail="Recruitment not found")
+    return _recruitment_to_out(recruitment)
+
+
+@router.put("/api/recruitments/{recruitment_id}/approve", response_model=RecruitmentOut)
+async def approve_recruitment(
+    recruitment_id: str,
+    body: RecruitmentDecisionIn,
+    request: Request,
+    tenant: Annotated[models.Tenant, Depends(require_session_tenant)],
+    session: DbSessionDep,
+    x_session_token: SessionTokenHeader = None,
+) -> RecruitmentOut:
+    recruitment_id_int = _parse_int_id(recruitment_id, "id")
+    reviewed_at = _utcnow_naive()
+    reviewed_by = _resolve_session_reviewer_id(request, session, x_session_token)
+    updated_rows = (
+        session.query(Recruitment)
+        .filter(
+            Recruitment.id == recruitment_id_int,
+            Recruitment.tenant_id == tenant.id,
+            Recruitment.status == "pending",
+            Recruitment.version == body.expected_version,
+        )
+        .update(
+            {
+                Recruitment.status: "approved",
+                Recruitment.reviewed_by: reviewed_by,
+                Recruitment.reviewed_at: reviewed_at,
+                Recruitment.version: Recruitment.version + 1,
+            },
+            synchronize_session=False,
+        )
+    )
+    if updated_rows == 0:
+        recruitment_state = (
+            session.query(Recruitment.status, Recruitment.version)
+            .filter(Recruitment.id == recruitment_id_int, Recruitment.tenant_id == tenant.id)
+            .first()
+        )
+        if recruitment_state is None:
+            raise HTTPException(status_code=404, detail="Recruitment not found")
+        state_status = cast(str, recruitment_state[0])
+        state_version = cast(int, recruitment_state[1])
+        if state_status != "pending":
+            raise HTTPException(status_code=409, detail="Recruitment already reviewed")
+        if state_version != body.expected_version:
+            raise HTTPException(status_code=409, detail="Recruitment version conflict")
+        raise HTTPException(status_code=409, detail="Recruitment already reviewed")
+
+    recruitment = (
+        session.query(Recruitment)
+        .filter(Recruitment.id == recruitment_id_int, Recruitment.tenant_id == tenant.id)
+        .first()
+    )
+    if not recruitment:
+        raise HTTPException(status_code=404, detail="Recruitment not found")
+
+    run_id_int = cast(int, getattr(recruitment, "run_id"))
+    run = (
+        session.query(models.Task)
+        .filter(models.Task.id == run_id_int, models.Task.tenant_id == tenant.id)
+        .first()
+    )
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    run_status = _assert_run_allows_recruitment(run)
+
+    role = cast(str | None, getattr(recruitment, "role", None))
+    skills = _parse_recruitment_skills(cast(str, getattr(recruitment, "skills_json")))
+    overrides = AgentInstantiateOverridesIn()
+    if role:
+        overrides.role = role
+    if skills:
+        overrides.skills = [AgentInstantiateSkillIn(name=skill) for skill in skills]
+
+    instantiate_payload = AgentInstantiateIn(
+        template_id=cast(str, getattr(recruitment, "template_id")),
+        overrides=overrides,
+    )
+    _append_recruitment_audit_event(
+        session,
+        tenant_id=int(getattr(tenant, "id")),
+        run_id=run_id_int,
+        status=run_status,
+        event_type="recruitment.approved",
+        data={
+            "recruitment_id": str(recruitment_id_int),
+            "reviewed_by": reviewed_by,
+            "reviewed_at": _dt_to_iso(reviewed_at),
+        },
+    )
+    try:
+        await instantiate_agent(
+            run_id=str(getattr(recruitment, "run_id")),
+            body=instantiate_payload,
+            tenant=tenant,
+            session=session,
+        )
+    except HTTPException as exc:
+        session.rollback()
+        if 400 <= exc.status_code < 500:
+            raise
+        if 500 <= exc.status_code < 600:
+            raise
+        raise HTTPException(status_code=500, detail="Failed to approve recruitment")
+    except Exception:
+        session.rollback()
+        raise HTTPException(status_code=500, detail="Failed to approve recruitment")
+    session.commit()
+    session.refresh(recruitment)
+    return _recruitment_to_out(recruitment)
+
+
+@router.put("/api/recruitments/{recruitment_id}/reject", response_model=RecruitmentOut)
+async def reject_recruitment(
+    recruitment_id: str,
+    body: RecruitmentDecisionIn,
+    request: Request,
+    tenant: Annotated[models.Tenant, Depends(require_session_tenant)],
+    session: DbSessionDep,
+    x_session_token: SessionTokenHeader = None,
+) -> RecruitmentOut:
+    recruitment_id_int = _parse_int_id(recruitment_id, "id")
+    reviewed_at = _utcnow_naive()
+    reviewed_by = _resolve_session_reviewer_id(request, session, x_session_token)
+    updated_rows = (
+        session.query(Recruitment)
+        .filter(
+            Recruitment.id == recruitment_id_int,
+            Recruitment.tenant_id == tenant.id,
+            Recruitment.status == "pending",
+            Recruitment.version == body.expected_version,
+        )
+        .update(
+            {
+                Recruitment.status: "rejected",
+                Recruitment.reviewed_by: reviewed_by,
+                Recruitment.reviewed_at: reviewed_at,
+                Recruitment.version: Recruitment.version + 1,
+            },
+            synchronize_session=False,
+        )
+    )
+    if updated_rows == 0:
+        recruitment_state = (
+            session.query(Recruitment.status, Recruitment.version)
+            .filter(Recruitment.id == recruitment_id_int, Recruitment.tenant_id == tenant.id)
+            .first()
+        )
+        if recruitment_state is None:
+            raise HTTPException(status_code=404, detail="Recruitment not found")
+        state_status = cast(str, recruitment_state[0])
+        state_version = cast(int, recruitment_state[1])
+        if state_status != "pending":
+            raise HTTPException(status_code=409, detail="Recruitment already reviewed")
+        if state_version != body.expected_version:
+            raise HTTPException(status_code=409, detail="Recruitment version conflict")
+        raise HTTPException(status_code=409, detail="Recruitment already reviewed")
+
+    recruitment = (
+        session.query(Recruitment)
+        .filter(Recruitment.id == recruitment_id_int, Recruitment.tenant_id == tenant.id)
+        .first()
+    )
+    if not recruitment:
+        raise HTTPException(status_code=404, detail="Recruitment not found")
+
+    run_id_int = cast(int, getattr(recruitment, "run_id"))
+    run = (
+        session.query(models.Task)
+        .filter(models.Task.id == run_id_int, models.Task.tenant_id == tenant.id)
+        .first()
+    )
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    run_status = _assert_run_allows_recruitment(run)
+
+    _append_recruitment_audit_event(
+        session,
+        tenant_id=int(getattr(tenant, "id")),
+        run_id=run_id_int,
+        status=run_status,
+        event_type="recruitment.rejected",
+        data={
+            "recruitment_id": str(recruitment_id_int),
+            "reviewed_by": reviewed_by,
+            "reviewed_at": _dt_to_iso(reviewed_at),
+        },
+    )
+    session.commit()
+    session.refresh(recruitment)
+    return _recruitment_to_out(recruitment)
+
+
+@router.post("/api/runs/{run_id}/recruitments", response_model=RecruitmentOut, status_code=201)
+async def create_run_recruitment(
+    run_id: str,
+    body: RunRecruitmentCreateIn,
+    request: Request,
+    tenant: Annotated[models.Tenant, Depends(require_session_tenant)],
+    session: DbSessionDep,
+    x_session_token: SessionTokenHeader = None,
+) -> RecruitmentOut:
+    run_id_int = _parse_int_id(run_id, "run_id")
+    run = (
+        session.query(models.Task)
+        .filter(models.Task.id == run_id_int, models.Task.tenant_id == tenant.id)
+        .first()
+    )
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    _ = _assert_run_allows_recruitment(run)
+
+    template_id = body.template_id.strip()
+    if not template_id:
+        raise HTTPException(status_code=422, detail="template_id required")
+    template = template_loader.load_agent_template(template_id)
+    if not isinstance(template, dict):
+        raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")
+
+    role = body.overrides.role.strip() if isinstance(body.overrides.role, str) and body.overrides.role.strip() else None
+    skill_items = _normalize_recruitment_skill_items(body.overrides.skills)
+    created_by_user_id = _resolve_session_user_id(request, session, x_session_token)
+
+    recruitment = Recruitment()
+    setattr(recruitment, "tenant_id", int(getattr(tenant, "id")))
+    setattr(recruitment, "run_id", run_id_int)
+    setattr(recruitment, "template_id", template_id)
+    setattr(recruitment, "role", role)
+    setattr(recruitment, "skills_json", json.dumps(skill_items, ensure_ascii=False))
+    setattr(recruitment, "status", "pending")
+    setattr(recruitment, "review_comment", None)
+    setattr(recruitment, "reviewed_by", None)
+    setattr(recruitment, "reviewed_at", None)
+    setattr(recruitment, "hired_agent_id", None)
+    setattr(recruitment, "instantiate_result_json", None)
+    setattr(recruitment, "created_by_user_id", created_by_user_id)
+    setattr(recruitment, "version", 1)
+
+    session.add(recruitment)
+    session.commit()
+    session.refresh(recruitment)
+    return _recruitment_to_out(recruitment)
+
+
+@router.post("/api/runs/{run_id}/recruitments/{recruitment_id}/review", response_model=RecruitmentOut)
+async def review_run_recruitment(
+    run_id: str,
+    recruitment_id: str,
+    body: RecruitmentReviewIn,
+    request: Request,
+    tenant: Annotated[models.Tenant, Depends(require_session_tenant)],
+    session: DbSessionDep,
+    x_session_token: SessionTokenHeader = None,
+) -> RecruitmentOut:
+    run_id_int = _parse_int_id(run_id, "run_id")
+    recruitment_id_int = _parse_int_id(recruitment_id, "recruitment_id")
+    tenant_id = int(getattr(tenant, "id"))
+
+    run = (
+        session.query(models.Task)
+        .filter(models.Task.id == run_id_int, models.Task.tenant_id == tenant_id)
+        .first()
+    )
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    run_status = _assert_run_allows_recruitment(run)
+
+    reviewed_at = _utcnow_naive()
+    reviewed_by = _resolve_session_reviewer(request, session, x_session_token)
+    review_comment = body.comment.strip() if isinstance(body.comment, str) and body.comment.strip() else None
+    decision = body.decision
+
+    recruitment_query = session.query(Recruitment).filter(
+        Recruitment.id == recruitment_id_int,
+        Recruitment.run_id == run_id_int,
+        Recruitment.tenant_id == tenant_id,
+        Recruitment.status == "pending",
+    )
+    if body.expected_version is not None:
+        recruitment_query = recruitment_query.filter(Recruitment.version == body.expected_version)
+    updated_rows = recruitment_query.update(
+        {
+            Recruitment.status: decision,
+            Recruitment.review_comment: review_comment,
+            Recruitment.reviewed_by: reviewed_by,
+            Recruitment.reviewed_at: reviewed_at,
+            Recruitment.version: Recruitment.version + 1,
+        },
+        synchronize_session=False,
+    )
+    if updated_rows == 0:
+        recruitment_state = (
+            session.query(Recruitment.status, Recruitment.version)
+            .filter(
+                Recruitment.id == recruitment_id_int,
+                Recruitment.run_id == run_id_int,
+                Recruitment.tenant_id == tenant_id,
+            )
+            .first()
+        )
+        if recruitment_state is None:
+            raise HTTPException(status_code=404, detail="Recruitment not found")
+        state_status = cast(str, recruitment_state[0])
+        state_version = cast(int, recruitment_state[1])
+        if state_status != "pending":
+            raise HTTPException(status_code=409, detail="Recruitment already reviewed")
+        if body.expected_version is not None and state_version != body.expected_version:
+            raise HTTPException(status_code=409, detail="Recruitment version conflict")
+        raise HTTPException(status_code=409, detail="Recruitment already reviewed")
+
+    recruitment = cast(
+        Recruitment,
+        session.query(Recruitment)
+        .filter(
+            Recruitment.id == recruitment_id_int,
+            Recruitment.run_id == run_id_int,
+            Recruitment.tenant_id == tenant_id,
+        )
+        .first(),
+    )
+    if recruitment is None:
+        raise HTTPException(status_code=404, detail="Recruitment not found")
+
+    _append_recruitment_audit_event(
+        session,
+        tenant_id=tenant_id,
+        run_id=run_id_int,
+        status=run_status,
+        event_type="recruitment.reviewed",
+        data={
+            "recruitment_id": str(recruitment_id_int),
+            "decision": decision,
+            "review_comment": review_comment,
+            "reviewed_by": reviewed_by,
+            "reviewed_at": _dt_to_iso(reviewed_at),
+        },
+    )
+    session.commit()
+
+    if decision == "rejected":
+        session.refresh(recruitment)
+        return _recruitment_to_out(recruitment)
+
+    instantiate_payload = _recruitment_instantiate_payload(recruitment)
+    try:
+        instantiated = await instantiate_agent(
+            run_id=str(run_id_int),
+            body=instantiate_payload,
+            tenant=tenant,
+            session=session,
+        )
+    except Exception as exc:
+        session.rollback()
+        logger.exception(
+            "Recruitment instantiate failed",
+            extra={
+                "tenant_id": str(tenant_id),
+                "run_id": str(run_id_int),
+                "recruitment_id": str(recruitment_id_int),
+                "error": str(exc),
+            },
+        )
+        recruitment = cast(
+            Recruitment,
+            session.query(Recruitment)
+            .filter(
+                Recruitment.id == recruitment_id_int,
+                Recruitment.run_id == run_id_int,
+                Recruitment.tenant_id == tenant_id,
+            )
+            .first(),
+        )
+        if recruitment is not None:
+            failure_result = {
+                "status": "failed",
+                "error": RECRUITMENT_INSTANTIATE_FAILED,
+            }
+            setattr(recruitment, "instantiate_result_json", json.dumps(failure_result, ensure_ascii=False))
+            session.add(recruitment)
+            _append_recruitment_audit_event(
+                session,
+                tenant_id=tenant_id,
+                run_id=run_id_int,
+                status=run_status,
+                event_type="recruitment.instantiate.failed",
+                data={
+                    "recruitment_id": str(recruitment_id_int),
+                    "result": failure_result,
+                },
+            )
+            session.commit()
+        raise HTTPException(status_code=500, detail="Failed to instantiate recruitment")
+
+    recruitment = cast(
+        Recruitment,
+        session.query(Recruitment)
+        .filter(
+            Recruitment.id == recruitment_id_int,
+            Recruitment.run_id == run_id_int,
+            Recruitment.tenant_id == tenant_id,
+        )
+        .first(),
+    )
+    if recruitment is None:
+        raise HTTPException(status_code=404, detail="Recruitment not found")
+
+    success_result = {
+        "status": "success",
+        "agent_id": instantiated.id,
+    }
+    setattr(recruitment, "hired_agent_id", int(instantiated.id))
+    setattr(recruitment, "instantiate_result_json", json.dumps(success_result, ensure_ascii=False))
+    session.add(recruitment)
+    _append_recruitment_audit_event(
+        session,
+        tenant_id=tenant_id,
+        run_id=run_id_int,
+        status=run_status,
+        event_type="recruitment.instantiate.succeeded",
+        data={
+            "recruitment_id": str(recruitment_id_int),
+            "result": success_result,
+        },
+    )
+    session.commit()
+    session.refresh(recruitment)
+    return _recruitment_to_out(recruitment)
 
 
 @router.get("/api/runs/{run_id}/tree", response_model=RunTreeOut)
@@ -1185,13 +2103,28 @@ async def instantiate_agent(
     session: DbSessionDep,
 ) -> AgentInstanceOut:
     run_id_int = _parse_int_id(run_id, "run_id")
+    tenant_id = cast(int, getattr(tenant, "id"))
     task = (
         session.query(models.Task)
-        .filter(models.Task.id == run_id_int, models.Task.tenant_id == tenant.id)
+        .filter(models.Task.id == run_id_int, models.Task.tenant_id == tenant_id)
         .first()
     )
     if not task:
         raise HTTPException(status_code=404, detail="Run not found")
+
+    idempotency_key = body.idempotency_key.strip() if isinstance(body.idempotency_key, str) else ""
+    if idempotency_key:
+        duplicate = (
+            session.query(models.AgentInstance)
+            .filter(
+                models.AgentInstance.tenant_id == tenant_id,
+                models.AgentInstance.run_id == run_id_int,
+                models.AgentInstance.idempotency_key == idempotency_key,
+            )
+            .first()
+        )
+        if duplicate:
+            raise HTTPException(status_code=409, detail="Duplicate instantiate request")
 
     template_id = body.template_id.strip()
     if not template_id:
@@ -1201,19 +2134,29 @@ async def instantiate_agent(
         raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")
 
     parent_agent_id_int: int | None = None
+    parent_from_request = False
     if isinstance(body.parent_agent_id, str) and body.parent_agent_id.strip():
         parent_agent_id_int = _parse_int_id(body.parent_agent_id, "parent_agent_id")
+        parent_from_request = True
+    else:
+        root_agent_id = getattr(task, "root_agent_id", None)
+        if isinstance(root_agent_id, int) and root_agent_id > 0:
+            parent_agent_id_int = root_agent_id
+
+    if parent_agent_id_int is not None:
         parent_agent = (
             session.query(models.AgentInstance)
             .filter(
                 models.AgentInstance.id == parent_agent_id_int,
                 models.AgentInstance.run_id == run_id_int,
-                models.AgentInstance.tenant_id == tenant.id,
+                models.AgentInstance.tenant_id == tenant_id,
             )
             .first()
         )
         if not parent_agent:
-            raise HTTPException(status_code=404, detail="Parent agent not found")
+            if parent_from_request:
+                raise HTTPException(status_code=404, detail="Parent agent not found")
+            raise HTTPException(status_code=404, detail="Run root agent not found")
 
     override_role = body.overrides.role.strip() if isinstance(body.overrides.role, str) else ""
     template_role = template.get("role")
@@ -1240,25 +2183,57 @@ async def instantiate_agent(
 
     from . import agent_hiring
 
+    agent_id: int | None = None
+    sop_md_path: str | None = None
     try:
         agent = agent_hiring._create_agent_with_sop(
             session,
-            tenant_id=cast(int, getattr(tenant, "id")),
+            tenant_id=tenant_id,
             run_id=run_id_int,
             parent_agent_id=parent_agent_id_int,
             role_label=role_label,
             sop_text=sop_text,
+            write_sop_to_fs=False,
         )
         setattr(agent, "name", name)
+        setattr(agent, "idempotency_key", idempotency_key or None)
         if tools:
             setattr(agent, "resource_allocation_json", json.dumps({"tools": tools}, ensure_ascii=False))
         session.add(agent)
         session.flush()
-
         agent_id = int(getattr(agent, "id"))
-        roboard_root = _get_roboard_root()
-        tenant_id = cast(int, getattr(tenant, "id"))
-        agent_root = project_fs.agent_root_for(roboard_root, tenant_id, run_id_int, str(agent_id))
+
+        sop_version = (
+            session.query(models.SopVersion)
+            .filter(
+                models.SopVersion.tenant_id == tenant_id,
+                models.SopVersion.agent_id == agent_id,
+            )
+            .order_by(models.SopVersion.version.desc())
+            .first()
+        )
+        if sop_version is None:
+            raise HTTPException(status_code=500, detail="SOP version missing")
+        sop_md_path = cast(str, getattr(sop_version, "md_path"))
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        if idempotency_key:
+            raise HTTPException(status_code=409, detail="Duplicate instantiate request")
+        raise
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception:
+        session.rollback()
+        raise
+
+    if agent_id is None or sop_md_path is None:
+        raise HTTPException(status_code=500, detail="Failed to create agent")
+
+    roboard_root = _get_roboard_root()
+    agent_root = project_fs.agent_root_for(roboard_root, tenant_id, run_id_int, str(agent_id))
+    try:
         agent_fs.ensure_agent_layout(agent_root)
         agent_fs.write_agent_identity(
             agent_root,
@@ -1274,7 +2249,7 @@ async def instantiate_agent(
                 "tools": tools,
             },
         )
-        agent_fs.write_text(agent_root, "mission.md", sop_text)
+        sop_store.write_sop_text(sop_md_path, sop_text)
         agent_fs.write_text(agent_root, "plan.md", "")
 
         for item in skills:
@@ -1283,14 +2258,18 @@ async def instantiate_agent(
             if isinstance(code, str) and code.strip():
                 agent_fs.write_skill_code(agent_root, filename, code)
         agent_fs.write_skills_manifest(agent_root, skills)
-
-        session.commit()
-    except HTTPException:
-        session.rollback()
-        raise
     except Exception:
         session.rollback()
-        raise
+        session.query(models.SopVersion).filter(
+            models.SopVersion.tenant_id == tenant_id,
+            models.SopVersion.agent_id == agent_id,
+        ).delete(synchronize_session=False)
+        session.query(models.AgentInstance).filter(
+            models.AgentInstance.tenant_id == tenant_id,
+            models.AgentInstance.id == agent_id,
+        ).delete(synchronize_session=False)
+        session.commit()
+        raise HTTPException(status_code=500, detail="Failed to materialize agent files")
 
     return AgentInstanceOut(
         id=str(getattr(agent, "id")),

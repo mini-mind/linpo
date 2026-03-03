@@ -4,6 +4,7 @@
 - 2026-02-26: 调整 MVP 范围分层，强调 Skill 自举与技能生态的差异化。
 - 2026-03-02: 将 3.7 升级为 "Agent 模板库"，支持预制 Agent 与模板库管理。
 - 2026-03-03: 新增 Agent 招募机制（模板招募 + 自定义技能招募），取消持久化架构复刻能力。
+- 2026-03-03: 修复优先级、并发控制与招募流程严谨性问题，补充 API Schema、安全边界与边界场景。
 
 · 升级 PRD 版本为 v3.0，覆盖核心功能与技术架构要点。
 · 调整 MVP 范围分层，强调 Skill 自举与技能生态的差异化。
@@ -57,11 +58,12 @@
 
 3. 产品核心功能（MVP范围）
 
-3.1 自然语言创建 run（含 Agent 招募）
+3.1 自然语言创建 run（P0，含创建期初始招募）
 
 · 用户以日常语言描述目标。
-· 系统解析目标并给出招募建议（模板 Agent / 自定义技能 Agent）。
-· 用户确认招募清单后创建 run 并执行，过程无需触碰技术细节。
+· 系统解析目标并给出创建期初始招募建议（模板 Agent 优先，可附加已审核自定义技能）。
+· 用户确认招募清单后创建 run 并执行；创建期不包含运行中追加招募。
+· 可验证指标：首次用户从目标输入到 run 启动耗时 P50 ≤ 60 秒，且确认步骤 ≤ 2 步。
 
 3.2 树状可视化与实时状态监控
 
@@ -74,6 +76,7 @@
 · 支持对单个 Agent 发起 `sop.replace` 动作。
 · 变更动作记录为事件并通过 WebSocket 实时可见。
 · 通过 `expected_version` 控制并发冲突。
+· 并发控制统一规则：所有 run/agent 写接口（`sop.replace`、`POST /api/runs/{run_id}/agents/recruit`、`PATCH /api/runs/{run_id}/agents/{agent_id}`）均需携带 `expected_version`，校验成功后版本号单调 +1，冲突返回 `409 VERSION_CONFLICT`。
 
 3.4（已移除）可信来源机制
 
@@ -99,14 +102,263 @@
 · 支持从模板实例化 Agent，自动绑定技能。
 · 预制 Agent 可直接对接内部服务（如 searcher 接入 searxng）。
 
-3.8 Agent 招募机制
+· 模板能力规则矩阵（MVP）：
 
-· 支持两种招募方式：从模板直接招募、绑定自定义技能后招募。
-· 招募后的 Agent 加入当前 run 执行，不引入持久化层级管理。
-· 招募流程（简版）：选择来源（模板/自定义）→ 配置技能 → 确认加入 run。
-· `POST /api/runs/{run_id}/agents/recruit`：按模板或自定义配置招募 Agent。
-· `GET /api/runs/{run_id}/agents`：获取当前 run 的 Agent 列表与状态。
-  · `PATCH /api/runs/{run_id}/agents/{agent_id}`：更新单个 Agent 的技能绑定配置。
+| 规则项 | 平台预制模板 | 租户私有模板 | 说明 |
+|---|---|---|---|
+| 可见范围 | 全租户可见 | 仅本租户可见 | 避免跨租户泄露 |
+| 可修改人 | 平台管理员 | 租户管理员 | 普通成员只可使用 |
+| 角色/显示名覆盖 | 允许 | 允许 | 仅影响实例，不回写模板 |
+| 技能绑定变更 | 仅可追加已审核租户技能，不可移除模板必选技能 | 可调整本租户技能 | 自定义技能必须先审核 |
+| 内部服务端点 | 不可由用户改写 | 不可由用户改写 | 端点白名单与鉴权头由系统注入 |
+
+3.8 Agent 招募机制（P1，运行期追加招募）
+
+· 创建期初始招募归属 P0（见 3.1）；本节定义运行期追加招募（P1）。
+· 运行期支持两种追加方式：模板招募、自定义技能招募（仅限已审核技能）。
+· 招募后的 Agent 仅加入当前 run 执行，不引入跨 run 持久化层级管理。
+
+3.8.1 运行期追加招募流程（简版）
+
+· 选择来源（模板/自定义）→ 提交招募请求（含 `expected_version`）→ 规则校验/审核校验 → 创建并加入 run。
+
+3.8.2 招募 API Schema（MVP）
+
+以下端点用于 run 内成员招募与审核。
+
+#### 创建招募申请（全局路径，兼容旧版）
+
+· `POST /api/recruitments`
+
+请求体 schema：
+
+```json
+{
+  "run_id": "101",
+  "template_id": "searcher",
+  "role": "市场研究员",
+  "skills": []
+}
+```
+
+响应体（201）：
+
+```json
+{
+  "id": "1",
+  "run_id": "101",
+  "template_id": "searcher",
+  "role": "市场研究员",
+  "skills": [],
+  "status": "pending",
+  "created_at": "2026-03-03T12:00:00Z"
+}
+```
+
+#### 创建招募申请（run 作用域，推荐）
+
+· `POST /api/runs/{run_id}/recruitments`
+
+请求体 schema：
+
+```json
+{
+  "template_id": "searcher",
+  "overrides": {
+    "role": "市场研究员",
+    "skills": [
+      {"name": "custom_research", "filename": "custom_research.py", "code": "def run():\n    return 'ok'\n"}
+    ]
+  }
+}
+```
+
+响应体（201）：同上。
+
+#### 审核招募申请（run 作用域）
+
+· `POST /api/runs/{run_id}/recruitments/{recruitment_id}/review`
+
+请求体 schema：
+
+```json
+{
+  "decision": "approved",
+  "comment": "match the run goal"
+}
+```
+
+响应体（200）：
+
+```json
+{
+  "id": "1",
+  "run_id": "101",
+  "template_id": "searcher",
+  "role": "市场研究员",
+  "skills": [],
+  "status": "approved",
+  "hired_agent_id": "ag_998",
+  "instantiate_result": {"status": "success"},
+  "reviewed_by": "user_123",
+  "reviewed_at": "2026-03-03T12:05:00Z",
+  "created_at": "2026-03-03T12:00:00Z"
+}
+```
+
+#### 查询招募列表
+
+· `GET /api/recruitments`
+
+Query 参数：
+- `run_id` (可选): 按 run 过滤
+- `status` (可选): `pending|approved|rejected`
+
+响应体（200）：
+
+```json
+[
+  {
+    "id": "1",
+    "run_id": "101",
+    "template_id": "searcher",
+    "role": "市场研究员",
+    "skills": [],
+    "status": "pending",
+    "created_at": "2026-03-03T12:00:00Z"
+  }
+]
+```
+
+#### 查询招募详情
+
+· `GET /api/recruitments/{id}`
+
+响应体（200）：同创建响应 schema。
+
+#### 审核通过/拒绝（兼容旧版）
+
+· `PUT /api/recruitments/{id}/approve`
+· `PUT /api/recruitments/{id}/reject`
+
+请求体：无（空 body）
+
+响应体（200）：同创建响应 schema，`status` 更新为 `approved` 或 `rejected`。
+
+错误码：
+
+· `404 NOT_FOUND`：run、招募记录或模板不存在。
+· `409 CONFLICT`：重复审核（已审核状态不可再次审核）或版本冲突。
+· `422 UNPROCESSABLE_ENTITY`：参数校验失败（例如 `run_id` 非法、`template_id` 为空、`status` 非法值）。
+· `500 INTERNAL_SERVER_ERROR`：实例化失败或其他内部错误。
+
+· `POST /api/runs/{run_id}/agents/recruit`
+
+请求体（模板招募示例）：
+
+```json
+{
+  "mode": "template",
+  "template_id": "searcher",
+  "display_name": "市场研究员",
+  "reason": "补齐竞品信息采集",
+  "expected_version": 12
+}
+```
+
+请求体（自定义技能招募示例）：
+
+```json
+{
+  "mode": "custom",
+  "role": "analyst",
+  "display_name": "数据分析师",
+  "skills": ["sql_analysis", "report_summary"],
+  "reason": "补齐数据洞察链路",
+  "expected_version": 12
+}
+```
+
+响应体（201）：
+
+```json
+{
+  "agent_id": "ag_998",
+  "run_id": "101",
+  "recruit_source": "template",
+  "status": "running",
+  "applied_version": 13
+}
+```
+
+错误码：
+
+· `400 INVALID_REQUEST`：参数缺失或 `mode` 非法。
+· `403 SKILL_NOT_APPROVED`：自定义技能未审核通过或无权限使用。
+· `404 RUN_OR_TEMPLATE_NOT_FOUND`：run、模板或技能不存在。
+· `409 VERSION_CONFLICT`：`expected_version` 与服务端当前版本不一致。
+· `409 RUN_STATE_INVALID`：run 不在可追加招募状态。
+
+· `GET /api/runs/{run_id}/agents`
+
+响应体（200）：
+
+```json
+[
+  {
+    "agent_id": "ag_998",
+    "display_name": "市场研究员",
+    "recruit_source": "template",
+    "status": "running"
+  }
+]
+```
+
+· `PATCH /api/runs/{run_id}/agents/{agent_id}`
+
+请求体（更新技能绑定示例）：
+
+```json
+{
+  "skills": ["sql_analysis", "report_summary"],
+  "expected_version": 13
+}
+```
+
+响应体（200）：
+
+```json
+{
+  "agent_id": "ag_998",
+  "skills": ["sql_analysis", "report_summary"],
+  "applied_version": 14
+}
+```
+
+错误码：
+
+· `400 INVALID_REQUEST`
+· `403 SKILL_NOT_APPROVED`
+· `404 RUN_OR_AGENT_NOT_FOUND`
+· `409 VERSION_CONFLICT`
+
+3.8.3 自定义技能审核规则
+
+· 仅允许绑定“已审核通过（approved）”的租户私有技能；`pending/rejected` 技能不可用于招募。
+· 审核最小维度：权限范围、依赖安全、资源配额；不通过必须返回可读拒绝原因。
+· 审核责任边界：平台预制技能由平台维护，租户自定义技能由租户管理员审核。
+· 运行边界：技能在沙箱执行，不可读取宿主机敏感路径，不可直接获取 `X-Internal-Key`。
+
+3.8.4 招募边界场景表（与当前实现对齐）
+
+| 场景 | 触发条件 | 处理策略 | 返回/可观测结果 |
+|---|---|---|---|
+| run 状态不允许招募 | run 状态为 `paused` 或 `terminated` | 拒绝创建/审核招募请求 | `409 RUN_STATE_INVALID` |
+| 模板下线或不可用 | `template_id` 在模板库中不存在 | 拒绝创建招募申请 | `404 Template '<template_id>' not found` |
+| 技能审核与输入校验 | 自定义技能文件名非法（含路径穿越）或 code 为空（当提供 code 时） | 拒绝写入招募申请，要求修正技能定义 | `400 Invalid skill filename` / `400 Skill code required` |
+| 审核并发冲突 | 同一招募被并发审核，或 `expected_version` 不匹配 | 仅允许一次从 `pending` 进入终态，冲突请求拒绝 | `409 Recruitment already reviewed` / `409 Recruitment version conflict` |
+| 实例化幂等冲突 | 同一 run 下重复提交相同 `idempotency_key` | 拒绝重复实例化请求 | `409 Duplicate instantiate request` |
+
 
 3.9 多端协同基础
 
@@ -163,7 +415,7 @@
 · 后端通过 WebSocket 推送状态，前端缓存更新。
 · 移动端与 Web 端共享同一 API。
 
-4.6 Agent 招募流程（运行态）
+4.6 Agent 招募流程（创建期）
 
 · 流程图：
 
@@ -174,18 +426,43 @@
    ↓
 用户确认招募清单
    ↓
-创建 Agent 并加入 run
+创建 run（写入初始 Agent 清单）
    ↓
 执行与状态回传（WebSocket）
 ```
 
+· 创建期招募属于 run 创建流程的一部分，不触发运行期追加接口。
+
+4.7 Agent 招募流程（运行期追加）
+
+· 流程图：
+
+```
+运行中 run
+   ↓
+提交追加招募（POST /api/runs/{run_id}/agents/recruit + expected_version）
+   ↓
+模板/技能校验（自定义技能需 approved）
+   ↓
+创建 Agent 并加入当前 run
+   ↓
+版本号 +1 与 WebSocket 状态回传
+```
+
 · 运行期仅维护当前 run 的协作关系，不维护跨 run 的持久化架构复刻。
+
+4.8 安全边界（招募与技能）
+
+· 用户输入边界：用户可提交角色、技能名、说明，不可提交内部鉴权头或内部服务密钥。
+· 模板边界：模板可声明内部服务调用，但端点与鉴权方式由平台白名单和服务端注入控制。
+· 执行边界：技能在 Docker 沙箱执行，按租户隔离文件系统与资源配额。
+· 审核边界：自定义技能未审核通过前，不得进入招募与运行链路。
 
 5. MVP 范围与优先级
 
 P0（必须，4 周内）
 
-· 自然语言创建 run + Agent 招募（基础版）
+· 自然语言创建 run + 创建期初始招募（模板优先）
 · 树状可视化 + WebSocket 实时状态
 · Agent 基础执行引擎（FS + 事件驱动）
 · 前端基础界面（指挥舱）
@@ -195,7 +472,7 @@ P1（争取，4-6 周）
 · Skill 自举（初版）
 · 社区技能集成（搜索/安装/调用）
 · Agent 模板库（预制 Agent + 自定义技能绑定）
-· Agent 招募机制（模板招募 + 自定义技能后招募）
+· Agent 招募机制（运行期追加：模板招募 + 自定义技能招募 + 审核）
 · 多端协同（移动端基础查看）
 
 P2（后续迭代）
@@ -208,17 +485,31 @@ P2（后续迭代）
 6. 关键术语解释
 
 · 智能体（Agent）：独立运行的 AI 单元，拥有文件系统与执行循环。
-· Agent 招募：将模板 Agent 或自定义技能配置实例化后，加入当前 run 的过程。
+· 创建期初始招募：在 run 创建前确认初始 Agent 清单，并随 run 启动一次性生效。
+· 运行期追加招募：run 启动后，通过招募接口将新 Agent 追加到当前 run。
+· Agent 招募：创建期初始招募与运行期追加招募的统称。
 · Skill：智能体可调用的工具函数，来源可为内置/社区/自建。
 · SOP：产品语境下指 TODO/计划列表，来源为 `plan.md`，前端展示为 `plan_subtasks`。当前实现仍保留 SOP 模板（`sops/templates/*.md` + `mission.md` + `/api/agents/{agent_id}/sop`），与计划列表并存。
 · Session Key：Agent 标识与权限依据。
+· `expected_version`：run/agent 写操作的乐观并发版本号，服务端仅在版本匹配时应用变更。
 
 7. 成功指标（内部使用）
 
-· 用户任务成功率：首次使用 5 分钟内完成简单场景的比例。
-· SOP 变更成功率：`sop.replace` 动作成功应用的比例。
-· Skill 安装/自建成功率：新增能力获取成功的比例。
-· 用户留存：次日留存、周留存等核心指标。
+· 创建期上手效率：首次用户从目标输入到 run 启动耗时 P50 ≤ 60 秒，P90 ≤ 180 秒。
+· 创建期初始招募确认率：在首次创建流程内完成招募确认的比例 ≥ 85%。
+· 运行期追加招募成功率：`POST /api/runs/{run_id}/agents/recruit` 成功率 ≥ 95%。
+· 并发冲突正确拦截率：版本冲突样本中返回 `409 VERSION_CONFLICT` 的比例 ≥ 99%。
+· 自定义技能审核时效：`pending -> approved/rejected` 的处理时长 P95 ≤ 10 分钟。
+
+7.1 边界场景与处理策略（MVP）
+
+| 场景 | 触发条件 | 处理策略 | 返回/可观测结果 |
+|---|---|---|---|
+| run 状态不允许追加 | run 为 `completed/failed/cancelled` | 拒绝运行期追加招募 | `409 RUN_STATE_INVALID` |
+| 模板下线或禁用 | `template_id` 不存在或状态不可用 | 拒绝新招募，不影响已在跑 Agent | `404 RUN_OR_TEMPLATE_NOT_FOUND` |
+| 版本冲突 | `expected_version` 落后于当前版本 | 拒绝写入并返回当前版本用于重试 | `409 VERSION_CONFLICT` |
+| 自定义技能未审核 | skill 状态为 `pending/rejected` | 阻止绑定与招募 | `403 SKILL_NOT_APPROVED` |
+| 资源越权访问 | 技能尝试访问非租户允许资源 | 在沙箱侧拦截并记录审计日志 | 执行失败事件 + 安全日志 |
 
 ---
 

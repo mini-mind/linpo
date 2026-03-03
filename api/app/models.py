@@ -123,6 +123,7 @@ class AgentInstance(Base):
     role_label = Column(String(255), nullable=True)
     state = Column(String(50), nullable=False, default='queued')
     current_sop_version_id = Column(Integer, ForeignKey('sop_versions.id'), nullable=True)
+    idempotency_key = Column(String(255), nullable=True)
     resource_allocation_json = Column(Text, nullable=True)
     created_at = Column(DateTime, default=utcnow_naive, nullable=False)
 
@@ -130,6 +131,7 @@ class AgentInstance(Base):
         Index('ix_agent_instances_tenant_id', 'tenant_id'),
         Index('ix_agent_instances_run_id', 'run_id'),
         Index('ix_agent_instances_parent_agent_id', 'parent_agent_id'),
+        Index('uq_agent_instances_tenant_run_idempotency_key', 'tenant_id', 'run_id', 'idempotency_key', unique=True),
     )
 
 

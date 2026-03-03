@@ -49,7 +49,6 @@ export PATH="$HOME/.opencode/bin:$PATH"
 
 2. P0 优先级（来自最新决策）
    - 状态协议（前端生命线）
-   - 干预接口（pause/retry/reassign 等）
    - 允许停下来向用户确认（open questions / human-in-the-loop）
    - 放弃 Vercel 动态部署独立子域，复用现有能力
 

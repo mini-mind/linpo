@@ -62,3 +62,10 @@ python -m pytest -q
 - 2026-02-28: API README 补充 SOP 术语说明（与计划列表并存）。
 - 2026-02-28: 新增可选 DISPATCH_URL, 后台调用 /internal/dispatch; 未配置则回退 Redis queue:dispatch。
 - 2026-03-03: 移除 P0 可信来源与干预控制能力：删除 `/api/runs/{run_id}/agents/{agent_id}/sources` 与 `/api/runs/{run_id}/interventions`；`/api/runs/{run_id}/actions` 仅保留 `sop.replace`。
+- 2026-03-03: 新增 run 作用域招募审核接口 `/api/runs/{run_id}/recruitments` 与 `/api/runs/{run_id}/recruitments/{recruitment_id}/review`，支持 `pending -> approved/rejected` 状态机、审核审计日志及审核通过后联动 `/api/runs/{run_id}/agents/instantiate`；测试见 `tests/test_recruitments.py`。
+- 2026-03-03: 修复招募审核 P0 缺陷：`/api/recruitments/{id}/approve` 与 `/api/recruitments/{id}/reject` 补充 `reviewed_by`/`reviewed_at` 字段写入与审计事件记录（`recruitment.approved`/`recruitment.rejected`）；修复 approve 成功后缺少 `session.commit()` 问题；并发审核通过 `status == "pending"` 条件更新保证幂等，测试见 `tests/test_recruitments.py` 与 `tests/test_recruitment_concurrency.py`。
+- 2026-03-03: 招募审核补充版本并发控制：`Recruitment.version` + `expected_version`（approve/reject/review 原子更新）；实例化失败错误脱敏为错误码 `RECRUITMENT_INSTANTIATE_FAILED`（仅内部日志记录异常详情），并新增不泄露用例覆盖。
+- 2026-03-03: `/api/runs/{run_id}/agents/instantiate` 增加 `idempotency_key` 幂等控制（重复请求 409），并将 agent/skills 文件落盘延后到 DB commit 后；FS 失败时执行 DB 补偿回滚；新增迁移 `20260303_0007` 与回归测试 `test_agent_instantiate.py`。
+- 2026-03-03: 招募与实例化补齐 P2：`Recruitment` 增加 `created_by_user_id` 并在响应返回 `created_by`；`/api/runs/{run_id}/agents/instantiate` 在未传 `parent_agent_id` 时默认挂到 `run.root_agent_id`；`overrides.tools` 改为严格 schema（`type/name/endpoint/auth` 必填且禁止额外字段），非法请求返回 `422` 字段级错误。
+- 2026-03-03: 补充招募边界与覆盖：run 状态 `paused/terminated` 下禁止招募创建与审核（`409 RUN_STATE_INVALID`），创建招募时强制模板存在校验（不存在返回 `404`）；新增 `tests/test_boundary.py`、`tests/test_concurrency.py`、`tests/test_idempotency.py` 并通过全量 `pytest`。
+- 2026-03-03: 清理 `api/app/tree_api.py` 代码质量问题：移除 `_parse_int_id` 不可达重复逻辑、`list_recruitments` 不可达 `raise`、`approve_recruitment` 重复 `session.refresh`，以及 `instantiate_agent` 冗余 `_get_roboard_root()` 调用。
