@@ -153,11 +153,9 @@ services:
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:?set}
       - WORKER_URL=${WORKER_URL:-http://worker-playwright:7100}
       - API_BACKEND_URL=${API_BACKEND_URL:-http://api:8000}
-      - MCP_URL=${MCP_URL:-http://mcp-server:9000}
-      - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
+      # 本地开发如需测试，手动设置 SEARXNG_URL 环境变量
     depends_on:
       - redis
-      - searxng
     healthcheck:
       test:
         - CMD-SHELL
@@ -169,18 +167,6 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
-    networks:
-      - app-net
-    restart: unless-stopped
-
-  searxng:
-    image: searxng/searxng:latest
-    environment:
-      - BASE_URL=http://localhost:8080/
-      - INSTANCE_NAME=roboard-searxng
-    volumes:
-      - ./internal/searxng/config/settings.yml:/etc/searxng/settings.yml:ro
-      - ./internal/searxng/config/limiter.toml:/etc/searxng/limiter.toml:ro
     networks:
       - app-net
     restart: unless-stopped
