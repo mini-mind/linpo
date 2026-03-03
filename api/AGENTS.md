@@ -50,9 +50,6 @@ python -m pytest -q
 ## NOTES
 - Local compose binds `127.0.0.1:8005->8000` for host access.
 - Migrations are Alembic-driven; keep schema changes in `alembic/versions`.
-- 2026-02-27: Removed legacy agent chat flow; switched root role to lead; keep intervention endpoint `/api/runs/{run_id}/interventions`.
-- 2026-02-27: Added agent sources API (`/api/runs/{run_id}/agents/{agent_id}/sources`) and run control actions (`/api/runs/{run_id}/actions`); pytest `47 passed`.
-- 2026-02-27: run 控制动作补全：`run.pause` 触发 `task.requires_input` 并标记 `action.applied`；`run.resume`/`run.retry` 触发重新入队派发；新增 `tests/test_run_controls.py` 覆盖。
 - 2026-02-27: Added agent skills manifest API + FS layout for skills, with tests for roundtrip and layout.
 - 2026-02-27: Added community skills registry + install API, plus team export/import YAML endpoints.
 - 2026-02-27: Added community skill search + NL install, skill catalog tiers (builtin/platform/tenant), and skill bootstrap enqueue endpoint.
@@ -64,3 +61,4 @@ python -m pytest -q
 - 2026-02-28: `/api/agents/{agent_id}/sop` 增加 `version` 返回；默认读取 `mission.md`，显式 version 参数读取对应版本；更新 `test_tree_api.py` 与 `test_actions_sop_replace.py`。
 - 2026-02-28: API README 补充 SOP 术语说明（与计划列表并存）。
 - 2026-02-28: 新增可选 DISPATCH_URL, 后台调用 /internal/dispatch; 未配置则回退 Redis queue:dispatch。
+- 2026-03-03: 移除 P0 可信来源与干预控制能力：删除 `/api/runs/{run_id}/agents/{agent_id}/sources` 与 `/api/runs/{run_id}/interventions`；`/api/runs/{run_id}/actions` 仅保留 `sop.replace`。

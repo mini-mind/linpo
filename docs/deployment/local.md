@@ -217,9 +217,8 @@ docker compose exec -T gateway curl -fsS http://localhost/api/health
 **Run/WS 验证（推荐）**：
 ```bash
 # 当前实现未提供 /api/bootstrap 端点。
-# 推荐按 run-centric 流程做端到端验证：register -> create run -> tree -> interventions。
-# 直接复用根 README 的“自然语言干预（Intervention）/快速验证（本地）”脚本：
-#   ../README.md#intervention
+# 推荐按 run-centric 流程做端到端验证：register -> create run -> tree -> ws。
+# `sop.replace` 可通过 `POST /api/runs/{run_id}/actions` 验证。
 ```
 
 **内部服务连接**（从 compose 网络内）：

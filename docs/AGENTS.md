@@ -41,4 +41,4 @@ docs/
 
 ## NOTES
 - Remove or archive docs that contradict the current PRD.
-- 2026-02-27: 文档已对齐 PRD v3（intervention 流程）。
+- 2026-03-03: 文档已移除 P0 可信来源/干预控制引用，对齐当前 PRD 方向。

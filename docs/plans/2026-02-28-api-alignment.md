@@ -16,10 +16,7 @@
 | `POST /api/runs` | 创建 run, 返回 `run_id` | `api/app/main.py` `create_run` | `api/README.md` 已覆盖 |
 | `GET /api/runs/{run_id}/tree` | 读取 agent 树与 edges | `api/app/tree_api.py` `get_run_tree` | `api/README.md` 已覆盖 |
 | `GET /api/agents/{agent_id}/sop` | 读取 agent SOP | `api/app/tree_api.py` `get_agent_sop` | `api/README.md` 已覆盖 |
-| `POST /api/runs/{run_id}/actions` | run 控制和 SOP 替换 | `api/app/main.py` `create_action` | `api/README.md` 已覆盖 |
-| `POST /api/runs/{run_id}/interventions` | 提交自然语言干预 | `api/app/main.py` `create_run_intervention` | `api/README.md` 已覆盖 |
-| `GET /api/runs/{run_id}/agents/{agent_id}/sources` | 加载来源清单 | `api/app/tree_api.py` `get_agent_sources` | `api/README.md` 已覆盖 |
-| `PUT /api/runs/{run_id}/agents/{agent_id}/sources` | 保存来源清单 | `api/app/tree_api.py` `put_agent_sources` | `api/README.md` 已覆盖 |
+| `POST /api/runs/{run_id}/actions` | SOP 替换（`sop.replace`） | `api/app/main.py` `create_action` | `api/README.md` 已覆盖 |
 | `GET /api/runs/{run_id}/agents/{agent_id}/skills` | 加载技能清单 | `api/app/tree_api.py` `get_agent_skills` | `api/README.md` 已覆盖 |
 | `POST /api/runs/{run_id}/agents/{agent_id}/skills/install` | 安装社区技能 | `api/app/tree_api.py` `install_community_skill` | `api/README.md` 已覆盖 |
 | `POST /api/runs/{run_id}/agents/{agent_id}/skills/install-nl` | NL 安装社区技能 | `api/app/tree_api.py` `install_community_skill_nl` | `api/README.md` 已覆盖 |

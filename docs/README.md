@@ -6,7 +6,7 @@
 
 ## L0: 这是什么？从哪里开始
 
-**项目简介**: RoBoard（灵板）是一个多服务的多智能体团队指挥平台，包含 Agent 框架、自然语言干预、浏览器自动化等组件。
+**项目简介**: RoBoard（灵板）是一个多服务的多智能体团队指挥平台，包含 Agent 框架、浏览器自动化等组件。
 
 **产品需求文档（最新）**:
 - [灵板 PRD v3.0](prd/2026-02-26-lingban-prd-v3.0.md)
@@ -18,7 +18,6 @@
 
 **端到端验证**:
 - [快速验证 - 租户创建、任务执行、WebSocket 连接](../README.md#快速验证)
-- [快速验证（本地） - 自然语言干预](../README.md#intervention)
 
 **对外契约（推荐口径）**:
 - [接口契约规范 (2026-03-02)](specs/2026-03-02-interface-contract.md) - 对齐 PRD v3 的对外接口/鉴权/WS
@@ -30,7 +29,6 @@
 ## L2: 架构与 Agent 机制
 
 - [Agent Framework 文档](agent-framework.md) - LLM Gateway、配置分离、安全指南
-  - 自然语言干预（Intervention）
   - 配置示例与常见错误
 
 **架构与目录索引**:
@@ -38,8 +36,10 @@
 - [服务地图 (多 Session 并行推进)](architecture/service-map.md)
 - [子项目化视图 (降低认知成本)](architecture/subprojects.md)
 
-**核心机制**（根 README）:
-- [自然语言干预](../README.md#intervention) - 事件驱动干预流程
+## L2.5: 计划与路线图
+
+- [P1 Agent 招募机制计划 (2026-03-03)](plans/2026-03-03-agent-recruitment-mechanism.md) - P1 主方向：模板/自定义招募、审核与加入 run
+- [P1 Skill 生态与团队复用计划 (2026-02-27, 已废弃)](plans/2026-02-27-prd3-p1-skill-ecosystem-implementation-plan.md) - 团队导入/导出方向已下线，Skill 自举与社区技能保留为暂缓
 
 ## L3: 部署与运维
 

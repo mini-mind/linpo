@@ -9,7 +9,7 @@
 Agent 模板库是 RoBoard 的预制能力基础设施，支持：
 - **预制 Agent 模板**：预配置的专家 Agent（如搜索专家、分析专家）
 - **团队模板导出/导入**：将团队架构序列化为 YAML/JSON
-- **实例化**：从模板快速创建 Agent，自动绑定技能与可信来源
+- **实例化**：从模板快速创建 Agent，自动绑定技能
 
 ## 2. 模板格式
 
@@ -36,12 +36,6 @@ tools:
     name: searxng
     endpoint: http://mcp-server:9000/search
     auth: internal-key
-
-# 可信来源（可选）
-sources:
-  - path: docs/knowledge
-    label: 知识库
-    readonly: true
 
 # SOP 模板
 sop: |
@@ -126,10 +120,7 @@ agents:
   "template_id": "searcher",
   "parent_agent_id": "123",
   "overrides": {
-    "name": "定制搜索专家",
-    "sources": [
-      {"path": "custom/docs", "label": "定制文档"}
-    ]
+    "name": "定制搜索专家"
   }
 }
 ```

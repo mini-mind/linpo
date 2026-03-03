@@ -92,26 +92,12 @@ Body:
 4. Test with LLM calls to verify the new key works
 5. Revoke old key after successful deployment
 
-### 自然语言干预（Intervention）
+### SOP 变更动作（sop.replace）
 
-**事件驱动干预：**
-- 通过 `POST /api/runs/{run_id}/interventions` 提交干预
-- 干预会生成 `task.requires_input` 事件并广播到 `/ws/runs/{run_id}`
-- 干预消息用于调整目标、计划或执行策略
-
-### 可信来源（Sources）
-
-**来源绑定 API：**
-- `GET /api/runs/{run_id}/agents/{agent_id}/sources` 获取来源列表
-- `PUT /api/runs/{run_id}/agents/{agent_id}/sources` 更新来源列表
-- 来源清单写入 agent FS 的 `context/sources/manifest.json`
-
-### 控制动作（Pause/Resume/Retry）
-
-**控制动作 API：**
-- `POST /api/runs/{run_id}/actions` 提交控制动作
-- `action_type` 支持 `run.pause` / `run.resume` / `run.retry`
-- 生成 `action.requested` 事件并广播到 `/ws/runs/{run_id}`
+**SOP 变更 API：**
+- `POST /api/runs/{run_id}/actions` 提交动作
+- `action_type` 固定为 `sop.replace`
+- 成功后写入 `action.requested`、`sop.updated`、`action.applied` 事件并广播到 `/ws/runs/{run_id}`
 
 ### 技能清单与社区技能
 
@@ -151,13 +137,13 @@ agents:
 
 ### Integration Examples
 
-**Intervention Demo:**
-- 用户提交干预让执行重新聚焦
+**SOP Replace Demo:**
+- 用户提交 `sop.replace` 以更新指定 Agent 的 SOP
 - Flow:
   1. 用户创建 run 并获取 `agent_id`
-  2. 调用 `/api/runs/{run_id}/interventions` 提交消息
-  3. 前端通过 WebSocket 收到 `task.requires_input`
-  4. 任务树 UI 更新状态并展示干预内容
+  2. 调用 `/api/runs/{run_id}/actions`（`action_type=sop.replace`）
+  3. 前端通过 WebSocket 收到 `action.requested/sop.updated/action.applied`
+  4. 任务树 UI 刷新并展示新 SOP 版本
 
 ### Worker Constraints
 

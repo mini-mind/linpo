@@ -1,6 +1,6 @@
 # RoBoard（灵板）
 
-多智能体团队指挥平台：自然语言创建 run，树状可视化进度，WebSocket 实时推送，支持随时干预，并可通过安装/自建技能扩展能力。
+多智能体团队指挥平台：自然语言创建 run，树状可视化进度，WebSocket 实时推送，并可通过安装/自建技能扩展能力。
 
 ## 文档目录结构
 
@@ -76,71 +76,6 @@ docker compose down
 查看日志：
 ```bash
 docker compose logs -f
-```
-
-<a id="intervention"></a>
-## 自然语言干预（Intervention）
-
-系统通过 run 事件流支持执行中干预，干预会以 `task.requires_input` 事件广播给 WebSocket 订阅者。
-
-### 流程
-1. `POST /api/runs` 创建 run
-2. `GET /api/runs/{run_id}/tree` 获取树与 `agent_id`
-3. `POST /api/runs/{run_id}/interventions` 提交干预
-4. 通过 `WS /ws/runs/{run_id}` 观察事件
-
-### 请求示例
-
-```json
-{
-  "agent_id": "123",
-  "message": "请重新聚焦目标，并更新当前计划"
-}
-```
-
-### 快速验证（本地）
-
-```bash
-docker compose exec -T api python3 - <<'PY'
-import urllib.request, json, time
-
-BASE = "http://localhost:8000"
-
-email = f"qa_{int(time.time())}@example.com"
-req = urllib.request.Request(
-    f"{BASE}/api/auth/register",
-    data=json.dumps({"email": email, "password": "testpass"}).encode(),
-    headers={"Content-Type": "application/json"}
-)
-with urllib.request.urlopen(req) as resp:
-    token = json.load(resp)["session_token"]
-
-req = urllib.request.Request(
-    f"{BASE}/api/runs",
-    data=json.dumps({"input_nl": "hello", "input": {}}).encode(),
-    headers={"Content-Type": "application/json", "X-Session-Token": token}
-)
-with urllib.request.urlopen(req) as resp:
-    run = json.load(resp)
-run_id = run["run_id"]
-
-req = urllib.request.Request(
-    f"{BASE}/api/runs/{run_id}/tree",
-    headers={"X-Session-Token": token}
-)
-with urllib.request.urlopen(req) as resp:
-    tree = json.load(resp)
-agent_id = tree["agents"][0]["id"]
-
-req = urllib.request.Request(
-    f"{BASE}/api/runs/{run_id}/interventions",
-    data=json.dumps({"agent_id": str(agent_id), "message": "更新当前计划"}).encode(),
-    headers={"Content-Type": "application/json", "X-Session-Token": token}
-)
-with urllib.request.urlopen(req) as resp:
-    event = json.load(resp)
-print(event)
-PY
 ```
 
 ## 环境变量

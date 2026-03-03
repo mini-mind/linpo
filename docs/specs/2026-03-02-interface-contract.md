@@ -5,9 +5,9 @@
 ## 目的
 本规范用于消除迁移过程中遗留的“过时规则”，把对外接口约定统一到 PRD v3 所强调的核心体验：
 
-- 以 run 为中心（团队树 + 实时状态 + 可干预）。
+- 以 run 为中心（团队树 + 实时状态）。
 - WebSocket 实时推送状态更新。
-- 干预以自然语言提交并实时生效。
+- 通过 `sop.replace` 对单个 Agent 的 SOP 做显式变更。
 
 PRD v3 不规定具体 URL/headers，本规范选择“当前实现 + PRD 目标”作为推荐契约；各子目录文档应引用本规范，避免再次漂移。
 
@@ -29,7 +29,7 @@ PRD v3 不规定具体 URL/headers，本规范选择“当前实现 + PRD 目标
 
 浏览器会话（用户级）
 - Header: `X-Session-Token` 或会话 Cookie
-- 主要用于指挥舱 UI 的登录态与干预（例如 `/api/auth/*`、`/api/runs/*`）
+- 主要用于指挥舱 UI 的登录态（例如 `/api/auth/*`、`/api/runs/*`）
 
 术语澄清（避免混用）
 - Agent 侧存在“身份/权限”的内部概念（用于文件系统与执行循环的内部边界）。
@@ -54,16 +54,18 @@ PRD v3 不规定具体 URL/headers，本规范选择“当前实现 + PRD 目标
 - `GET /api/runs/{run_id}/tree`
 - 返回：agents + edges（用于前端树状可视化）。
 
-### 自然语言干预
-- `POST /api/runs/{run_id}/interventions`
+### SOP 替换动作
+- `POST /api/runs/{run_id}/actions`
 - Body 示例：
 ```json
 {
-  "agent_id": "123",
-  "message": "请重新聚焦目标，并更新当前计划"
+  "target_agent_id": "123",
+  "action_type": "sop.replace",
+  "expected_version": 1,
+  "md_text": "# Updated SOP\n\n..."
 }
 ```
-- 语义：干预会生成 `task.requires_input` 事件，并通过 run WebSocket 广播。
+- 语义：创建并应用 SOP 变更动作，写入 `action.requested/sop.updated/action.applied` 事件并通过 run WebSocket 广播。
 
 ### WebSocket（推荐入口）
 

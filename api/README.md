@@ -239,21 +239,7 @@ Response:
 - 产品语境中 SOP 常被用于指代 TODO/计划列表, 其来源为 `plan.md` 并解析为 `plan_subtasks`.
 - 该接口返回的是 SOP 模板文本, 与计划列表在实现上并存.
 
-### Interventions
-
-`POST /api/runs/{run_id}/interventions`
-
-Request:
-```json
-{
-  "agent_id": "123",
-  "message": "Please focus on delivery risk."
-}
-```
-
-Response: 事件对象（`task.requires_input`），并将 run 状态更新为 `needs_human`。
-
-### Run actions (pause/resume/retry)
+### Run actions (sop.replace)
 
 `POST /api/runs/{run_id}/actions`
 
@@ -261,32 +247,14 @@ Request:
 ```json
 {
   "target_agent_id": "123",
-  "action_type": "run.pause",
-  "idempotency_key": "pause-1"
+  "action_type": "sop.replace",
+  "expected_version": 1,
+  "md_text": "# Updated SOP\n\n...",
+  "idempotency_key": "sop-replace-1"
 }
 ```
 
-`action_type` 支持：`run.pause` / `run.resume` / `run.retry` / `sop.replace`。
-
-行为说明：
-- `run.pause`: 生成 `task.requires_input` 事件并把 run 标记为 `needs_human`
-- `run.resume` / `run.retry`: 生成 `action.*` 事件并重新入队 `queue:dispatch`
-
-### Agent sources
-
-`GET /api/runs/{run_id}/agents/{agent_id}/sources`
-`PUT /api/runs/{run_id}/agents/{agent_id}/sources`
-
-Request (PUT):
-```json
-{
-  "sources": [
-    {"path": "docs/manuals", "label": "Manuals"}
-  ]
-}
-```
-
-来源清单写入 `agent_fs/context/sources/manifest.json`，并创建相应目录。
+`action_type` 目前仅支持 `sop.replace`。
 
 ### Agent skills
 
