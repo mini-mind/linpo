@@ -52,6 +52,17 @@ docker ps --format "{{.Names}}\t{{.Image}}\t{{.Ports}}"
 
 ## 部署：frontend host (ravin, 68.64.179.125)
 
+frontend host 负责：edge(Caddy) + gateway + web-frontend + **searxng**。
+
+**SearXNG 部署说明**：
+- **位置**：ravin (68.64.179.125) - 美国服务器
+- **网络优势**：可直接访问 google、duckduckgo、bing、brave 等所有国际搜索引擎
+- **配置**：使用 `use_default_settings: true`，启用所有默认引擎
+- **访问地址**：`http://127.0.0.1:8081/`（仅 ravin 本地）
+- **后端调用**：mcp-server 通过 `SEARXNG_URL` 环境变量访问
+
+在 ravin 上：
+
 frontend host 负责：edge(Caddy) + gateway + web-frontend + searxng。
 
 在 ravin 上：
@@ -76,6 +87,21 @@ worker host 负责：api/dispatch/worker-playwright/mcp-server/postgres/redis/ll
 - 确保 `/api/*` 与 `/ws/*` 的隧道链路健康
 
 ## 验证清单
+
+从任意能访问公网的机器执行：
+
+```bash
+curl -fsS https://roboard.duckdns.org/api/health
+curl -fsS https://roboard.duckdns.org/ >/dev/null
+
+# 验证 SearXNG（SSH 登录 ravin）
+ssh ravin "curl -s 'http://127.0.0.1:8081/search?q=test&format=json'"
+# 期望输出：Results: N | Engines OK: 0
+
+端口固定约定（split 部署）：
+- 前端 host：80/443 由 edge 占用；gateway 仅本机 127.0.0.1:8082
+- worker host：api 对外 `0.0.0.0:8000->8000`，必须可被前端 host 访问
+```
 
 从任意能访问公网的机器执行：
 

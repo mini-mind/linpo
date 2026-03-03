@@ -68,7 +68,7 @@ Docker Compose will automatically load variables from the project root `.env`. T
 ```bash
 ADMIN_API_KEY=...            # required by api
 INTERNAL_API_KEY=...         # required by internal service-to-service auth
-SEARXNG_SECRET_KEY=...        # required by searxng
+SEARXNG_SECRET_KEY=...        # required by searxng (deployed on ravin, not worker host)
 PLAYWRIGHT_GATEWAY_URL=http://175.178.213.10:7200
 ```
 

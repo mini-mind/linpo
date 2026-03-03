@@ -1,6 +1,9 @@
 # searxng
 
 ## OVERVIEW
+SearXNG 搜索引擎服务，部署在 ravin (68.64.179.125)，用作 `internal/mcp-server` 的搜索后端。
+
+**重要**：ravin 位于美国，可直接访问所有国际搜索引擎（google、duckduckgo、bing 等），无需禁用任何引擎。
 SearXNG 搜索引擎服务，仅在生产前端 compose（`ops/deploy/prod/docker-compose.frontend.yml`）中启用，用作 `internal/mcp-server` 的搜索后端。
 
 ## STRUCTURE
@@ -43,4 +46,8 @@ internal/searxng/
 - 不要在非生产前端 compose 中默认启用 `searxng`（除非明确需要）。
 
 ## NOTES
+- `internal/mcp-server` 通过 `SEARXNG_URL` 访问 searxng（具体值由部署形态决定）。
+- **部署位置**：SearXNG 仅部署在 ravin (68.64.179.125)，本地开发环境不包含 searxng 服务。
+- **网络优势**：ravin 位于美国，可直接访问 google、duckduckgo、brave、bing 等所有国际搜索引擎，搜索结果质量更高。
+- **配置说明**：`internal/searxng/config/settings.yml` 使用 `use_default_settings: true`，启用所有默认引擎。
 - `internal/mcp-server` 通过 `SEARXNG_URL` 访问 searxng（具体值由部署形态决定）。
