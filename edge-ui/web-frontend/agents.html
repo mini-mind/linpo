@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RoBoard Agent 招募</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23c46a2a'/%3E%3Ctext x='50' y='70' font-family='Arial, sans-serif' font-size='60' font-weight='bold' text-anchor='middle' fill='white'%3ER%3C/text%3E%3C/svg%3E" type="image/svg+xml" />
+    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="agents.css" />
+  </head>
+  <body>
+    <div id="app" class="agent-recruit-shell" x-data="window.agentRecruitState || {}" x-cloak x-init="init && init()">
+      <!-- 顶部栏 -->
+      <header class="header topbar" aria-label="RoBoard Agent 招募">
+        <a class="brand logo" href="/" aria-label="RoBoard 首页">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">RoBoard</span>
+        </a>
+
+        <nav class="nav-breadcrumbs" aria-label="面包屑导航">
+          <a href="/" class="nav-crumb">任务树</a>
+          <span class="nav-crumb-sep">/</span>
+          <span class="nav-crumb nav-crumb-active">Agent 招募</span>
+        </nav>
+
+        <div class="user-status user-dropdown" aria-label="用户菜单">
+          <button id="user-dropdown-trigger" class="user-dropdown-trigger" type="button" aria-haspopup="menu" aria-expanded="false">
+            <span id="session-label" class="session-label user-name" x-text="sessionLabel"></span>
+            <span class="connect-status">
+              <span class="connect-dot" aria-hidden="true"></span>
+              <span id="agent-connection-pill" class="status-pill neutral" aria-label="连接状态" data-i18n="agentRecruit.statusIdle">空闲</span>
+            </span>
+          </button>
+          <div id="user-dropdown-menu" class="user-dropdown-menu is-hidden" role="menu">
+            <div class="lang-toggle" role="group" aria-label="语言切换">
+              <button id="lang-zh" class="btn btn-ghost" type="button" role="menuitem">中文</button>
+              <button id="lang-en" class="btn btn-ghost" type="button" role="menuitem">English</button>
+            </div>
+            <button id="logout-btn" class="btn btn-ghost" type="button" role="menuitem" data-i18n="taskTree.logout">退出</button>
+          </div>
+        </div>
+      </header>
+
+      <!-- 主内容区 -->
+      <main class="agent-recruit-main" aria-label="Agent 招募">
+        <!-- 页面标题区 -->
+        <section class="agent-recruit-hero">
+          <div class="agent-recruit-hero-content">
+            <h1 class="agent-recruit-title" data-i18n="agentRecruit.title">Agent 招募</h1>
+            <p class="agent-recruit-subtitle" data-i18n="agentRecruit.subtitle">从预制模板或自定义创建 Agent，组建您的智能体团队</p>
+          </div>
+        </section>
+
+        <!-- Agent 列表区 -->
+        <section class="agent-recruit-section">
+          <div class="agent-tabs">
+            <button 
+              class="agent-tab" 
+              :class="{ 'is-active': activeTab === 'templates' }" 
+              @click="activeTab = 'templates'"
+              data-i18n="agentRecruit.tabTemplates">
+              预制模板
+            </button>
+            <button 
+              class="agent-tab" 
+              :class="{ 'is-active': activeTab === 'custom' }" 
+              @click="activeTab = 'custom'"
+              data-i18n="agentRecruit.tabCustom">
+              自定义创建
+            </button>
+          </div>
+
+          <div class="agent-grid">
+            <!-- 加载状态 -->
+            <div class="agent-loading" x-show="loading">
+              <div class="loading-spinner"></div>
+              <p data-i18n="agentRecruit.loading">加载中...</p>
+            </div>
+
+            <!-- 预制模板列表 -->
+            <template x-for="agent in availableAgents" :key="agent.id">
+              <article 
+                class="agent-card" 
+                :class="{ 'is-selected': selectedAgent?.id === agent.id }"
+                @click="selectAgent(agent)">
+                <div class="agent-card-header">
+                  <div class="agent-card-icon" x-text="getAgentIcon(agent.role)"></div>
+                  <div class="agent-card-title-group">
+                    <h3 class="agent-card-title" x-text="agent.name"></h3>
+                    <span class="agent-card-role" x-text="agent.role"></span>
+                  </div>
+                </div>
+                <p class="agent-card-description" x-text="agent.description"></p>
+                <div class="agent-card-tags" x-show="agent.tags?.length">
+                  <template x-for="tag in agent.tags" :key="tag">
+                    <span class="agent-tag" x-text="tag"></span>
+                  </template>
+                </div>
+                <div class="agent-card-skills" x-show="agent.skills?.length">
+                  <span class="skills-label" data-i18n="agentRecruit.skills">绑定技能:</span>
+                  <div class="skills-list">
+                    <template x-for="skill in agent.skills.slice(0, 3)" :key="skill.name">
+                      <span class="skill-badge" x-text="skill.name"></span>
+                    </template>
+                    <span class="skills-more" x-show="agent.skills.length > 3" x-text="'+' + (agent.skills.length - 3)"></span>
+                  </div>
+                </div>
+                <div class="agent-card-footer">
+                  <button 
+                    class="btn btn-primary btn-recruit" 
+                    @click.stop="recruitAgent(agent)"
+                    data-i18n="agentRecruit.recruitButton">
+                    招募此 Agent
+                  </button>
+                </div>
+              </article>
+            </template>
+
+            <!-- 空状态 -->
+            <div class="agent-empty" x-show="!loading && availableAgents.length === 0 && activeTab === 'templates'">
+              <div class="empty-icon">🤖</div>
+              <p data-i18n="agentRecruit.emptyTemplates">暂无可用模板</p>
+            </div>
+          </div>
+
+          <!-- 自定义创建表单 -->
+          <div class="custom-agent-form" x-show="activeTab === 'custom'">
+            <div class="custom-agent-card">
+              <h2 class="custom-agent-title" data-i18n="agentRecruit.createCustom">创建自定义 Agent</h2>
+              <form id="custom-agent-form" class="ui-form" @submit.prevent="submitCustomAgent">
+                <label for="agent-name" data-i18n="agentRecruit.nameLabel">Agent 名称</label>
+                <input 
+                  type="text" 
+                  id="agent-name" 
+                  name="name" 
+                  required
+                  placeholder="例如：数据分析专家"
+                  data-i18n-placeholder="agentRecruit.namePlaceholder" />
+
+                <label for="agent-role" data-i18n="agentRecruit.roleLabel">角色</label>
+                <select id="agent-role" name="role" required>
+                  <option value="" disabled selected data-i18n="agentRecruit.roleSelect">选择角色</option>
+                  <option value="searcher">搜索专家 (Searcher)</option>
+                  <option value="analyzer">分析专家 (Analyzer)</option>
+                  <option value="writer">撰写专家 (Writer)</option>
+                  <option value="reviewer">审核专家 (Reviewer)</option>
+                  <option value="lead">团队负责人 (Lead)</option>
+                  <option value="custom">自定义 (Custom)</option>
+                </select>
+
+                <label for="agent-description" data-i18n="agentRecruit.descriptionLabel">职责描述</label>
+                <textarea 
+                  id="agent-description" 
+                  name="description" 
+                  rows="4" 
+                  required
+                  placeholder="描述这个 Agent 的职责和能力..."
+                  data-i18n-placeholder="agentRecruit.descriptionPlaceholder"></textarea>
+
+                <label for="agent-sop" data-i18n="agentRecruit.sopLabel">SOP (可选)</label>
+                <textarea 
+                  id="agent-sop" 
+                  name="sop" 
+                  rows="6" 
+                  placeholder="# Agent SOP&#10;&#10;职责:&#10;- ...&#10;&#10;步骤:&#10;1. ...&#10;2. ..."
+                  data-i18n-placeholder="agentRecruit.sopPlaceholder"></textarea>
+
+                <div class="ui-row ui-row-single">
+                  <button type="submit" class="btn btn-primary" data-i18n="agentRecruit.createButton">
+                    <span x-show="!creating" data-i18n="agentRecruit.createButton">创建 Agent</span>
+                    <span x-show="creating" data-i18n="agentRecruit.creating">创建中...</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <!-- Agent 详情弹窗 -->
+      <section 
+        class="modal modal-mask agent-details-modal" 
+        :class="{ 'is-hidden': !showDetailsModal }" 
+        role="dialog" 
+        aria-modal="true" 
+        aria-labelledby="agent-details-title">
+        <div class="modal-overlay" @click="closeDetails"></div>
+        <div class="modal-content agent-details-card">
+          <div class="modal-header">
+            <h3 class="panel-title modal-title" id="agent-details-title" x-text="selectedAgent?.name"></h3>
+            <button class="btn btn-ghost modal-close" type="button" aria-label="关闭" @click="closeDetails">×</button>
+          </div>
+
+          <div class="agent-details-content" x-show="selectedAgent">
+            <!-- 基本信息 -->
+            <div class="agent-detail-section">
+              <h4 class="detail-section-title" data-i18n="agentRecruit.details.overview">基本信息</h4>
+              <div class="detail-grid">
+                <div class="detail-item">
+                  <span class="detail-label" data-i18n="agentRecruit.details.id">Agent ID</span>
+                  <span class="detail-value" x-text="selectedAgent?.id"></span>
+                </div>
+                <div class="detail-item">
+                  <span class="detail-label" data-i18n="agentRecruit.details.role">角色</span>
+                  <span class="detail-value" x-text="selectedAgent?.role"></span>
+                </div>
+                <div class="detail-item">
+                  <span class="detail-label" data-i18n="agentRecruit.details.version">版本</span>
+                  <span class="detail-value" x-text="'v' + (selectedAgent?.version || 1)"></span>
+                </div>
+              </div>
+              <p class="detail-description" x-text="selectedAgent?.description"></p>
+            </div>
+
+            <!-- 绑定技能 -->
+            <div class="agent-detail-section" x-show="selectedAgent?.skills?.length">
+              <h4 class="detail-section-title" data-i18n="agentRecruit.details.skills">绑定技能</h4>
+              <div class="detail-skills-list">
+                <template x-for="skill in selectedAgent.skills" :key="skill.name">
+                  <div class="detail-skill-item">
+                    <span class="detail-skill-name" x-text="skill.name"></span>
+                    <span class="detail-skill-type" x-text="skill.builtin ? '内置' : '自定义'"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <!-- 工具绑定 -->
+            <div class="agent-detail-section" x-show="selectedAgent?.tools?.length">
+              <h4 class="detail-section-title" data-i18n="agentRecruit.details.tools">工具绑定</h4>
+              <div class="detail-tools-list">
+                <template x-for="tool in selectedAgent.tools" :key="tool.name">
+                  <div class="detail-tool-item">
+                    <span class="detail-tool-name" x-text="tool.name"></span>
+                    <span class="detail-tool-endpoint" x-text="tool.endpoint"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <!-- SOP 预览 -->
+            <div class="agent-detail-section" x-show="selectedAgent?.sop">
+              <h4 class="detail-section-title" data-i18n="agentRecruit.details.sop">SOP 预览</h4>
+              <pre class="detail-sop-preview" x-text="selectedAgent?.sop"></pre>
+            </div>
+
+            <!-- 标签 -->
+            <div class="agent-detail-section" x-show="selectedAgent?.tags?.length">
+              <h4 class="detail-section-title" data-i18n="agentRecruit.details.tags">标签</h4>
+              <div class="detail-tags-list">
+                <template x-for="tag in selectedAgent.tags" :key="tag">
+                  <span class="detail-tag" x-text="tag"></span>
+                </template>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-footer agent-details-actions">
+            <button class="btn btn-ghost" type="button" @click="closeDetails" data-i18n="agentRecruit.cancel">取消</button>
+            <button class="btn btn-primary" type="button" @click="confirmRecruit" :disabled="recruiting" data-i18n="agentRecruit.recruitButton">
+              <span x-show="!recruiting" data-i18n="agentRecruit.recruitButton">招募此 Agent</span>
+              <span x-show="recruiting" data-i18n="agentRecruit.recruiting">招募中...</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 招募确认弹窗 -->
+      <section 
+        class="modal modal-mask agent-recruit-modal" 
+        :class="{ 'is-hidden': !showRecruitModal }" 
+        role="dialog" 
+        aria-modal="true" 
+        aria-labelledby="agent-recruit-title">
+        <div class="modal-overlay" @click="closeRecruitModal"></div>
+        <div class="modal-content agent-recruit-card">
+          <div class="modal-header">
+            <h3 class="panel-title modal-title" id="agent-recruit-title" data-i18n="agentRecruit.recruitModal.title">招募 Agent</h3>
+            <button class="btn btn-ghost modal-close" type="button" aria-label="关闭" @click="closeRecruitModal">×</button>
+          </div>
+
+          <div class="agent-recruit-content">
+            <p data-i18n="agentRecruit.recruitModal.description">选择要招募到的 Run ID（可选，留空则创建新 Run）</p>
+            <label for="recruit-run-id" data-i18n="agentRecruit.recruitModal.runLabel">Run ID</label>
+            <input 
+              type="text" 
+              id="recruit-run-id" 
+              placeholder="留空则创建新 Run"
+              data-i18n-placeholder="agentRecruit.recruitModal.runPlaceholder" />
+            
+            <div class="recruit-summary">
+              <div class="recruit-agent-icon" x-text="selectedAgent ? getAgentIcon(selectedAgent.role) : '🤖'"></div>
+              <div class="recruit-agent-info">
+                <strong x-text="selectedAgent?.name"></strong>
+                <span x-text="selectedAgent?.description"></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-footer agent-recruit-actions">
+            <button class="btn btn-ghost" type="button" @click="closeRecruitModal" data-i18n="agentRecruit.cancel">取消</button>
+            <button class="btn btn-primary" type="button" @click="confirmRecruitAction" :disabled="recruiting" data-i18n="agentRecruit.confirm">
+              <span x-show="!recruiting" data-i18n="agentRecruit.confirm">确认招募</span>
+              <span x-show="recruiting" data-i18n="agentRecruit.recruiting">招募中...</span>
+            </button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script src="https://unpkg.com/alpinejs@3.13.5/dist/cdn.min.js" defer></script>
+    <script src="agents.js" defer></script>
+  </body>
+</html>

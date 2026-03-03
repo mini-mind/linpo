@@ -1,0 +1,628 @@
+/**
+ * RoBoard Agent Recruit Styles
+ * Agent 招募页面样式
+ */
+
+/* Agent 招募外壳 */
+.agent-recruit-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+/* 主内容区 */
+.agent-recruit-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Hero 区域 */
+.agent-recruit-hero {
+  background:
+    linear-gradient(135deg, rgba(59, 209, 255, 0.08), transparent 60%),
+    linear-gradient(180deg, rgba(10, 24, 36, 0.8), rgba(7, 16, 26, 0.95));
+  border-bottom: 1px solid var(--line);
+  padding: clamp(24px, 4vw, 40px) clamp(16px, 3vw, 32px);
+}
+
+.agent-recruit-hero-content {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.agent-recruit-title {
+  margin: 0 0 8px 0;
+  font-family: var(--font-display);
+  font-size: clamp(24px, 4vw, 36px);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text);
+  text-shadow: 0 0 24px rgba(59, 209, 255, 0.2);
+}
+
+.agent-recruit-subtitle {
+  margin: 0;
+  font-size: clamp(14px, 2vw, 16px);
+  color: var(--muted);
+  max-width: 600px;
+}
+
+/* 章节 */
+.agent-recruit-section {
+  padding: clamp(24px, 4vw, 40px) clamp(16px, 3vw, 32px);
+  flex: 1;
+}
+
+/* Agent 标签页 */
+.agent-tabs {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 24px;
+  max-width: 1400px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.agent-tab {
+  padding: 12px 24px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--muted);
+  font-family: var(--font-display);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.agent-tab:hover {
+  background: var(--panel-3);
+  color: var(--text);
+  border-color: rgba(59, 209, 255, 0.3);
+}
+
+.agent-tab.is-active {
+  background: rgba(59, 209, 255, 0.12);
+  color: var(--text);
+  border-color: rgba(59, 209, 255, 0.5);
+}
+
+/* Agent 网格 */
+.agent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 24px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+/* 加载状态 */
+.agent-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 24px;
+  color: var(--muted);
+}
+
+.loading-spinner {
+  width: 48px;
+  height: 48px;
+  border: 3px solid rgba(59, 209, 255, 0.2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 16px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 空状态 */
+.agent-empty {
+  text-align: center;
+  padding: 80px 24px;
+  color: var(--muted-2);
+}
+
+.empty-icon {
+  font-size: 64px;
+  margin-bottom: 16px;
+  opacity: 0.6;
+}
+
+/* Agent 卡片 */
+.agent-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px;
+  border-radius: var(--radius);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 40%),
+    var(--panel-2);
+  border: 1px solid var(--line-2);
+  box-shadow: 0 4px 24px rgba(2, 8, 14, 0.4);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  overflow: hidden;
+}
+
+.agent-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.agent-card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(59, 209, 255, 0.4);
+  box-shadow: 0 8px 32px rgba(2, 8, 14, 0.6), 0 0 24px rgba(59, 209, 255, 0.1);
+}
+
+.agent-card:hover::before {
+  opacity: 1;
+}
+
+.agent-card.is-selected {
+  border-color: var(--accent);
+  background:
+    linear-gradient(180deg, rgba(59, 209, 255, 0.08), transparent 40%),
+    var(--panel-2);
+  box-shadow: 0 0 0 1px rgba(59, 209, 255, 0.3), 0 8px 32px rgba(2, 8, 14, 0.6);
+}
+
+.agent-card.is-selected::before {
+  opacity: 1;
+}
+
+/* 卡片头部 */
+.agent-card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.agent-card-icon {
+  font-size: 32px;
+  width: 56px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(59, 209, 255, 0.15), rgba(30, 127, 184, 0.2));
+  border: 1px solid rgba(59, 209, 255, 0.3);
+  flex-shrink: 0;
+}
+
+.agent-card-title-group {
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-card-title {
+  margin: 0 0 4px 0;
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.04em;
+}
+
+.agent-card-role {
+  font-size: 12px;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+/* 卡片描述 */
+.agent-card-description {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 标签 */
+.agent-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.agent-tag {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(59, 209, 255, 0.1);
+  color: var(--accent);
+  border: 1px solid rgba(59, 209, 255, 0.2);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* 技能 */
+.agent-card-skills {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skills-label {
+  font-size: 12px;
+  color: var(--muted-2);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.skills-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.skill-badge {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: var(--panel-3);
+  color: var(--text);
+  border: 1px solid var(--line-2);
+}
+
+.skills-more {
+  font-size: 12px;
+  color: var(--muted-2);
+}
+
+/* 卡片底部 */
+.agent-card-footer {
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px solid var(--line-2);
+}
+
+.btn-recruit {
+  width: 100%;
+  justify-content: center;
+}
+
+/* 自定义 Agent 表单 */
+.custom-agent-form {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.custom-agent-card {
+  padding: 32px;
+  border-radius: var(--radius);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 40%),
+    var(--panel-2);
+  border: 1px solid var(--line-2);
+  box-shadow: 0 4px 24px rgba(2, 8, 14, 0.4);
+}
+
+.custom-agent-title {
+  margin: 0 0 24px 0;
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* 详情弹窗 */
+.agent-details-modal .modal-content {
+  max-width: 720px;
+  max-height: 85vh;
+  overflow: auto;
+}
+
+.agent-details-content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.agent-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.detail-section-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line-2);
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.detail-label {
+  font-size: 11px;
+  color: var(--muted-2);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.detail-value {
+  font-size: 14px;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.detail-description {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* 技能列表 */
+.detail-skills-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.detail-skill-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line-2);
+}
+
+.detail-skill-name {
+  font-weight: 600;
+  color: var(--text);
+  min-width: 120px;
+}
+
+.detail-skill-type {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(59, 209, 255, 0.15);
+  color: var(--accent);
+  text-transform: uppercase;
+}
+
+/* 工具列表 */
+.detail-tools-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.detail-tool-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line-2);
+}
+
+.detail-tool-name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.detail-tool-endpoint {
+  font-size: 12px;
+  color: var(--muted-2);
+  font-family: monospace;
+}
+
+/* SOP 预览 */
+.detail-sop-preview {
+  margin: 0;
+  padding: 16px;
+  border-radius: 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+  white-space: pre-wrap;
+  max-height: 300px;
+  overflow: auto;
+}
+
+/* 标签列表 */
+.detail-tags-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.detail-tag {
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgba(59, 209, 255, 0.12);
+  color: var(--accent);
+  border: 1px solid rgba(59, 209, 255, 0.25);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* 招募弹窗 */
+.agent-recruit-modal .modal-content {
+  max-width: 480px;
+}
+
+.agent-recruit-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.recruit-summary {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px;
+  border-radius: 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+}
+
+.recruit-agent-icon {
+  font-size: 40px;
+  width: 72px;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(59, 209, 255, 0.15), rgba(30, 127, 184, 0.2));
+  border: 1px solid rgba(59, 209, 255, 0.3);
+  flex-shrink: 0;
+}
+
+.recruit-agent-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recruit-agent-info strong {
+  font-size: 16px;
+  color: var(--text);
+}
+
+.recruit-agent-info span {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* 弹窗底部 */
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line-2);
+}
+
+/* 面包屑导航 */
+.nav-breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted-2);
+}
+
+.nav-crumb {
+  color: var(--muted);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.nav-crumb:hover {
+  color: var(--accent);
+}
+
+.nav-crumb-sep {
+  opacity: 0.5;
+}
+
+.nav-crumb-active {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* 移动端响应式 */
+@media (max-width: 768px) {
+  .agent-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-recruit-hero {
+    padding: 24px 16px;
+  }
+
+  .agent-recruit-section {
+    padding: 24px 16px;
+  }
+
+  .agent-tabs {
+    overflow-x: auto;
+  }
+
+  .agent-tab {
+    white-space: nowrap;
+  }
+
+  .agent-details-modal .modal-content {
+    max-height: 90vh;
+  }
+
+  .custom-agent-card {
+    padding: 20px;
+  }
+}
+
+/* 减少动画 */
+@media (prefers-reduced-motion: reduce) {
+  .agent-card {
+    transition: none;
+  }
+
+  .loading-spinner {
+    animation-duration: 2s;
+  }
+}
