@@ -34,7 +34,6 @@ Files:
 - **详情区域**: `#task-details-section` 显示选中任务的详细信息
 - **计划列表显示**: `#task-sop-display` 显示任务的 TODO/计划列表内容（来源为 `plan_subtasks`）
 - **技能面板**: `#task-skills-list` 展示技能列表，`#task-skill-select` 选择社区技能并安装
-- **团队模板**: `#task-team-export` 导出 YAML，`#task-team-import-form` 粘贴并导入 YAML
 - **聊天消息**: `#task-chat-messages` 显示任务相关的聊天消息
 - **聊天表单**: `#task-chat-form` 发送新消息的表单
 - **聊天输入**: `#task-chat-input` 消息输入框
@@ -47,8 +46,6 @@ Files:
 - `PUT /api/runs/{run_id}/agents/{agent_id}/skills` - 覆盖技能清单
 - `GET /api/community-skills` - 获取社区技能列表
 - `POST /api/runs/{run_id}/agents/{agent_id}/skills/install` - 安装社区技能
-- `GET /api/runs/{run_id}/team/export` - 导出团队 YAML
-- `POST /api/runs/team/import` - 导入团队 YAML
 - `POST /api/runs/{run_id}/actions` - 提交 `sop.replace` 动作
 
 ## 手动验证清单
@@ -56,8 +53,6 @@ Files:
 - [ ] 任务详情显示 Skills 面板（列表 + 安装按钮）
 - [ ] Skills search returns results and renders list
 - [ ] NL install installs top skill and updates list
-- [ ] 导出 YAML 文件成功下载
-- [ ] 粘贴 YAML 导入并创建新 run
 
 ## WebSocket 连接
 

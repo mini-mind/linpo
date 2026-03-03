@@ -113,34 +113,14 @@ Body:
 
 **状态说明：**
 - 团队导出/导入（YAML）能力已下线，不再作为对外推荐能力。
-- 历史接口 `GET /api/runs/{run_id}/team/export` 与 `POST /api/runs/team/import` 仅保留在旧文档语境中，不再作为当前功能规划依据。
 
 **当前机制（PRD v3）：**
 - 使用 Agent 招募机制替代团队导入/导出：支持模板招募与自定义招募。
 - 推荐接口以 `docs/specs/2026-03-02-interface-contract.md` 为准，核心为：
-  - `POST /api/recruitments` 创建招募申请
-  - `GET /api/recruitments` / `GET /api/recruitments/{id}` 查询招募
-  - `PUT /api/recruitments/{id}/approve` / `PUT /api/recruitments/{id}/reject` 审核招募
+  - `POST /api/runs/{run_id}/recruitments` 创建招募申请
+  - `POST /api/runs/{run_id}/recruitments/{recruitment_id}/review` 审核招募
 
 **术语说明：** 产品语境中的 SOP 指 TODO/计划列表，来源为 `plan.md` 并解析为 `plan_subtasks`。当前实现仍保留 SOP 模板（`sops/templates/*.md` + `mission.md` + `/api/agents/{agent_id}/sop`），与计划列表并存。
-
-**YAML Schema（示例）：**
-```yaml
-version: 1
-name: example-team
-agents:
-  - id: lead
-    role: lead
-    sop: "# Lead SOP\n..."
-  - id: pm
-    role: pm
-    parent: lead
-    sop: "# PM SOP\n..."
-  - id: engineer
-    role: engineer
-    parent: lead
-    sop: "# Engineer SOP\n..."
-```
 
 ### Integration Examples
 

@@ -89,9 +89,24 @@ fi
 
 echo "Task ID: $TASK_ID"
 
+echo "Creating run..."
+RUN_RESPONSE=$(curl -s -X POST "${GATEWAY_URL}/api/runs" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
+  -d '{"input_nl": "ws verification", "input": {}}')
+
+RUN_ID=$(echo "$RUN_RESPONSE" | python3 -c "import sys, json; print(json.load(sys.stdin).get('run_id', ''))" 2>/dev/null || echo "")
+
+if [ -z "$RUN_ID" ]; then
+    echo "ERROR: Failed to create run. Response: $RUN_RESPONSE"
+    exit 1
+fi
+
+echo "Run ID: $RUN_ID"
+
 # WebSocket verification using Python
 echo "Verifying WebSocket events..."
-WS_URL="ws://localhost:8082/ws/events?api_key=${API_KEY}&task_id=${TASK_ID}"
+WS_URL="ws://localhost:8082/ws/runs/${RUN_ID}?api_key=${API_KEY}"
 WS_TIMEOUT=20
 
 python3 - "$WS_URL" "$WS_TIMEOUT" <<'PYTHON_SCRIPT'
@@ -254,13 +269,8 @@ if __name__ == '__main__':
         sys.exit(1)
 
     first_event = events_seen[0]
-    if first_event not in ['snapshot', 'task.created']:
-        print(f"ERROR: First event not snapshot or task.created, got: {first_event}")
-        sys.exit(1)
-
-    has_completion = any(e in ['task.completed', 'task.failed'] for e in events_seen)
-    if not has_completion:
-        print("ERROR: No task.completed or task.failed event received")
+    if first_event != 'snapshot':
+        print(f"ERROR: First event is not snapshot, got: {first_event}")
         sys.exit(1)
 
     print(f"WebSocket OK: Events={events_seen}")

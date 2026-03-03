@@ -304,32 +304,6 @@ Request:
 
 根据自然语言查询匹配社区技能并安装，默认选取第一个匹配项。
 
-### Team template export/import
-
-`GET /api/runs/{run_id}/team/export`
-
-Query:
-- `format`: `yaml` (default) or `json`
-
-Response (YAML):
-```json
-{ "format": "yaml", "yaml": "version: 1\n..." }
-```
-
-Response (JSON):
-```json
-{ "format": "json", "content": "{\"version\":1,...}" }
-```
-
-`POST /api/runs/team/import`
-
-Request:
-```json
-{ "yaml": "version: 1\n..." }
-```
-
-导入后创建新的 run，并按模板生成 agent 树。
-
 ## WebSocket
 
 订阅任务事件流，连接时发送快照，之后广播新事件。
@@ -345,19 +319,7 @@ Request:
 - 连接后发送 `snapshot`，包含 `run`、`agents`、`edges`、`recent_events`、`cursor`。
 - 后续以 `delta` 消息推送增量事件，字段包含 `recent_events` 和 `cursor`。
 
-### Task 事件流（任务视角，不推荐）
-`WS /ws/events?api_key=...&task_id=...`
-
-- 这是 task 视角的事件流，主要用于调试或对接仍基于 `task_id` 的消费者。
-- 外部客户端认证：`api_key` 查询参数。
-
-`WS /ws/events?internal_key=...&tenant_id=...&task_id=...`
-
-- 内部服务认证：`internal_key` + `tenant_id` 查询参数。
-- 用于服务内部监听特定租户的 task 事件。
-
 ### 消息格式
 - 连接成功后，服务器发送 `snapshot` 消息。
   - 对 `WS /ws/runs/{run_id}`：`data` 包含 `run`、`agents`、`edges`、`recent_events`、`cursor`。
-  - 对 `WS /ws/events`：`data` 包含 `task` 与 `events`。
-- 之后每当有新事件提交，会以 `delta`（run）或事件广播（task）方式推送给所有连接的客户端。
+- 之后每当有新事件提交，会以 `delta` 方式推送给所有连接的客户端。

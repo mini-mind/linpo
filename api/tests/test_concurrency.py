@@ -39,7 +39,7 @@ def test_concurrent_review_with_expected_version_only_one_succeeds(
     recruitment_id = cast(str, _as_dict(create_resp.json())["id"])
 
     tree_api = importlib.import_module("app.tree_api")
-    original_parse = cast(Callable[[object], object], getattr(tree_api, "_parse_recruitment_skills"))
+    original_parse = cast(Callable[[object], object], getattr(tree_api, "_parse_recruitment_skill_items"))
     gate = threading.Barrier(2)
 
     def _gated_parse(skills_json: object) -> object:
@@ -56,7 +56,7 @@ def test_concurrent_review_with_expected_version_only_one_succeeds(
             cast(_CommitSession, session).commit()
         return SimpleNamespace(id="123")
 
-    monkeypatch.setattr(tree_api, "_parse_recruitment_skills", _gated_parse)
+    monkeypatch.setattr(tree_api, "_parse_recruitment_skill_items", _gated_parse)
     monkeypatch.setattr(tree_api, "instantiate_agent", _commit_only_instantiate)
 
     def _review_once() -> int:

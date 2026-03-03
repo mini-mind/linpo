@@ -8,31 +8,6 @@ from pathlib import Path
 from typing import Any
 
 
-# Fallback values matching existing hardcoded values in main.py and tree_api.py
-_FALLBACK_ALLOWED_AGENT_TYPES = ["lead", "pm", "engineer"]
-
-_FALLBACK_TRENDING_KEYWORDS = [
-    "github trending",
-    "github trend",
-    "top repo",
-    "popular repo",
-    "github 热门",
-    "github 趋势",
-    "热门仓库",
-    "流行仓库",
-    "今日热门",
-    "今日趋势",
-]
-
-_FALLBACK_GROWTH_INDICATORS = [
-    "trending",
-    "热门",
-    "趋势",
-    "增长",
-    "stars",
-    "star",
-]
-
 # Test override for repo root
 _repo_root_override: Path | None = None
 
@@ -139,8 +114,7 @@ def get_allowed_agent_types() -> list[str]:
     """Get list of allowed agent types.
 
     Returns:
-        List of agent type strings from decision_rules.json,
-        or fallback to ["lead", "pm", "engineer"]
+        List of agent type strings from decision_rules.json.
     """
     rules = load_decision_rules()
     agents = rules.get("agent_type_allowlist")
@@ -151,15 +125,14 @@ def get_allowed_agent_types() -> list[str]:
         if valid_agents:
             return valid_agents
 
-    return _FALLBACK_ALLOWED_AGENT_TYPES
+    return []
 
 
 def get_github_trending_keywords() -> tuple[list[str], list[str]]:
     """Get GitHub trending detection keywords.
 
     Returns:
-        Tuple of (trending_keywords, growth_indicators) from decision_rules.json,
-        or fallback to hardcoded values
+        Tuple of (trending_keywords, growth_indicators) from decision_rules.json.
     """
     rules = load_decision_rules()
 
@@ -172,23 +145,17 @@ def get_github_trending_keywords() -> tuple[list[str], list[str]]:
     trending = detection.get("keywords")
     if isinstance(trending, list) and trending:
         valid_trending = [str(k) for k in trending if isinstance(k, str) and k.strip()]
-        if valid_trending:
-            trending_keywords = valid_trending
-        else:
-            trending_keywords = _FALLBACK_TRENDING_KEYWORDS
+        trending_keywords = valid_trending
     else:
-        trending_keywords = _FALLBACK_TRENDING_KEYWORDS
+        trending_keywords = []
 
     # Get growth indicators
     indicators = detection.get("growth_indicators")
     if isinstance(indicators, list) and indicators:
         valid_indicators = [str(i) for i in indicators if isinstance(i, str) and i.strip()]
-        if valid_indicators:
-            growth_indicators = valid_indicators
-        else:
-            growth_indicators = _FALLBACK_GROWTH_INDICATORS
+        growth_indicators = valid_indicators
     else:
-        growth_indicators = _FALLBACK_GROWTH_INDICATORS
+        growth_indicators = []
 
     return trending_keywords, growth_indicators
 

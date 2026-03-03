@@ -5,7 +5,6 @@ import logging
 import os
 from pathlib import Path
 import re
-import yaml
 from typing import Annotated, Literal, TypeAlias, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -210,21 +209,6 @@ class TenantSkillsIn(BaseModel):
     skills: list[TenantSkillIn]
 
 
-class TeamTemplateExportOut(BaseModel):
-    format: str
-    yaml: str | None = None
-    content: str | None = None
-
-
-class TeamTemplateImportIn(BaseModel):
-    yaml: str
-
-
-class TeamTemplateImportOut(BaseModel):
-    run_id: str
-    root_agent_id: str
-
-
 class AgentInstantiateSkillIn(BaseModel):
     name: str
     filename: str | None = None
@@ -268,13 +252,6 @@ _RECRUITMENT_STATUSES: set[str] = {"pending", "approved", "rejected"}
 _RECRUITMENT_BLOCKED_RUN_STATUSES: set[str] = {"paused", "terminated"}
 
 
-class RecruitmentCreateIn(BaseModel):
-    run_id: str
-    template_id: str
-    role: str | None = None
-    skills: list[str] = Field(default_factory=list)
-
-
 class RecruitmentOverridesIn(BaseModel):
     role: str | None = None
     skills: list[AgentInstantiateSkillIn] | None = None
@@ -289,10 +266,6 @@ class RecruitmentReviewIn(BaseModel):
     decision: Literal["approved", "rejected"]
     comment: str | None = None
     expected_version: int | None = Field(default=None, ge=1)
-
-
-class RecruitmentDecisionIn(BaseModel):
-    expected_version: int = Field(ge=1)
 
 
 class RecruitmentOverrideSkillOut(BaseModel):
@@ -539,52 +512,6 @@ def _install_community_skill_by_key(
     return AgentSkillsOut(skills=[SkillItemOut(**item) for item in manifest_items])
 
 
-def _parse_team_template(raw_text: str) -> dict[str, object]:
-    if not raw_text.strip():
-        raise HTTPException(status_code=400, detail="YAML content required")
-    try:
-        parsed = yaml.safe_load(raw_text)
-    except yaml.YAMLError:
-        raise HTTPException(status_code=400, detail="Invalid YAML")
-    if not isinstance(parsed, dict):
-        raise HTTPException(status_code=400, detail="Template must be a mapping")
-    version = parsed.get("version")
-    if version != 1:
-        raise HTTPException(status_code=400, detail="Unsupported template version")
-    agents = parsed.get("agents")
-    if not isinstance(agents, list) or not agents:
-        raise HTTPException(status_code=400, detail="Template agents required")
-    normalized_agents: list[dict[str, str | None]] = []
-    seen_ids: set[str] = set()
-    for item in agents:
-        if not isinstance(item, dict):
-            raise HTTPException(status_code=400, detail="Agent entries must be objects")
-        agent_id = item.get("id")
-        role = item.get("role")
-        sop = item.get("sop")
-        parent = item.get("parent")
-        if not isinstance(agent_id, str) or not agent_id.strip():
-            raise HTTPException(status_code=400, detail="Agent id required")
-        if not isinstance(role, str) or not role.strip():
-            raise HTTPException(status_code=400, detail="Agent role required")
-        agent_id = agent_id.strip()
-        role = role.strip()
-        if agent_id in seen_ids:
-            raise HTTPException(status_code=400, detail="Duplicate agent id")
-        seen_ids.add(agent_id)
-        if parent is not None and (not isinstance(parent, str) or not parent.strip()):
-            raise HTTPException(status_code=400, detail="Invalid parent id")
-        normalized_agents.append(
-            {
-                "id": agent_id,
-                "role": role,
-                "parent": parent.strip() if isinstance(parent, str) else None,
-                "sop": sop if isinstance(sop, str) else None,
-            }
-        )
-    return {"version": 1, "name": parsed.get("name"), "agents": normalized_agents}
-
-
 def get_db() -> Generator[Session, None, None]:
     session = db.SessionLocal()
     try:
@@ -598,27 +525,6 @@ InternalKeyHeader = Annotated[str | None, Header(alias="X-Internal-Key")]
 TenantIdHeader = Annotated[str | None, Header(alias="X-Tenant-ID")]
 ApiKeyHeader = Annotated[str | None, Header(alias="X-API-Key")]
 SessionTokenHeader = Annotated[str | None, Header(alias="X-Session-Token")]
-
-
-def _parse_recruitment_skills(raw_value: object) -> list[str]:
-    skills: list[str] = []
-    for item in _parse_recruitment_skill_items(raw_value):
-        name = item.get("name")
-        if isinstance(name, str) and name.strip():
-            skills.append(name.strip())
-    return skills
-
-
-def _normalize_recruitment_skills(values: list[str]) -> list[str]:
-    skills: list[str] = []
-    seen: set[str] = set()
-    for item in values:
-        normalized = item.strip()
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        skills.append(normalized)
-    return skills
 
 
 def _normalize_recruitment_skill_items(
@@ -843,18 +749,6 @@ def _resolve_session_reviewer(
     return str(getattr(user, "id"))
 
 
-def _resolve_session_reviewer_id(
-    request: Request,
-    session: Session,
-    x_session_token: str | None,
-) -> str:
-    from . import main as app_main
-
-    token = x_session_token or request.cookies.get(app_main.SESSION_COOKIE_NAME)
-    user = app_main._require_session_user(session, token)
-    return str(getattr(user, "id"))
-
-
 def _resolve_session_user_id(
     request: Request,
     session: Session,
@@ -863,20 +757,6 @@ def _resolve_session_user_id(
     from . import main as app_main
 
     token = x_session_token or request.cookies.get(app_main.SESSION_COOKIE_NAME)
-    user = app_main._require_session_user(session, token)
-    return int(getattr(user, "id"))
-
-
-def _resolve_optional_session_user_id(
-    request: Request,
-    session: Session,
-    x_session_token: str | None,
-) -> int | None:
-    from . import main as app_main
-
-    token = x_session_token or request.cookies.get(app_main.SESSION_COOKIE_NAME)
-    if not token:
-        return None
     user = app_main._require_session_user(session, token)
     return int(getattr(user, "id"))
 
@@ -910,281 +790,6 @@ def _recruitment_instantiate_payload(recruitment: Recruitment) -> AgentInstantia
             overrides.skills = skills
 
     return AgentInstantiateIn(template_id=template_id, overrides=overrides)
-
-
-@router.post("/api/recruitments", response_model=RecruitmentOut, status_code=201)
-async def create_recruitment(
-    request: Request,
-    body: RecruitmentCreateIn,
-    tenant: Annotated[models.Tenant, Depends(require_tenant)],
-    session: DbSessionDep,
-    x_session_token: SessionTokenHeader = None,
-) -> RecruitmentOut:
-    run_id_int = _parse_int_id(body.run_id, "run_id")
-    run = (
-        session.query(models.Task)
-        .filter(models.Task.id == run_id_int, models.Task.tenant_id == tenant.id)
-        .first()
-    )
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
-    _ = _assert_run_allows_recruitment(run)
-
-    template_id = body.template_id.strip()
-    if not template_id:
-        raise HTTPException(status_code=422, detail="template_id required")
-    template = template_loader.load_agent_template(template_id)
-    if not isinstance(template, dict):
-        raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")
-
-    role = body.role.strip() if isinstance(body.role, str) and body.role.strip() else None
-    skills = _normalize_recruitment_skills(body.skills)
-    created_by_user_id = _resolve_optional_session_user_id(request, session, x_session_token)
-
-    recruitment = Recruitment()
-    setattr(recruitment, "tenant_id", int(getattr(tenant, "id")))
-    setattr(recruitment, "run_id", run_id_int)
-    setattr(recruitment, "template_id", template_id)
-    setattr(recruitment, "role", role)
-    setattr(recruitment, "skills_json", json.dumps(skills, ensure_ascii=False))
-    setattr(recruitment, "status", "pending")
-    setattr(recruitment, "created_by_user_id", created_by_user_id)
-
-    session.add(recruitment)
-    session.commit()
-    session.refresh(recruitment)
-    return _recruitment_to_out(recruitment)
-
-
-@router.get("/api/recruitments", response_model=list[RecruitmentOut])
-async def list_recruitments(
-    tenant: Annotated[models.Tenant, Depends(require_tenant)],
-    session: DbSessionDep,
-    run_id: str | None = None,
-    status: str | None = None,
-) -> list[RecruitmentOut]:
-    query = session.query(Recruitment).filter(Recruitment.tenant_id == tenant.id)
-
-    if run_id is not None:
-        run_id_int = _parse_int_id(run_id, "run_id")
-        query = query.filter(Recruitment.run_id == run_id_int)
-
-    if status is not None:
-        normalized_status = status.strip().lower()
-        if normalized_status not in _RECRUITMENT_STATUSES:
-            raise HTTPException(status_code=422, detail="Invalid status")
-        query = query.filter(Recruitment.status == normalized_status)
-
-    recruitments = query.order_by(Recruitment.id.asc()).all()
-    return [_recruitment_to_out(item) for item in recruitments]
-
-
-@router.get("/api/recruitments/{recruitment_id}", response_model=RecruitmentOut)
-async def get_recruitment(
-    recruitment_id: str,
-    tenant: Annotated[models.Tenant, Depends(require_tenant)],
-    session: DbSessionDep,
-) -> RecruitmentOut:
-    recruitment_id_int = _parse_int_id(recruitment_id, "id")
-    recruitment = (
-        session.query(Recruitment)
-        .filter(Recruitment.id == recruitment_id_int, Recruitment.tenant_id == tenant.id)
-        .first()
-    )
-    if not recruitment:
-        raise HTTPException(status_code=404, detail="Recruitment not found")
-    return _recruitment_to_out(recruitment)
-
-
-@router.put("/api/recruitments/{recruitment_id}/approve", response_model=RecruitmentOut)
-async def approve_recruitment(
-    recruitment_id: str,
-    body: RecruitmentDecisionIn,
-    request: Request,
-    tenant: Annotated[models.Tenant, Depends(require_session_tenant)],
-    session: DbSessionDep,
-    x_session_token: SessionTokenHeader = None,
-) -> RecruitmentOut:
-    recruitment_id_int = _parse_int_id(recruitment_id, "id")
-    reviewed_at = _utcnow_naive()
-    reviewed_by = _resolve_session_reviewer_id(request, session, x_session_token)
-    updated_rows = (
-        session.query(Recruitment)
-        .filter(
-            Recruitment.id == recruitment_id_int,
-            Recruitment.tenant_id == tenant.id,
-            Recruitment.status == "pending",
-            Recruitment.version == body.expected_version,
-        )
-        .update(
-            {
-                Recruitment.status: "approved",
-                Recruitment.reviewed_by: reviewed_by,
-                Recruitment.reviewed_at: reviewed_at,
-                Recruitment.version: Recruitment.version + 1,
-            },
-            synchronize_session=False,
-        )
-    )
-    if updated_rows == 0:
-        recruitment_state = (
-            session.query(Recruitment.status, Recruitment.version)
-            .filter(Recruitment.id == recruitment_id_int, Recruitment.tenant_id == tenant.id)
-            .first()
-        )
-        if recruitment_state is None:
-            raise HTTPException(status_code=404, detail="Recruitment not found")
-        state_status = cast(str, recruitment_state[0])
-        state_version = cast(int, recruitment_state[1])
-        if state_status != "pending":
-            raise HTTPException(status_code=409, detail="Recruitment already reviewed")
-        if state_version != body.expected_version:
-            raise HTTPException(status_code=409, detail="Recruitment version conflict")
-        raise HTTPException(status_code=409, detail="Recruitment already reviewed")
-
-    recruitment = (
-        session.query(Recruitment)
-        .filter(Recruitment.id == recruitment_id_int, Recruitment.tenant_id == tenant.id)
-        .first()
-    )
-    if not recruitment:
-        raise HTTPException(status_code=404, detail="Recruitment not found")
-
-    run_id_int = cast(int, getattr(recruitment, "run_id"))
-    run = (
-        session.query(models.Task)
-        .filter(models.Task.id == run_id_int, models.Task.tenant_id == tenant.id)
-        .first()
-    )
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
-    run_status = _assert_run_allows_recruitment(run)
-
-    role = cast(str | None, getattr(recruitment, "role", None))
-    skills = _parse_recruitment_skills(cast(str, getattr(recruitment, "skills_json")))
-    overrides = AgentInstantiateOverridesIn()
-    if role:
-        overrides.role = role
-    if skills:
-        overrides.skills = [AgentInstantiateSkillIn(name=skill) for skill in skills]
-
-    instantiate_payload = AgentInstantiateIn(
-        template_id=cast(str, getattr(recruitment, "template_id")),
-        overrides=overrides,
-    )
-    _append_recruitment_audit_event(
-        session,
-        tenant_id=int(getattr(tenant, "id")),
-        run_id=run_id_int,
-        status=run_status,
-        event_type="recruitment.approved",
-        data={
-            "recruitment_id": str(recruitment_id_int),
-            "reviewed_by": reviewed_by,
-            "reviewed_at": _dt_to_iso(reviewed_at),
-        },
-    )
-    try:
-        await instantiate_agent(
-            run_id=str(getattr(recruitment, "run_id")),
-            body=instantiate_payload,
-            tenant=tenant,
-            session=session,
-        )
-    except HTTPException as exc:
-        session.rollback()
-        if 400 <= exc.status_code < 500:
-            raise
-        if 500 <= exc.status_code < 600:
-            raise
-        raise HTTPException(status_code=500, detail="Failed to approve recruitment")
-    except Exception:
-        session.rollback()
-        raise HTTPException(status_code=500, detail="Failed to approve recruitment")
-    session.commit()
-    session.refresh(recruitment)
-    return _recruitment_to_out(recruitment)
-
-
-@router.put("/api/recruitments/{recruitment_id}/reject", response_model=RecruitmentOut)
-async def reject_recruitment(
-    recruitment_id: str,
-    body: RecruitmentDecisionIn,
-    request: Request,
-    tenant: Annotated[models.Tenant, Depends(require_session_tenant)],
-    session: DbSessionDep,
-    x_session_token: SessionTokenHeader = None,
-) -> RecruitmentOut:
-    recruitment_id_int = _parse_int_id(recruitment_id, "id")
-    reviewed_at = _utcnow_naive()
-    reviewed_by = _resolve_session_reviewer_id(request, session, x_session_token)
-    updated_rows = (
-        session.query(Recruitment)
-        .filter(
-            Recruitment.id == recruitment_id_int,
-            Recruitment.tenant_id == tenant.id,
-            Recruitment.status == "pending",
-            Recruitment.version == body.expected_version,
-        )
-        .update(
-            {
-                Recruitment.status: "rejected",
-                Recruitment.reviewed_by: reviewed_by,
-                Recruitment.reviewed_at: reviewed_at,
-                Recruitment.version: Recruitment.version + 1,
-            },
-            synchronize_session=False,
-        )
-    )
-    if updated_rows == 0:
-        recruitment_state = (
-            session.query(Recruitment.status, Recruitment.version)
-            .filter(Recruitment.id == recruitment_id_int, Recruitment.tenant_id == tenant.id)
-            .first()
-        )
-        if recruitment_state is None:
-            raise HTTPException(status_code=404, detail="Recruitment not found")
-        state_status = cast(str, recruitment_state[0])
-        state_version = cast(int, recruitment_state[1])
-        if state_status != "pending":
-            raise HTTPException(status_code=409, detail="Recruitment already reviewed")
-        if state_version != body.expected_version:
-            raise HTTPException(status_code=409, detail="Recruitment version conflict")
-        raise HTTPException(status_code=409, detail="Recruitment already reviewed")
-
-    recruitment = (
-        session.query(Recruitment)
-        .filter(Recruitment.id == recruitment_id_int, Recruitment.tenant_id == tenant.id)
-        .first()
-    )
-    if not recruitment:
-        raise HTTPException(status_code=404, detail="Recruitment not found")
-
-    run_id_int = cast(int, getattr(recruitment, "run_id"))
-    run = (
-        session.query(models.Task)
-        .filter(models.Task.id == run_id_int, models.Task.tenant_id == tenant.id)
-        .first()
-    )
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
-    run_status = _assert_run_allows_recruitment(run)
-
-    _append_recruitment_audit_event(
-        session,
-        tenant_id=int(getattr(tenant, "id")),
-        run_id=run_id_int,
-        status=run_status,
-        event_type="recruitment.rejected",
-        data={
-            "recruitment_id": str(recruitment_id_int),
-            "reviewed_by": reviewed_by,
-            "reviewed_at": _dt_to_iso(reviewed_at),
-        },
-    )
-    session.commit()
-    session.refresh(recruitment)
-    return _recruitment_to_out(recruitment)
 
 
 @router.post("/api/runs/{run_id}/recruitments", response_model=RecruitmentOut, status_code=201)
@@ -1887,148 +1492,6 @@ async def invoke_skill(
     }
     await redis_client.xadd("queue:skill-exec", payload)
     return SkillInvokeOut(status="queued")
-
-
-@router.get("/api/runs/{run_id}/team/export", response_model=TeamTemplateExportOut)
-async def export_team_yaml(
-    run_id: str,
-    tenant: Annotated[models.Tenant, Depends(require_tenant)],
-    session: DbSessionDep,
-    format: str = "yaml",
-) -> TeamTemplateExportOut:
-    normalized_format = format.strip().lower()
-    if normalized_format not in {"yaml", "json"}:
-        raise HTTPException(status_code=400, detail="format must be yaml or json")
-    run_id_int = _parse_int_id(run_id, "run_id")
-    agents = (
-        session.query(models.AgentInstance)
-        .filter(
-            models.AgentInstance.run_id == run_id_int,
-            models.AgentInstance.tenant_id == tenant.id,
-        )
-        .order_by(models.AgentInstance.id.asc())
-        .all()
-    )
-    if not agents:
-        raise HTTPException(status_code=404, detail="Run not found")
-
-    template_ids: dict[int, str] = {}
-    used_ids: set[str] = set()
-    for agent in agents:
-        agent_db_id = int(getattr(agent, "id"))
-        role_label = cast(str | None, getattr(agent, "role_label", None))
-        template_id = role_label or f"agent-{agent_db_id}"
-        if template_id in used_ids:
-            template_id = f"agent-{agent_db_id}"
-        used_ids.add(template_id)
-        template_ids[agent_db_id] = template_id
-
-    template_agents: list[dict[str, object]] = []
-    for agent in agents:
-        agent_db_id = int(getattr(agent, "id"))
-        role_label = cast(str | None, getattr(agent, "role_label", None)) or "agent"
-        parent_id = getattr(agent, "parent_agent_id", None)
-        entry: dict[str, object] = {
-            "id": template_ids[agent_db_id],
-            "role": role_label,
-        }
-        if parent_id is not None and int(parent_id) in template_ids:
-            entry["parent"] = template_ids[int(parent_id)]
-
-        sop_text = ""
-        sop_version = (
-            session.query(models.SopVersion)
-            .filter(
-                models.SopVersion.agent_id == agent_db_id,
-                models.SopVersion.tenant_id == tenant.id,
-            )
-            .order_by(models.SopVersion.version.desc())
-            .first()
-        )
-        if sop_version is not None:
-            md_path = cast(str, getattr(sop_version, "md_path"))
-            try:
-                sop_text = sop_store.read_sop_text(md_path)
-            except Exception:
-                sop_text = ""
-        entry["sop"] = sop_text
-        template_agents.append(entry)
-
-    template = {
-        "version": 1,
-        "name": f"run-{run_id_int}",
-        "agents": template_agents,
-    }
-    if normalized_format == "json":
-        json_text = json.dumps(template, ensure_ascii=False)
-        return TeamTemplateExportOut(format="json", content=json_text)
-
-    yaml_text = yaml.safe_dump(template, sort_keys=False, allow_unicode=True)
-    return TeamTemplateExportOut(format="yaml", yaml=yaml_text)
-
-
-@router.post("/api/runs/team/import", response_model=TeamTemplateImportOut)
-async def import_team_yaml(
-    body: TeamTemplateImportIn,
-    tenant: Annotated[models.Tenant, Depends(require_tenant)],
-    session: DbSessionDep,
-) -> TeamTemplateImportOut:
-    template = _parse_team_template(body.yaml)
-    tenant_id = int(getattr(tenant, "id"))
-
-    task = models.Task()
-    setattr(task, "tenant_id", tenant_id)
-    setattr(task, "status", "queued")
-    setattr(task, "kind", "run")
-    setattr(task, "input_nl", "import")
-    setattr(task, "input_json", "{}")
-    session.add(task)
-    session.flush()
-
-    run_id_int = int(getattr(task, "id"))
-    from . import agent_hiring
-
-    root_agent_id = agent_hiring.hire_team_from_template(
-        session,
-        tenant_id=tenant_id,
-        run_id=run_id_int,
-        template=template,
-    )
-    setattr(task, "root_agent_id", root_agent_id)
-    session.add(task)
-    session.commit()
-
-    roboard_root = _get_roboard_root()
-    agents = (
-        session.query(models.AgentInstance)
-        .filter(
-            models.AgentInstance.run_id == run_id_int,
-            models.AgentInstance.tenant_id == tenant_id,
-        )
-        .order_by(models.AgentInstance.id.asc())
-        .all()
-    )
-    for agent in agents:
-        agent_id_int = int(getattr(agent, "id"))
-        agent_root = project_fs.agent_root_for(roboard_root, tenant_id, run_id_int, str(agent_id_int))
-        agent_fs.ensure_agent_layout(agent_root)
-        parent_id = getattr(agent, "parent_agent_id", None)
-        role_label = cast(str | None, getattr(agent, "role_label", None))
-        agent_fs.write_agent_identity(
-            agent_root,
-            {
-                "agent_id": str(agent_id_int),
-                "tenant_id": tenant_id,
-                "run_id": run_id_int,
-                "parent_agent_id": str(parent_id) if parent_id is not None else None,
-                "role_label": role_label,
-                "state": "queued",
-                "name": role_label,
-                "current_step": "mission",
-            },
-        )
-
-    return TeamTemplateImportOut(run_id=str(run_id_int), root_agent_id=str(root_agent_id))
 
 
 # =============================================================================

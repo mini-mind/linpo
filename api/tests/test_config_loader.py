@@ -1,16 +1,21 @@
-# pyright: reportImplicitRelativeImport=false
 """Tests for config_loader module."""
 
+import importlib
 import json
 import pathlib
 import sys
 from pathlib import Path
-
-import pytest
+from typing import Protocol
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from app import config_loader
+config_loader = importlib.import_module("app.config_loader")
+
+
+class _MonkeyPatch(Protocol):
+    def chdir(self, path: Path) -> None: ...
+    def delenv(self, name: str, raising: bool = True) -> None: ...
+    def setenv(self, name: str, value: str) -> None: ...
 
 
 def test_load_sop_template_returns_content(tmp_path: Path) -> None:
@@ -78,11 +83,10 @@ def test_get_allowed_agent_types_from_rules(tmp_path: Path) -> None:
 
 
 def test_get_allowed_agent_types_fallback(tmp_path: Path) -> None:
-    """Test fallback for allowed agent types."""
     config_loader._set_repo_root_override(tmp_path)
     try:
         result = config_loader.get_allowed_agent_types()
-        assert result == ["lead", "pm", "engineer"]
+        assert result == []
     finally:
         config_loader._clear_repo_root_override()
 
@@ -109,13 +113,11 @@ def test_get_github_trending_keywords_from_rules(tmp_path: Path) -> None:
 
 
 def test_get_github_trending_keywords_fallback(tmp_path: Path) -> None:
-    """Test fallback for GitHub trending keywords."""
     config_loader._set_repo_root_override(tmp_path)
     try:
         trending, indicators = config_loader.get_github_trending_keywords()
-        assert len(trending) > 0
-        assert len(indicators) > 0
-        assert "github trending" in trending
+        assert trending == []
+        assert indicators == []
     finally:
         config_loader._clear_repo_root_override()
 
@@ -154,7 +156,7 @@ def test_integration_all_functions(tmp_path: Path) -> None:
         config_loader._clear_repo_root_override()
 
 
-def test_default_llm_model_is_gpt(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_default_llm_model_is_gpt(monkeypatch: _MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("LLM_PROVIDERS_HOST_PATH", raising=False)
     monkeypatch.delenv("LLM_DEFAULT_MODEL", raising=False)
@@ -162,6 +164,5 @@ def test_default_llm_model_is_gpt(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin-key")
     monkeypatch.setenv("INTERNAL_API_KEY", "test-internal-key")
 
-    from app.main import _resolve_default_llm_model
-
-    assert _resolve_default_llm_model() == "gpt-4o-mini"
+    main_module = importlib.import_module("app.main")
+    assert getattr(main_module, "_resolve_default_llm_model")() == "gpt-4o-mini"

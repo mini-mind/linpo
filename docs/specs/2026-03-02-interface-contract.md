@@ -85,17 +85,24 @@ PRD v3 不规定具体 URL/headers，本规范选择“当前实现 + PRD 目标
 
 以下端点用于 run 内成员招募与审核。推荐浏览器会话鉴权：`X-Session-Token: <session_token>` 或会话 Cookie。
 
-### 创建招募申请
+### 创建招募申请（run 作用域）
 
-- `POST /api/recruitments`
+- `POST /api/runs/{run_id}/recruitments`
 - 鉴权：`session_token`（`X-Session-Token` 或会话 Cookie）
 - 请求体 schema：
 ```json
 {
-  "run_id": "string",
   "template_id": "string",
-  "role": "string | null",
-  "skills": ["string"]
+  "overrides": {
+    "role": "string | null",
+    "skills": [
+      {
+        "name": "string",
+        "filename": "string | null",
+        "code": "string | null"
+      }
+    ]
+  }
 }
 ```
 - 响应 schema（`201`）：
@@ -129,112 +136,8 @@ PRD v3 不规定具体 URL/headers，本规范选择“当前实现 + PRD 目标
 - 错误码说明：
   - `404`：`run_id` 对应 run 不存在，或 `template_id` 不存在
   - `409`：`RUN_STATE_INVALID`（run 状态不允许招募，如 `paused/terminated`）
-  - `422`：请求体字段缺失/类型不匹配（例如 `run_id`、`template_id` 非法）
-
-### 创建招募申请（run 作用域，推荐）
-
-- `POST /api/runs/{run_id}/recruitments`
-- 鉴权：`session_token`（`X-Session-Token` 或会话 Cookie）
-- 请求体 schema：
-```json
-{
-  "template_id": "string",
-  "overrides": {
-    "role": "string | null",
-    "skills": [
-      {
-        "name": "string",
-        "filename": "string | null",
-        "code": "string | null"
-      }
-    ]
-  }
-}
-```
-- 响应 schema（`201`）：同 `POST /api/recruitments` 单对象响应 schema。
-- 错误码说明：
-  - `404`：`run_id` 对应 run 不存在，或 `template_id` 不存在
-  - `409`：`RUN_STATE_INVALID`（run 状态不允许招募，如 `paused/terminated`）
   - `400`：技能输入不合法（例如非法 filename、空 code）
   - `422`：路径/请求体字段校验失败
-
-### 查询招募列表
-
-- `GET /api/recruitments`
-- 鉴权：`session_token`（`X-Session-Token` 或会话 Cookie）
-- Query schema：
-```json
-{
-  "run_id": "string (optional)",
-  "status": "pending | approved | rejected (optional)"
-}
-```
-- 响应 schema（`200`）：
-```json
-[
-  {
-    "id": "string",
-    "run_id": "string",
-    "template_id": "string",
-    "role": "string | null",
-    "skills": ["string"],
-    "overrides": {
-      "role": "string | null",
-      "skills": [
-        {
-          "name": "string",
-          "filename": "string | null",
-          "code": "string | null"
-        }
-      ]
-    },
-    "status": "pending | approved | rejected",
-    "review_comment": "string | null",
-    "reviewed_by": "string | null",
-    "created_by": "string | null",
-    "reviewed_at": "ISO8601 string | null",
-    "hired_agent_id": "string | null",
-    "instantiate_result": {"...": "..."},
-    "created_at": "ISO8601 datetime"
-  }
-]
-```
-- 错误码说明：
-  - `404`：不适用（列表接口本身不按 ID 查询）
-  - `409`：不适用（列表接口无状态冲突）
-  - `422`：查询参数类型不匹配（例如非字符串传值导致校验失败）
-
-### 查询招募详情
-
-- `GET /api/recruitments/{id}`
-- 鉴权：`session_token`（`X-Session-Token` 或会话 Cookie）
-- Path schema：
-```json
-{
-  "id": "string (数字字符串)"
-}
-```
-- 响应 schema（`200`）：同 `POST /api/recruitments` 的单对象响应 schema。
-- 错误码说明：
-  - `404`：`id` 对应招募记录不存在
-  - `409`：不适用（详情查询无状态冲突）
-  - `422`：路径参数类型/格式不匹配
-
-### 审核通过
-
-- `PUT /api/recruitments/{id}/approve`
-- 鉴权：`session_token`（`X-Session-Token` 或会话 Cookie）
-- 请求体 schema：
-```json
-{
-  "expected_version": 1
-}
-```
-- 响应 schema（`200`）：同 `POST /api/recruitments` 的单对象响应 schema，`status` 更新为 `approved`。
-- 错误码说明：
-  - `404`：`id` 对应招募记录不存在
-  - `409`：`Recruitment already reviewed` / `Recruitment version conflict` / `RUN_STATE_INVALID`
-  - `422`：路径参数类型/格式不匹配，或 `expected_version < 1`
 
 ### 审核招募（run 作用域）
 
@@ -248,39 +151,12 @@ PRD v3 不规定具体 URL/headers，本规范选择“当前实现 + PRD 目标
   "expected_version": "integer | null"
 }
 ```
-- 响应 schema（`200`）：同 `POST /api/recruitments` 单对象响应 schema。
+- 响应 schema（`200`）：同创建招募响应 schema。
 - 错误码说明：
   - `404`：`run_id` 或 `recruitment_id` 不存在
   - `409`：`Recruitment already reviewed` / `Recruitment version conflict` / `RUN_STATE_INVALID`
   - `500`：审核通过后实例化失败（`detail=Failed to instantiate recruitment`，同时 `instantiate_result.error=RECRUITMENT_INSTANTIATE_FAILED`）
   - `422`：路径/请求体字段校验失败
-
-### 审核拒绝
-
-- `PUT /api/recruitments/{id}/reject`
-- 鉴权：`session_token`（`X-Session-Token` 或会话 Cookie）
-- 请求体 schema：
-```json
-{
-  "expected_version": 1
-}
-```
-- 响应 schema（`200`）：同 `POST /api/recruitments` 的单对象响应 schema，`status` 更新为 `rejected`。
-- 错误码说明：
-  - `404`：`id` 对应招募记录不存在
-  - `409`：`Recruitment already reviewed` / `Recruitment version conflict` / `RUN_STATE_INVALID`
-  - `422`：路径参数类型/格式不匹配，或 `expected_version < 1`
-
-## 兼容接口（不推荐对外宣传）
-
-### Task WebSocket（历史/调试）
-
-`WS /ws/events?api_key=...&task_id=...`
-
-`WS /ws/events?internal_key=...&tenant_id=...&task_id=...`
-
-- 这是 task 视角事件流，迁移阶段保留以兼容仍基于 `task_id` 的消费者。
-- 不建议在根文档或 UI 文档中作为主要入口对外宣传；对外推荐使用 `/ws/runs/{run_id}`。
 
 ## 文档维护规则
 

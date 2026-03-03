@@ -275,6 +275,10 @@
       await handleRecruit();
     };
 
+    viewState.confirmRecruitAction = async () => {
+      await handleRecruit();
+    };
+
     viewState.getAgentIcon = (role) => {
       return ROLE_ICONS[role] || ROLE_ICONS.default;
     };
@@ -309,53 +313,7 @@
       state.availableAgents = detailedAgents;
     } catch (err) {
       console.error("Failed to load agents:", err);
-      // 使用默认 Agent 列表作为后备
-      state.availableAgents = [
-        {
-          id: "searcher",
-          name: "搜索专家",
-          role: "searcher",
-          description: "专门用于网络搜索和信息收集的专家 Agent",
-          version: 1,
-          skills: [{ name: "search_web", builtin: true }, { name: "citation_minify", builtin: true }],
-          tools: [{ name: "searxng", endpoint: "http://mcp-server:9000/search" }],
-          tags: ["搜索", "信息收集"],
-          sop: "# Searcher SOP\n\n职责:\n- 根据关键词进行网络搜索\n- 过滤和整理搜索结果\n- 返回带引用的结果摘要\n\n步骤:\n1. 接收搜索请求\n2. 调用 searxng 执行搜索\n3. 过滤低质量结果\n4. 整理并返回结果"
-        },
-        {
-          id: "analyzer",
-          name: "分析专家",
-          role: "analyzer",
-          description: "专门用于数据分析和报告生成的专家 Agent",
-          version: 1,
-          skills: [{ name: "analyze_data", builtin: true }],
-          tools: [],
-          tags: ["分析", "报告"],
-          sop: "# Analyzer SOP\n\n职责:\n- 分析收集到的数据\n- 生成分析报告\n- 提供洞察和建议\n\n步骤:\n1. 接收数据\n2. 分析数据模式\n3. 生成报告\n4. 提供建议"
-        },
-        {
-          id: "writer",
-          name: "撰写专家",
-          role: "writer",
-          description: "专门用于文档撰写和内容编辑的专家 Agent",
-          version: 1,
-          skills: [{ name: "write_document", builtin: true }],
-          tools: [],
-          tags: ["写作", "编辑"],
-          sop: "# Writer SOP\n\n职责:\n- 根据要求撰写文档\n- 编辑和优化内容\n- 确保格式规范\n\n步骤:\n1. 理解需求\n2. 收集素材\n3. 撰写初稿\n4. 编辑优化"
-        },
-        {
-          id: "reviewer",
-          name: "审核专家",
-          role: "reviewer",
-          description: "专门用于内容审核和质量检查的专家 Agent",
-          version: 1,
-          skills: [{ name: "review_content", builtin: true }],
-          tools: [],
-          tags: ["审核", "质量"],
-          sop: "# Reviewer SOP\n\n职责:\n- 审核内容质量\n- 检查错误和问题\n- 提供改进建议\n\n步骤:\n1. 接收内容\n2. 检查质量\n3. 标记问题\n4. 提供建议"
-        }
-      ];
+      state.availableAgents = [];
     } finally {
       state.loading = false;
     }
@@ -421,16 +379,9 @@
       const runIdInput = byId("recruit-run-id");
       const runId = runIdInput ? runIdInput.value.trim() : "";
       const template = state.selectedAgent;
-
-      // TODO: 对接实例化 API
-      // 目前仅做演示，后续需要实现：
-      // POST /api/runs/{run_id}/agents/instantiate
-
-      // 临时实现：创建一个新 run 并使用模板
       let targetRunId = runId;
-      
+
       if (!targetRunId) {
-        // 创建新 run
         const resp = await apiFetch("/api/runs", {
           method: "POST",
           body: JSON.stringify({
@@ -443,21 +394,40 @@
         localStorage.setItem(STORAGE.runId, targetRunId);
       }
 
-      // TODO: 实例化 Agent
-      // await apiFetch(`/api/runs/${targetRunId}/agents/instantiate`, {
-      //   method: "POST",
-      //   body: JSON.stringify({
-      //     template_id: template.id,
-      //     overrides: {}
-      //   })
-      // });
+      const overrides = {};
+      if (safeText(template.role).trim()) {
+        overrides.role = safeText(template.role).trim();
+      }
+      if (Array.isArray(template.skills) && template.skills.length > 0) {
+        const normalizedSkills = template.skills
+          .map((item) => {
+            const name = safeText(item?.name).trim();
+            if (!name) return null;
+            const normalized = { name };
+            const filename = safeText(item?.filename).trim();
+            const code = safeText(item?.code);
+            if (filename) normalized.filename = filename;
+            if (code.trim()) normalized.code = code;
+            return normalized;
+          })
+          .filter(Boolean);
+        if (normalizedSkills.length > 0) {
+          overrides.skills = normalizedSkills;
+        }
+      }
 
-      alert(`即将招募 Agent：${template.name}\nRun ID: ${targetRunId}\n\n实例化功能开发中，后续将支持从模板快速创建 Agent。`);
+      await apiFetch(`/api/runs/${encodeURIComponent(targetRunId)}/recruitments`, {
+        method: "POST",
+        body: JSON.stringify({
+          template_id: template.id,
+          overrides
+        })
+      });
 
       state.showRecruitModal = false;
+      window.location.assign("/");
     } catch (err) {
       console.error("Failed to recruit agent:", err);
-      alert(t("agentRecruit.msg.recruitFailed"));
     } finally {
       state.recruiting = false;
     }
@@ -482,7 +452,6 @@
         sop: formData.get("sop") || ""
       };
 
-      // TODO: 对接自定义 Agent 创建 API
       console.log("Creating custom agent:", agentData);
 
       alert(`即将创建自定义 Agent：${agentData.name}\n\n自定义 Agent 创建功能开发中。`);

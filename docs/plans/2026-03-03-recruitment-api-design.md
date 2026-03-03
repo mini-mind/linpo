@@ -76,7 +76,7 @@
 
 ### 4.1 创建申请
 
-`POST /api/recruitments`
+`POST /api/runs/{run_id}/recruitments`
 
 请求体：
 
@@ -110,7 +110,7 @@
 
 ### 4.2 查询列表
 
-`GET /api/recruitments`
+`GET /api/runs/{run_id}/recruitments`（设计草案，当前实现未开放）
 
 查询参数（MVP）：
 
@@ -135,7 +135,7 @@
 
 ### 4.3 查询详情
 
-`GET /api/recruitments/{id}`
+`GET /api/runs/{run_id}/recruitments/{recruitment_id}`（设计草案，当前实现未开放）
 
 响应：`200 OK`，返回单条 `Recruitment`。
 
@@ -145,7 +145,7 @@
 
 ### 4.4 审核通过
 
-`PUT /api/recruitments/{id}/approve`
+`POST /api/runs/{run_id}/recruitments/{recruitment_id}/review`（decision=approved）
 
 请求体（MVP 可为空）：
 
@@ -178,7 +178,7 @@
 
 ### 4.5 审核拒绝
 
-`PUT /api/recruitments/{id}/reject`
+`POST /api/runs/{run_id}/recruitments/{recruitment_id}/review`（decision=rejected）
 
 请求体（MVP 可为空）：
 

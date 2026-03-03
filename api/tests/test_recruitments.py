@@ -4,9 +4,8 @@ import pathlib
 import shutil
 import sys
 import uuid
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
-from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from starlette.types import ASGIApp
 
@@ -70,14 +69,6 @@ class _Client(Protocol):
         self,
         url: str,
         *,
-        headers: dict[str, str] | None = None,
-    ) -> _Response: ...
-
-    def put(
-        self,
-        url: str,
-        *,
-        json: dict[str, object] | None = None,
         headers: dict[str, str] | None = None,
     ) -> _Response: ...
 
@@ -147,20 +138,24 @@ def _session_user_id(client: _Client, session_token: str) -> str:
     return cast(str, user_payload["id"])
 
 
-def _create_legacy_recruitment(client: _Client, session_token: str, run_id: str) -> str:
-    create_resp = client.post(
-        "/api/recruitments",
-        json={
-            "run_id": run_id,
-            "template_id": "searcher",
-            "role": "legacy-review-role",
-            "skills": [],
-        },
-        headers={"X-Session-Token": session_token},
-    )
-    assert create_resp.status_code == 201
-    create_payload = _as_dict(create_resp.json())
-    return cast(str, create_payload["id"])
+def _get_recruitment_row(recruitment_id: str) -> dict[str, object]:
+    tree_api = cast(Any, importlib.import_module("app.tree_api"))
+    main = cast(Any, importlib.import_module("app.main"))
+
+    session = main.db.SessionLocal()
+    try:
+        row = (
+            session.query(tree_api.Recruitment)
+            .filter(tree_api.Recruitment.id == int(recruitment_id))
+            .first()
+        )
+        assert row is not None
+        return {
+            "status": cast(str, getattr(row, "status")),
+            "instantiate_result_json": cast(str | None, getattr(row, "instantiate_result_json", None)),
+        }
+    finally:
+        session.close()
 
 
 def test_create_run_recruitment_records_created_by(tmp_path: pathlib.Path, monkeypatch: _MonkeyPatch) -> None:
@@ -171,35 +166,6 @@ def test_create_run_recruitment_records_created_by(tmp_path: pathlib.Path, monke
     create_resp = client.post(
         f"/api/runs/{run_id}/recruitments",
         json={"template_id": "searcher"},
-        headers={"X-Session-Token": session_token},
-    )
-    assert create_resp.status_code == 201
-    payload = _as_dict(create_resp.json())
-    assert payload["created_by"] == reviewer_id
-
-    recruitment_id = cast(str, payload["id"])
-    get_resp = client.get(
-        f"/api/recruitments/{recruitment_id}",
-        headers={"X-Session-Token": session_token},
-    )
-    assert get_resp.status_code == 200
-    get_payload = _as_dict(get_resp.json())
-    assert get_payload["created_by"] == reviewer_id
-
-
-def test_create_legacy_recruitment_records_created_by(tmp_path: pathlib.Path, monkeypatch: _MonkeyPatch) -> None:
-    client = _bootstrap_client(tmp_path, monkeypatch)
-    session_token, run_id = _create_run_with_session(client)
-    reviewer_id = _session_user_id(client, session_token)
-
-    create_resp = client.post(
-        "/api/recruitments",
-        json={
-            "run_id": run_id,
-            "template_id": "searcher",
-            "role": "legacy-review-role",
-            "skills": ["custom_research"],
-        },
         headers={"X-Session-Token": session_token},
     )
     assert create_resp.status_code == 201
@@ -292,143 +258,6 @@ def test_review_rejected_records_reason(tmp_path: pathlib.Path, monkeypatch: _Mo
     assert payload["hired_agent_id"] is None
 
 
-def test_legacy_approve_writes_reviewer_and_audit_event(tmp_path: pathlib.Path, monkeypatch: _MonkeyPatch) -> None:
-    client = _bootstrap_client(tmp_path, monkeypatch)
-    session_token, run_id = _create_run_with_session(client)
-    reviewer_id = _session_user_id(client, session_token)
-    recruitment_id = _create_legacy_recruitment(client, session_token, run_id)
-
-    approve_resp = client.put(
-        f"/api/recruitments/{recruitment_id}/approve",
-        json={"expected_version": 1},
-        headers={"X-Session-Token": session_token},
-    )
-    assert approve_resp.status_code == 200
-    approve_payload = _as_dict(approve_resp.json())
-    assert approve_payload["status"] == "approved"
-    assert approve_payload["reviewed_by"] == reviewer_id
-    assert approve_payload["reviewed_at"]
-
-    events_resp = client.get(
-        f"/api/runs/{run_id}/events?limit=50",
-        headers={"X-Session-Token": session_token},
-    )
-    assert events_resp.status_code == 200
-    events = _as_list_of_dict(events_resp.json())
-    approved_events = [event for event in events if event["type"] == "recruitment.approved"]
-    assert approved_events
-    event_data = _as_dict(approved_events[-1]["data"])
-    assert event_data["recruitment_id"] == recruitment_id
-    assert event_data["reviewed_by"] == reviewer_id
-    assert event_data["reviewed_at"]
-
-
-def test_legacy_recruitment_response_skills_schema_is_stable(tmp_path: pathlib.Path, monkeypatch: _MonkeyPatch) -> None:
-    client = _bootstrap_client(tmp_path, monkeypatch)
-    session_token, _ = _create_run_with_session(client)
-
-    create_resp = client.post(
-        "/api/recruitments",
-        json={
-            "run_id": "1",
-            "template_id": "searcher",
-            "role": "legacy-review-role",
-            "skills": ["custom_research"],
-        },
-        headers={"X-Session-Token": session_token},
-    )
-    assert create_resp.status_code == 201
-    payload = _as_dict(create_resp.json())
-
-    assert payload["skills"] == ["custom_research"]
-    overrides = _as_dict(payload["overrides"])
-    assert overrides["role"] == "legacy-review-role"
-    override_skills = cast(list[dict[str, object]], overrides["skills"])
-    assert len(override_skills) == 1
-    first_skill = override_skills[0]
-    assert first_skill["name"] == "custom_research"
-    assert first_skill["filename"] == "custom_research.py"
-    assert "code" in first_skill
-    assert first_skill["code"] is None
-
-
-def test_legacy_approve_preserves_downstream_http_status_code(tmp_path: pathlib.Path, monkeypatch: _MonkeyPatch) -> None:
-    client = _bootstrap_client(tmp_path, monkeypatch)
-    session_token, run_id = _create_run_with_session(client)
-    recruitment_id = _create_legacy_recruitment(client, session_token, run_id)
-
-    tree_api = importlib.import_module("app.tree_api")
-
-    async def _instantiate_client_error(*args: object, **kwargs: object) -> object:
-        _ = args, kwargs
-        raise HTTPException(status_code=422, detail="invalid instantiate payload")
-
-    monkeypatch.setattr(tree_api, "instantiate_agent", _instantiate_client_error)
-
-    approve_resp = client.put(
-        f"/api/recruitments/{recruitment_id}/approve",
-        json={"expected_version": 1},
-        headers={"X-Session-Token": session_token},
-    )
-    assert approve_resp.status_code == 422
-    payload = _as_dict(approve_resp.json())
-    assert payload["detail"] == "invalid instantiate payload"
-
-
-def test_legacy_approve_preserves_downstream_http_5xx_status_code(tmp_path: pathlib.Path, monkeypatch: _MonkeyPatch) -> None:
-    client = _bootstrap_client(tmp_path, monkeypatch)
-    session_token, run_id = _create_run_with_session(client)
-    recruitment_id = _create_legacy_recruitment(client, session_token, run_id)
-
-    tree_api = importlib.import_module("app.tree_api")
-
-    async def _instantiate_server_error(*args: object, **kwargs: object) -> object:
-        _ = args, kwargs
-        raise HTTPException(status_code=503, detail="instantiate unavailable")
-
-    monkeypatch.setattr(tree_api, "instantiate_agent", _instantiate_server_error)
-
-    approve_resp = client.put(
-        f"/api/recruitments/{recruitment_id}/approve",
-        json={"expected_version": 1},
-        headers={"X-Session-Token": session_token},
-    )
-    assert approve_resp.status_code == 503
-    payload = _as_dict(approve_resp.json())
-    assert payload["detail"] == "instantiate unavailable"
-
-
-def test_legacy_reject_writes_reviewer_and_audit_event(tmp_path: pathlib.Path, monkeypatch: _MonkeyPatch) -> None:
-    client = _bootstrap_client(tmp_path, monkeypatch)
-    session_token, run_id = _create_run_with_session(client)
-    reviewer_id = _session_user_id(client, session_token)
-    recruitment_id = _create_legacy_recruitment(client, session_token, run_id)
-
-    reject_resp = client.put(
-        f"/api/recruitments/{recruitment_id}/reject",
-        json={"expected_version": 1},
-        headers={"X-Session-Token": session_token},
-    )
-    assert reject_resp.status_code == 200
-    reject_payload = _as_dict(reject_resp.json())
-    assert reject_payload["status"] == "rejected"
-    assert reject_payload["reviewed_by"] == reviewer_id
-    assert reject_payload["reviewed_at"]
-
-    events_resp = client.get(
-        f"/api/runs/{run_id}/events?limit=50",
-        headers={"X-Session-Token": session_token},
-    )
-    assert events_resp.status_code == 200
-    events = _as_list_of_dict(events_resp.json())
-    rejected_events = [event for event in events if event["type"] == "recruitment.rejected"]
-    assert rejected_events
-    event_data = _as_dict(rejected_events[-1]["data"])
-    assert event_data["recruitment_id"] == recruitment_id
-    assert event_data["reviewed_by"] == reviewer_id
-    assert event_data["reviewed_at"]
-
-
 def test_review_returns_404_when_recruitment_not_found(tmp_path: pathlib.Path, monkeypatch: _MonkeyPatch) -> None:
     client = _bootstrap_client(tmp_path, monkeypatch)
     session_token, run_id = _create_run_with_session(client)
@@ -498,15 +327,10 @@ def test_review_returns_500_when_instantiate_fails(tmp_path: pathlib.Path, monke
     assert review_resp.status_code == 500
     review_payload = _as_dict(review_resp.json())
     assert review_payload["detail"] == "Failed to instantiate recruitment"
-    assert "instantiate boom" not in cast(str, review_payload["detail"])
 
-    recruitment_resp = client.get(
-        f"/api/recruitments/{recruitment_id}",
-        headers={"X-Session-Token": session_token},
-    )
-    assert recruitment_resp.status_code == 200
-    recruitment_payload = _as_dict(recruitment_resp.json())
-    instantiate_result = _as_dict(recruitment_payload["instantiate_result"])
+    db_row = _get_recruitment_row(recruitment_id)
+    assert db_row["status"] == "approved"
+    instantiate_result = json.loads(cast(str, db_row["instantiate_result_json"]))
     assert instantiate_result["status"] == "failed"
     assert instantiate_result["error"] == "RECRUITMENT_INSTANTIATE_FAILED"
     assert "instantiate boom" not in json.dumps(instantiate_result, ensure_ascii=False)
@@ -549,11 +373,9 @@ def test_review_returns_409_on_expected_version_conflict(tmp_path: pathlib.Path,
 
 
 def test_create_recruitment_returns_422_when_template_id_empty(tmp_path: pathlib.Path, monkeypatch: _MonkeyPatch) -> None:
-    """验证 template_id 为空时返回 422 而非 400"""
     client = _bootstrap_client(tmp_path, monkeypatch)
     session_token, run_id = _create_run_with_session(client)
 
-    # 空字符串 template_id
     create_resp = client.post(
         f"/api/runs/{run_id}/recruitments",
         json={"template_id": ""},
@@ -562,35 +384,19 @@ def test_create_recruitment_returns_422_when_template_id_empty(tmp_path: pathlib
     assert create_resp.status_code == 422
 
 
-def test_list_recruitments_returns_422_when_invalid_status(tmp_path: pathlib.Path, monkeypatch: _MonkeyPatch) -> None:
-    """验证非法 status 参数返回 422 而非 400"""
-    client = _bootstrap_client(tmp_path, monkeypatch)
-    session_token, _ = _create_run_with_session(client)
-
-    # 非法 status 值
-    list_resp = client.get(
-        f"/api/recruitments?status=invalid_status",
-        headers={"X-Session-Token": session_token},
-    )
-    assert list_resp.status_code == 422
-
-
 def test_recruitment_returns_422_when_invalid_run_id(tmp_path: pathlib.Path, monkeypatch: _MonkeyPatch) -> None:
-    """验证非法 run_id 返回 422 而非 400"""
     client = _bootstrap_client(tmp_path, monkeypatch)
     session_token, _ = _create_run_with_session(client)
 
-    # 非数字 run_id
     create_resp = client.post(
-        f"/api/runs/not-a-number/recruitments",
+        "/api/runs/not-a-number/recruitments",
         json={"template_id": "searcher"},
         headers={"X-Session-Token": session_token},
     )
     assert create_resp.status_code == 422
 
-    # 负数 run_id
     create_resp2 = client.post(
-        f"/api/runs/-1/recruitments",
+        "/api/runs/-1/recruitments",
         json={"template_id": "searcher"},
         headers={"X-Session-Token": session_token},
     )

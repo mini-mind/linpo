@@ -150,10 +150,6 @@
       "taskTree.msg.skillsInstallOk": "Skill installed",
       "taskTree.msg.skillsInstallNlFailed": "Install by NL failed",
       "taskTree.msg.skillsInstallNlOk": "Skill installed",
-      "taskTree.msg.teamExportFailed": "Export failed",
-      "taskTree.msg.teamExportOk": "Exported template",
-      "taskTree.msg.teamImportFailed": "Import failed",
-      "taskTree.msg.teamImportOk": "Imported new run",
 
     },
     zh: {
@@ -296,10 +292,6 @@
       "taskTree.msg.skillsInstallOk": "技能已安装",
       "taskTree.msg.skillsInstallNlFailed": "Install by NL failed",
       "taskTree.msg.skillsInstallNlOk": "技能已安装",
-      "taskTree.msg.teamExportFailed": "导出失败",
-      "taskTree.msg.teamExportOk": "已导出模板",
-      "taskTree.msg.teamImportFailed": "导入失败",
-      "taskTree.msg.teamImportOk": "已导入新运行",
 
     }
   };
@@ -1292,10 +1284,6 @@
       taskSkillInstallNl: byId("task-skill-install-nl"),
       taskSkillSelect: byId("task-skill-select"),
       taskSkillInstall: byId("task-skill-install"),
-      taskTeamExport: byId("task-team-export"),
-      taskTeamImportForm: byId("task-team-import-form"),
-      taskTeamImportInput: byId("task-team-import-input"),
-      taskTeamImport: byId("task-team-import"),
       taskChatMessages: byId("task-chat-messages"),
       taskChatForm: byId("task-chat-form"),
       taskChatInput: byId("task-chat-input")
@@ -2192,60 +2180,6 @@
       }
     };
 
-    const exportTeamTemplate = async () => {
-      if (!state.runId) {
-        setMessage(t("sop.msg.needRun"), "error");
-        return;
-      }
-      try {
-        const resp = await apiFetch(`/api/runs/${encodeURIComponent(state.runId)}/team/export`, { method: "GET" });
-        const data = await resp.json().catch(() => null);
-        const yamlText = safeText(data?.yaml || "").trim();
-        if (!yamlText) throw new Error("empty export");
-        const blob = new Blob([yamlText], { type: "text/yaml" });
-        const link = document.createElement("a");
-        link.href = URL.createObjectURL(blob);
-        link.download = `team-${state.runId}.yaml`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(link.href);
-        setMessage(t("taskTree.msg.teamExportOk"), "ok");
-      } catch (err) {
-        if (handleAuthError(err)) return;
-        setMessage(t("taskTree.msg.teamExportFailed"), "error");
-      }
-    };
-
-    const importTeamTemplate = async () => {
-      if (!state.runId) {
-        setMessage(t("sop.msg.needRun"), "error");
-        return;
-      }
-      if (!ui.taskTeamImportInput) return;
-      const yamlText = ui.taskTeamImportInput.value.trim();
-      if (!yamlText) return;
-      try {
-        const resp = await apiFetch("/api/runs/team/import", {
-          method: "POST",
-          body: JSON.stringify({ yaml: yamlText })
-        });
-        const data = await resp.json().catch(() => null);
-        const newRunId = safeText(data?.run_id || "").trim();
-        if (newRunId) {
-          state.runId = newRunId;
-          localStorage.setItem(STORAGE.runId, newRunId);
-          updateMobileControlsState();
-          await fetchTree();
-        }
-        ui.taskTeamImportInput.value = "";
-        setMessage(t("taskTree.msg.teamImportOk"), "ok");
-      } catch (err) {
-        if (handleAuthError(err)) return;
-        setMessage(t("taskTree.msg.teamImportFailed"), "error");
-      }
-    };
-
     const loadChatHistory = (agentId) => {
       if (!ui.taskChatMessages) return;
       const key = `roboard_chat_${agentId}`;
@@ -2385,18 +2319,6 @@
       ui.taskSkillInstall.addEventListener("click", (e) => {
         e.preventDefault();
         void installSelectedSkill();
-      });
-    }
-    if (ui.taskTeamExport) {
-      ui.taskTeamExport.addEventListener("click", (e) => {
-        e.preventDefault();
-        void exportTeamTemplate();
-      });
-    }
-    if (ui.taskTeamImportForm) {
-      ui.taskTeamImportForm.addEventListener("submit", (e) => {
-        e.preventDefault();
-        void importTeamTemplate();
       });
     }
     if (ui.logoutBtn) {

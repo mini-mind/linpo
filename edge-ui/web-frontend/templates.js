@@ -10,7 +10,8 @@
 
   const STORAGE = {
     lang: "roboard_lang",
-    sessionToken: "roboard_session_token"
+    sessionToken: "roboard_session_token",
+    runId: "roboard_run_id"
   };
 
   // 国际化字符串
@@ -323,21 +324,32 @@
     state.usingTemplate = true;
 
     try {
-      // TODO: 对接实例化 API
-      // 目前仅做演示，后续需要实现：
-      // POST /api/runs/{run_id}/agents/instantiate
-      // 或者创建新的 run 并实例化模板
-
-      // 临时实现：创建一个新 run 并使用模板
       const template = state.selectedTemplate;
 
-      // 提示用户模板功能开发中
-      alert(`即将使用模板：${template.name}\n\n实例化功能开发中，后续将支持从模板快速创建 Agent。`);
+      const createRunResp = await apiFetch("/api/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          input_nl: `从模板创建 Agent: ${safeText(template.name)}`,
+          input: {}
+        })
+      });
+      const runPayload = await createRunResp.json().catch(() => null);
+      const runId = safeText(runPayload?.run_id).trim();
+      if (!runId) {
+        throw new Error("missing run_id");
+      }
+
+      await apiFetch(`/api/runs/${encodeURIComponent(runId)}/agents/instantiate`, {
+        method: "POST",
+        body: JSON.stringify({ template_id: template.id })
+      });
+
+      localStorage.setItem(STORAGE.runId, runId);
 
       state.showUseModal = false;
+      window.location.assign("/");
     } catch (err) {
       console.error("Failed to use template:", err);
-      alert(t("templates.msg.useFailed"));
     } finally {
       state.usingTemplate = false;
     }

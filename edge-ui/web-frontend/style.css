@@ -1079,31 +1079,10 @@ details[open] > .panel-summary::after {
 
 .task-status-section,
 .task-sop-section,
-.task-team-section,
 .task-chat-section {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-}
-
-.team-actions {
-  display: flex;
-  gap: var(--space-2);
-}
-
-.team-import-form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.team-import-form textarea {
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  background: var(--panel-2);
-  font-size: 12px;
-  resize: vertical;
 }
 
 .task-plan-section {

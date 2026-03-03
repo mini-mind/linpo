@@ -135,43 +135,7 @@ agents:
 **错误码说明**：
 - `404`：模板不存在（`GET /api/agent-templates/{id}`）
 
-### 3.2 团队模板导出/导入（保留现有）
-
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/api/runs/{run_id}/team/export` | GET | 导出团队为 YAML/JSON |
-| `/api/runs/team/import` | POST | 从模板创建新 run |
-
-**鉴权方式**：
-- 租户鉴权（`X-API-Key`，或 `X-Internal-Key + X-Tenant-ID`，或 `X-Session-Token`/会话 Cookie）。
-
-**响应 schema（`GET /api/runs/{run_id}/team/export`，200）**：
-```json
-{
-  "format": "yaml | json",
-  "yaml": "string | null",
-  "content": "string | null"
-}
-```
-
-**请求/响应 schema（`POST /api/runs/team/import`）**：
-```json
-{
-  "yaml": "string"
-}
-```
-```json
-{
-  "run_id": "string",
-  "root_agent_id": "string"
-}
-```
-
-**错误码说明**：
-- `400`：模板 YAML 非法或不满足导入约束（空内容、版本不支持、结构错误等）
-- `404`：导出目标 run 不存在
-
-### 3.3 Agent 实例化
+### 3.2 Agent 实例化
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
@@ -331,36 +295,17 @@ tools:
 ### Phase 4: 前端 UI（1 周）
 - [ ] 模板库浏览界面
 - [ ] 从模板创建 Agent 入口
-- [ ] 团队模板管理
 
 ## 7. 兼容性
 
 ### 7.1 现有功能保持
 
-- `/api/runs/{run_id}/team/export` - 保持不变
-- `/api/runs/team/import` - 保持不变
 - `hire_default_team()` - 保持不变
 - `hire_team_from_template()` - 扩展支持预制模板引用
 
 ### 7.2 迁移路径
 
-现有团队模板 YAML 格式保持兼容，新增 `template` 字段用于引用预制模板：
-
-```yaml
-# 旧格式（保持兼容）
-agents:
-  - id: searcher
-    role: searcher
-    sop: "..."
-    skills: [...]
-
-# 新格式（引用预制模板）
-agents:
-  - id: searcher
-    template: searcher  # 引用预制模板
-    parent: lead
-    # 可选：覆盖 SOP/技能
-```
+历史的团队导出/导入接口已下线，迁移路径统一为 run 作用域招募与实例化接口。
 
 ## 8. 安全考虑
 

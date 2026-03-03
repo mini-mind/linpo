@@ -22,8 +22,8 @@
 | `POST /api/runs/{run_id}/agents/{agent_id}/skills/install-nl` | NL 安装社区技能 | `api/app/tree_api.py` `install_community_skill_nl` | `api/README.md` 已覆盖 |
 | `GET /api/community-skills` | 获取社区技能列表 | `api/app/tree_api.py` `list_community_skills` | `api/README.md` 已覆盖 |
 | `GET /api/community-skills/search` | 搜索社区技能 | `api/app/tree_api.py` `search_community_skills` | `api/README.md` 已覆盖 |
-| `GET /api/runs/{run_id}/team/export` | 导出团队模板 | `api/app/tree_api.py` `export_team_yaml` | `api/README.md` 已覆盖 |
-| `POST /api/runs/team/import` | 导入团队模板并创建新 run | `api/app/tree_api.py` `import_team_yaml` | `api/README.md` 已覆盖 |
+| 已下线（历史团队导出） | 导出团队模板 | `api/app/tree_api.py` `export_team_yaml` | 历史记录 |
+| 已下线（历史团队导入） | 导入团队模板并创建新 run | `api/app/tree_api.py` `import_team_yaml` | 历史记录 |
 | `WS /ws/runs/{run_id}` | 订阅 run 事件流 | `api/app/main.py` `run_events_ws` | `api/README.md` 已覆盖 |
 
 ## 备注

@@ -372,11 +372,11 @@ def hire_team_from_template(session: Session, *, tenant_id: int, run_id: int, te
 
 ```python
 # api/app/tree_api.py
-@router.get("/api/runs/{run_id}/team/export")
+@router.get("[removed-team-export-endpoint]")
 async def export_team_yaml(...):
     # build template from AgentInstance + edges, return YAML
 
-@router.post("/api/runs/team/import")
+@router.post("[removed-team-import-endpoint]")
 async def import_team_yaml(...):
     # create new run, hire_team_from_template, return run_id
 ```

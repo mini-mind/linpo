@@ -126,15 +126,14 @@
 
 以下端点用于 run 内成员招募与审核。
 
-#### 创建招募申请（全局路径，兼容旧版）
+#### 创建招募申请（run 作用域）
 
-· `POST /api/recruitments`
+· `POST /api/runs/{run_id}/recruitments`
 
 请求体 schema：
 
 ```json
 {
-  "run_id": "101",
   "template_id": "searcher",
   "role": "市场研究员",
   "skills": []
@@ -206,9 +205,9 @@
 }
 ```
 
-#### 查询招募列表
+#### 查询招募列表（规划项）
 
-· `GET /api/recruitments`
+· `GET /api/runs/{run_id}/recruitments`
 
 Query 参数：
 - `run_id` (可选): 按 run 过滤
@@ -230,16 +229,16 @@ Query 参数：
 ]
 ```
 
-#### 查询招募详情
+#### 查询招募详情（规划项）
 
-· `GET /api/recruitments/{id}`
+· `GET /api/runs/{run_id}/recruitments/{recruitment_id}`
 
 响应体（200）：同创建响应 schema。
 
-#### 审核通过/拒绝（兼容旧版）
+#### 审核通过/拒绝（run 作用域）
 
-· `PUT /api/recruitments/{id}/approve`
-· `PUT /api/recruitments/{id}/reject`
+· `POST /api/runs/{run_id}/recruitments/{recruitment_id}/review`（`decision=approved`）
+· `POST /api/runs/{run_id}/recruitments/{recruitment_id}/review`（`decision=rejected`）
 
 请求体：无（空 body）
 
