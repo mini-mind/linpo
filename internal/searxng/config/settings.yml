@@ -20,6 +20,13 @@ search:
     - html
     - json
 
+# ravin 可直接访问所有搜索引擎，无需禁用
+# engines 配置使用 SearXNG 默认设置
+  default_lang: zh-CN
+  formats:
+    - html
+    - json
+
 # 禁用不可达的搜索引擎（GFW 阻断）
 engines:
   - name: google
