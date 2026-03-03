@@ -27,31 +27,6 @@ def get_templates_dir() -> Path:
         return local_path
     # Return default path (may not exist)
     return Path("/app/templates")
-    """Get the agent templates directory path."""
-    # Try environment variable first
-    roboard_root = os.getenv("ROBOARD_ROOT")
-    if roboard_root:
-        return Path(roboard_root) / "shared" / "agent-templates"
-    # Try ROBOARD_TEMPLATES_DIR for direct path
-    templates_dir = os.getenv("ROBOARD_TEMPLATES_DIR")
-    if templates_dir:
-        return Path(templates_dir)
-    # Fallback for Docker container - templates are mounted at /app/templates
-    docker_path = Path("/app/templates")
-    if docker_path.exists():
-        return docker_path
-    # Fallback for local development
-    local_path = Path(__file__).resolve().parents[3] / "shared" / "agent-templates"
-    if local_path.exists():
-        return local_path
-    # Return default path (may not exist)
-    return Path("/app/templates")
-    """Get the agent templates directory path."""
-    roboard_root = os.getenv("ROBOARD_ROOT")
-    if roboard_root:
-        return Path(roboard_root) / "shared" / "agent-templates"
-    # Fallback to relative path
-    return Path(__file__).resolve().parents[3] / "shared" / "agent-templates"
 
 
 def list_agent_templates() -> list[dict[str, Any]]:

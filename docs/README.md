@@ -72,7 +72,7 @@
 
 ## L4: 流程与决策记录
 
-- [项目章程](CONSTITUTION.md) - 项目治理与沟通规则
+- [项目章程](docs/CONSTITUTION.md) - 项目治理与沟通规则
 - [Sisyphus 工作流](process/sisyphus-workflow.md) - 计划、草稿、决策记录系统（`.sisyphus/` 在仓库根目录）
 - [多子项目并行推进规则](process/multi-session-ownership.md) - 目录所有权、接口契约同步与并行协作约定
 - [产品定位决策记录 (2026-02-13)](decisions/positioning-2026-02-13.md) - 业务专家构建权、长期服务与 P0 方向
