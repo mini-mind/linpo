@@ -19,9 +19,6 @@ skills:
 # 工具绑定
 tools: []
 
-# 可信来源（可选）
-sources: []
-
 # SOP 模板
 sop: |
   # Writer SOP

@@ -30,10 +30,6 @@ tools:                    # 工具绑定
     endpoint: http://mcp-server:9000/search
     auth: internal-key
 
-sources:                  # 可信来源（可选）
-  - path: docs/knowledge
-    label: 知识库
-
 sop: |                    # SOP 模板
   # Searcher SOP
   ...

@@ -93,8 +93,7 @@
       "taskTree.logout": "Logout",
       "taskTree.title": "Task Tree",
       "templates.nav": "Templates",
-      "taskTree.logout": "Logout",
-      "taskTree.title": "Task Tree",
+      "agentRecruit.nav": "Agent Recruit",
       "taskTree.kanban.title": "Task Board",
       "taskTree.kanban.todo": "To Do",
       "taskTree.kanban.running": "Running",
@@ -117,17 +116,9 @@
       "taskTree.cancel": "Cancel",
       "taskTree.detailsTitle": "Task Details",
       "taskTree.status": "Status",
-      "taskTree.controls": "Controls",
-      "taskTree.pause": "Pause",
-      "taskTree.resume": "Resume",
-      "taskTree.retry": "Retry",
       "taskTree.plan": "Plan",
       "taskTree.plan.empty": "No plan subtasks yet.",
       "taskTree.sop": "SOP",
-      "taskTree.sources": "Sources",
-      "taskTree.sourcesEmpty": "No sources yet.",
-      "taskTree.addSource": "Add",
-      "taskTree.sourcePlaceholder": "Add a source path...",
       "taskTree.skills": "Skills",
       "taskTree.skillsEmpty": "No skills yet.",
       "taskTree.skillSearch": "Search",
@@ -136,7 +127,6 @@
       "taskTree.skillNlInstall": "Install by NL",
       "taskTree.skillNlPlaceholder": "Describe the skill you want...",
       "taskTree.skillsAutoHint": "Skills auto-run after install.",
-      "taskTree.mobileInterventionPlaceholder": "Intervention message...",
       "taskTree.installSkill": "Install",
       "taskTree.teamTemplate": "Team Template",
       "taskTree.exportYaml": "Export YAML",
@@ -154,13 +144,6 @@
       "taskTree.msg.wsError": "WebSocket error",
       "taskTree.msg.fetchTreeFailed": "Fetch tree failed",
       "taskTree.msg.fetchSopFailed": "Fetch SOP failed",
-      "taskTree.msg.chatSendFailed": "Send message failed",
-      "taskTree.msg.interventionSubmitted": "Intervention submitted",
-      "taskTree.msg.sourcesLoadFailed": "Load sources failed",
-      "taskTree.msg.sourcesSaveFailed": "Save sources failed",
-      "taskTree.msg.sourceAdded": "Source added",
-      "taskTree.msg.controlSent": "Control sent",
-      "taskTree.msg.controlFailed": "Control failed",
       "taskTree.msg.skillsLoadFailed": "Load skills failed",
       "taskTree.msg.skillsSearchFailed": "Search failed",
       "taskTree.msg.skillsInstallFailed": "Install skill failed",
@@ -256,8 +239,7 @@
       "taskTree.logout": "退出",
       "taskTree.title": "任务树",
       "templates.nav": "模板库",
-      "taskTree.logout": "退出",
-      "taskTree.title": "任务树",
+      "agentRecruit.nav": "Agent 招募",
       "taskTree.kanban.title": "任务看板",
       "taskTree.kanban.todo": "待执行",
       "taskTree.kanban.running": "执行中",
@@ -280,17 +262,9 @@
       "taskTree.cancel": "取消",
       "taskTree.detailsTitle": "任务详情",
       "taskTree.status": "状态",
-      "taskTree.controls": "控制",
-      "taskTree.pause": "暂停",
-      "taskTree.resume": "继续",
-      "taskTree.retry": "重试",
       "taskTree.plan": "计划",
       "taskTree.plan.empty": "暂无计划子任务。",
       "taskTree.sop": "SOP",
-      "taskTree.sources": "来源",
-      "taskTree.sourcesEmpty": "暂无来源。",
-      "taskTree.addSource": "添加",
-      "taskTree.sourcePlaceholder": "添加来源路径...",
       "taskTree.skills": "技能",
       "taskTree.skillsEmpty": "暂无技能。",
       "taskTree.skillSearch": "Search",
@@ -299,7 +273,6 @@
       "taskTree.skillNlInstall": "Install by NL",
       "taskTree.skillNlPlaceholder": "Describe the skill you want...",
       "taskTree.skillsAutoHint": "Skills auto-run after install.",
-      "taskTree.mobileInterventionPlaceholder": "Intervention message...",
       "taskTree.installSkill": "安装",
       "taskTree.teamTemplate": "团队模板",
       "taskTree.exportYaml": "导出 YAML",
@@ -317,13 +290,6 @@
       "taskTree.msg.wsError": "WebSocket 错误",
       "taskTree.msg.fetchTreeFailed": "获取树失败",
       "taskTree.msg.fetchSopFailed": "获取 SOP 失败",
-      "taskTree.msg.chatSendFailed": "发送消息失败",
-      "taskTree.msg.interventionSubmitted": "已提交干预",
-      "taskTree.msg.sourcesLoadFailed": "加载来源失败",
-      "taskTree.msg.sourcesSaveFailed": "保存来源失败",
-      "taskTree.msg.sourceAdded": "已添加来源",
-      "taskTree.msg.controlSent": "已发送控制指令",
-      "taskTree.msg.controlFailed": "控制指令失败",
       "taskTree.msg.skillsLoadFailed": "加载技能失败",
       "taskTree.msg.skillsSearchFailed": "Search failed",
       "taskTree.msg.skillsInstallFailed": "安装技能失败",
@@ -1315,10 +1281,6 @@
       taskPlanList: byId("task-plan-list"),
       taskPlanEmpty: byId("task-plan-empty"),
       taskSopDisplay: byId("task-sop-display"),
-      taskSourcesList: byId("task-sources-list"),
-      taskSourcesEmpty: byId("task-sources-empty"),
-      taskSourcesForm: byId("task-sources-form"),
-      taskSourcesInput: byId("task-sources-input"),
       taskSkillsList: byId("task-skills-list"),
       taskSkillsEmpty: byId("task-skills-empty"),
       taskSkillSearchForm: byId("task-skill-search-form"),
@@ -1336,16 +1298,7 @@
       taskTeamImport: byId("task-team-import"),
       taskChatMessages: byId("task-chat-messages"),
       taskChatForm: byId("task-chat-form"),
-      taskChatInput: byId("task-chat-input"),
-      taskControlPause: byId("task-control-pause"),
-      taskControlResume: byId("task-control-resume"),
-      taskControlRetry: byId("task-control-retry"),
-      taskMobilePause: byId("task-mobile-pause"),
-      taskMobileResume: byId("task-mobile-resume"),
-      taskMobileRetry: byId("task-mobile-retry"),
-      taskMobileInterventionForm: byId("task-mobile-intervention-form"),
-      taskMobileInterventionInput: byId("task-mobile-intervention-input"),
-      taskMobileInterventionSubmit: byId("task-mobile-intervention-submit")
+      taskChatInput: byId("task-chat-input")
     };
 
     const state = {
@@ -1354,7 +1307,6 @@
       runId: "",
       selectedNode: null,
       chatHistories: {},
-      sourcesByAgent: {},
       skillsByAgent: {},
       communitySkills: [],
       communitySearchResults: [],
@@ -1511,13 +1463,7 @@
     };
 
     const setMobileControlsEnabled = (enabled) => {
-      const disabled = !enabled;
-      const buttons = [ui.taskMobilePause, ui.taskMobileResume, ui.taskMobileRetry];
-      buttons.forEach((btn) => {
-        if (btn) btn.disabled = disabled;
-      });
-      if (ui.taskMobileInterventionInput) ui.taskMobileInterventionInput.disabled = disabled;
-      if (ui.taskMobileInterventionSubmit) ui.taskMobileInterventionSubmit.disabled = disabled;
+      void enabled;
     };
 
     const updateMobileControlsState = () => {
@@ -2021,7 +1967,6 @@
       if (agent?.id) {
         fetchSop(agent.id);
         loadChatHistory(agent.id);
-        loadSources(agent.id);
         loadSkills(agent.id);
       }
 
@@ -2056,35 +2001,6 @@
         if (handleAuthError(err)) return;
         setMessage(t("taskTree.msg.fetchSopFailed"), "error");
       }
-    };
-
-    const renderSources = (agentId) => {
-      if (!ui.taskSourcesList || !ui.taskSourcesEmpty) return;
-      ui.taskSourcesList.innerHTML = "";
-      const sources = Array.isArray(state.sourcesByAgent?.[agentId]) ? state.sourcesByAgent[agentId] : [];
-      toggleHidden(ui.taskSourcesEmpty, sources.length > 0);
-      sources.forEach((source) => {
-        const path = safeText(source?.path || "").trim();
-        const label = safeText(source?.label || "").trim();
-        const li = document.createElement("li");
-        li.className = "source-item";
-
-        const meta = document.createElement("div");
-        meta.className = "source-meta";
-        const pathEl = document.createElement("div");
-        pathEl.className = "source-path";
-        pathEl.textContent = path || "-";
-        meta.appendChild(pathEl);
-        if (label) {
-          const labelEl = document.createElement("div");
-          labelEl.className = "source-label";
-          labelEl.textContent = label;
-          meta.appendChild(labelEl);
-        }
-
-        li.appendChild(meta);
-        ui.taskSourcesList.appendChild(li);
-      });
     };
 
     const renderSkills = (agentId) => {
@@ -2142,24 +2058,6 @@
         li.appendChild(meta);
         ui.taskSkillSearchResults.appendChild(li);
       });
-    };
-
-    const loadSources = async (agentId) => {
-      if (!agentId || !state.runId) return;
-      if (!ui.taskSourcesList) return;
-      try {
-        const resp = await apiFetch(
-          `/api/runs/${encodeURIComponent(state.runId)}/agents/${encodeURIComponent(agentId)}/sources`,
-          { method: "GET" }
-        );
-        const data = await resp.json().catch(() => null);
-        const sources = Array.isArray(data?.sources) ? data.sources : [];
-        state.sourcesByAgent[agentId] = sources;
-        renderSources(agentId);
-      } catch (err) {
-        if (handleAuthError(err)) return;
-        setMessage(t("taskTree.msg.sourcesLoadFailed"), "error");
-      }
     };
 
     const populateCommunitySkills = () => {
@@ -2231,27 +2129,6 @@
       } catch (err) {
         if (handleAuthError(err)) return;
         setMessage(t("taskTree.msg.skillsLoadFailed"), "error");
-      }
-    };
-
-    const saveSources = async (agentId, sources) => {
-      if (!state.runId) return;
-      try {
-        const resp = await apiFetch(
-          `/api/runs/${encodeURIComponent(state.runId)}/agents/${encodeURIComponent(agentId)}/sources`,
-          {
-            method: "PUT",
-            body: JSON.stringify({ sources })
-          }
-        );
-        const data = await resp.json().catch(() => null);
-        const next = Array.isArray(data?.sources) ? data.sources : sources;
-        state.sourcesByAgent[agentId] = next;
-        renderSources(agentId);
-        setMessage(t("taskTree.msg.sourceAdded"), "ok");
-      } catch (err) {
-        if (handleAuthError(err)) return;
-        setMessage(t("taskTree.msg.sourcesSaveFailed"), "error");
       }
     };
 
@@ -2369,28 +2246,6 @@
       }
     };
 
-    const sendControlAction = async (actionType) => {
-      const agentId = state.selectedNode?.id;
-      if (!agentId) {
-        setMessage(t("sop.msg.needAgent"), "error");
-        return;
-      }
-      if (!state.runId) {
-        setMessage(t("sop.msg.needRun"), "error");
-        return;
-      }
-      try {
-        await apiFetch(`/api/runs/${encodeURIComponent(state.runId)}/actions`, {
-          method: "POST",
-          body: JSON.stringify({ target_agent_id: agentId, action_type: actionType })
-        });
-        setMessage(t("taskTree.msg.controlSent"), "ok");
-      } catch (err) {
-        if (handleAuthError(err)) return;
-        setMessage(t("taskTree.msg.controlFailed"), "error");
-      }
-    };
-
     const loadChatHistory = (agentId) => {
       if (!ui.taskChatMessages) return;
       const key = `roboard_chat_${agentId}`;
@@ -2414,67 +2269,6 @@
         ui.taskChatMessages.appendChild(div);
       });
       ui.taskChatMessages.scrollTop = ui.taskChatMessages.scrollHeight;
-    };
-
-    const saveChatHistory = (agentId, messages) => {
-      const key = `roboard_chat_${agentId}`;
-      try {
-        localStorage.setItem(key, JSON.stringify(messages));
-      } catch {
-      }
-    };
-
-    const submitInterventionMessage = async (message) => {
-      if (!state.selectedNode) return false;
-      const agentId = state.selectedNode.id;
-      const trimmed = safeText(message).trim();
-      if (!trimmed) return false;
-      if (!state.runId) {
-        setMessage(t("taskTree.msg.chatSendFailed"), "error");
-        return false;
-      }
-
-      const userMsg = { role: "user", content: trimmed, timestamp: Date.now() };
-      if (!state.chatHistories[agentId]) state.chatHistories[agentId] = [];
-      state.chatHistories[agentId].push(userMsg);
-      saveChatHistory(agentId, state.chatHistories[agentId]);
-      renderChat(agentId);
-
-      try {
-        const resp = await apiFetch(`/api/runs/${encodeURIComponent(state.runId)}/interventions`, {
-          method: "POST",
-          body: JSON.stringify({
-            message: trimmed,
-            agent_id: agentId
-          })
-        });
-        await resp.json().catch(() => null);
-        const systemMsg = { role: "system", content: t("taskTree.msg.interventionSubmitted"), timestamp: Date.now() };
-        state.chatHistories[agentId].push(systemMsg);
-        saveChatHistory(agentId, state.chatHistories[agentId]);
-        renderChat(agentId);
-        return true;
-      } catch (err) {
-        if (handleAuthError(err)) return false;
-        setMessage(t("taskTree.msg.chatSendFailed"), "error");
-        return false;
-      }
-    };
-
-    const sendChatMessage = async () => {
-      if (!ui.taskChatInput || !state.selectedNode) return;
-      const message = ui.taskChatInput.value.trim();
-      if (!message) return;
-      ui.taskChatInput.value = "";
-      await submitInterventionMessage(message);
-    };
-
-    const sendMobileIntervention = async () => {
-      if (!ui.taskMobileInterventionInput) return;
-      const message = ui.taskMobileInterventionInput.value.trim();
-      if (!message) return;
-      ui.taskMobileInterventionInput.value = "";
-      await submitInterventionMessage(message);
     };
 
     const logout = async () => {
@@ -2575,12 +2369,6 @@
       }
     });
 
-    if (ui.taskChatForm) {
-      ui.taskChatForm.addEventListener("submit", (e) => {
-        e.preventDefault();
-        void sendChatMessage();
-      });
-    }
     if (ui.taskSkillSearchForm) {
       ui.taskSkillSearchForm.addEventListener("submit", (e) => {
         e.preventDefault();
@@ -2591,23 +2379,6 @@
       ui.taskSkillNlForm.addEventListener("submit", (e) => {
         e.preventDefault();
         void installSkillByNl();
-      });
-    }
-    if (ui.taskSourcesForm) {
-      ui.taskSourcesForm.addEventListener("submit", (e) => {
-        e.preventDefault();
-        const agentId = state.selectedNode?.id;
-        if (!agentId || !ui.taskSourcesInput) {
-          setMessage(t("sop.msg.needAgent"), "error");
-          return;
-        }
-        const path = ui.taskSourcesInput.value.trim();
-        if (!path) return;
-        const existing = Array.isArray(state.sourcesByAgent?.[agentId]) ? state.sourcesByAgent[agentId] : [];
-        const filtered = existing.filter((item) => safeText(item?.path || "") !== path);
-        const next = [...filtered, { path }];
-        ui.taskSourcesInput.value = "";
-        void saveSources(agentId, next);
       });
     }
     if (ui.taskSkillInstall) {
@@ -2626,48 +2397,6 @@
       ui.taskTeamImportForm.addEventListener("submit", (e) => {
         e.preventDefault();
         void importTeamTemplate();
-      });
-    }
-    if (ui.taskControlPause) {
-      ui.taskControlPause.addEventListener("click", (e) => {
-        e.preventDefault();
-        void sendControlAction("run.pause");
-      });
-    }
-    if (ui.taskControlResume) {
-      ui.taskControlResume.addEventListener("click", (e) => {
-        e.preventDefault();
-        void sendControlAction("run.resume");
-      });
-    }
-    if (ui.taskControlRetry) {
-      ui.taskControlRetry.addEventListener("click", (e) => {
-        e.preventDefault();
-        void sendControlAction("run.retry");
-      });
-    }
-    if (ui.taskMobilePause) {
-      ui.taskMobilePause.addEventListener("click", (e) => {
-        e.preventDefault();
-        void sendControlAction("run.pause");
-      });
-    }
-    if (ui.taskMobileResume) {
-      ui.taskMobileResume.addEventListener("click", (e) => {
-        e.preventDefault();
-        void sendControlAction("run.resume");
-      });
-    }
-    if (ui.taskMobileRetry) {
-      ui.taskMobileRetry.addEventListener("click", (e) => {
-        e.preventDefault();
-        void sendControlAction("run.retry");
-      });
-    }
-    if (ui.taskMobileInterventionForm) {
-      ui.taskMobileInterventionForm.addEventListener("submit", (e) => {
-        e.preventDefault();
-        void sendMobileIntervention();
       });
     }
     if (ui.logoutBtn) {

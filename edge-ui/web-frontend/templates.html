@@ -23,6 +23,18 @@
           <span class="nav-crumb nav-crumb-active">模板库</span>
         </nav>
 
+        <nav class="nav-tabs task-view-switcher" role="tablist" aria-label="主导航">
+          <a href="/" class="nav-tab view-tab" aria-label="任务树">
+            <span class="view-tab-label" data-i18n="taskTree.title">任务树</span>
+          </a>
+          <a href="/templates" class="nav-tab view-tab is-active" aria-label="模板库">
+            <span class="view-tab-label" data-i18n="templates.nav">模板库</span>
+          </a>
+          <a href="/agents" class="nav-tab view-tab" aria-label="Agent 招募">
+            <span class="view-tab-label" data-i18n="agentRecruit.nav">Agent 招募</span>
+          </a>
+        </nav>
+
         <div class="user-status user-dropdown" aria-label="用户菜单">
           <button id="user-dropdown-trigger" class="user-dropdown-trigger" type="button" aria-haspopup="menu" aria-expanded="false">
             <span id="session-label" class="session-label user-name" x-text="sessionLabel"></span>
@@ -92,7 +104,7 @@
                 </div>
 
                 <div class="template-card-footer">
-                  <button class="btn btn-primary btn-use-template" @click.stop="useTemplate(template)" data-i18n="templates.useButton">
+                  <button class="btn btn-primary btn-use-template" type="button" @click.stop="useTemplate(template)" data-i18n="templates.useButton">
                     使用此模板
                   </button>
                 </div>

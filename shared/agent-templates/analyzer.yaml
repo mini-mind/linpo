@@ -25,9 +25,6 @@ tools:
     timeout: 60s
     description: LLM 深度分析
 
-# 可信来源（可选）
-sources: []
-
 # SOP 模板
 sop: |
   # Analyzer SOP

@@ -40,6 +40,9 @@
         <a href="/templates" class="nav-tab view-tab" aria-label="模板库">
           <span class="view-tab-label" data-i18n="templates.nav">模板库</span>
         </a>
+        <a href="/agents" class="nav-tab view-tab" aria-label="Agent 招募">
+          <span class="view-tab-label" data-i18n="agentRecruit.nav">Agent 招募</span>
+        </a>
       </nav>
 
       <main id="task-tree-view" class="task-tree-main" aria-label="Task Tree">
@@ -98,23 +101,6 @@
               </section>
             </div>
 
-            <section id="task-mobile-toolbar" class="task-mobile-toolbar" aria-label="Mobile actions">
-              <div class="task-mobile-controls">
-                <button id="task-mobile-pause" class="btn btn-ghost" type="button" data-i18n="taskTree.pause">Pause</button>
-                <button id="task-mobile-resume" class="btn btn-ghost" type="button" data-i18n="taskTree.resume">Resume</button>
-                <button id="task-mobile-retry" class="btn btn-ghost" type="button" data-i18n="taskTree.retry">Retry</button>
-              </div>
-              <form id="task-mobile-intervention-form" class="task-mobile-intervention">
-                <input
-                  id="task-mobile-intervention-input"
-                  type="text"
-                  placeholder="Intervention message..."
-                  data-i18n-placeholder="taskTree.mobileInterventionPlaceholder"
-                  autocomplete="off"
-                />
-                <button id="task-mobile-intervention-submit" type="submit" class="btn btn-primary" data-i18n="taskTree.send">Send</button>
-              </form>
-            </section>
           </section>
         </div>
       </main>
@@ -184,7 +170,7 @@
     <button id="add-task-btn" class="btn btn-primary add-task-btn is-hidden" type="button" aria-label="Add new task" title="Add new task">
       <span class="add-task-icon">+</span>
     </button>
-    <script src="https://unpkg.com/alpinejs@3.13.5/dist/cdn.min.js" defer></script>
     <script src="app.js" defer></script>
+    <script src="https://unpkg.com/alpinejs@3.13.5/dist/cdn.min.js" defer></script>
   </body>
 </html>

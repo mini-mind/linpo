@@ -33,10 +33,8 @@ Files:
 ### 任务详情
 - **详情区域**: `#task-details-section` 显示选中任务的详细信息
 - **计划列表显示**: `#task-sop-display` 显示任务的 TODO/计划列表内容（来源为 `plan_subtasks`）
-- **来源面板**: `#task-sources-list` 展示可信来源列表，`#task-sources-form` 添加来源路径
 - **技能面板**: `#task-skills-list` 展示技能列表，`#task-skill-select` 选择社区技能并安装
 - **团队模板**: `#task-team-export` 导出 YAML，`#task-team-import-form` 粘贴并导入 YAML
-- **控制按钮**: `#task-control-pause` / `#task-control-resume` / `#task-control-retry` 触发干预控制
 - **聊天消息**: `#task-chat-messages` 显示任务相关的聊天消息
 - **聊天表单**: `#task-chat-form` 发送新消息的表单
 - **聊天输入**: `#task-chat-input` 消息输入框
@@ -45,16 +43,13 @@ Files:
 
 - `POST /api/runs` - 创建新运行
 - `GET /api/runs/{run_id}/tree` - 获取运行的任务树
-- `POST /api/runs/{run_id}/interventions` - 向指定 Agent 提交自然语言干预
-- `GET /api/runs/{run_id}/agents/{agent_id}/sources` - 获取可信来源列表
-- `PUT /api/runs/{run_id}/agents/{agent_id}/sources` - 更新可信来源列表
 - `GET /api/runs/{run_id}/agents/{agent_id}/skills` - 获取技能清单
 - `PUT /api/runs/{run_id}/agents/{agent_id}/skills` - 覆盖技能清单
 - `GET /api/community-skills` - 获取社区技能列表
 - `POST /api/runs/{run_id}/agents/{agent_id}/skills/install` - 安装社区技能
 - `GET /api/runs/{run_id}/team/export` - 导出团队 YAML
 - `POST /api/runs/team/import` - 导入团队 YAML
-- `POST /api/runs/{run_id}/actions` - 发送控制动作（pause/resume/retry）
+- `POST /api/runs/{run_id}/actions` - 提交 `sop.replace` 动作
 
 ## 手动验证清单
 
@@ -63,7 +58,6 @@ Files:
 - [ ] NL install installs top skill and updates list
 - [ ] 导出 YAML 文件成功下载
 - [ ] 粘贴 YAML 导入并创建新 run
-- [ ] Mobile layout keeps tree visible and shows pause/resume/retry + intervention entry
 
 ## WebSocket 连接
 

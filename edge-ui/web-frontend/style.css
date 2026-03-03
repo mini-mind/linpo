@@ -932,35 +932,6 @@ details[open] > .panel-summary::after {
   color: var(--muted-2);
 }
 
-.task-mobile-toolbar {
-  display: none;
-  padding: var(--space-3);
-  border-top: 1px solid var(--line);
-  background: var(--panel);
-  gap: var(--space-2);
-}
-
-.task-mobile-controls {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-2);
-}
-
-.task-mobile-intervention {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: var(--space-2);
-}
-
-.task-mobile-intervention input {
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--line);
-  background: var(--bg-2);
-  color: var(--text);
-  font-size: 13px;
-}
-
 .task-tree-panel {
   flex: 1;
   min-width: 0;
@@ -1109,7 +1080,6 @@ details[open] > .panel-summary::after {
 .task-status-section,
 .task-controls-section,
 .task-sop-section,
-.task-sources-section,
 .task-skills-section,
 .task-team-section,
 .task-chat-section {
@@ -1122,16 +1092,6 @@ details[open] > .panel-summary::after {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-2);
-}
-
-.sources-empty {
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px dashed rgba(0, 0, 0, 0.16);
-  background: rgba(255, 255, 255, 0.6);
-  color: var(--muted-2);
-  font-size: 12px;
-  font-style: italic;
 }
 
 .skills-empty {
@@ -1260,56 +1220,6 @@ details[open] > .panel-summary::after {
   background: var(--panel-2);
   font-size: 12px;
   resize: vertical;
-}
-
-.sources-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: var(--space-2);
-}
-
-.source-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--line);
-  background: var(--panel-2);
-  font-size: 12px;
-}
-
-.source-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.source-path {
-  color: var(--text);
-  font-weight: 600;
-}
-
-.source-label {
-  color: var(--muted-2);
-  font-size: 11px;
-}
-
-.sources-form {
-  display: flex;
-  gap: var(--space-2);
-}
-
-.sources-form input {
-  flex: 1;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  background: var(--panel-2);
-  font-size: 12px;
 }
 
 .task-plan-section {
@@ -1521,16 +1431,8 @@ details[open] > .panel-summary::after {
     border-right: none;
   }
 
-  .task-mobile-toolbar {
-    display: grid;
-  }
-
   .control-buttons {
     grid-template-columns: 1fr;
-  }
-
-  .sources-form {
-    flex-direction: column;
   }
 
   .skills-actions {
@@ -1538,8 +1440,7 @@ details[open] > .panel-summary::after {
   }
 
   .skills-search,
-  .skills-nl,
-  .task-mobile-intervention {
+  .skills-nl {
     grid-template-columns: 1fr;
   }
 
@@ -1714,8 +1615,7 @@ details[open] > .panel-summary::after {
 }
 
 .task-tree-shell .plan-empty,
-.task-tree-shell .skills-empty,
-.task-tree-shell .sources-empty {
+.task-tree-shell .skills-empty {
   border: 1px dashed rgba(59, 209, 255, 0.22);
   background: rgba(8, 18, 28, 0.65);
   color: var(--muted-2);
@@ -1723,8 +1623,7 @@ details[open] > .panel-summary::after {
 
 .task-tree-shell .ui-form input:focus,
 .task-tree-shell .ui-form textarea:focus,
-.task-tree-shell .chat-form input:focus,
-.task-tree-shell .task-mobile-intervention input:focus {
+.task-tree-shell .chat-form input:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(59, 209, 255, 0.22);
 }
