@@ -1,41 +1,4 @@
 services:
-  gateway:
-    build:
-      context: ./edge-ui/gateway
-    depends_on:
-      - web-frontend
-      - api
-    environment:
-      - API_BACKEND_URL=${API_BACKEND_URL:-http://api:8000}
-      - NGINX_ENVSUBST_VARS=$$API_BACKEND_URL
-    networks:
-      - app-net
-    restart: unless-stopped
-
-  edge:
-    image: caddy:2.8-alpine
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./edge-ui/edge/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-    environment:
-      - CADDY_EMAIL=${CADDY_EMAIL:-}
-    networks:
-      - app-net
-    depends_on:
-      - gateway
-    restart: unless-stopped
-
-  web-frontend:
-    build:
-      context: ./edge-ui/web-frontend
-    networks:
-      - app-net
-    restart: unless-stopped
-
   api:
     build:
       context: ./api
