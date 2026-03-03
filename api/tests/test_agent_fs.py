@@ -54,7 +54,6 @@ def test_ensure_agent_layout_creates_folders(tmp_path: Path) -> None:
     agent_fs.ensure_agent_layout(agent_root)
 
     expected_dirs = [
-        agent_root / "context" / "sources",
         agent_root / "context" / "workspace",
         agent_root / "skills",
         agent_root / "children",

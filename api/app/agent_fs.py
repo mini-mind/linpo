@@ -7,7 +7,6 @@ from typing import cast
 
 def ensure_agent_layout(agent_root: Path) -> None:
     for path in (
-        agent_root / "context" / "sources",
         agent_root / "context" / "workspace",
         agent_root / "skills",
         agent_root / "children",
@@ -43,40 +42,6 @@ def write_text(agent_root: Path, rel: str, text: str) -> None:
 def read_text(agent_root: Path, rel: str) -> str:
     full_path = _safe_path(agent_root, rel)
     return full_path.read_text(encoding="utf-8")
-
-
-def read_sources_manifest(agent_root: Path) -> list[dict[str, str]]:
-    manifest_path = agent_root / "context" / "sources" / "manifest.json"
-    if not manifest_path.exists():
-        return []
-    raw_value = cast(object, json.loads(manifest_path.read_text(encoding="utf-8")))
-    if not isinstance(raw_value, list):
-        return []
-    raw_list = cast(list[object], raw_value)
-    sources: list[dict[str, str]] = []
-    for item in raw_list:
-        if not isinstance(item, dict):
-            continue
-        item_dict = cast(dict[str, object], item)
-        path = item_dict.get("path")
-        label = item_dict.get("label")
-        if not isinstance(path, str) or not path.strip():
-            continue
-        entry: dict[str, str] = {"path": path}
-        if isinstance(label, str) and label.strip():
-            entry["label"] = label
-        sources.append(entry)
-    return sources
-
-
-def write_sources_manifest(agent_root: Path, sources: list[dict[str, str]]) -> None:
-    sources_root = agent_root / "context" / "sources"
-    sources_root.mkdir(parents=True, exist_ok=True)
-    manifest_path = sources_root / "manifest.json"
-    _ = manifest_path.write_text(
-        json.dumps(sources, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
 
 
 def read_skills_manifest(agent_root: Path) -> list[dict[str, str]]:

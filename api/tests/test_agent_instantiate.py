@@ -137,7 +137,6 @@ def test_instantiate_agent_from_template_with_overrides(tmp_path: pathlib.Path, 
             {
             "name": "定制搜索专家",
             "sop": "# Custom SOP\n\n执行定制流程",
-            "sources": [{"path": "custom/docs", "label": "定制文档"}],
             "skills": [
                 {
                     "name": "custom_skill",
@@ -181,9 +180,6 @@ def test_instantiate_agent_from_template_with_overrides(tmp_path: pathlib.Path, 
 
     mission_text = (agent_root / "mission.md").read_text(encoding="utf-8")
     assert "Custom SOP" in mission_text
-
-    sources_manifest = json.loads((agent_root / "context" / "sources" / "manifest.json").read_text(encoding="utf-8"))
-    assert sources_manifest == [{"path": "custom/docs", "label": "定制文档"}]
 
     skills_manifest = json.loads((agent_root / "skills" / "manifest.json").read_text(encoding="utf-8"))
     assert skills_manifest == [{"name": "custom_skill", "filename": "custom_skill.py"}]

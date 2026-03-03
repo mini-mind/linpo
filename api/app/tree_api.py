@@ -124,24 +124,6 @@ class SopOut(BaseModel):
     version: int
 
 
-class SourceItemIn(BaseModel):
-    path: str
-    label: str | None = None
-
-
-class SourceItemOut(BaseModel):
-    path: str
-    label: str | None = None
-
-
-class AgentSourcesIn(BaseModel):
-    sources: list[SourceItemIn]
-
-
-class AgentSourcesOut(BaseModel):
-    sources: list[SourceItemOut]
-
-
 class SkillItemIn(BaseModel):
     name: str
     filename: str
@@ -215,7 +197,6 @@ class AgentInstantiateOverridesIn(BaseModel):
     name: str | None = None
     role: str | None = None
     sop: str | None = None
-    sources: list[SourceItemIn] | None = None
     skills: list[AgentInstantiateSkillIn] | None = None
     tools: list[dict[str, object]] | None = None
 
@@ -261,34 +242,6 @@ class SkillInvokeOut(BaseModel):
     status: str
 
 
-def _normalize_source_path(value: str) -> str:
-    raw = value.strip()
-    if not raw:
-        raise HTTPException(status_code=400, detail="Source path required")
-    rel = Path(raw)
-    if rel.is_absolute() or ".." in rel.parts:
-        raise HTTPException(status_code=400, detail="Invalid source path")
-    normalized = rel.as_posix().lstrip("./")
-    if not normalized:
-        raise HTTPException(status_code=400, detail="Invalid source path")
-    return normalized
-
-
-def _normalize_sources(items: list[SourceItemIn]) -> list[dict[str, str]]:
-    seen: set[str] = set()
-    normalized: list[dict[str, str]] = []
-    for item in items:
-        path = _normalize_source_path(item.path)
-        if path in seen:
-            continue
-        seen.add(path)
-        entry: dict[str, str] = {"path": path}
-        if isinstance(item.label, str) and item.label.strip():
-            entry["label"] = item.label.strip()
-        normalized.append(entry)
-    return normalized
-
-
 def _normalize_skill_name(value: str) -> str:
     name = value.strip()
     if not name:
@@ -324,29 +277,6 @@ def _normalize_skills(items: list[SkillItemIn]) -> list[dict[str, str]]:
             continue
         seen.add(filename)
         normalized.append({"name": name, "filename": filename, "code": code})
-    return normalized
-
-
-def _normalize_template_sources(raw_value: object) -> list[dict[str, str]]:
-    if not isinstance(raw_value, list):
-        return []
-    normalized: list[dict[str, str]] = []
-    seen: set[str] = set()
-    for item in raw_value:
-        if not isinstance(item, dict):
-            continue
-        path = item.get("path")
-        if not isinstance(path, str):
-            continue
-        normalized_path = _normalize_source_path(path)
-        if normalized_path in seen:
-            continue
-        seen.add(normalized_path)
-        entry: dict[str, str] = {"path": normalized_path}
-        label = item.get("label")
-        if isinstance(label, str) and label.strip():
-            entry["label"] = label.strip()
-        normalized.append(entry)
     return normalized
 
 
@@ -750,70 +680,6 @@ async def get_agent_sop(
 
     sop_version_num = cast(int, getattr(sop_version, "version"))
     return SopOut(md_text=md_text, version=sop_version_num)
-
-
-@router.get("/api/runs/{run_id}/agents/{agent_id}/sources", response_model=AgentSourcesOut)
-async def get_agent_sources(
-    run_id: str,
-    agent_id: str,
-    tenant: Annotated[models.Tenant, Depends(require_tenant)],
-    session: DbSessionDep,
-) -> AgentSourcesOut:
-    run_id_int = _parse_int_id(run_id, "run_id")
-    agent_id_int = _parse_int_id(agent_id, "agent_id")
-    agent = (
-        session.query(models.AgentInstance)
-        .filter(
-            models.AgentInstance.id == agent_id_int,
-            models.AgentInstance.tenant_id == tenant.id,
-            models.AgentInstance.run_id == run_id_int,
-        )
-        .first()
-    )
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
-
-    roboard_root = _get_roboard_root()
-    tenant_id = cast(int, getattr(tenant, "id"))
-    agent_root = project_fs.agent_root_for(roboard_root, tenant_id, run_id_int, str(agent_id_int))
-    agent_fs.ensure_agent_layout(agent_root)
-    sources = agent_fs.read_sources_manifest(agent_root)
-    return AgentSourcesOut(sources=[SourceItemOut(**item) for item in sources])
-
-
-@router.put("/api/runs/{run_id}/agents/{agent_id}/sources", response_model=AgentSourcesOut)
-async def put_agent_sources(
-    run_id: str,
-    agent_id: str,
-    body: AgentSourcesIn,
-    tenant: Annotated[models.Tenant, Depends(require_tenant)],
-    session: DbSessionDep,
-) -> AgentSourcesOut:
-    run_id_int = _parse_int_id(run_id, "run_id")
-    agent_id_int = _parse_int_id(agent_id, "agent_id")
-    agent = (
-        session.query(models.AgentInstance)
-        .filter(
-            models.AgentInstance.id == agent_id_int,
-            models.AgentInstance.tenant_id == tenant.id,
-            models.AgentInstance.run_id == run_id_int,
-        )
-        .first()
-    )
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
-
-    sources = _normalize_sources(body.sources)
-    roboard_root = _get_roboard_root()
-    tenant_id = cast(int, getattr(tenant, "id"))
-    agent_root = project_fs.agent_root_for(roboard_root, tenant_id, run_id_int, str(agent_id_int))
-    agent_fs.ensure_agent_layout(agent_root)
-    sources_root = agent_root / "context" / "sources"
-    for item in sources:
-        source_path = sources_root / item["path"]
-        source_path.mkdir(parents=True, exist_ok=True)
-    agent_fs.write_sources_manifest(agent_root, sources)
-    return AgentSourcesOut(sources=[SourceItemOut(**item) for item in sources])
 
 
 @router.get("/api/community-skills", response_model=CommunitySkillsOut)
@@ -1272,7 +1138,6 @@ class AgentTemplateDetailOut(BaseModel):
     version: int = 1
     skills: list[dict[str, object]] = []
     tools: list[dict[str, object]] = []
-    sources: list[dict[str, object]] = []
     sop: str | None = None
     metadata: dict[str, object] = {}
 
@@ -1307,7 +1172,6 @@ async def get_agent_template(template_id: str) -> AgentTemplateDetailOut:
         version=template.get("version", 1),
         skills=template.get("skills", []),
         tools=template.get("tools", []),
-        sources=template.get("sources", []),
         sop=template.get("sop"),
         metadata=template.get("metadata", {}),
     )
@@ -1365,9 +1229,6 @@ async def instantiate_agent(
     template_name = template.get("name")
     name = override_name or (template_name.strip() if isinstance(template_name, str) and template_name.strip() else role_label)
 
-    template_sources = _normalize_template_sources(template.get("sources"))
-    sources = _normalize_sources(body.overrides.sources) if body.overrides.sources is not None else template_sources
-
     template_skills, template_skill_code = _normalize_template_skills_raw(template.get("skills"))
     if body.overrides.skills is not None:
         skills, skill_code_by_filename = _normalize_template_skills_override(body.overrides.skills)
@@ -1415,12 +1276,6 @@ async def instantiate_agent(
         )
         agent_fs.write_text(agent_root, "mission.md", sop_text)
         agent_fs.write_text(agent_root, "plan.md", "")
-
-        sources_root = agent_root / "context" / "sources"
-        for item in sources:
-            source_path = sources_root / item["path"]
-            source_path.mkdir(parents=True, exist_ok=True)
-        agent_fs.write_sources_manifest(agent_root, sources)
 
         for item in skills:
             filename = item["filename"]

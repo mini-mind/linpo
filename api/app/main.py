@@ -647,11 +647,6 @@ class ActionCreateIn(BaseModel):
     idempotency_key: str | None = None
 
 
-class RunInterventionIn(BaseModel):
-    agent_id: str = Field(..., min_length=1)
-    message: str = Field(..., min_length=1)
-
-
 class ActionOut(BaseModel):
     action_id: str
     status: str
@@ -1621,33 +1616,17 @@ async def create_action(
     body: ActionCreateIn,
 ) -> ActionOut:
     run_id_int = _parse_int_id(run_id, "run_id")
-    task = (
-        session.query(models.Task)
-        .filter(models.Task.id == run_id_int, models.Task.tenant_id == tenant.id)
-        .first()
-    )
-    if not task:
-        raise HTTPException(status_code=404, detail="Run not found")
 
     agent_id_int = _parse_int_id(body.target_agent_id, "target_agent_id")
     from . import actions
 
-    if body.action_type == "sop.replace":
-        action, _new_sop, events = actions.apply_sop_replace_action(
-            session,
-            tenant,
-            run_id_int,
-            agent_id_int,
-            body,
-        )
-    else:
-        action, events = actions.apply_control_action(
-            session,
-            tenant,
-            run_id_int,
-            agent_id_int,
-            body,
-        )
+    action, _new_sop, events = actions.apply_sop_replace_action(
+        session,
+        tenant,
+        run_id_int,
+        agent_id_int,
+        body,
+    )
 
     if events:
         tenant_id_str = str(getattr(tenant, "id"))
@@ -1667,156 +1646,11 @@ async def create_action(
 
     applied_id = getattr(action, "applied_sop_version_id")
 
-    if body.action_type in {"run.resume", "run.retry"}:
-        input_json = getattr(task, "input_json", None)
-        task_input = _parse_input_json(input_json)
-        if _schedule_dispatch_dispatch(str(run_id_int), str(getattr(tenant, "id")), task_input):
-            return ActionOut(
-                action_id=str(getattr(action, "id")),
-                status=cast(str, getattr(action, "status")),
-                applied_sop_version_id=str(applied_id) if applied_id is not None else None,
-            )
-        redis_client = getattr(app.state, "redis_client", None)
-        if redis_client is not None and getattr(app.state, "redis_ok", False):
-            try:
-                trace_id = TRACE_ID_CONTEXT.get() or ""
-                dispatch_msg = {
-                    "task_id": str(run_id_int),
-                    "tenant_id": str(getattr(tenant, "id")),
-                    "input_json": json.dumps(task_input),
-                    "attempt": "1",
-                    "enqueued_at": utcnow_iso(),
-                    "trace_id": trace_id,
-                }
-                await redis_client.xadd("queue:dispatch", dispatch_msg)
-                logger.info(
-                    "Enqueued dispatch for run %s action %s",
-                    run_id_int,
-                    body.action_type,
-                )
-                DISPATCH_ENQUEUED_TOTAL.labels(tenant_id=str(getattr(tenant, "id"))).inc()
-            except Exception as exc:
-                logger.warning(
-                    "Failed to enqueue dispatch for run %s action %s: %s",
-                    run_id_int,
-                    body.action_type,
-                    exc,
-                )
-                DISPATCH_ENQUEUE_FAILURES_TOTAL.labels(tenant_id=str(getattr(tenant, "id"))).inc()
-
     return ActionOut(
         action_id=str(getattr(action, "id")),
         status=cast(str, getattr(action, "status")),
         applied_sop_version_id=str(applied_id) if applied_id is not None else None,
     )
-
-
-@app.post("/api/runs/{run_id}/interventions", response_model=EventOut)
-async def create_run_intervention(
-    run_id: str,
-    tenant: Annotated[models.Tenant, Depends(require_tenant)],
-    session: DbSessionDep,
-    body: RunInterventionIn,
-) -> EventOut:
-    TASK_ID_CONTEXT.set(run_id)
-    run_id_int = _parse_int_id(run_id, "run_id")
-    task = (
-        session.query(models.Task)
-        .filter(models.Task.id == run_id_int, models.Task.tenant_id == tenant.id)
-        .first()
-    )
-    if not task or getattr(task, "kind", None) != "run":
-        raise HTTPException(status_code=404, detail="Run not found")
-
-    agent_id_int = _parse_int_id(body.agent_id, "agent_id")
-    agent = (
-        session.query(models.AgentInstance)
-        .filter(
-            models.AgentInstance.id == agent_id_int,
-            models.AgentInstance.tenant_id == tenant.id,
-            models.AgentInstance.run_id == run_id_int,
-        )
-        .first()
-    )
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
-
-    tenant_id_db = getattr(tenant, "id")
-    task_id_db = getattr(task, "id")
-    old_status = cast(str, getattr(task, "status"))
-    new_status = EVENT_TO_STATUS.get("task.requires_input", old_status)
-    data = {
-        "agent_id": str(agent_id_int),
-        "message": body.message,
-    }
-
-    try:
-        event = models.Event()
-        setattr(event, "task_id", task_id_db)
-        setattr(event, "run_id", task_id_db)
-        setattr(event, "tenant_id", tenant_id_db)
-        setattr(event, "agent_id", agent_id_int)
-        setattr(event, "type", "task.requires_input")
-        setattr(event, "data_json", json.dumps(data))
-        setattr(event, "status", new_status)
-        setattr(event, "timestamp", _utcnow_naive())
-        session.add(event)
-        session.flush()
-
-        setattr(agent, "state", new_status)
-        current_rev = getattr(task, "tree_revision", 0) or 0
-        setattr(task, "tree_revision", int(current_rev) + 1)
-        session.add(agent)
-
-        if new_status != old_status:
-            setattr(task, "status", new_status)
-            if new_status in NOTIFY_ON_STATUSES:
-                web_n = models.Notification()
-                setattr(web_n, "task_id", task_id_db)
-                setattr(web_n, "tenant_id", tenant_id_db)
-                setattr(web_n, "channel", "web")
-                setattr(web_n, "status", "delivered")
-                setattr(web_n, "task_status", new_status)
-                session.add(web_n)
-
-                email_n = models.Notification()
-                setattr(email_n, "task_id", task_id_db)
-                setattr(email_n, "tenant_id", tenant_id_db)
-                setattr(email_n, "channel", "email")
-                setattr(email_n, "status", "queued")
-                setattr(email_n, "task_status", new_status)
-                default_email = os.getenv("DEFAULT_NOTIFICATION_EMAIL")
-                tenant_email = getattr(tenant, "notification_email", None)
-                email_to = tenant_email or default_email
-                if email_to:
-                    setattr(email_n, "email_to", email_to)
-                session.add(email_n)
-
-        session.commit()
-    except HTTPException:
-        session.rollback()
-        raise
-    except Exception:
-        session.rollback()
-        raise
-
-    TASK_EVENTS_WRITTEN_TOTAL.labels(tenant_id=str(tenant_id_db)).inc()
-    event_out = _event_to_out(event)
-    await WS_MANAGER.broadcast(str(tenant_id_db), str(task_id_db), event_out.model_dump())
-    await WS_MANAGER.broadcast(str(tenant_id_db), _run_ws_key(task_id_db), _run_delta_payload(event))
-
-    recent_runs = (
-        session.query(models.Task)
-        .filter(models.Task.tenant_id == tenant_id_db, models.Task.kind == "run")
-        .order_by(models.Task.id.desc())
-        .limit(5)
-        .all()
-    )
-    recent_run_ids = {getattr(r, "id") for r in recent_runs}
-    if task_id_db in recent_run_ids:
-        await WS_MANAGER.broadcast(str(tenant_id_db), "world", _run_delta_payload(event))
-
-    return event_out
 
 
 @app.get("/api/tasks/{task_id}", response_model=TaskOut)
