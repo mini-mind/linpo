@@ -118,3 +118,43 @@ curl -fsS https://roboard.duckdns.org/ >/dev/null
 - 未登录显示登录/注册
 - 注册/登录后可创建 run 并连接 WS（不需要填写 API key）
 - Logout 正常清理会话
+
+---
+
+## 本地开发环境
+
+**重要**：本地开发环境**只运行后端服务**，frontend 服务在 ravin 上运行。
+
+### 本地服务清单
+
+```bash
+# 本地运行的服务（后端重服务）
+docker compose ps
+
+# 包含：
+# - api, dispatch, worker-playwright
+# - mcp-server, llm-gateway, skill-gateway
+# - postgres, redis, mailhog
+# - sandbox-template
+```
+
+### 不运行的服务
+
+以下服务在 ravin 上运行，本地**不运行**：
+- ❌ edge (Caddy)
+- ❌ gateway (nginx)
+- ❌ web-frontend
+- ❌ searxng
+
+### 开发测试
+
+```bash
+# 后端 API 测试
+curl http://127.0.0.1:8005/health
+
+# 前端 UI 测试（访问 ravin）
+open https://roboard.duckdns.org/
+
+# SearXNG 测试（通过 mcp-server 或指向 ravin）
+export SEARXNG_URL=http://68.64.179.125:8081
+```

@@ -261,3 +261,43 @@ export SEARXNG_URL=http://68.64.179.125:8081
 
 ### 2026-02-18
 - 初始部署在 ravin
+
+---
+
+## 本地环境说明
+
+**重要**：本地开发环境**不包含** frontend 服务（edge/gateway/web-frontend），这些服务已在 ravin 上运行。
+
+### 本地服务清单
+
+本地只运行后端重服务：
+- ✅ api - 核心 API 服务
+- ✅ dispatch - 任务调度
+- ✅ mcp-server - MCP 服务（调用 ravin searxng）
+- ✅ worker-playwright - Playwright 工作节点
+- ✅ llm-gateway - LLM 网关
+- ✅ skill-gateway - 技能网关
+- ✅ sandbox-template - 沙盒模板
+- ✅ postgres - 数据库
+- ✅ redis - 缓存
+- ✅ mailhog - 邮件测试
+
+### 不运行的服务
+
+以下服务在 ravin 上运行，本地**不运行**：
+- ❌ edge - Caddy 反向代理（ravin）
+- ❌ gateway - nginx 网关（ravin）
+- ❌ web-frontend - 前端 UI（ravin）
+- ❌ searxng - 搜索引擎（ravin）
+
+### 开发测试方式
+
+1. **后端 API 测试**：直接访问 `http://127.0.0.1:8005/`
+2. **前端 UI 测试**：访问 ravin `https://roboard.duckdns.org/`
+3. **SearXNG 测试**：通过 mcp-server 调用，或设置 `SEARXNG_URL=http://68.64.179.125:8081`
+
+### 架构优势
+
+- **资源优化**：本地不运行 frontend 服务，节省资源
+- **环境一致**：frontend 服务在生产环境（ravin）统一运行
+- **简化开发**：开发专注于后端逻辑，frontend 使用生产环境
