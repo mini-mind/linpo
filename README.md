@@ -1,6 +1,6 @@
-# SoulBoard（灵板）
+# 灵盘（Linpo）
 
-SoulBoard 是一个从小功能闭环起步、逐步成长的平台型项目。
+灵盘（Linpo）是一个从小功能闭环起步、逐步成长的平台型项目。
 
 当前第一阶段的产品起点是：
 
@@ -8,14 +8,17 @@ SoulBoard 是一个从小功能闭环起步、逐步成长的平台型项目。
 
 当前仓库已完成一次项目级重置：旧版 roboard 的实现、设计与配置已迁出当前仓库根目录，仅作为仓库外本地归档参考，不再作为当前项目的权威来源。
 
+开发阶段域名暂定为：`linpo.duckdns.org`
+
 ## 文档入口
 
 | 文档 | 路径 | 说明 |
 |------|------|------|
-| 产品需求 | `docs/prd/2026-03-12-soulboard-v0.1.md` | SoulBoard v0.1 产品定义 |
-| 初始架构 | `docs/architecture/2026-03-12-initial-architecture.md` | SoulBoard 初始架构边界 |
+| 产品需求 | `docs/prd/2026-03-12-linpo-v0.1.md` | 灵盘 v0.1 产品定义 |
+| 初始架构 | `docs/architecture/2026-03-12-initial-architecture.md` | 灵盘初始架构边界 |
 | 第一阶段计划 | `docs/plans/2026-03-12-phase-1-plan.md` | 第一阶段实施计划 |
 | 仓库治理 | `AGENTS.md` | 当前项目治理规则 |
+
 
 ## 当前原则
 - 先做最小闭环，再扩张平台能力

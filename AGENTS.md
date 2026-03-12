@@ -1,9 +1,11 @@
-# SoulBoard
+# 灵盘（Linpo）
 
 ## 概览
-SoulBoard（灵板）是一个从小闭环起步、逐步扩张的平台型项目。当前阶段的产品起点是**多 OpenClaw 辩论编排**：围绕单一命题组织多个 OpenClaw 实例进行结构化辩论，由用户作为主持人/裁判介入，并沉淀可复盘的总结结果。
+灵盘（Linpo）是一个从小闭环起步、逐步扩张的平台型项目。当前阶段的产品起点是**多 OpenClaw 辩论编排**：围绕单一命题组织多个 OpenClaw 实例进行结构化辩论，由用户作为主持人/裁判介入，并沉淀可复盘的总结结果。
 
 当前仓库已完成一次项目级重置：旧版 roboard 的实现、文档与配置已移出当前仓库根目录，仅作为仓库外本地归档参考，不再作为当前项目权威来源。
+
+开发阶段对外域名暂定为 `linpo.duckdns.org`。
 
 ## 目录结构
 ```
@@ -16,16 +18,17 @@ SoulBoard（灵板）是一个从小闭环起步、逐步扩张的平台型项�
     └── plans/
 ```
 
-| 仓库根目录 | `./` | SoulBoard 当前开发工作根目录 |
+| 仓库根目录 | `./` | 灵盘（Linpo）当前开发工作根目录 |
 | 文档规范 | `docs/` | 产品、架构与计划文档 |
 | 仓库治理 | `AGENTS.md` | 本文档，记录当前项目的协作与治理规则 |
 
 ## 查阅入口
 
 | 文档总入口 | `README.md` | 仓库导航与当前文档索引 |
-| 产品需求 | `docs/prd/2026-03-12-soulboard-v0.1.md` | SoulBoard v0.1 产品定义 |
-| 初始架构 | `docs/architecture/2026-03-12-initial-architecture.md` | SoulBoard 初始架构边界 |
+| 产品需求 | `docs/prd/2026-03-12-linpo-v0.1.md` | 灵盘 v0.1 产品定义 |
+| 初始架构 | `docs/architecture/2026-03-12-initial-architecture.md` | 灵盘初始架构边界 |
 | 第一阶段计划 | `docs/plans/2026-03-12-phase-1-plan.md` | 第一阶段实施计划 |
+
 
 ## 所有权
 - Lead: @platform
