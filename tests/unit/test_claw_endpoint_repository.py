@@ -1,6 +1,9 @@
 from pathlib import Path
 
+import pytest
+
 from app.repositories.claw_endpoint_repository import FileClawEndpointRepository
+from app.repositories.claw_endpoint_repository import InvalidClawEndpointFixtureError
 
 
 def test_file_repository_loads_preconfigured_claw_endpoints_from_fixture_baseline() -> None:
@@ -23,4 +26,31 @@ def test_file_repository_loads_preconfigured_claw_endpoints_from_fixture_baselin
         "mock://claw-beta",
         "mock://claw-gamma",
     ]
+    assert [endpoint.inbox_url for endpoint in endpoints] == [
+        "http://localhost:8001/inbox",
+        None,
+        None,
+    ]
     assert all(endpoint.enabled for endpoint in endpoints)
+
+
+def test_file_repository_treats_missing_inbox_url_as_none() -> None:
+    repository = FileClawEndpointRepository(Path("fixtures/mock/claw_endpoints.yaml"))
+
+    beta = repository.get("mock-claw-beta")
+    gamma = repository.get("mock-claw-gamma")
+
+    assert beta is not None
+    assert gamma is not None
+    assert beta.inbox_url is None
+    assert gamma.inbox_url is None
+
+
+def test_file_repository_rejects_fixture_when_claw_endpoints_is_not_a_list(
+    tmp_path: Path,
+) -> None:
+    fixture_path = tmp_path / "invalid-claw-endpoints.yaml"
+    fixture_path.write_text("claw_endpoints: not-a-list\n", encoding="utf-8")
+
+    with pytest.raises(InvalidClawEndpointFixtureError):
+        FileClawEndpointRepository(fixture_path)

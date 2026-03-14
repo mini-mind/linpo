@@ -84,6 +84,33 @@ def test_session_state_is_isolated_per_app_instance() -> None:
     assert response.status_code == 404
 
 
+def test_session_survives_app_recreation_when_explicit_persistence_path_is_set(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage_path = tmp_path / "persistent-session-state"
+    monkeypatch.setenv("LINPO_SESSION_STORAGE_PATH", str(storage_path))
+
+    app_a = FastAPI()
+    app_a.include_router(session_router)
+
+    with TestClient(app_a) as client_a:
+        created = _as_mapping(cast(object, client_a.post("/sessions").json()))
+        session_id_obj = created["id"]
+        assert isinstance(session_id_obj, str)
+
+    app_b = FastAPI()
+    app_b.include_router(session_router)
+
+    with TestClient(app_b) as client_b:
+        response = client_b.post(f"/sessions/{session_id_obj}/close")
+
+    assert response.status_code == 200
+    payload = _as_mapping(cast(object, response.json()))
+    assert payload["id"] == session_id_obj
+    assert payload["status"] == "closed"
+
+
 def test_attach_session_endpoints_updates_attached_claw_ids(client: TestClient) -> None:
     created = _as_mapping(cast(object, client.post("/sessions").json()))
     session_id_obj = created["id"]
@@ -129,3 +156,50 @@ def test_session_attachments_work_when_cwd_changes(tmp_path: Path, monkeypatch: 
         )
 
     assert response.status_code == 200
+
+
+def test_session_attachments_can_use_env_selected_local_fixture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture_path = Path(__file__).resolve().parents[2] / "fixtures" / "local" / "claw_endpoints.yaml"
+    monkeypatch.setenv("LINPO_CLAW_ENDPOINT_FIXTURE_PATH", str(fixture_path))
+
+    test_app = FastAPI()
+    test_app.include_router(session_router)
+
+    with TestClient(test_app) as client:
+        created = _as_mapping(cast(object, client.post("/sessions").json()))
+        session_id_obj = created["id"]
+        assert isinstance(session_id_obj, str)
+
+        response = client.post(
+            f"/sessions/{session_id_obj}/attachments",
+            json={"claw_ids": ["local-claw-1", "local-claw-2"]},
+        )
+
+    assert response.status_code == 200
+    payload = _as_mapping(cast(object, response.json()))
+    assert payload["attached_claw_ids"] == ["local-claw-1", "local-claw-2"]
+
+
+def test_session_attachments_can_use_builtin_local_fixture_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LINPO_CLAW_ENDPOINT_FIXTURE_SOURCE", "local")
+
+    test_app = FastAPI()
+    test_app.include_router(session_router)
+
+    with TestClient(test_app) as client:
+        created = _as_mapping(cast(object, client.post("/sessions").json()))
+        session_id_obj = created["id"]
+        assert isinstance(session_id_obj, str)
+
+        response = client.post(
+            f"/sessions/{session_id_obj}/attachments",
+            json={"claw_ids": ["local-claw-1", "local-claw-2"]},
+        )
+
+    assert response.status_code == 200
+    payload = _as_mapping(cast(object, response.json()))
+    assert payload["attached_claw_ids"] == ["local-claw-1", "local-claw-2"]

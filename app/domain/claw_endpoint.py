@@ -7,3 +7,4 @@ class ClawEndpoint:
     name: str
     endpoint_ref: str
     enabled: bool
+    inbox_url: str | None = None

@@ -57,12 +57,20 @@ def test_relay_endpoint_accepts_attached_claw_to_claw_message(
         "from_claw_id",
         "to_claw_id",
         "content",
+        "turn_index",
         "created_at",
+        "delivery_status",
+        "delivered_at",
+        "delivery_error",
     }
     assert payload["session_id"] == session_id
     assert payload["from_claw_id"] == "mock-claw-alpha"
     assert payload["to_claw_id"] == "mock-claw-beta"
     assert payload["content"] == "hello beta"
+    assert payload["turn_index"] == 1
+    assert payload["delivery_status"] == "failed"
+    assert payload["delivered_at"] is None
+    assert payload["delivery_error"] == "no inbox_url configured"
 
     session_service_obj = cast(object, getattr(app.state, "session_service"))
     assert isinstance(session_service_obj, SessionService)

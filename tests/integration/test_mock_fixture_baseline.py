@@ -38,13 +38,20 @@ def test_mock_fixture_baseline_is_valid_for_test_topology() -> None:
     assert len(endpoints) == len(expected_ids)
 
     actual_ids: set[str] = set()
+    required_keys = {"id", "name", "endpoint_ref", "enabled"}
     for endpoint in endpoints:
-        assert set(endpoint.keys()) == {"id", "name", "endpoint_ref", "enabled"}
-
         endpoint_id_obj = endpoint["id"]
         assert isinstance(endpoint_id_obj, str)
         endpoint_id = endpoint_id_obj
         assert endpoint_id in expected_ids
+
+        if endpoint_id == "mock-claw-alpha":
+            assert set(endpoint.keys()) == required_keys | {"inbox_url"}
+            assert endpoint["inbox_url"] == "http://localhost:8001/inbox"
+        else:
+            assert set(endpoint.keys()) in (required_keys, required_keys | {"inbox_url"})
+            if "inbox_url" in endpoint:
+                assert endpoint["inbox_url"] is None
 
         assert endpoint["name"] == expected_name_by_id[endpoint_id]
         assert endpoint["endpoint_ref"] == f"mock://{endpoint_id.removeprefix('mock-')}"

@@ -13,6 +13,10 @@ class Message:
     to_claw_id: str
     content: str
     created_at: datetime
+    delivery_status: str
+    delivered_at: datetime | None
+    delivery_error: str | None
+    turn_index: int = 1
 
 
 def new_message(
@@ -20,6 +24,8 @@ def new_message(
     from_claw_id: str,
     to_claw_id: str,
     content: str,
+    *,
+    turn_index: int,
 ) -> Message:
     return Message(
         id=str(uuid4()),
@@ -28,4 +34,8 @@ def new_message(
         to_claw_id=to_claw_id,
         content=content,
         created_at=datetime.now(timezone.utc),
+        delivery_status="pending",
+        delivered_at=None,
+        delivery_error=None,
+        turn_index=turn_index,
     )

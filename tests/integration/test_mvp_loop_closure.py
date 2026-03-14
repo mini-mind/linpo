@@ -221,3 +221,36 @@ def test_create_session_returns_stable_error_when_fixture_source_is_unavailable(
     assert response.status_code == 503
     payload = _as_mapping(cast(object, response.json()))
     assert payload["detail"] == "fixture unavailable"
+
+
+def test_create_session_returns_stable_error_when_fixture_source_selector_is_invalid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LINPO_CLAW_ENDPOINT_FIXTURE_SOURCE", "sandbox")
+
+    test_app = FastAPI()
+    test_app.include_router(session_router)
+    with TestClient(test_app, raise_server_exceptions=False) as client:
+        response = client.post("/sessions")
+
+    assert response.status_code == 503
+    payload = _as_mapping(cast(object, response.json()))
+    assert payload["detail"] == "fixture configuration invalid"
+
+
+def test_create_session_returns_stable_error_when_fixture_content_is_invalid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invalid_fixture_path = tmp_path / "invalid-claw-endpoints.yaml"
+    invalid_fixture_path.write_text("claw_endpoints: not-a-list\n", encoding="utf-8")
+    monkeypatch.setenv("LINPO_CLAW_ENDPOINT_FIXTURE_PATH", str(invalid_fixture_path))
+
+    test_app = FastAPI()
+    test_app.include_router(session_router)
+    with TestClient(test_app, raise_server_exceptions=False) as client:
+        response = client.post("/sessions")
+
+    assert response.status_code == 503
+    payload = _as_mapping(cast(object, response.json()))
+    assert payload["detail"] == "fixture invalid"

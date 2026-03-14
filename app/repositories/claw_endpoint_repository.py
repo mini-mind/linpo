@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
 
 import yaml
 
 from app.domain.claw_endpoint import ClawEndpoint
+
+
+class InvalidClawEndpointFixtureError(ValueError):
+    pass
 
 
 class FileClawEndpointRepository:
@@ -22,20 +25,57 @@ class FileClawEndpointRepository:
 
     @staticmethod
     def _load(fixture_path: Path) -> dict[str, ClawEndpoint]:
-        payload_obj = yaml.safe_load(  # pyright: ignore[reportAny]
-            fixture_path.read_text(encoding="utf-8")
-        )
-        payload = cast(dict[str, object], payload_obj)
-        raw_endpoints = cast(list[object], payload["claw_endpoints"])
+        try:
+            payload_obj = yaml.safe_load(fixture_path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as error:
+            raise InvalidClawEndpointFixtureError("fixture yaml is invalid") from error
+
+        if not isinstance(payload_obj, dict):
+            raise InvalidClawEndpointFixtureError("fixture root must be a mapping")
+
+        raw_endpoints = payload_obj.get("claw_endpoints")
+        if not isinstance(raw_endpoints, list):
+            raise InvalidClawEndpointFixtureError("fixture claw_endpoints must be a list")
 
         endpoints: dict[str, ClawEndpoint] = {}
         for raw_endpoint in raw_endpoints:
-            endpoint_mapping = cast(dict[str, object], raw_endpoint)
+            if not isinstance(raw_endpoint, dict):
+                raise InvalidClawEndpointFixtureError("fixture endpoint entries must be mappings")
+
+            endpoint_id = FileClawEndpointRepository._require_str(raw_endpoint, "id")
+            endpoint_name = FileClawEndpointRepository._require_str(raw_endpoint, "name")
+            endpoint_ref = FileClawEndpointRepository._require_str(raw_endpoint, "endpoint_ref")
+            enabled = FileClawEndpointRepository._require_bool(raw_endpoint, "enabled")
+            inbox_url = FileClawEndpointRepository._require_optional_str(raw_endpoint, "inbox_url")
             endpoint = ClawEndpoint(
-                id=cast(str, endpoint_mapping["id"]),
-                name=cast(str, endpoint_mapping["name"]),
-                endpoint_ref=cast(str, endpoint_mapping["endpoint_ref"]),
-                enabled=cast(bool, endpoint_mapping["enabled"]),
+                id=endpoint_id,
+                name=endpoint_name,
+                endpoint_ref=endpoint_ref,
+                inbox_url=inbox_url,
+                enabled=enabled,
             )
             endpoints[endpoint.id] = endpoint
         return endpoints
+
+    @staticmethod
+    def _require_str(payload: dict[str, object], key: str) -> str:
+        value = payload.get(key)
+        if not isinstance(value, str):
+            raise InvalidClawEndpointFixtureError(f"fixture field '{key}' must be a string")
+        return value
+
+    @staticmethod
+    def _require_bool(payload: dict[str, object], key: str) -> bool:
+        value = payload.get(key)
+        if not isinstance(value, bool):
+            raise InvalidClawEndpointFixtureError(f"fixture field '{key}' must be a bool")
+        return value
+
+    @staticmethod
+    def _require_optional_str(payload: dict[str, object], key: str) -> str | None:
+        value = payload.get(key)
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise InvalidClawEndpointFixtureError(f"fixture field '{key}' must be a string or null")
+        return value

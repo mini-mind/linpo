@@ -1,8 +1,10 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from typing import cast
 from uuid import uuid4
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -58,8 +60,8 @@ def test_replay_endpoint_returns_session_messages_in_write_order() -> None:
         second_relay = client.post(
             f"/sessions/{session_id}/relay",
             json={
-                "from_claw_id": "mock-claw-beta",
-                "to_claw_id": "mock-claw-alpha",
+                "from_claw_id": "mock-claw-alpha",
+                "to_claw_id": "mock-claw-beta",
                 "content": "message-2",
             },
         )
@@ -80,6 +82,13 @@ def test_replay_endpoint_returns_session_messages_in_write_order() -> None:
         ]
         assert [item["content"] for item in replay_payload] == ["message-1", "message-2"]
         assert all(item["session_id"] == session_id for item in replay_payload)
+        assert [item["turn_index"] for item in replay_payload] == [1, 1]
+        assert replay_payload[0]["delivery_status"] == "failed"
+        assert replay_payload[0]["delivered_at"] is None
+        assert replay_payload[0]["delivery_error"] == "no inbox_url configured"
+        assert "delivery_status" in replay_payload[1]
+        assert "delivered_at" in replay_payload[1]
+        assert "delivery_error" in replay_payload[1]
 
         session_service_obj = cast(object, getattr(app.state, "session_service"))
         assert isinstance(session_service_obj, SessionService)
@@ -96,3 +105,40 @@ def test_replay_endpoint_returns_404_for_missing_session() -> None:
     assert response.status_code == 404
     payload = _as_mapping(cast(object, response.json()))
     assert payload["detail"] == "session not found"
+
+
+def test_replay_messages_survive_app_recreation_when_explicit_persistence_path_is_set(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage_path = tmp_path / "persistent-replay-state"
+    monkeypatch.setenv("LINPO_SESSION_STORAGE_PATH", str(storage_path))
+
+    with app_and_client() as (_app, client):
+        session_id = _create_session(client)
+        attach_response = client.post(
+            f"/sessions/{session_id}/attachments",
+            json={"claw_ids": ["mock-claw-alpha", "mock-claw-beta"]},
+        )
+        assert attach_response.status_code == 200
+
+        relay = client.post(
+            f"/sessions/{session_id}/relay",
+            json={
+                "from_claw_id": "mock-claw-alpha",
+                "to_claw_id": "mock-claw-beta",
+                "content": "message-1",
+            },
+        )
+        assert relay.status_code == 201
+        relay_payload = _as_mapping(cast(object, relay.json()))
+
+    with app_and_client() as (_app, client):
+        replay = client.get(f"/sessions/{session_id}/replay")
+
+    assert replay.status_code == 200
+    replay_payload_obj = _as_list(cast(object, replay.json()))
+    replay_payload = [_as_mapping(cast(object, item)) for item in replay_payload_obj]
+    assert [item["id"] for item in replay_payload] == [relay_payload["id"]]
+    assert [item["content"] for item in replay_payload] == ["message-1"]
+    assert [item["session_id"] for item in replay_payload] == [session_id]

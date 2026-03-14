@@ -1,19 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
-from typing import cast
 
-from fastapi import APIRouter, FastAPI, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
 
+from app.api.dependencies import DEFAULT_CLAW_ENDPOINT_FIXTURE_PATH, get_session_service
 from app.domain.message import Message
 from app.domain.session import Session, SessionStatus
-from app.repositories.claw_endpoint_repository import FileClawEndpointRepository
 from app.services.session_service import (
     ClawEndpointDisabledError,
     ClawEndpointNotFoundError,
-    InMemorySessionRepository,
     ReceiverClawNotAttachedError,
     SenderClawNotAttachedError,
     SessionClosedError,
@@ -22,27 +19,14 @@ from app.services.session_service import (
 )
 
 router = APIRouter()
-_CLAW_ENDPOINT_FIXTURE_PATH = (
-    Path(__file__).resolve().parents[2] / "fixtures" / "mock" / "claw_endpoints.yaml"
-)
+_CLAW_ENDPOINT_FIXTURE_PATH = DEFAULT_CLAW_ENDPOINT_FIXTURE_PATH
 
 
 def _get_session_service(request: Request) -> SessionService:
-    app = cast(FastAPI, request.app)
-    service = getattr(app.state, "session_service", None)
-    if isinstance(service, SessionService):
-        return service
-
-    try:
-        claw_endpoint_repository = FileClawEndpointRepository(_CLAW_ENDPOINT_FIXTURE_PATH)
-    except OSError as error:
-        raise HTTPException(status_code=503, detail="fixture unavailable") from error
-    created_service = SessionService(
-        InMemorySessionRepository(),
-        claw_endpoint_repository,
+    return get_session_service(
+        request,
+        fallback_path=_CLAW_ENDPOINT_FIXTURE_PATH,
     )
-    app.state.session_service = created_service
-    return created_service
 
 
 class SessionReadModel(BaseModel):
@@ -69,7 +53,11 @@ class MessageReadModel(BaseModel):
     from_claw_id: str
     to_claw_id: str
     content: str
+    turn_index: int
     created_at: datetime
+    delivery_status: str
+    delivered_at: datetime | None
+    delivery_error: str | None
 
 
 def _to_read_model(session: Session) -> SessionReadModel:
@@ -89,7 +77,11 @@ def _to_message_read_model(message: Message) -> MessageReadModel:
         from_claw_id=message.from_claw_id,
         to_claw_id=message.to_claw_id,
         content=message.content,
+        turn_index=message.turn_index,
         created_at=message.created_at,
+        delivery_status=message.delivery_status,
+        delivered_at=message.delivered_at,
+        delivery_error=message.delivery_error,
     )
 
 

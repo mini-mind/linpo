@@ -5,6 +5,7 @@ claw_endpoints:
   - id: mock-claw-alpha
     name: Mock Claw Alpha
     endpoint_ref: mock://claw-alpha
+    inbox_url: http://localhost:8001/inbox
     enabled: true
   - id: mock-claw-beta
     name: Mock Claw Beta
