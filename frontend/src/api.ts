@@ -1,4 +1,12 @@
-export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000').replace(/\/$/, '');
+const viteEnv = (import.meta as ImportMeta & { env?: { VITE_API_BASE_URL?: string } }).env;
+
+export const API_BASE_URL = (viteEnv?.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000').replace(/\/$/, '');
+
+export {
+  buildClawOptionLabel,
+  formatRegistrationStatusLabel,
+  formatSourceLabel,
+} from './api-presentation.js';
 
 export interface HealthResponse {
   status: string;
@@ -10,7 +18,13 @@ export interface ClawEndpoint {
   endpoint_ref: string;
   inbox_url: string | null;
   enabled: boolean;
+  source?: 'fixture' | 'external_registration';
+  registration_status?: 'pending_review' | 'approved' | 'rejected';
+  identity_did?: string | null;
+  agent_card_url?: string | null;
 }
+
+export type RegistrationReviewStatus = 'pending_review' | 'approved' | 'rejected';
 
 export interface SessionRecord {
   id: string;
@@ -218,5 +232,64 @@ export function finishDebate(sessionId: string, payload: FinishDebateRequest): P
   return requestJson<SessionRecord>(`/debates/${sessionId}/finish`, {
     method: 'POST',
     body: JSON.stringify(payload),
+  });
+}
+
+export interface ExternalClawChallengeRequest {
+  did: string;
+}
+
+export interface ExternalClawChallengeResponse {
+  id: string;
+  did: string;
+  nonce: string;
+  created_at: string;
+}
+
+export interface ExternalClawRegistrationRequest {
+  display_name: string;
+  did: string;
+  agent_card_url: string;
+  inbox_url: string;
+  challenge_id: string;
+  challenge_signature: string;
+}
+
+export interface ExternalClawRegistrationRecord {
+  id: string;
+  display_name: string;
+  did: string;
+  agent_card_url: string;
+  inbox_url: string;
+  status: RegistrationReviewStatus;
+  created_at: string;
+  approved_at: string | null;
+  rejected_at: string | null;
+  endpoint_id: string | null;
+}
+
+export function requestExternalClawChallenge(payload: ExternalClawChallengeRequest): Promise<ExternalClawChallengeResponse> {
+  return requestJson<ExternalClawChallengeResponse>('/external-claw-registrations/challenge', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function registerExternalClaw(payload: ExternalClawRegistrationRequest): Promise<ExternalClawRegistrationRecord> {
+  return requestJson<ExternalClawRegistrationRecord>('/external-claw-registrations', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function approveExternalClawRegistration(id: string): Promise<ExternalClawRegistrationRecord> {
+  return requestJson<ExternalClawRegistrationRecord>(`/external-claw-registrations/${id}/approve`, {
+    method: 'POST',
+  });
+}
+
+export function rejectExternalClawRegistration(id: string): Promise<ExternalClawRegistrationRecord> {
+  return requestJson<ExternalClawRegistrationRecord>(`/external-claw-registrations/${id}/reject`, {
+    method: 'POST',
   });
 }

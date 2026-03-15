@@ -5,6 +5,7 @@ from app.api.a2a_api import router as a2a_router
 from app.api.callback_api import router as callback_router
 from app.api.claw_endpoint_api import router as claw_endpoint_router
 from app.api.debate_api import router as debate_router
+from app.api.external_claw_registration_api import router as external_claw_registration_router
 from app.api.protocol_api import router as protocol_router
 from app.api.session_api import router as session_router
 
@@ -21,6 +22,7 @@ app.include_router(protocol_router)
 app.include_router(callback_router)
 app.include_router(a2a_router)
 app.include_router(claw_endpoint_router)
+app.include_router(external_claw_registration_router)
 
 
 @app.get("/health")

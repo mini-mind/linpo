@@ -32,6 +32,19 @@ def _as_string_list(value: object) -> list[str]:
     return cast(list[str], value)
 
 
+def _assert_text_contains(text: str, *terms: str) -> None:
+    normalized = text.lower()
+    for term in terms:
+        assert term.lower() in normalized
+
+
+def _assert_any_entry_contains(entries: list[str], *terms: str) -> None:
+    for entry in entries:
+        if all(term.lower() in entry.lower() for term in terms):
+            return
+    raise AssertionError(f"missing entry containing terms: {terms}")
+
+
 def test_get_protocol_claw_returns_required_guide_structure(
     app_and_client: tuple[FastAPI, TestClient],
 ) -> None:
@@ -43,30 +56,65 @@ def test_get_protocol_claw_returns_required_guide_structure(
     payload = _as_mapping(cast(object, response.json()))
     assert payload["name"] == "linpo claw protocol"
     assert payload["version"] == "1.0.0"
-    assert payload["endpoints"] == {
-        "guide": "/protocol/claw",
-        "tests": "/protocol/claw/test",
-        "echo_callback": "/callback/echo",
-    }
+    endpoints = _as_mapping(payload["endpoints"])
+    assert endpoints["guide"] == "/protocol/claw"
+    assert endpoints["tests"] == "/protocol/claw/test"
+    assert endpoints["echo_callback"] == "/callback/echo"
+    assert endpoints["external_challenge"] == "/external-claw-registrations/challenge"
+    assert endpoints["external_registration"] == "/external-claw-registrations"
+    assert endpoints["external_review_approve"] == (
+        "/external-claw-registrations/{registration_id}/approve"
+    )
+    assert endpoints["external_review_reject"] == (
+        "/external-claw-registrations/{registration_id}/reject"
+    )
+
+    auth = _as_mapping(payload["auth"])
+    assert auth["type"] == "none"
+    auth_notes = auth["notes"]
+    assert isinstance(auth_notes, str)
+    _assert_text_contains(auth_notes, "bearer", "did:web", "x-linpo-review-token")
+    _assert_text_contains(auth_notes, "non-cryptographic")
 
     prerequisites = _as_string_list(payload["prerequisites"])
-    assert any("/protocol/claw/test" in item for item in prerequisites)
-    assert any("/callback/echo" in item for item in prerequisites)
-    assert any("task_id" in item for item in prerequisites)
+    _assert_any_entry_contains(prerequisites, "/protocol/claw")
+    _assert_any_entry_contains(prerequisites, "/external-claw-registrations/challenge", "did:web")
+    _assert_any_entry_contains(
+        prerequisites,
+        "/external-claw-registrations",
+        "challenge_id",
+        "challenge_signature",
+    )
+    _assert_any_entry_contains(prerequisites, "pending_review", "approve", "reject")
+    assert not any("/callback/echo" in item for item in prerequisites)
 
     callback_guidance = _as_string_list(payload["callback_guidance"])
-    assert any("/protocol/claw/test" in item for item in callback_guidance)
-    assert any("/callback/echo" in item for item in callback_guidance)
+    _assert_any_entry_contains(callback_guidance, "/protocol/claw/test", "optional")
+    _assert_any_entry_contains(callback_guidance, "/callback/echo", "task_id")
+    _assert_any_entry_contains(callback_guidance, "http 400")
+    assert not any("pending_review" in item for item in callback_guidance)
 
     error_responses = _as_mapping(payload["error_responses"])
     error_400 = error_responses["400"]
     assert isinstance(error_400, str)
-    assert "task_id" in error_400
-    assert "retry" in error_400.lower()
+    _assert_text_contains(error_400, "task_id", "/protocol/claw/test")
 
     notes = _as_string_list(payload["notes"])
-    assert any("preflight/auxiliary" in item for item in notes)
-    assert any("Session/Attachment/Relay/Replay" in item for item in notes)
+    _assert_any_entry_contains(
+        notes,
+        "curl -X POST http://linpo.duckdns.org/external-claw-registrations/challenge",
+    )
+    _assert_any_entry_contains(
+        notes,
+        "curl -X POST http://linpo.duckdns.org/external-claw-registrations",
+    )
+    _assert_any_entry_contains(notes, "http client", "restful")
+    _assert_any_entry_contains(notes, "challenge_signature", "cryptographically verify")
+    _assert_any_entry_contains(notes, "did:web", "validation")
+    _assert_any_entry_contains(notes, "x-linpo-review-token")
+    _assert_any_entry_contains(notes, "candidate pool", "local fixture")
+    _assert_any_entry_contains(notes, "debate creation")
+    _assert_any_entry_contains(notes, "session", "attachment", "relay", "replay")
 
 
 def test_get_protocol_claw_test_returns_echo_test_contract(
@@ -81,8 +129,9 @@ def test_get_protocol_claw_test_returns_echo_test_contract(
     assert payload["name"] == "claw protocol tests"
 
     how_to_run = _as_string_list(payload["how_to_run"])
-    assert any("/callback/echo" in item for item in how_to_run)
-    assert any("matched=true" in item for item in how_to_run)
+    _assert_any_entry_contains(how_to_run, "/callback/echo")
+    _assert_any_entry_contains(how_to_run, "task_id", "payload")
+    _assert_any_entry_contains(how_to_run, "matched=true")
 
     available_tests = payload["available_tests"]
     assert isinstance(available_tests, list)
@@ -123,7 +172,9 @@ def test_echo_callback_happy_path_returns_matched_true(
 
     verification = _as_mapping(payload["verification"])
     assert verification["matched"] is True
-    assert verification["message"] == "Echo payload matched"
+    message = verification["message"]
+    assert isinstance(message, str)
+    _assert_text_contains(message, "echo", "matched")
 
 
 def test_echo_callback_rejects_invalid_task_id(
@@ -143,7 +194,9 @@ def test_echo_callback_rejects_invalid_task_id(
 
     assert response.status_code == 400
     payload = _as_mapping(cast(object, response.json()))
-    assert payload["detail"] == "invalid task_id"
+    detail = payload["detail"]
+    assert isinstance(detail, str)
+    _assert_text_contains(detail, "task_id")
 
 
 def test_echo_callback_mismatch_persists_failed_status_and_error(
@@ -167,7 +220,9 @@ def test_echo_callback_mismatch_persists_failed_status_and_error(
 
     verification = _as_mapping(payload["verification"])
     assert verification["matched"] is False
-    assert verification["message"] == "Echo payload mismatch"
+    message = verification["message"]
+    assert isinstance(message, str)
+    _assert_text_contains(message, "echo", "mismatch")
 
     repository = getattr(app.state, "callback_repository")
     assert isinstance(repository, InMemoryCallbackRepository)

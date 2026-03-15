@@ -16,14 +16,30 @@
 
 当前文档明确不冻结以下能力：
 
-- 长期注册型 Claw 池
-- Claw 自主发现与平台自动纳管
 - 多方广播 / 群聊模型
 - 辩论回合状态机
 - 主持人干预语义
 - 结构化总结生成
 - 多租户与鉴权模型
 - 将测试用 Claw 视为平台运行单元
+
+### 2.1 本轮补充冻结范围
+
+在保持 MVP 最小化前提下，本文档补充冻结一个**受限的外部 OpenClaw 注册能力**，仅用于让外部实例在人工审核后进入当前辩论候选池：
+
+- 支持外部 OpenClaw 主动读取 Linpo 提供的 agent-facing 接入页后发起注册
+- 支持最小 `did:web` 身份声明与 challenge 签名校验
+- 支持文件注册表作为外部实例真相源
+- 支持人工审核（`pending_review` → `approved` / `rejected`）
+- 支持审核通过的外部实例与本地预配置实例混合进入同一辩手池
+
+当前轮次仍明确不做：
+
+- 自动批准或基于复杂信任策略自动纳管
+- 完整 A2A / ANP 协议实现
+- DID 方法扩展到 `did:wba` 之外的多方法治理
+- 生产级开放注册防滥用体系
+- 完全无鉴权的运行期消息投递模型
 
 ## 3. 系统边界
 
@@ -56,17 +72,23 @@
 
 ### 4.1 ClawEndpoint
 
-表示测试环境中可被挂入会话的外部 Claw 端点配置。
+表示可被挂入会话并参与辩论的外部 Claw 端点配置或注册实例。
 
 最小字段：
 - `id`
 - `name`
 - `endpoint_ref`
 - `enabled`
+- `source`（`fixture` / `external_registration`）
+- `registration_status`（`pending_review` / `approved` / `rejected`，fixture 实例可固定为 `approved`）
+- `identity_did`（可空，当前仅支持最小 `did:web`）
+- `agent_card_url`（可空）
+- `inbox_url`（可空）
 
 说明：
-- 当前阶段仅要求支持“平台预配置端点”
-- `ClawEndpoint` 不是长期注册实体，只是当前测试/接入环境下的可引用配置
+- 当前阶段同时支持“平台预配置端点”和“受限外部注册实例”
+- `ClawEndpoint` 仍不是完整平台级长期注册实体，而是当前阶段可进入辩论候选池的最小引用对象
+- 审核通过的外部实例在选择链路上与 fixture 实例混合，但需保留 `source` 与 `registration_status` 供界面与治理使用
 
 ### 4.2 Session
 

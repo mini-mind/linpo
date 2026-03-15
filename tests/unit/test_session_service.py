@@ -239,6 +239,28 @@ def test_attach_claw_endpoints_rejects_disabled_endpoint() -> None:
         _ = service.attach_claw_endpoints(created.id, ["mock-claw-disabled"])
 
 
+def test_attach_claw_endpoints_rejects_unapproved_external_endpoint() -> None:
+    service = SessionService(
+        InMemorySessionRepository(),
+        InMemoryClawEndpointRepository(
+            [
+                ClawEndpoint(
+                    id="external-claw-pending",
+                    name="External Claw Pending",
+                    endpoint_ref="openclaw://external/external-claw-pending",
+                    enabled=True,
+                    source="external_registration",
+                    registration_status="pending_review",
+                )
+            ]
+        ),
+    )
+    created = service.create_session()
+
+    with pytest.raises(ClawEndpointDisabledError):
+        _ = service.attach_claw_endpoints(created.id, ["external-claw-pending"])
+
+
 def _new_debate_service() -> SessionService:
     return SessionService(
         InMemorySessionRepository(),
@@ -320,6 +342,40 @@ def test_create_debate_session_defaults_current_turn_and_summary() -> None:
 
     assert debate.current_turn == 1
     assert debate.summary is None
+
+
+def test_create_debate_session_rejects_unapproved_external_participant() -> None:
+    service = SessionService(
+        InMemorySessionRepository(),
+        InMemoryClawEndpointRepository(
+            [
+                ClawEndpoint(
+                    id="mock-claw-alpha",
+                    name="Mock Claw Alpha",
+                    endpoint_ref="mock://claw-alpha",
+                    enabled=True,
+                ),
+                ClawEndpoint(
+                    id="external-claw-pending",
+                    name="External Claw Pending",
+                    endpoint_ref="openclaw://external/external-claw-pending",
+                    enabled=True,
+                    source="external_registration",
+                    registration_status="pending_review",
+                ),
+            ]
+        ),
+    )
+
+    with pytest.raises(InvalidDebateRequestError):
+        _ = service.create_debate_session(
+            proposition="Should we trust pending external claws?",
+            participants=["mock-claw-alpha", "external-claw-pending"],
+            participant_roles={
+                "mock-claw-alpha": "正方",
+                "external-claw-pending": "反方",
+            },
+        )
 
 
 def test_get_debate_session_rejects_non_debate_session() -> None:

@@ -206,7 +206,7 @@ class SessionService:
         normalized_roles: dict[str, str] = {}
         for participant in participants:
             endpoint = self._claw_endpoint_repository.get(participant)
-            if endpoint is None or not endpoint.enabled:
+            if endpoint is None or not self._is_endpoint_available(endpoint):
                 raise InvalidDebateRequestError()
 
             role = participant_roles[participant].strip()
@@ -378,7 +378,7 @@ class SessionService:
             endpoint = self._claw_endpoint_repository.get(claw_id)
             if endpoint is None:
                 raise ClawEndpointNotFoundError(claw_id)
-            if not endpoint.enabled:
+            if not self._is_endpoint_available(endpoint):
                 raise ClawEndpointDisabledError(claw_id)
             if claw_id not in attached_claw_ids:
                 attached_claw_ids.append(claw_id)
@@ -393,6 +393,10 @@ class SessionService:
             attached_claw_ids=attached_claw_ids,
         )
         return self._repository.save(updated_session)
+
+    @staticmethod
+    def _is_endpoint_available(endpoint: ClawEndpoint) -> bool:
+        return endpoint.enabled and endpoint.registration_status == "approved"
 
     def relay_message(
         self,

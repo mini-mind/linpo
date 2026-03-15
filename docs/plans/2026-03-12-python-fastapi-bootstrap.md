@@ -1,5 +1,7 @@
 # Python + FastAPI 最小实现基线
 
+> **Status:** 历史草案（已退役）。本文档仅保留为 2026-03-12 的工程基线记录；不代表当前接入方向。当前接入方向为 `registration API + 直接 RESTful 请求`（见 `docs/plans/2026-03-15-external-openclaw-registration-plan.md`）。
+
 ## 1. 目标
 
 本文档用于在当前已冻结的 MVP 边界下，补充一份**实现基线**，使后续 subagents 可以在不越界扩展需求的前提下开始编码。

@@ -1,18 +1,4 @@
 import {
-  addModeratorNote,
-  advanceDebateTurn,
-  API_BASE_URL,
-  createDebateSession,
-  fetchHealth,
-  fetchReplay,
-  finishDebate,
-  listClawEndpoints,
-  runNextDebateTurn,
-  type ClawEndpoint,
-  type RelayMessageRecord,
-  type SessionRecord,
-} from './api';
-import {
   type FormEvent,
   useCallback,
   useEffect,
@@ -20,6 +6,28 @@ import {
   useRef,
   useState,
 } from 'react';
+import {
+  API_BASE_URL,
+  addModeratorNote,
+  advanceDebateTurn,
+  buildClawOptionLabel,
+  createDebateSession,
+  fetchHealth,
+  fetchReplay,
+  finishDebate,
+  formatRegistrationStatusLabel,
+  formatSourceLabel,
+  listClawEndpoints,
+  registerExternalClaw,
+  requestExternalClawChallenge,
+  runNextDebateTurn,
+} from './api';
+import type {
+  ClawEndpoint,
+  ExternalClawRegistrationRecord,
+  RelayMessageRecord,
+  SessionRecord,
+} from './api';
 
 function formatSessionStatus(status: string | undefined): string {
   if (status === 'closed') {
@@ -77,9 +85,26 @@ export default function App() {
   const [closingReason, setClosingReason] = useState<string>('讨论已收束');
   const isBusyRef = useRef(false);
 
+  const [regDisplayName, setRegDisplayName] = useState<string>('');
+  const [regDid, setRegDid] = useState<string>('');
+  const [regAgentCardUrl, setRegAgentCardUrl] = useState<string>('');
+  const [regInboxUrl, setRegInboxUrl] = useState<string>('');
+  const [regChallengeId, setRegChallengeId] = useState<string>('');
+  const [regChallengeSignature, setRegChallengeSignature] = useState<string>('');
+  const [regStatus, setRegStatus] = useState<ExternalClawRegistrationRecord | null>(null);
+  const [showRegPanel, setShowRegPanel] = useState<boolean>(false);
+
   const availableEnabledClaws = useMemo(
     () => availableClaws.filter((claw) => claw.enabled),
     [availableClaws],
+  );
+  const selectedClaw1Record = useMemo(
+    () => availableEnabledClaws.find((claw) => claw.id === selectedClaw1) ?? null,
+    [availableEnabledClaws, selectedClaw1],
+  );
+  const selectedClaw2Record = useMemo(
+    () => availableEnabledClaws.find((claw) => claw.id === selectedClaw2) ?? null,
+    [availableEnabledClaws, selectedClaw2],
   );
 
   const canCreateDebate = availableEnabledClaws.length >= 2;
@@ -257,6 +282,88 @@ export default function App() {
     await loadReplay(currentSession.id);
   }
 
+  async function handleRequestChallenge() {
+    if (!regDid.trim()) {
+      setErrorMessage('请输入 DID。');
+      return;
+    }
+    if (!regDid.startsWith('did:web:')) {
+      setErrorMessage('目前仅支持 did:web 格式。');
+      return;
+    }
+
+    const response = await withAction('正在请求 Challenge', () =>
+      requestExternalClawChallenge({ did: regDid.trim() }),
+    );
+
+    if (response) {
+      setRegChallengeId(response.id);
+      setErrorMessage(null);
+    }
+  }
+
+  async function handleRegisterExternalClaw(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!regDisplayName.trim()) {
+      setErrorMessage('请输入显示名称。');
+      return;
+    }
+    if (!regDid.trim()) {
+      setErrorMessage('请输入 DID。');
+      return;
+    }
+    if (!regAgentCardUrl.trim()) {
+      setErrorMessage('请输入 Agent Card URL。');
+      return;
+    }
+    if (!regInboxUrl.trim()) {
+      setErrorMessage('请输入 Inbox URL。');
+      return;
+    }
+    if (!regChallengeId) {
+      setErrorMessage('请先请求 Challenge。');
+      return;
+    }
+    if (!regChallengeSignature.trim()) {
+      setErrorMessage('请输入 Challenge 签名。');
+      return;
+    }
+
+    const record = await withAction('正在提交注册', () =>
+      registerExternalClaw({
+        display_name: regDisplayName.trim(),
+        did: regDid.trim(),
+        agent_card_url: regAgentCardUrl.trim(),
+        inbox_url: regInboxUrl.trim(),
+        challenge_id: regChallengeId,
+        challenge_signature: regChallengeSignature.trim(),
+      }),
+    );
+
+    if (record) {
+      setRegStatus(record);
+      setErrorMessage(null);
+    }
+  }
+
+  function describeSelectedClaw(claw: ClawEndpoint): string {
+    if (claw.source === 'external_registration') {
+      return `来源：${formatSourceLabel(claw.source)} · 审核状态：${formatRegistrationStatusLabel(claw.registration_status)}`;
+    }
+    return `来源：${formatSourceLabel(claw.source)} · 平台内置实例`;
+  }
+
+  function describeRegistrationStatus(record: ExternalClawRegistrationRecord): string {
+    if (record.status === 'approved') {
+      return '已通过审核，之后会进入辩手池。';
+    }
+    if (record.status === 'rejected') {
+      return '已拒绝，暂不会进入辩手池。';
+    }
+    return '待审核中，暂不会进入辩手池。';
+  }
+
   const sessionParticipants = currentSession?.attached_claw_ids ?? [];
 
   return (
@@ -323,9 +430,9 @@ export default function App() {
                     .filter((claw) => claw.id !== selectedClaw2)
                     .map((claw) => (
                       <option key={claw.id} value={claw.id}>
-                        {claw.name}（{claw.id}）
-                      </option>
-                    ))}
+                       {buildClawOptionLabel(claw)}
+                     </option>
+                   ))}
                 </select>
                 <input
                   type="text"
@@ -334,6 +441,9 @@ export default function App() {
                   placeholder="角色名称，例如：支持方"
                   disabled={!!busyAction}
                 />
+                {selectedClaw1Record ? (
+                  <p className="participant-meta">{describeSelectedClaw(selectedClaw1Record)}</p>
+                ) : null}
               </div>
 
               <div className="participant-card">
@@ -349,9 +459,9 @@ export default function App() {
                     .filter((claw) => claw.id !== selectedClaw1)
                     .map((claw) => (
                       <option key={claw.id} value={claw.id}>
-                        {claw.name}（{claw.id}）
-                      </option>
-                    ))}
+                       {buildClawOptionLabel(claw)}
+                     </option>
+                   ))}
                 </select>
                 <input
                   type="text"
@@ -360,12 +470,15 @@ export default function App() {
                   placeholder="角色名称，例如：反对方"
                   disabled={!!busyAction}
                 />
+                {selectedClaw2Record ? (
+                  <p className="participant-meta">{describeSelectedClaw(selectedClaw2Record)}</p>
+                ) : null}
               </div>
             </div>
 
             <div className="form-footnote">
               {canCreateDebate
-                ? '建议只保留最必要的设定：一个辩题、两位辩手、清晰角色。'
+                ? '建议只保留最必要的设定：一个辩题、两位辩手、清晰角色。外部实例会在选择时标明来源与审核状态。'
                 : '当前可用辩手不足两位，请先检查后端或本地 claw 配置。'}
             </div>
 
@@ -542,6 +655,126 @@ export default function App() {
               <strong>还没有摘要</strong>
               <p>辩论结束后，这里会显示可复盘的结果概览。</p>
             </div>
+          )}
+        </section>
+
+        <section className="registration-panel card">
+          <div className="section-head compact">
+            <div>
+              <p className="section-kicker">外部 OpenClaw 接入</p>
+              <h2>高级接入（可选）</h2>
+            </div>
+            <button
+              type="button"
+              className="toggle-button"
+              onClick={() => setShowRegPanel(!showRegPanel)}
+            >
+              {showRegPanel ? '收起高级入口' : '展开高级入口'}
+            </button>
+          </div>
+
+          <div className="registration-intro">
+            <p>主流程仍然是创建并主持辩论；只有要把自己的 OpenClaw 纳入辩手池时，才使用这里的高级注册入口。</p>
+            <p>接入方式保持直接 RESTful 请求：请求 Challenge → 本地签名 → 提交注册 → 等待审核。</p>
+          </div>
+
+          <div className={`registration-status-summary ${regStatus ? `status-${regStatus.status}` : 'status-idle'}`}>
+            <div className="registration-status-head">
+              <span>来源：外部接入</span>
+              <strong>审核状态：{regStatus ? formatRegistrationStatusLabel(regStatus.status) : '未提交'}</strong>
+            </div>
+            <p>
+              {regStatus
+                ? `${regStatus.display_name}：${describeRegistrationStatus(regStatus)}`
+                : '提交后会先进入待审核；只有已通过审核的实例才会进入辩手池。'}
+            </p>
+          </div>
+
+          {showRegPanel && (
+            <form className="registration-form" onSubmit={(event) => void handleRegisterExternalClaw(event)}>
+              <div className="registration-flow">
+                <strong>最小接入顺序</strong>
+                <span>1. 填写实例信息与 DID</span>
+                <span>2. 请求 Challenge 并在本地完成签名</span>
+                <span>3. 直接提交注册 API，进入待审核状态</span>
+              </div>
+
+              <label htmlFor="reg-display-name">显示名称</label>
+              <input
+                id="reg-display-name"
+                type="text"
+                value={regDisplayName}
+                onChange={(event) => setRegDisplayName(event.target.value)}
+                placeholder="例如：My External Claw"
+                disabled={!!busyAction}
+              />
+
+              <label htmlFor="reg-did">DID（did:web 格式）</label>
+              <input
+                id="reg-did"
+                type="text"
+                value={regDid}
+                onChange={(event) => setRegDid(event.target.value)}
+                placeholder="例如：did:web:example.com"
+                disabled={!!busyAction}
+              />
+
+              <label htmlFor="reg-agent-card-url">Agent Card URL</label>
+              <input
+                id="reg-agent-card-url"
+                type="text"
+                value={regAgentCardUrl}
+                onChange={(event) => setRegAgentCardUrl(event.target.value)}
+                placeholder="例如：https://example.com/.well-known/agent-card.json"
+                disabled={!!busyAction}
+              />
+
+              <label htmlFor="reg-inbox-url">Inbox URL</label>
+              <input
+                id="reg-inbox-url"
+                type="text"
+                value={regInboxUrl}
+                onChange={(event) => setRegInboxUrl(event.target.value)}
+                placeholder="例如：https://example.com/inbox"
+                disabled={!!busyAction}
+              />
+
+              <div className="challenge-row">
+                <button
+                  type="button"
+                  onClick={() => void handleRequestChallenge()}
+                  disabled={!!busyAction || !regDid}
+                >
+                  1. 请求 Challenge
+                </button>
+                {regChallengeId && (
+                  <span className="challenge-hint">Challenge ID: {regChallengeId.slice(0, 8)}...</span>
+                )}
+              </div>
+
+              <label htmlFor="reg-challenge-signature">Challenge 签名</label>
+              <input
+                id="reg-challenge-signature"
+                type="text"
+                value={regChallengeSignature}
+                onChange={(event) => setRegChallengeSignature(event.target.value)}
+                placeholder="使用 DID 私钥对 Challenge 签名"
+                disabled={!!busyAction}
+              />
+
+              {regStatus && (
+                <div className={`reg-status reg-status-${regStatus.status}`}>
+                  注册状态：{formatRegistrationStatusLabel(regStatus.status)}。
+                  {regStatus.status === 'approved'
+                    ? ' 已通过审核，可在辩手池中查看。'
+                    : ' 暂不可参赛。'}
+                </div>
+              )}
+
+              <button type="submit" className="primary-button" disabled={!!busyAction}>
+                3. 提交注册
+              </button>
+            </form>
           )}
         </section>
       </div>

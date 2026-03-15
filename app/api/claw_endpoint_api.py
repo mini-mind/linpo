@@ -16,6 +16,10 @@ class ClawEndpointReadModel(BaseModel):
     endpoint_ref: str
     inbox_url: str | None
     enabled: bool
+    source: str
+    registration_status: str
+    identity_did: str | None
+    agent_card_url: str | None
 
 
 def _to_read_model(endpoint: ClawEndpoint) -> ClawEndpointReadModel:
@@ -25,6 +29,10 @@ def _to_read_model(endpoint: ClawEndpoint) -> ClawEndpointReadModel:
         endpoint_ref=endpoint.endpoint_ref,
         inbox_url=endpoint.inbox_url,
         enabled=endpoint.enabled,
+        source=endpoint.source,
+        registration_status=endpoint.registration_status,
+        identity_did=endpoint.identity_did,
+        agent_card_url=endpoint.agent_card_url,
     )
 
 
@@ -34,4 +42,4 @@ def list_claw_endpoints(request: Request) -> list[ClawEndpointReadModel]:
         request,
         fallback_path=_CLAW_ENDPOINT_FIXTURE_PATH,
     )
-    return [_to_read_model(endpoint) for endpoint in repository.list_endpoints()]
+    return [_to_read_model(endpoint) for endpoint in repository.list_candidate_endpoints()]

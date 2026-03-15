@@ -82,7 +82,14 @@ class _RecordingTurnClient:
         self._response_text = response_text
         self._raised_error = raised_error
 
-    def run_turn(self, *, endpoint_url: str, prompt: str) -> str:
+    def run_turn(
+        self,
+        *,
+        endpoint_url: str,
+        prompt: str,
+        gateway_token: str | None = None,
+    ) -> str:
+        _ = gateway_token
         self.calls.append((endpoint_url, prompt))
         if self._raised_error is not None:
             raise self._raised_error
