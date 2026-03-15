@@ -47,11 +47,13 @@ class FileClawEndpointRepository:
             endpoint_ref = FileClawEndpointRepository._require_str(raw_endpoint, "endpoint_ref")
             enabled = FileClawEndpointRepository._require_bool(raw_endpoint, "enabled")
             inbox_url = FileClawEndpointRepository._require_optional_str(raw_endpoint, "inbox_url")
+            gateway_token = FileClawEndpointRepository._require_optional_str(raw_endpoint, "gateway_token")
             endpoint = ClawEndpoint(
                 id=endpoint_id,
                 name=endpoint_name,
                 endpoint_ref=endpoint_ref,
                 inbox_url=inbox_url,
+                gateway_token=gateway_token,
                 enabled=enabled,
             )
             endpoints[endpoint.id] = endpoint

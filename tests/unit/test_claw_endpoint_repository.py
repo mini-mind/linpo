@@ -31,6 +31,11 @@ def test_file_repository_loads_preconfigured_claw_endpoints_from_fixture_baselin
         None,
         None,
     ]
+    assert [endpoint.gateway_token for endpoint in endpoints] == [
+        None,
+        None,
+        None,
+    ]
     assert all(endpoint.enabled for endpoint in endpoints)
 
 
@@ -46,9 +51,28 @@ def test_file_repository_treats_missing_inbox_url_as_none() -> None:
     assert gamma.inbox_url is None
 
 
-def test_file_repository_rejects_fixture_when_claw_endpoints_is_not_a_list(
-    tmp_path: Path,
-) -> None:
+
+def test_file_repository_loads_optional_gateway_token_when_present(tmp_path: Path) -> None:
+    fixture_path = tmp_path / "claw-endpoints.yaml"
+    fixture_path.write_text(
+        """
+claw_endpoints:
+  - id: local-claw-1
+    name: Local Claw 1
+    endpoint_ref: openclaw://claw1-local
+    inbox_url: http://127.0.0.1:18789/inbox
+    gateway_token: secret-token-1
+    enabled: true
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    repository = FileClawEndpointRepository(fixture_path)
+
+    endpoint = repository.get("local-claw-1")
+    assert endpoint is not None
+    assert endpoint.gateway_token == "secret-token-1"
     fixture_path = tmp_path / "invalid-claw-endpoints.yaml"
     fixture_path.write_text("claw_endpoints: not-a-list\n", encoding="utf-8")
 

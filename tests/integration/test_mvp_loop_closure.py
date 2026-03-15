@@ -53,18 +53,18 @@ def test_mvp_happy_path_create_attach_relay_replay(
 
     attach = client.post(
         f"/sessions/{session_id}/attachments",
-        json={"claw_ids": ["mock-claw-alpha", "mock-claw-beta"]},
+        json={"claw_ids": ["local-claw-1", "local-claw-2"]},
     )
     assert attach.status_code == 200
     attach_payload = _as_mapping(cast(object, attach.json()))
     assert attach_payload["status"] == "active"
-    assert attach_payload["attached_claw_ids"] == ["mock-claw-alpha", "mock-claw-beta"]
+    assert attach_payload["attached_claw_ids"] == ["local-claw-1", "local-claw-2"]
 
     relay = client.post(
         f"/sessions/{session_id}/relay",
         json={
-            "from_claw_id": "mock-claw-alpha",
-            "to_claw_id": "mock-claw-beta",
+            "from_claw_id": "local-claw-1",
+            "to_claw_id": "local-claw-2",
             "content": "hello beta",
         },
     )
@@ -77,8 +77,8 @@ def test_mvp_happy_path_create_attach_relay_replay(
     assert len(replay_payload) == 1
     assert replay_payload[0]["id"] == relay_payload["id"]
     assert replay_payload[0]["session_id"] == session_id
-    assert replay_payload[0]["from_claw_id"] == "mock-claw-alpha"
-    assert replay_payload[0]["to_claw_id"] == "mock-claw-beta"
+    assert replay_payload[0]["from_claw_id"] == "local-claw-1"
+    assert replay_payload[0]["to_claw_id"] == "local-claw-2"
     assert replay_payload[0]["content"] == "hello beta"
 
     session_service_obj = cast(object, getattr(app.state, "session_service"))
@@ -97,15 +97,15 @@ def test_relay_rejects_unattached_sender(
 
     attach = client.post(
         f"/sessions/{session_id_obj}/attachments",
-        json={"claw_ids": ["mock-claw-beta"]},
+        json={"claw_ids": ["local-claw-2"]},
     )
     assert attach.status_code == 200
 
     relay = client.post(
         f"/sessions/{session_id_obj}/relay",
         json={
-            "from_claw_id": "mock-claw-alpha",
-            "to_claw_id": "mock-claw-beta",
+            "from_claw_id": "local-claw-1",
+            "to_claw_id": "local-claw-2",
             "content": "hello beta",
         },
     )
@@ -124,15 +124,15 @@ def test_relay_rejects_unattached_receiver(
 
     attach = client.post(
         f"/sessions/{session_id_obj}/attachments",
-        json={"claw_ids": ["mock-claw-alpha"]},
+        json={"claw_ids": ["local-claw-1"]},
     )
     assert attach.status_code == 200
 
     relay = client.post(
         f"/sessions/{session_id_obj}/relay",
         json={
-            "from_claw_id": "mock-claw-alpha",
-            "to_claw_id": "mock-claw-beta",
+            "from_claw_id": "local-claw-1",
+            "to_claw_id": "local-claw-2",
             "content": "hello beta",
         },
     )
@@ -151,7 +151,7 @@ def test_relay_rejects_closed_session(
 
     attach = client.post(
         f"/sessions/{session_id_obj}/attachments",
-        json={"claw_ids": ["mock-claw-alpha", "mock-claw-beta"]},
+        json={"claw_ids": ["local-claw-1", "local-claw-2"]},
     )
     assert attach.status_code == 200
     close = client.post(f"/sessions/{session_id_obj}/close")
@@ -160,8 +160,8 @@ def test_relay_rejects_closed_session(
     relay = client.post(
         f"/sessions/{session_id_obj}/relay",
         json={
-            "from_claw_id": "mock-claw-alpha",
-            "to_claw_id": "mock-claw-beta",
+            "from_claw_id": "local-claw-1",
+            "to_claw_id": "local-claw-2",
             "content": "hello beta",
         },
     )
@@ -192,11 +192,11 @@ def test_attachment_assumes_preconfigured_fixture_endpoints(
 
     known_attach = client.post(
         f"/sessions/{session_id_obj}/attachments",
-        json={"claw_ids": ["mock-claw-gamma"]},
+        json={"claw_ids": ["local-claw-3"]},
     )
     assert known_attach.status_code == 200
     known_payload = _as_mapping(cast(object, known_attach.json()))
-    assert known_payload["attached_claw_ids"] == ["mock-claw-gamma"]
+    assert known_payload["attached_claw_ids"] == ["local-claw-3"]
 
     missing_attach = client.post(
         f"/sessions/{session_id_obj}/attachments",

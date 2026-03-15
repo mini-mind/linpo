@@ -1,29 +1,19 @@
 import {
-  API_BASE_URL,
-  type ClawEndpoint,
-  type EchoCallbackResponse,
-  type ProtocolGuide,
-  type ProtocolTestResponse,
-  type RelayMessageRecord,
-  type SessionRecord,
   addModeratorNote,
   advanceDebateTurn,
-  attachParticipants,
+  API_BASE_URL,
   createDebateSession,
-  createSession,
   fetchHealth,
-  fetchProtocolGuide,
-  fetchProtocolTest,
   fetchReplay,
   finishDebate,
   listClawEndpoints,
-  relayMessage,
   runNextDebateTurn,
-  sendEchoCallback,
+  type ClawEndpoint,
+  type RelayMessageRecord,
+  type SessionRecord,
 } from './api';
 import {
   type FormEvent,
-  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -31,51 +21,69 @@ import {
   useState,
 } from 'react';
 
-const DEFAULT_ATTACH_IDS = ['local-claw-1', 'local-claw-2'];
-const DEFAULT_RELAY_MESSAGE = 'hello from linpo';
+function formatSessionStatus(status: string | undefined): string {
+  if (status === 'closed') {
+    return '已结束';
+  }
+  if (status === 'active') {
+    return '进行中';
+  }
+  if (status === 'draft') {
+    return '待开始';
+  }
+  return status ?? '未开始';
+}
 
-function Section(props: { title: string; eyebrow: string; children: ReactNode }) {
-  return (
-    <section className="panel">
-      <p className="panel-eyebrow">{props.eyebrow}</p>
-      <div className="panel-heading">
-        <h2>{props.title}</h2>
-      </div>
-      {props.children}
-    </section>
-  );
+function formatDeliveryStatus(status: string): string {
+  if (status === 'delivered') {
+    return '已送达';
+  }
+  if (status === 'pending') {
+    return '处理中';
+  }
+  if (status === 'failed') {
+    return '失败';
+  }
+  return status;
+}
+
+function formatSpeakerName(message: RelayMessageRecord, session: SessionRecord | null): string {
+  if (message.from_claw_id === 'moderator') {
+    return '主持人';
+  }
+  return session?.participant_roles?.[message.from_claw_id] ?? message.from_claw_id;
+}
+
+function formatTargetName(message: RelayMessageRecord, session: SessionRecord | null): string {
+  if (message.to_claw_id === 'all') {
+    return '全体';
+  }
+  return session?.participant_roles?.[message.to_claw_id] ?? message.to_claw_id;
 }
 
 export default function App() {
   const [backendStatus, setBackendStatus] = useState<string>('checking');
   const [availableClaws, setAvailableClaws] = useState<ClawEndpoint[]>([]);
   const [currentSession, setCurrentSession] = useState<SessionRecord | null>(null);
-  const [relayPayload, setRelayPayload] = useState<string>(DEFAULT_RELAY_MESSAGE);
-  const [lastRelay, setLastRelay] = useState<RelayMessageRecord | null>(null);
   const [replayMessages, setReplayMessages] = useState<RelayMessageRecord[]>([]);
-  const [protocolGuide, setProtocolGuide] = useState<ProtocolGuide | null>(null);
-  const [protocolTest, setProtocolTest] = useState<ProtocolTestResponse | null>(null);
-  const [echoResult, setEchoResult] = useState<EchoCallbackResponse | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
-  const isBusyRef = useRef(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [proposition, setProposition] = useState<string>('');
   const [selectedClaw1, setSelectedClaw1] = useState<string>('');
   const [selectedClaw2, setSelectedClaw2] = useState<string>('');
-  const [roleLabel1, setRoleLabel1] = useState<string>('');
-  const [roleLabel2, setRoleLabel2] = useState<string>('');
+  const [roleLabel1, setRoleLabel1] = useState<string>('正方');
+  const [roleLabel2, setRoleLabel2] = useState<string>('反方');
   const [moderatorNote, setModeratorNote] = useState<string>('');
-  const [closingReason, setClosingReason] = useState<string>('');
+  const [closingReason, setClosingReason] = useState<string>('讨论已收束');
+  const isBusyRef = useRef(false);
 
-  const attachedPair = useMemo(() => {
-    if (!currentSession || currentSession.attached_claw_ids.length < 2) {
-      return null;
-    }
-    return {
-      from: currentSession.attached_claw_ids[0],
-      to: currentSession.attached_claw_ids[1],
-    };
-  }, [currentSession]);
+  const availableEnabledClaws = useMemo(
+    () => availableClaws.filter((claw) => claw.enabled),
+    [availableClaws],
+  );
+
+  const canCreateDebate = availableEnabledClaws.length >= 2;
+  const hasActiveDebate = currentSession?.proposition;
 
   const withAction = useCallback(async <T,>(
     label: string,
@@ -84,13 +92,15 @@ export default function App() {
     if (isBusyRef.current) {
       return null;
     }
+
     isBusyRef.current = true;
     setBusyAction(label);
     setErrorMessage(null);
+
     try {
       return await work();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unknown error');
+      setErrorMessage(error instanceof Error ? error.message : '发生未知错误');
       return null;
     } finally {
       setBusyAction(null);
@@ -99,7 +109,7 @@ export default function App() {
   }, []);
 
   const loadOverview = useCallback(async () => {
-    const result = await withAction('Refreshing backend overview', async () => {
+    const result = await withAction('正在刷新状态', async () => {
       const [health, claws] = await Promise.all([fetchHealth(), listClawEndpoints()]);
       return { health, claws };
     });
@@ -113,122 +123,38 @@ export default function App() {
     setAvailableClaws(result.claws);
   }, [withAction]);
 
+  const loadReplay = useCallback(async (sessionId: string) => {
+    const messages = await withAction('正在同步对话', () => fetchReplay(sessionId));
+    if (messages) {
+      setReplayMessages(messages);
+    }
+  }, [withAction]);
+
   useEffect(() => {
     void loadOverview();
   }, [loadOverview]);
-
-  async function handleCreateSession() {
-    const session = await withAction('Creating session', () => createSession());
-    if (!session) {
-      return;
-    }
-    setCurrentSession(session);
-    setLastRelay(null);
-    setReplayMessages([]);
-  }
-
-  async function handleAttachDefaults() {
-    if (!currentSession) {
-      setErrorMessage('Create a session before attaching claws.');
-      return;
-    }
-
-    const updated = await withAction('Attaching local claws', () =>
-      attachParticipants(currentSession.id, DEFAULT_ATTACH_IDS),
-    );
-    if (!updated) {
-      return;
-    }
-    setCurrentSession(updated);
-  }
-
-  async function handleRelay(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!currentSession || !attachedPair) {
-      setErrorMessage('Attach two claws before sending a relay message.');
-      return;
-    }
-
-    const relayed = await withAction('Relaying message', () =>
-      relayMessage(currentSession.id, {
-        from_claw_id: attachedPair.from,
-        to_claw_id: attachedPair.to,
-        content: relayPayload,
-      }),
-    );
-    if (!relayed) {
-      return;
-    }
-
-    setLastRelay(relayed);
-    await handleReplay();
-  }
-
-  async function handleReplay() {
-    if (!currentSession) {
-      setErrorMessage('Create a session before loading replay.');
-      return;
-    }
-
-    const messages = await withAction('Loading replay', () => fetchReplay(currentSession.id));
-    if (!messages) {
-      return;
-    }
-    setReplayMessages(messages);
-  }
-
-  async function handleLoadProtocolGuide() {
-    const guide = await withAction('Loading protocol guide', () => fetchProtocolGuide());
-    if (guide) {
-      setProtocolGuide(guide);
-    }
-  }
-
-  async function handleLoadProtocolTest() {
-    const testPayload = await withAction('Loading protocol test', () => fetchProtocolTest());
-    if (testPayload) {
-      setProtocolTest(testPayload);
-    }
-  }
-
-  async function handleSendEcho() {
-    let currentTest = protocolTest;
-    if (!currentTest) {
-      currentTest = await withAction('Loading protocol test', () => fetchProtocolTest());
-      if (!currentTest) {
-        return;
-      }
-      setProtocolTest(currentTest);
-    }
-
-    const echoEntry = currentTest.available_tests[0];
-    const result = await withAction('Sending echo callback', () => sendEchoCallback(echoEntry.request_body));
-    if (result) {
-      setEchoResult(result);
-    }
-  }
 
   async function handleCreateDebate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (!proposition.trim()) {
-      setErrorMessage('Please enter a proposition.');
+      setErrorMessage('请先输入辩题。');
       return;
     }
     if (!selectedClaw1 || !selectedClaw2) {
-      setErrorMessage('Please select two claws.');
+      setErrorMessage('请选择两位辩手。');
       return;
     }
     if (selectedClaw1 === selectedClaw2) {
-      setErrorMessage('Please select two different claws.');
+      setErrorMessage('两位辩手不能重复。');
       return;
     }
     if (!roleLabel1.trim() || !roleLabel2.trim()) {
-      setErrorMessage('Please enter role labels for both claws.');
+      setErrorMessage('请为双方填写角色名称。');
       return;
     }
 
-    const session = await withAction('Creating debate session', () =>
+    const session = await withAction('正在创建辩论', () =>
       createDebateSession({
         proposition: proposition.trim(),
         participants: [selectedClaw1, selectedClaw2],
@@ -244,23 +170,23 @@ export default function App() {
     }
 
     setCurrentSession(session);
-    setLastRelay(null);
     setReplayMessages([]);
+    await loadReplay(session.id);
   }
 
   async function handleAddModeratorNote(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (!currentSession) {
-      setErrorMessage('Create a debate session first.');
+      setErrorMessage('请先开始一场辩论。');
       return;
     }
     if (!moderatorNote.trim()) {
-      setErrorMessage('Please enter a moderator note.');
+      setErrorMessage('请输入主持人提示。');
       return;
     }
 
-    const note = await withAction('Adding moderator note', () =>
+    const note = await withAction('正在发送主持人提示', () =>
       addModeratorNote(currentSession.id, { content: moderatorNote.trim() }),
     );
 
@@ -269,16 +195,19 @@ export default function App() {
     }
 
     setModeratorNote('');
-    await handleReplay();
+    await loadReplay(currentSession.id);
   }
 
   async function handleAdvanceTurn() {
     if (!currentSession) {
-      setErrorMessage('Create a debate session first.');
+      setErrorMessage('请先开始一场辩论。');
       return;
     }
 
-    const updated = await withAction('Advancing turn', () => advanceDebateTurn(currentSession.id));
+    const updated = await withAction('正在推进到下一回合', () =>
+      advanceDebateTurn(currentSession.id),
+    );
+
     if (!updated) {
       return;
     }
@@ -288,32 +217,35 @@ export default function App() {
 
   async function handleRunNextTurn() {
     if (!currentSession) {
-      setErrorMessage('Create a debate session first.');
+      setErrorMessage('请先开始一场辩论。');
       return;
     }
 
-    const updated = await withAction('Running next turn', () => runNextDebateTurn(currentSession.id));
+    const updated = await withAction('正在生成下一轮发言', () =>
+      runNextDebateTurn(currentSession.id),
+    );
+
     if (!updated) {
       return;
     }
 
     setCurrentSession(updated);
-    await handleReplay();
+    await loadReplay(currentSession.id);
   }
 
   async function handleFinishDebate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (!currentSession) {
-      setErrorMessage('Create a debate session first.');
+      setErrorMessage('请先开始一场辩论。');
       return;
     }
     if (!closingReason.trim()) {
-      setErrorMessage('Please enter a closing reason.');
+      setErrorMessage('请填写结束说明。');
       return;
     }
 
-    const finished = await withAction('Finishing debate', () =>
+    const finished = await withAction('正在结束辩论', () =>
       finishDebate(currentSession.id, { closing_reason: closingReason.trim() }),
     );
 
@@ -322,93 +254,76 @@ export default function App() {
     }
 
     setCurrentSession(finished);
-    setClosingReason('');
-    await handleReplay();
+    await loadReplay(currentSession.id);
   }
 
+  const sessionParticipants = currentSession?.attached_claw_ids ?? [];
+
   return (
-    <main className="shell">
-      <div className="hero-card">
-        <div>
-          <p className="hero-kicker">Linpo Visible MVP</p>
-          <h1>Real local claws, one page, no dashboard sprawl.</h1>
+    <main className="app-shell">
+      <section className="hero-panel">
+        <div className="hero-copy">
+          <span className="hero-badge">灵盘 Linpo</span>
+          <h1>让你像主持一场讨论一样，掌控多 AI 辩论。</h1>
+          <p>
+            用中文创建辩题、看双方轮流发言、随时插入主持人提示，最后收束成可回看的总结。
+          </p>
         </div>
-        <div className="hero-meta">
-          <span>API base</span>
-          <code>{API_BASE_URL}</code>
+
+        <div className="hero-status-card">
+          <div>
+            <span className="status-label">服务状态</span>
+            <strong>{backendStatus === 'ok' ? '在线' : backendStatus}</strong>
+          </div>
+          <div>
+            <span className="status-label">可用辩手</span>
+            <strong>{availableEnabledClaws.length}</strong>
+          </div>
+          <button type="button" onClick={() => void loadOverview()} disabled={!!busyAction}>
+            刷新
+          </button>
         </div>
-      </div>
+      </section>
 
-      {errorMessage ? <div className="status-banner error">{errorMessage}</div> : null}
-      {busyAction ? <div className="status-banner">{busyAction}...</div> : null}
+      {errorMessage ? <div className="banner error">{errorMessage}</div> : null}
+      {busyAction ? <div className="banner">{busyAction}…</div> : null}
 
-      <div className="grid-layout">
-        <Section title="Backend Status" eyebrow="01 / health">
-          <div className="metric-row">
+      <div className="console-layout">
+        <section className="setup-panel card">
+          <div className="section-head">
             <div>
-              <span className="metric-label">Service</span>
-              <strong>{backendStatus}</strong>
+              <p className="section-kicker">开始一场新辩论</p>
+              <h2>先定题，再让双方开口</h2>
             </div>
-            <button type="button" onClick={() => void loadOverview()} disabled={!!busyAction}>
-              Refresh overview
-            </button>
+            <span className="inline-note">API：{API_BASE_URL}</span>
           </div>
-        </Section>
 
-        <Section title="Available Claws" eyebrow="02 / local docker endpoints">
-          <div className="stack-list">
-            {availableClaws.map((claw) => (
-              <article className="endpoint-card" key={claw.id}>
-                <div>
-                  <h3>{claw.name}</h3>
-                  <p>{claw.id}</p>
-                </div>
-                <dl>
-                  <div>
-                    <dt>Endpoint</dt>
-                    <dd>{claw.endpoint_ref}</dd>
-                  </div>
-                  <div>
-                    <dt>Inbox</dt>
-                    <dd>{claw.inbox_url ?? 'none'}</dd>
-                  </div>
-                  <div>
-                    <dt>Enabled</dt>
-                    <dd>{String(claw.enabled)}</dd>
-                  </div>
-                </dl>
-              </article>
-            ))}
-          </div>
-        </Section>
-
-        <Section title="Debate Setup" eyebrow="03 / create debate">
-          <form className="debate-form" onSubmit={(event) => void handleCreateDebate(event)}>
-            <label htmlFor="proposition">Proposition</label>
+          <form className="setup-form" onSubmit={(event) => void handleCreateDebate(event)}>
+            <label htmlFor="proposition">辩题</label>
             <textarea
               id="proposition"
               value={proposition}
               onChange={(event) => setProposition(event.target.value)}
-              rows={2}
-              placeholder="Enter the debate proposition..."
+              rows={3}
+              placeholder="例如：AI 结对编程应该默认开启吗？"
               disabled={!!busyAction}
             />
 
-            <div className="claw-selectors">
-              <div className="claw-select-group">
-                <label htmlFor="claw-1">Claw 1</label>
+            <div className="participant-grid">
+              <div className="participant-card">
+                <label htmlFor="claw-1">第一位辩手</label>
                 <select
                   id="claw-1"
                   value={selectedClaw1}
                   onChange={(event) => setSelectedClaw1(event.target.value)}
-                  disabled={!!busyAction}
+                  disabled={!!busyAction || !canCreateDebate}
                 >
-                  <option value="">Select a claw</option>
-                  {availableClaws
-                    .filter((claw) => claw.enabled && claw.id !== selectedClaw2)
+                  <option value="">请选择</option>
+                  {availableEnabledClaws
+                    .filter((claw) => claw.id !== selectedClaw2)
                     .map((claw) => (
                       <option key={claw.id} value={claw.id}>
-                        {claw.name} ({claw.id})
+                        {claw.name}（{claw.id}）
                       </option>
                     ))}
                 </select>
@@ -416,26 +331,25 @@ export default function App() {
                   type="text"
                   value={roleLabel1}
                   onChange={(event) => setRoleLabel1(event.target.value)}
-                  placeholder="Role label (e.g., 正方)"
-                  className="role-input"
+                  placeholder="角色名称，例如：支持方"
                   disabled={!!busyAction}
                 />
               </div>
 
-              <div className="claw-select-group">
-                <label htmlFor="claw-2">Claw 2</label>
+              <div className="participant-card">
+                <label htmlFor="claw-2">第二位辩手</label>
                 <select
                   id="claw-2"
                   value={selectedClaw2}
                   onChange={(event) => setSelectedClaw2(event.target.value)}
-                  disabled={!!busyAction}
+                  disabled={!!busyAction || !canCreateDebate}
                 >
-                  <option value="">Select a claw</option>
-                  {availableClaws
-                    .filter((claw) => claw.enabled && claw.id !== selectedClaw1)
+                  <option value="">请选择</option>
+                  {availableEnabledClaws
+                    .filter((claw) => claw.id !== selectedClaw1)
                     .map((claw) => (
                       <option key={claw.id} value={claw.id}>
-                        {claw.name} ({claw.id})
+                        {claw.name}（{claw.id}）
                       </option>
                     ))}
                 </select>
@@ -443,282 +357,193 @@ export default function App() {
                   type="text"
                   value={roleLabel2}
                   onChange={(event) => setRoleLabel2(event.target.value)}
-                  placeholder="Role label (e.g., 反方)"
-                  className="role-input"
+                  placeholder="角色名称，例如：反对方"
                   disabled={!!busyAction}
                 />
               </div>
             </div>
 
-            <button type="submit" disabled={!!busyAction}>Create debate session</button>
-          </form>
+            <div className="form-footnote">
+              {canCreateDebate
+                ? '建议只保留最必要的设定：一个辩题、两位辩手、清晰角色。'
+                : '当前可用辩手不足两位，请先检查后端或本地 claw 配置。'}
+            </div>
 
-          {currentSession?.proposition && (
-            <div className="debate-summary detail-card">
-              <h3>Debate Status</h3>
-              <dl className="summary-grid compact">
+            <button type="submit" className="primary-button" disabled={!!busyAction || !canCreateDebate}>
+              开始辩论
+            </button>
+          </form>
+        </section>
+
+        <section className="conversation-panel card">
+          <div className="section-head">
+            <div>
+              <p className="section-kicker">聊天式控制台</p>
+              <h2>{hasActiveDebate ? '当前辩论' : '还没有进行中的辩论'}</h2>
+            </div>
+            {currentSession ? (
+              <span className={`session-status status-${currentSession.status}`}>
+                {formatSessionStatus(currentSession.status)}
+              </span>
+            ) : null}
+          </div>
+
+          {currentSession ? (
+            <>
+              <div className="conversation-summary">
                 <div>
-                  <dt>Session ID</dt>
-                  <dd>{currentSession.id}</dd>
+                  <span className="status-label">辩题</span>
+                  <strong>{currentSession.proposition ?? '未设置'}</strong>
                 </div>
                 <div>
-                  <dt>Status</dt>
-                  <dd className={currentSession.status === 'closed' ? 'status-closed' : 'status-active'}>
-                    {currentSession.status}
-                  </dd>
+                  <span className="status-label">当前回合</span>
+                  <strong>第 {currentSession.current_turn} 回合</strong>
                 </div>
                 <div>
-                  <dt>Current Turn</dt>
-                  <dd>{currentSession.current_turn}</dd>
-                </div>
-                <div>
-                  <dt>Closed At</dt>
-                  <dd>{currentSession.closed_at ?? 'N/A'}</dd>
-                </div>
-                <div className="span-full">
-                  <dt>Proposition</dt>
-                  <dd>{currentSession.proposition ?? 'N/A'}</dd>
-                </div>
-                <div className="span-full">
-                  <dt>Participants</dt>
-                  <dd>
-                    {currentSession.attached_claw_ids.map((id) => (
+                  <span className="status-label">参与者</span>
+                  <div className="participant-tags">
+                    {sessionParticipants.map((id) => (
                       <span key={id} className="participant-tag">
-                        {id} ({currentSession.participant_roles?.[id] ?? 'unknown'})
+                        {currentSession.participant_roles?.[id] ?? id}
                       </span>
                     ))}
-                  </dd>
-                </div>
-              </dl>
-
-              {currentSession.summary && (
-                <div className="summary-section">
-                  <h4>Debate Summary</h4>
-                  <dl className="summary-grid compact">
-                    <div>
-                      <dt>Total Messages</dt>
-                      <dd>{currentSession.summary.total_messages}</dd>
-                    </div>
-                    <div>
-                      <dt>Total Turns</dt>
-                      <dd>{currentSession.summary.total_turns}</dd>
-                    </div>
-                    <div>
-                      <dt>Moderator Notes</dt>
-                      <dd>{currentSession.summary.moderator_note_count}</dd>
-                    </div>
-                    <div>
-                      <dt>Closing Reason</dt>
-                      <dd>{currentSession.summary.closing_reason}</dd>
-                    </div>
-                    <div className="span-full">
-                      <dt>Last Message At</dt>
-                      <dd>{currentSession.summary.last_message_at ?? 'N/A'}</dd>
-                    </div>
-                  </dl>
-                </div>
-              )}
-
-              {currentSession.status !== 'closed' && (
-                <div className="debate-controls">
-                  <div className="action-row wrap">
-                    <button type="button" onClick={() => void handleAdvanceTurn()} disabled={!!busyAction}>
-                      Advance turn
-                    </button>
-                    <button type="button" onClick={() => void handleRunNextTurn()} disabled={!!busyAction}>
-                      Run next turn
-                    </button>
                   </div>
-                  <form className="finish-form" onSubmit={(event) => void handleFinishDebate(event)}>
-                    <input
-                      type="text"
-                      value={closingReason}
-                      onChange={(event) => setClosingReason(event.target.value)}
-                      placeholder="Closing reason (e.g., debate concluded)"
-                      className="closing-reason-input"
-                      disabled={!!busyAction}
-                    />
-                    <button type="submit" disabled={!!busyAction}>Finish debate</button>
-                  </form>
                 </div>
-              )}
+              </div>
+
+              <div className="action-bar">
+                <button type="button" onClick={() => void handleRunNextTurn()} disabled={!!busyAction || currentSession.status === 'closed'}>
+                  生成下一轮
+                </button>
+                <button type="button" onClick={() => void handleAdvanceTurn()} disabled={!!busyAction || currentSession.status === 'closed'}>
+                  仅推进回合
+                </button>
+                <button type="button" onClick={() => void loadReplay(currentSession.id)} disabled={!!busyAction}>
+                  刷新记录
+                </button>
+              </div>
+
+              <div className="message-stream">
+                {replayMessages.length === 0 ? (
+                  <div className="empty-state">
+                    <strong>对话还没开始</strong>
+                    <p>先点击“生成下一轮”，或先发一条主持人提示。</p>
+                  </div>
+                ) : (
+                  replayMessages.map((message) => {
+                    const isModerator = message.from_claw_id === 'moderator';
+                    return (
+                      <article
+                        key={message.id}
+                        className={`message-bubble ${isModerator ? 'moderator' : 'debater'}`}
+                      >
+                        <div className="message-head">
+                          <div>
+                            <strong>{formatSpeakerName(message, currentSession)}</strong>
+                            <span> → {formatTargetName(message, currentSession)}</span>
+                          </div>
+                          <span className="message-turn">第 {message.turn_index} 回合</span>
+                        </div>
+                        <p>{message.content}</p>
+                        <div className="message-meta">
+                          <span>{formatDeliveryStatus(message.delivery_status)}</span>
+                          <span>{message.delivery_error ?? '无异常'}</span>
+                        </div>
+                      </article>
+                    );
+                  })
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="empty-state large">
+              <strong>先创建一场辩论</strong>
+              <p>左侧填好辩题和双方角色，这里就会变成你的主持面板。</p>
             </div>
           )}
-        </Section>
+        </section>
 
-        <Section title="Moderator Note" eyebrow="04 / add note">
+        <section className="moderator-panel card">
+          <div className="section-head compact">
+            <div>
+              <p className="section-kicker">主持人操作</p>
+              <h2>插一句话，调整节奏</h2>
+            </div>
+          </div>
+
           <form className="moderator-form" onSubmit={(event) => void handleAddModeratorNote(event)}>
-            <label htmlFor="moderator-note">Moderator message</label>
+            <label htmlFor="moderator-note">主持人提示</label>
             <textarea
               id="moderator-note"
               value={moderatorNote}
               onChange={(event) => setModeratorNote(event.target.value)}
-              rows={3}
-              placeholder="Enter your moderator note..."
+              rows={4}
+              placeholder="例如：请双方各用一段话回应对方最强论点。"
               disabled={!currentSession || !!busyAction}
             />
             <button type="submit" disabled={!currentSession || !!busyAction}>
-              Add moderator note
+              发送提示
             </button>
           </form>
-        </Section>
 
-        <Section title="Session Flow" eyebrow="05 / create attach relay">
-          <div className="action-row">
-            <button type="button" onClick={() => void handleCreateSession()} disabled={!!busyAction}>
-              Create session
-            </button>
-            <button type="button" onClick={() => void handleAttachDefaults()} disabled={!!busyAction}>
-              Attach local-claw-1 + local-claw-2
-            </button>
-          </div>
-
-          <dl className="summary-grid">
-            <div>
-              <dt>Session ID</dt>
-              <dd>{currentSession?.id ?? 'not created'}</dd>
-            </div>
-            <div>
-              <dt>Status</dt>
-              <dd>{currentSession?.status ?? 'n/a'}</dd>
-            </div>
-            <div>
-              <dt>Participants</dt>
-              <dd>{currentSession?.attached_claw_ids.join(', ') || 'none attached'}</dd>
-            </div>
-          </dl>
-
-          <form className="relay-form" onSubmit={(event) => void handleRelay(event)}>
-            <label htmlFor="relay-message">Relay message</label>
-            <textarea
-              id="relay-message"
-              value={relayPayload}
-              onChange={(event) => setRelayPayload(event.target.value)}
-              rows={4}
-              disabled={!!busyAction}
+          <form className="finish-form" onSubmit={(event) => void handleFinishDebate(event)}>
+            <label htmlFor="closing-reason">结束说明</label>
+            <input
+              id="closing-reason"
+              type="text"
+              value={closingReason}
+              onChange={(event) => setClosingReason(event.target.value)}
+              placeholder="例如：核心分歧已充分展开"
+              disabled={!currentSession || !!busyAction || currentSession.status === 'closed'}
             />
-            <button type="submit" disabled={!!busyAction}>Send relay</button>
+            <button
+              type="submit"
+              className="secondary-button"
+              disabled={!currentSession || !!busyAction || currentSession.status === 'closed'}
+            >
+              结束辩论
+            </button>
           </form>
+        </section>
 
-          <div className="detail-card">
-            <h3>Last relay</h3>
-            {lastRelay ? (
-              <dl className="summary-grid compact">
-                <div>
-                  <dt>Route</dt>
-                  <dd>
-                    {lastRelay.from_claw_id} -&gt; {lastRelay.to_claw_id}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Status</dt>
-                  <dd>{lastRelay.delivery_status}</dd>
-                </div>
-                <div>
-                  <dt>Content</dt>
-                  <dd>{lastRelay.content}</dd>
-                </div>
-                <div>
-                  <dt>Error</dt>
-                  <dd>{lastRelay.delivery_error ?? 'none'}</dd>
-                </div>
-              </dl>
-            ) : (
-              <p className="muted">No relay sent yet.</p>
-            )}
-          </div>
-        </Section>
-
-        <Section title="Replay" eyebrow="06 / message history">
-          <div className="action-row">
-            <button type="button" onClick={() => void handleReplay()} disabled={!!busyAction}>
-              Refresh replay
-            </button>
-          </div>
-          <div className="stack-list">
-            {replayMessages.length === 0 ? (
-              <p className="muted">Replay is empty.</p>
-            ) : (
-              replayMessages.map((message) => (
-                <article className="message-card" key={message.id}>
-                  <div className="message-route">
-                    <span className="turn-badge">Turn {message.turn_index}</span>
-                    <strong>{message.from_claw_id}</strong>
-                    <span>to</span>
-                    <strong>{message.to_claw_id}</strong>
-                  </div>
-                  <p>{message.content}</p>
-                  <div className="message-meta">
-                    <span>{message.delivery_status}</span>
-                    <span>{message.delivery_error ?? 'delivered cleanly'}</span>
-                  </div>
-                </article>
-              ))
-            )}
-          </div>
-        </Section>
-
-        <Section title="Protocol / Callback Echo" eyebrow="07 / verification">
-          <div className="action-row wrap">
-            <button type="button" onClick={() => void handleLoadProtocolGuide()} disabled={!!busyAction}>
-              Load /protocol/claw
-            </button>
-            <button type="button" onClick={() => void handleLoadProtocolTest()} disabled={!!busyAction}>
-              Load /protocol/claw/test
-            </button>
-            <button type="button" onClick={() => void handleSendEcho()} disabled={!!busyAction}>
-              Send echo callback
-            </button>
+        <section className="summary-panel card">
+          <div className="section-head compact">
+            <div>
+              <p className="section-kicker">结果摘要</p>
+              <h2>最后得到什么</h2>
+            </div>
           </div>
 
-          <div className="detail-card">
-            <h3>Protocol guide</h3>
-            {protocolGuide ? (
-              <>
-                <p>
-                  {protocolGuide.name} v{protocolGuide.version}
-                </p>
-                <ul>
-                  {protocolGuide.prerequisites.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              </>
-            ) : (
-              <p className="muted">Guide not loaded.</p>
-            )}
-          </div>
-
-          <div className="detail-card">
-            <h3>Protocol test</h3>
-            {protocolTest ? (
-              <>
-                <p>{protocolTest.name}</p>
-                <pre>{JSON.stringify(protocolTest.available_tests[0]?.request_body ?? {}, null, 2)}</pre>
-              </>
-            ) : (
-              <p className="muted">Test payload not loaded.</p>
-            )}
-          </div>
-
-          <div className="detail-card">
-            <h3>Echo result</h3>
-            {echoResult ? (
-              <dl className="summary-grid compact">
-                <div>
-                  <dt>Matched</dt>
-                  <dd>{String(echoResult.verification.matched)}</dd>
-                </div>
-                <div>
-                  <dt>Message</dt>
-                  <dd>{echoResult.verification.message}</dd>
-                </div>
-              </dl>
-            ) : (
-              <p className="muted">No callback sent yet.</p>
-            )}
-          </div>
-        </Section>
+          {currentSession?.summary ? (
+            <dl className="summary-list">
+              <div>
+                <dt>总消息数</dt>
+                <dd>{currentSession.summary.total_messages}</dd>
+              </div>
+              <div>
+                <dt>总回合数</dt>
+                <dd>{currentSession.summary.total_turns}</dd>
+              </div>
+              <div>
+                <dt>主持人提示</dt>
+                <dd>{currentSession.summary.moderator_note_count}</dd>
+              </div>
+              <div>
+                <dt>结束原因</dt>
+                <dd>{currentSession.summary.closing_reason}</dd>
+              </div>
+              <div>
+                <dt>最后发言时间</dt>
+                <dd>{currentSession.summary.last_message_at ?? '暂无'}</dd>
+              </div>
+            </dl>
+          ) : (
+            <div className="empty-state">
+              <strong>还没有摘要</strong>
+              <p>辩论结束后，这里会显示可复盘的结果概览。</p>
+            </div>
+          )}
+        </section>
       </div>
     </main>
   );

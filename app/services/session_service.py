@@ -118,7 +118,13 @@ class RelayOutboundClient(Protocol):
 
 
 class OpenClawTurnClientProtocol(Protocol):
-    def run_turn(self, *, endpoint_url: str, prompt: str) -> str:
+    def run_turn(
+        self,
+        *,
+        endpoint_url: str,
+        prompt: str,
+        gateway_token: str | None = None,
+    ) -> str:
         raise NotImplementedError
 
 
@@ -283,6 +289,7 @@ class SessionService:
             generated_content = self._turn_client.run_turn(
                 endpoint_url=speaker_endpoint.inbox_url,
                 prompt=prompt,
+                gateway_token=speaker_endpoint.gateway_token,
             ).strip()
         except OpenClawTurnExecutionError as error:
             raise DebateTurnExecutionError(str(error)) from error

@@ -72,14 +72,12 @@ def test_session_state_is_isolated_per_app_instance() -> None:
     app_b = FastAPI()
     app_b.include_router(session_router)
 
-    client_a = TestClient(app_a)
-    client_b = TestClient(app_b)
+    with TestClient(app_a) as client_a, TestClient(app_b) as client_b:
+        created = _as_mapping(cast(object, client_a.post("/sessions").json()))
+        session_id_obj = created["id"]
+        assert isinstance(session_id_obj, str)
 
-    created = _as_mapping(cast(object, client_a.post("/sessions").json()))
-    session_id_obj = created["id"]
-    assert isinstance(session_id_obj, str)
-
-    response = client_b.post(f"/sessions/{session_id_obj}/close")
+        response = client_b.post(f"/sessions/{session_id_obj}/close")
 
     assert response.status_code == 404
 
@@ -118,13 +116,13 @@ def test_attach_session_endpoints_updates_attached_claw_ids(client: TestClient) 
 
     response = client.post(
         f"/sessions/{session_id_obj}/attachments",
-        json={"claw_ids": ["mock-claw-alpha", "mock-claw-beta"]},
+        json={"claw_ids": ["local-claw-1", "local-claw-2"]},
     )
 
     assert response.status_code == 200
     payload = _as_mapping(cast(object, response.json()))
     assert payload["id"] == session_id_obj
-    assert payload["attached_claw_ids"] == ["mock-claw-alpha", "mock-claw-beta"]
+    assert payload["attached_claw_ids"] == ["local-claw-1", "local-claw-2"]
     assert payload["status"] == "active"
 
 
@@ -152,7 +150,7 @@ def test_session_attachments_work_when_cwd_changes(tmp_path: Path, monkeypatch: 
 
         response = client.post(
             f"/sessions/{session_id_obj}/attachments",
-            json={"claw_ids": ["mock-claw-alpha", "mock-claw-beta"]},
+            json={"claw_ids": ["local-claw-1", "local-claw-2"]},
         )
 
     assert response.status_code == 200

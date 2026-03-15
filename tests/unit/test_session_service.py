@@ -268,12 +268,12 @@ class _RecordingTurnClient:
         response_text: str = "generated turn",
         raised_error: Exception | None = None,
     ) -> None:
-        self.calls: list[tuple[str, str]] = []
+        self.calls: list[tuple[str, str, str | None]] = []
         self._response_text = response_text
         self._raised_error = raised_error
 
-    def run_turn(self, *, endpoint_url: str, prompt: str) -> str:
-        self.calls.append((endpoint_url, prompt))
+    def run_turn(self, *, endpoint_url: str, prompt: str, gateway_token: str | None = None) -> str:
+        self.calls.append((endpoint_url, prompt, gateway_token))
         if self._raised_error is not None:
             raise self._raised_error
         return self._response_text
@@ -290,6 +290,7 @@ def _new_debate_service_with_turn_client(turn_client: _RecordingTurnClient) -> S
                     endpoint_ref="mock://claw-alpha",
                     enabled=True,
                     inbox_url="http://mock-claw-alpha.test/inbox",
+                    gateway_token="gateway-token-alpha",
                 ),
                 ClawEndpoint(
                     id="mock-claw-beta",
@@ -297,6 +298,7 @@ def _new_debate_service_with_turn_client(turn_client: _RecordingTurnClient) -> S
                     endpoint_ref="mock://claw-beta",
                     enabled=True,
                     inbox_url="http://mock-claw-beta.test/inbox",
+                    gateway_token="gateway-token-beta",
                 ),
             ]
         ),
@@ -469,6 +471,7 @@ def test_run_next_turn_records_generated_message_and_advances_turn() -> None:
     assert generated.delivery_error is None
     assert generated.turn_index == 1
     assert turn_client.calls[0][0] == "http://mock-claw-alpha.test/inbox"
+    assert turn_client.calls[0][2] == "gateway-token-alpha"
     prompt = turn_client.calls[0][1]
     assert "Proposition: Should we adopt service mesh now?" in prompt
     assert "Current speaker: mock-claw-alpha (正方)" in prompt
@@ -497,6 +500,7 @@ def test_run_next_turn_uses_second_participant_on_even_turn() -> None:
     assert generated.from_claw_id == "mock-claw-beta"
     assert generated.turn_index == 2
     assert turn_client.calls[0][0] == "http://mock-claw-beta.test/inbox"
+    assert turn_client.calls[0][2] == "gateway-token-beta"
     assert "Current speaker: mock-claw-beta (反方)" in turn_client.calls[0][1]
     assert "Opponent: mock-claw-alpha (正方)" in turn_client.calls[0][1]
     assert "Current turn: 2" in turn_client.calls[0][1]

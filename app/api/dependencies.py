@@ -27,7 +27,7 @@ MOCK_CLAW_ENDPOINT_FIXTURE_PATH = (
 LOCAL_CLAW_ENDPOINT_FIXTURE_PATH = (
     Path(__file__).resolve().parents[2] / "fixtures" / "local" / "claw_endpoints.yaml"
 )
-DEFAULT_CLAW_ENDPOINT_FIXTURE_PATH = MOCK_CLAW_ENDPOINT_FIXTURE_PATH
+DEFAULT_CLAW_ENDPOINT_FIXTURE_PATH = LOCAL_CLAW_ENDPOINT_FIXTURE_PATH
 _BUILTIN_CLAW_ENDPOINT_FIXTURE_PATHS = {
     "mock": MOCK_CLAW_ENDPOINT_FIXTURE_PATH,
     "local": LOCAL_CLAW_ENDPOINT_FIXTURE_PATH,
@@ -133,8 +133,9 @@ def resolve_session_storage_path(request: Request) -> Path:
         return Path(configured_path).expanduser()
 
     raw_path = os.getenv(LINPO_SESSION_STORAGE_PATH_ENV)
-    if raw_path:
-        resolved_path = Path(raw_path).expanduser()
+    normalized_path = None if raw_path is None else raw_path.strip()
+    if normalized_path:
+        resolved_path = Path(normalized_path).expanduser()
         app.state.session_storage_path = resolved_path
         return resolved_path
 

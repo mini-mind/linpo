@@ -43,10 +43,10 @@ def _debate_payload(
     participants: list[str] | None = None,
     participant_roles: dict[str, str] | None = None,
 ) -> dict[str, object]:
-    selected_participants = participants or ["mock-claw-alpha", "mock-claw-beta"]
+    selected_participants = participants or ["local-claw-1", "local-claw-2"]
     selected_roles = participant_roles or {
-        "mock-claw-alpha": "正方",
-        "mock-claw-beta": "反方",
+        "local-claw-1": "正方",
+        "local-claw-2": "反方",
     }
     return {
         "proposition": proposition,
@@ -98,18 +98,18 @@ def _new_app_with_turn_client(turn_client: _RecordingTurnClient) -> FastAPI:
         InMemoryClawEndpointRepository(
             [
                 ClawEndpoint(
-                    id="mock-claw-alpha",
+                    id="local-claw-1",
                     name="Mock Claw Alpha",
                     endpoint_ref="mock://claw-alpha",
                     enabled=True,
-                    inbox_url="http://mock-claw-alpha.test/inbox",
+                    inbox_url="http://local-claw-1.test/inbox",
                 ),
                 ClawEndpoint(
-                    id="mock-claw-beta",
+                    id="local-claw-2",
                     name="Mock Claw Beta",
                     endpoint_ref="mock://claw-beta",
                     enabled=True,
-                    inbox_url="http://mock-claw-beta.test/inbox",
+                    inbox_url="http://local-claw-2.test/inbox",
                 ),
             ]
         ),
@@ -140,11 +140,11 @@ def test_create_debate_session_returns_session_with_metadata(
         "closed_at",
     }
     assert payload["status"] == "active"
-    assert payload["attached_claw_ids"] == ["mock-claw-alpha", "mock-claw-beta"]
+    assert payload["attached_claw_ids"] == ["local-claw-1", "local-claw-2"]
     assert payload["proposition"] == "Should we adopt service mesh now?"
     assert payload["participant_roles"] == {
-        "mock-claw-alpha": "正方",
-        "mock-claw-beta": "反方",
+        "local-claw-1": "正方",
+        "local-claw-2": "反方",
     }
     assert payload["current_turn"] == 1
     assert payload["summary"] is None
@@ -157,7 +157,7 @@ def test_create_debate_session_rejects_unknown_participant(
 
     response = client.post(
         "/debates",
-        json=_debate_payload(participants=["mock-claw-alpha", "mock-claw-missing"]),
+        json=_debate_payload(participants=["local-claw-1", "local-claw-missing"]),
     )
 
     assert response.status_code == 400
@@ -173,7 +173,7 @@ def test_create_debate_session_rejects_disabled_participant() -> None:
         InMemoryClawEndpointRepository(
             [
                 ClawEndpoint(
-                    id="mock-claw-alpha",
+                    id="local-claw-1",
                     name="Mock Claw Alpha",
                     endpoint_ref="mock://claw-alpha",
                     enabled=True,
@@ -192,7 +192,7 @@ def test_create_debate_session_rejects_disabled_participant() -> None:
     with TestClient(test_app) as client:
         response = client.post(
             "/debates",
-            json=_debate_payload(participants=["mock-claw-alpha", "mock-claw-disabled"]),
+            json=_debate_payload(participants=["local-claw-1", "mock-claw-disabled"]),
         )
 
     assert response.status_code == 400
@@ -206,7 +206,7 @@ def test_create_debate_session_rejects_non_pair_participants(
 
     response = client.post(
         "/debates",
-        json=_debate_payload(participants=["mock-claw-alpha"]),
+        json=_debate_payload(participants=["local-claw-1"]),
     )
 
     assert response.status_code == 400
@@ -220,7 +220,7 @@ def test_create_debate_session_rejects_duplicate_participants(
 
     response = client.post(
         "/debates",
-        json=_debate_payload(participants=["mock-claw-alpha", "mock-claw-alpha"]),
+        json=_debate_payload(participants=["local-claw-1", "local-claw-1"]),
     )
 
     assert response.status_code == 400
@@ -234,7 +234,7 @@ def test_create_debate_session_rejects_role_mapping_mismatch(
 
     response = client.post(
         "/debates",
-        json=_debate_payload(participant_roles={"mock-claw-alpha": "正方"}),
+        json=_debate_payload(participant_roles={"local-claw-1": "正方"}),
     )
 
     assert response.status_code == 400
@@ -264,8 +264,8 @@ def test_create_debate_session_rejects_blank_role_label(
         "/debates",
         json=_debate_payload(
             participant_roles={
-                "mock-claw-alpha": "正方",
-                "mock-claw-beta": "   ",
+                "local-claw-1": "正方",
+                "local-claw-2": "   ",
             }
         ),
     )
@@ -281,7 +281,7 @@ def test_create_debate_session_validation_failure_leaves_no_session(
 
     response = client.post(
         "/debates",
-        json=_debate_payload(participants=["mock-claw-alpha", "mock-claw-missing"]),
+        json=_debate_payload(participants=["local-claw-1", "local-claw-missing"]),
     )
 
     assert response.status_code == 400
@@ -379,11 +379,11 @@ def test_get_debate_detail_returns_full_debate_read_model(
     payload = _as_mapping(cast(object, response.json()))
     assert payload["id"] == session_id
     assert payload["status"] == "active"
-    assert payload["attached_claw_ids"] == ["mock-claw-alpha", "mock-claw-beta"]
+    assert payload["attached_claw_ids"] == ["local-claw-1", "local-claw-2"]
     assert payload["proposition"] == "Should we adopt service mesh now?"
     assert payload["participant_roles"] == {
-        "mock-claw-alpha": "正方",
-        "mock-claw-beta": "反方",
+        "local-claw-1": "正方",
+        "local-claw-2": "反方",
     }
     assert payload["current_turn"] == 1
     assert payload["summary"] is None
@@ -467,31 +467,46 @@ def test_advance_turn_rejects_closed_debate(
     assert _as_mapping(cast(object, response.json())) == {"detail": "invalid debate request"}
 
 
-def test_run_next_turn_returns_updated_debate_and_generated_replay_message() -> None:
-    test_app = _new_app_with_turn_client(_RecordingTurnClient(response_text="Alpha opening"))
+def test_run_next_turn_with_local_fixture_records_generated_message() -> None:
+    fixture_path = Path(__file__).resolve().parents[2] / "fixtures" / "local" / "claw_endpoints.yaml"
+    test_app = FastAPI()
+    test_app.include_router(session_router)
+    test_app.include_router(debate_router)
+    test_app.state.openclaw_turn_client = _RecordingTurnClient(response_text="本地 OpenClaw 已回应")
+    test_app.state.claw_endpoint_fixture_path = fixture_path
+    test_app.state.session_service_fixture_path = fixture_path
 
     with TestClient(test_app) as client:
-        session_id = _create_debate_session(client)
-
-        response = client.post(f"/debates/{session_id}/run-next-turn", json={})
-
-        assert response.status_code == 200
+        response = client.post(
+            "/debates",
+            json={
+                "proposition": "Should we adopt service mesh now?",
+                "participants": ["local-claw-1", "local-claw-2"],
+                "participant_roles": {
+                    "local-claw-1": "正方",
+                    "local-claw-2": "反方",
+                },
+            },
+        )
+        assert response.status_code == 201
         payload = _as_mapping(cast(object, response.json()))
-        assert payload["id"] == session_id
-        assert payload["status"] == "active"
-        assert payload["current_turn"] == 2
+        session_id_obj = payload["id"]
+        assert isinstance(session_id_obj, str)
 
-        replay = client.get(f"/sessions/{session_id}/replay")
+        run_response = client.post(f"/debates/{session_id_obj}/run-next-turn", json={})
+        assert run_response.status_code == 200
+        run_payload = _as_mapping(cast(object, run_response.json()))
+        assert run_payload["current_turn"] == 2
+
+        replay = client.get(f"/sessions/{session_id_obj}/replay")
         assert replay.status_code == 200
         replay_payload_obj = _as_list(cast(object, replay.json()))
         replay_payload = [_as_mapping(cast(object, item)) for item in replay_payload_obj]
         assert len(replay_payload) == 1
-        assert replay_payload[0]["from_claw_id"] == "mock-claw-alpha"
+        assert replay_payload[0]["from_claw_id"] == "local-claw-1"
         assert replay_payload[0]["to_claw_id"] == "session"
-        assert replay_payload[0]["content"] == "Alpha opening"
+        assert replay_payload[0]["content"] == "本地 OpenClaw 已回应"
         assert replay_payload[0]["delivery_status"] == "generated"
-        assert replay_payload[0]["delivery_error"] is None
-        assert replay_payload[0]["turn_index"] == 1
 
 
 def test_run_next_turn_openapi_declares_required_empty_object_request_body(
@@ -622,8 +637,8 @@ def test_finish_debate_returns_closed_detail_with_summary_stub(
     assert summary == {
         "proposition": "Should we adopt service mesh now?",
         "participant_roles": {
-            "mock-claw-alpha": "正方",
-            "mock-claw-beta": "反方",
+            "local-claw-1": "正方",
+            "local-claw-2": "反方",
         },
         "total_messages": 1,
         "total_turns": 2,

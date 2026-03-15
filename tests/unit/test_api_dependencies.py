@@ -10,14 +10,12 @@ from app.api.dependencies import (
     DEFAULT_CLAW_ENDPOINT_FIXTURE_PATH,
     LINPO_CLAW_ENDPOINT_FIXTURE_PATH_ENV,
     LINPO_CLAW_ENDPOINT_FIXTURE_SOURCE_ENV,
+    LINPO_SESSION_STORAGE_PATH_ENV,
     LOCAL_CLAW_ENDPOINT_FIXTURE_PATH,
     ClawEndpointFixtureConfigurationError,
     get_session_service,
     resolve_claw_endpoint_fixture_path,
 )
-
-
-LINPO_SESSION_STORAGE_PATH_ENV = "LINPO_SESSION_STORAGE_PATH"
 
 
 class _DummySessionService:
@@ -39,8 +37,8 @@ def _build_request() -> SimpleNamespace:
     return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))
 
 
-def test_resolve_claw_endpoint_fixture_path_defaults_to_mock_fixture() -> None:
-    assert resolve_claw_endpoint_fixture_path() == DEFAULT_CLAW_ENDPOINT_FIXTURE_PATH
+def test_resolve_claw_endpoint_fixture_path_defaults_to_local_fixture() -> None:
+    assert resolve_claw_endpoint_fixture_path() == LOCAL_CLAW_ENDPOINT_FIXTURE_PATH
 
 
 def test_resolve_claw_endpoint_fixture_path_supports_local_builtin_source(
@@ -167,3 +165,47 @@ def test_get_session_service_uses_configured_storage_path_for_file_repositories(
     assert observed_message_paths == [storage_path]
     assert service.session_repository is session_repository
     assert service.message_repository is message_repository
+
+
+def test_get_session_service_ignores_blank_storage_path_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = cast(Request, _build_request())
+    fixture_path = Path("/tmp/claw_endpoints.yaml")
+    session_repository_paths: list[Path] = []
+    message_repository_paths: list[Path] = []
+
+    monkeypatch.setenv(LINPO_SESSION_STORAGE_PATH_ENV, "   ")
+    monkeypatch.setattr(
+        dependencies,
+        "_resolve_claw_endpoint_fixture_path_or_raise",
+        lambda fallback_path=None: fixture_path,
+    )
+    monkeypatch.setattr(
+        dependencies,
+        "FileSessionRepository",
+        lambda storage_path: session_repository_paths.append(storage_path) or object(),
+    )
+    monkeypatch.setattr(
+        dependencies,
+        "FileMessageRepository",
+        lambda storage_path: message_repository_paths.append(storage_path) or object(),
+    )
+    monkeypatch.setattr(
+        dependencies,
+        "get_claw_endpoint_repository",
+        lambda request, fallback_path=None: object(),
+    )
+    monkeypatch.setattr(
+        dependencies,
+        "get_openclaw_turn_client",
+        lambda request: object(),
+    )
+    monkeypatch.setattr(dependencies, "SessionService", _DummySessionService)
+
+    _ = cast(_DummySessionService, get_session_service(request))
+
+    assert len(session_repository_paths) == 1
+    assert len(message_repository_paths) == 1
+    assert session_repository_paths == message_repository_paths
+    assert session_repository_paths[0] != Path("   ")

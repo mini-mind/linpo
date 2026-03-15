@@ -6,14 +6,17 @@ claw_endpoints:
     name: Local Claw 1
     endpoint_ref: openclaw://claw1-local
     inbox_url: http://127.0.0.1:18789/inbox
+    gateway_token: lhdWYU1MGLCWNwbHaQsIjlPkiSt5LKhEh9PjAtElrlE
     enabled: true
   - id: local-claw-2
     name: Local Claw 2
     endpoint_ref: openclaw://claw2-local
     inbox_url: http://127.0.0.1:28789/inbox
+    gateway_token: ZUEg6oLmaH2DEuC3A3mJYe_l-q3yLOqVSLiLsAGfmJQ
     enabled: true
   - id: local-claw-3
     name: Local Claw 3
     endpoint_ref: openclaw://claw3-local
     inbox_url: http://127.0.0.1:38789/inbox
+    gateway_token: OuWJnOh9wo_8wLkIQv262NPc0tgnjo1G4yCMh9v-RAg
     enabled: true

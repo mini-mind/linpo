@@ -101,8 +101,8 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const contentType = response.headers.get('content-type') ?? '';
     if (contentType.includes('application/json')) {
-      const errorPayload = (await response.json()) as { detail?: string };
-      throw new Error(errorPayload.detail ?? `Request failed with status ${response.status}`);
+        const errorPayload = (await response.json()) as { detail?: string };
+        throw new Error(errorPayload.detail ?? `请求失败（状态码 ${response.status}）`);
     }
     throw new Error(await response.text());
   }

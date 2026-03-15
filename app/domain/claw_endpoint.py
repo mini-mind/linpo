@@ -8,3 +8,4 @@ class ClawEndpoint:
     endpoint_ref: str
     enabled: bool
     inbox_url: str | None = None
+    gateway_token: str | None = None
