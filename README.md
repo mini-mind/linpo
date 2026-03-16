@@ -14,8 +14,21 @@
 
 | 文档 | 路径 | 说明 |
 |------|------|------|
-| v0.1 设计草案 | `docs/plans/2026-03-15-linpo-v0.1-observer-design.md` | 当前有效的 Linpo v0.1 observer 设计共识 |
+| v0.1 产品需求 | `docs/prd/2026-03-15-linpo-v0.1-observer-prd.md` | 当前有效的 Linpo v0.1 产品范围与边界 |
+| v0.1 架构边界 | `docs/architecture/2026-03-15-observer-architecture.md` | 当前有效的 observer 架构边界与最小模型 |
+| v0.1 实施计划 | `docs/plans/2026-03-15-linpo-v0.1-observer-implementation-plan.md` | 当前有效的第一阶段实施拆解 |
+| v0.1 设计共识 | `docs/plans/2026-03-15-linpo-v0.1-observer-design.md` | 设计收敛过程记录与共识来源 |
+| v0.1 细化设计 | `docs/plans/2026-03-16-linpo-v0.1-observer-detailed-design.md` | 最小 observer 闭环的细化实现设计 |
+| demo 收敛与数据边界 | `docs/plans/2026-03-16-observer-demo-hardening-and-data-boundary-plan.md` | 稳定 demo、真实数据只读边界与手动联调准备计划 |
+| 公网联调与 OpenClaw 只读接入 | `docs/plans/2026-03-16-public-access-and-openclaw-readonly-plan.md` | 公网访问配置与 OpenClaw 只读接入边界 |
+| demo runbook | `docs/plans/2026-03-16-observer-demo-runbook.md` | 当前 observer 主路径的本地演示与联调检查说明 |
 | 仓库治理 | `AGENTS.md` | 当前项目治理规则 |
+
+## 当前技术原理（极简）
+- 前端不直接连接 OpenClaw，只请求 Linpo 后端的 3 个 observer 只读接口：`/agents`、`/agents/{agent_id}`、`/agents/{agent_id}/nodes/{node_id}`。
+- 后端在选择 `openclaw` 数据源时，会作为只读 WebSocket client 连接 OpenClaw gateway，按 `connect.challenge -> connect -> hello-ok` 完成最小握手。
+- 当前监控数据主要来自 `hello-ok` 内的 `snapshot.health` 与 `snapshot.presence`，然后被映射成 Linpo 的最小 read model：`Agent`、`TopologyNode`、`EventRecord`。
+- OpenClaw 失败时不会静默回退到 stub；会直接返回明确错误，避免把假数据伪装成真实运行状态。
 
 ## 当前原则
 - 先做最小观测入口，再扩张平台能力
