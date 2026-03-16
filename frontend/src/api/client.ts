@@ -19,6 +19,10 @@ function withDefaultDataSource(path: string): string {
   return `${path}${separator}data_source=${DEFAULT_OBSERVER_DATA_SOURCE}`;
 }
 
+export function getDefaultObserverDataSource(): string {
+  return DEFAULT_OBSERVER_DATA_SOURCE;
+}
+
 async function fetchApi<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${withDefaultDataSource(path)}`);
   if (!response.ok) {

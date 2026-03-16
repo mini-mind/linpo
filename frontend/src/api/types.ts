@@ -76,3 +76,186 @@ export interface NodeDetailResponse {
   last_active_started_at: string | null;
   events: EventRecord[];
 }
+
+export type ObserverChannel = 'agents:list' | `agent:${string}:detail`;
+
+export type ObserverRealtimeMessageType =
+  | 'snapshot_ready'
+  | 'agent_summary_updated'
+  | 'topology_updated'
+  | 'node_events_appended'
+  | 'resync_required'
+  | 'error';
+
+export interface RealtimeTopologyNode extends TopologyNode {
+  agent_id: string;
+  last_active_started_at: string | null;
+}
+
+export interface SnapshotReadyPayload {
+  status: 'ok';
+}
+
+export interface AgentSummaryUpdatedPayload {
+  agent: AgentListItem;
+}
+
+export interface TopologyUpdatedPayload {
+  agent_id: string;
+  nodes: RealtimeTopologyNode[];
+}
+
+export interface NodeEventsAppendedPayload {
+  agent_id: string;
+  node_id: string;
+  events: EventRecord[];
+}
+
+export interface ResyncRequiredPayload {
+  reason: string;
+}
+
+export interface ErrorPayload {
+  detail: string;
+}
+
+interface ObserverRealtimeEnvelope<TType extends ObserverRealtimeMessageType, TPayload> {
+  type: TType;
+  channel: ObserverChannel;
+  seq: number;
+  timestamp: string;
+  payload: TPayload;
+}
+
+export type SnapshotReadyMessage = ObserverRealtimeEnvelope<'snapshot_ready', SnapshotReadyPayload>;
+export type AgentSummaryUpdatedMessage = ObserverRealtimeEnvelope<
+  'agent_summary_updated',
+  AgentSummaryUpdatedPayload
+>;
+export type TopologyUpdatedMessage = ObserverRealtimeEnvelope<'topology_updated', TopologyUpdatedPayload>;
+export type NodeEventsAppendedMessage = ObserverRealtimeEnvelope<
+  'node_events_appended',
+  NodeEventsAppendedPayload
+>;
+export type ResyncRequiredMessage = ObserverRealtimeEnvelope<
+  'resync_required',
+  ResyncRequiredPayload
+>;
+export type ErrorMessage = ObserverRealtimeEnvelope<'error', ErrorPayload>;
+
+export type ObserverRealtimeMessage =
+  | SnapshotReadyMessage
+  | AgentSummaryUpdatedMessage
+  | TopologyUpdatedMessage
+  | NodeEventsAppendedMessage
+  | ResyncRequiredMessage
+  | ErrorMessage;
+
+export interface ObserverSubscribeMessage {
+  type: 'subscribe';
+  channel: ObserverChannel;
+  last_seq?: number;
+}
+
+const observerRealtimeTypes: ReadonlySet<ObserverRealtimeMessageType> = new Set([
+  'snapshot_ready',
+  'agent_summary_updated',
+  'topology_updated',
+  'node_events_appended',
+  'resync_required',
+  'error',
+]);
+
+export function buildAgentDetailChannel(agentId: string): `agent:${string}:detail` {
+  if (!agentId) {
+    throw new Error('agentId is required');
+  }
+  return `agent:${agentId}:detail`;
+}
+
+export function isObserverChannel(value: string): value is ObserverChannel {
+  if (value === 'agents:list') {
+    return true;
+  }
+  if (!value.startsWith('agent:') || !value.endsWith(':detail')) {
+    return false;
+  }
+  const agentId = value.slice('agent:'.length, -':detail'.length);
+  return agentId.length > 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isObserverRealtimeMessageType(value: unknown): value is ObserverRealtimeMessageType {
+  return typeof value === 'string' && observerRealtimeTypes.has(value as ObserverRealtimeMessageType);
+}
+
+function isPayloadCompatible(
+  type: ObserverRealtimeMessageType,
+  payload: unknown
+): payload is ObserverRealtimeMessage['payload'] {
+  if (!isRecord(payload)) {
+    return false;
+  }
+
+  if (type === 'snapshot_ready') {
+    return payload.status === 'ok';
+  }
+  if (type === 'agent_summary_updated') {
+    return isRecord(payload.agent);
+  }
+  if (type === 'topology_updated') {
+    return typeof payload.agent_id === 'string' && Array.isArray(payload.nodes);
+  }
+  if (type === 'node_events_appended') {
+    return (
+      typeof payload.agent_id === 'string' &&
+      typeof payload.node_id === 'string' &&
+      Array.isArray(payload.events)
+    );
+  }
+  if (type === 'resync_required') {
+    return typeof payload.reason === 'string';
+  }
+  return typeof payload.detail === 'string';
+}
+
+export function parseObserverRealtimeMessage(raw: string): ObserverRealtimeMessage {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('Invalid observer realtime message: malformed JSON');
+  }
+
+  if (!isRecord(parsed)) {
+    throw new Error('Invalid observer realtime message');
+  }
+
+  const { type, channel, seq, timestamp, payload } = parsed;
+  if (!isObserverRealtimeMessageType(type)) {
+    throw new Error('Invalid observer realtime message');
+  }
+  if (typeof channel !== 'string' || !isObserverChannel(channel)) {
+    throw new Error('Invalid observer realtime message');
+  }
+  if (typeof seq !== 'number' || !Number.isInteger(seq) || seq < 0) {
+    throw new Error('Invalid observer realtime message');
+  }
+  if (typeof timestamp !== 'string') {
+    throw new Error('Invalid observer realtime message');
+  }
+  if (!isPayloadCompatible(type, payload)) {
+    throw new Error('Invalid observer realtime message');
+  }
+
+  return {
+    type,
+    channel,
+    seq,
+    timestamp,
+    payload,
+  } as ObserverRealtimeMessage;
+}
