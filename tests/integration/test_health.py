@@ -1,29 +1,29 @@
-from app.main import app
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
+import json
 from typing import cast
 
+from fastapi import FastAPI
 
-def test_app_boots_with_testclient() -> None:
+from ._asgi import request
+from app.main import app
+
+
+def test_app_boots_with_asgi_request() -> None:
     assert isinstance(app, FastAPI), "expected app.main.app to be a FastAPI instance"
-    with TestClient(app):
-        pass
+    status_code, _, _ = request("GET", "/health")
+    assert status_code == 200
 
 
 def test_health_endpoint_returns_ok() -> None:
-    client = TestClient(app)
+    status_code, _, body = request("GET", "/health")
 
-    response = client.get("/health")
-
-    assert response.status_code == 200
-    payload = cast(object, response.json())
+    assert status_code == 200
+    payload = cast(object, json.loads(body.decode("utf-8")))
     assert payload == {"status": "ok"}
 
 
 def test_health_endpoint_allows_local_vite_origin_for_preflight() -> None:
-    client = TestClient(app)
-
-    response = client.options(
+    status_code, headers, _ = request(
+        "OPTIONS",
         "/health",
         headers={
             "Origin": "http://127.0.0.1:5173",
@@ -31,5 +31,48 @@ def test_health_endpoint_allows_local_vite_origin_for_preflight() -> None:
         },
     )
 
-    assert response.status_code == 200
-    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
+    assert status_code == 200
+    assert headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
+
+
+def test_health_endpoint_allows_alternate_local_vite_origin_for_preflight() -> None:
+    status_code, headers, _ = request(
+        "OPTIONS",
+        "/health",
+        headers={
+            "Origin": "http://127.0.0.1:4173",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert status_code == 200
+    assert headers["access-control-allow-origin"] == "http://127.0.0.1:4173"
+
+
+def test_health_endpoint_allows_configured_public_origin_for_preflight() -> None:
+    status_code, headers, _ = request(
+        "OPTIONS",
+        "/health",
+        headers={
+            "Origin": "http://175.178.213.10:5173",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert status_code == 200
+    assert headers["access-control-allow-origin"] == "http://175.178.213.10:5173"
+
+
+def test_legacy_demo_routes_are_not_exposed() -> None:
+    legacy_paths = (
+        "/sessions",
+        "/debates",
+        "/claw-endpoints",
+        "/echo",
+        "/conversations",
+        "/test",
+    )
+
+    for path in legacy_paths:
+        status_code, _, _ = request("GET", path)
+        assert status_code == 404
