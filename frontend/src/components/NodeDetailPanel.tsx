@@ -1,7 +1,16 @@
 import { useEffect, useState } from 'react';
 import type React from 'react';
-import { getNodeDetail } from '../api/client';
-import type { EventRecord, NodeDetailResponse } from '../api/types';
+import { getDefaultObserverDataSource, getNodeDetail } from '../api/client';
+import {
+  createObserverRealtimeClient,
+  type ObserverRealtimeClient,
+  type ObserverRealtimeClientOptions,
+} from '../api/realtimeClient';
+import {
+  buildAgentDetailChannel,
+  type EventRecord,
+  type NodeDetailResponse,
+} from '../api/types';
 import {
   activeIndicatorStyle,
   getStatusBadgeStyle,
@@ -12,6 +21,116 @@ interface NodeDetailPanelProps {
   agentId: string;
   nodeId: string;
   onClose: () => void;
+}
+
+type NodeDetailUpdate =
+  | NodeDetailResponse
+  | null
+  | ((previous: NodeDetailResponse | null) => NodeDetailResponse | null);
+
+interface StartNodeDetailRealtimeOptions {
+  agentId: string;
+  nodeId: string;
+  getNodeDetailFn: (agentId: string, nodeId: string) => Promise<NodeDetailResponse>;
+  createRealtimeClientFn: (options: ObserverRealtimeClientOptions) => ObserverRealtimeClient;
+  applyNode: (update: NodeDetailUpdate) => void;
+  setRealtimeError?: (message: string | null) => void;
+}
+
+const NODE_DETAIL_REALTIME_DATA_SOURCE = getDefaultObserverDataSource();
+
+function withErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+export async function startNodeDetailRealtime(
+  options: StartNodeDetailRealtimeOptions
+): Promise<{ close: () => void } | null> {
+  const snapshot = await options.getNodeDetailFn(options.agentId, options.nodeId);
+  options.applyNode(snapshot);
+
+  const runResync = async (): Promise<void> => {
+    try {
+      const refreshed = await options.getNodeDetailFn(options.agentId, options.nodeId);
+      options.applyNode(refreshed);
+      options.setRealtimeError?.(null);
+    } catch (error) {
+      options.setRealtimeError?.(withErrorMessage(error, 'Failed to resync node detail'));
+    }
+  };
+
+  try {
+    const realtimeClient = options.createRealtimeClientFn({
+      dataSource: NODE_DETAIL_REALTIME_DATA_SOURCE,
+      channel: buildAgentDetailChannel(options.agentId),
+      onMessage: (message) => {
+        if (
+          message.type === 'node_events_appended'
+          && message.payload.agent_id === options.agentId
+          && message.payload.node_id === options.nodeId
+        ) {
+          options.applyNode((previous) => {
+            if (!previous || previous.id !== options.nodeId) {
+              return previous;
+            }
+
+            const nextEvents = message.payload.events.filter(
+              (event) => event.node_id === options.nodeId
+            );
+            if (nextEvents.length === 0) {
+              return previous;
+            }
+
+            return {
+              ...previous,
+              events: [...previous.events, ...nextEvents],
+            };
+          });
+          return;
+        }
+
+        if (message.type === 'topology_updated' && message.payload.agent_id === options.agentId) {
+          const targetNode = message.payload.nodes.find((node) => node.id === options.nodeId);
+          if (!targetNode) {
+            return;
+          }
+
+          options.applyNode((previous) => {
+            if (!previous || previous.id !== options.nodeId) {
+              return previous;
+            }
+
+            return {
+              ...previous,
+              status: targetNode.status,
+              is_active: targetNode.is_active,
+              last_active_started_at: targetNode.last_active_started_at,
+            };
+          });
+          return;
+        }
+
+        if (message.type === 'error') {
+          options.setRealtimeError?.(message.payload.detail);
+        }
+      },
+      onResyncRequired: () => {
+        void runResync();
+      },
+      onParseError: (_raw, error) => {
+        options.setRealtimeError?.(withErrorMessage(error, 'Failed to parse realtime message'));
+      },
+      onDisconnected: () => {
+        options.setRealtimeError?.('Realtime connection closed unexpectedly');
+      },
+    });
+
+    realtimeClient.connect();
+    return realtimeClient;
+  } catch (error) {
+    options.setRealtimeError?.(withErrorMessage(error, 'Failed to connect realtime channel'));
+    return null;
+  }
 }
 
 /**
@@ -44,12 +163,34 @@ export function NodeDetailPanel({
     setNode(null);
 
     let cancelled = false;
+    let realtimeHandle: { close: () => void } | null = null;
 
-    async function fetchNode() {
+    async function loadSnapshotAndSubscribe() {
       try {
-        const data = await getNodeDetail(agentId, nodeId);
+        const handle = await startNodeDetailRealtime({
+          agentId,
+          nodeId,
+          getNodeDetailFn: getNodeDetail,
+          createRealtimeClientFn: createObserverRealtimeClient,
+          applyNode: (update) => {
+            if (cancelled) {
+              return;
+            }
+            setNode((previousNode) =>
+              typeof update === 'function' ? update(previousNode) : update
+            );
+          },
+          setRealtimeError: (message) => {
+            if (!cancelled) {
+              setError(message);
+            }
+          },
+        });
+
         if (!cancelled) {
-          setNode(data);
+          realtimeHandle = handle;
+        } else {
+          handle?.close();
         }
       } catch (err) {
         if (!cancelled) {
@@ -62,10 +203,11 @@ export function NodeDetailPanel({
       }
     }
 
-    fetchNode();
+    void loadSnapshotAndSubscribe();
 
     return () => {
       cancelled = true;
+      realtimeHandle?.close();
     };
   }, [agentId, nodeId]);
 
