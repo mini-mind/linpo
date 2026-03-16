@@ -1,13 +1,139 @@
 import { useEffect, useState } from 'react';
 import type React from 'react';
 import { Link } from 'react-router-dom';
-import { listAgents } from '../api/client';
+import { getDefaultObserverDataSource, listAgents } from '../api/client';
+import {
+  createObserverRealtimeClient,
+  type ObserverRealtimeClient,
+  type ObserverRealtimeClientOptions,
+} from '../api/realtimeClient';
 import type { AgentListItem } from '../api/types';
 import {
   activeIndicatorStyle,
   getStatusBadgeStyle,
   inactiveIndicatorStyle,
 } from '../utils/statusStyles';
+
+type RealtimeStatus = 'realtime' | 'reconnecting' | 'resyncing' | 'disconnected' | 'error';
+
+interface RealtimeState {
+  status: RealtimeStatus;
+  message: string | null;
+}
+
+type AgentsUpdate = AgentListItem[] | ((previous: AgentListItem[]) => AgentListItem[]);
+
+interface StartAgentsListRealtimeOptions {
+  listAgentsFn: () => Promise<AgentListItem[]>;
+  createRealtimeClientFn: (options: ObserverRealtimeClientOptions) => ObserverRealtimeClient;
+  applyAgents: (update: AgentsUpdate) => void;
+  setRealtimeState: (state: RealtimeState) => void;
+}
+
+const AGENTS_LIST_REALTIME_DATA_SOURCE = getDefaultObserverDataSource();
+
+function withErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function mergeAgentSummary(
+  previousAgents: AgentListItem[],
+  updatedAgent: AgentListItem
+): AgentListItem[] {
+  const targetIndex = previousAgents.findIndex((agent) => agent.id === updatedAgent.id);
+  if (targetIndex < 0) {
+    return [...previousAgents, updatedAgent];
+  }
+
+  return previousAgents.map((agent, index) => (index === targetIndex ? updatedAgent : agent));
+}
+
+export async function startAgentsListRealtime(
+  options: StartAgentsListRealtimeOptions
+): Promise<{ close: () => void } | null> {
+  const snapshot = await options.listAgentsFn();
+  options.applyAgents(snapshot);
+  options.setRealtimeState({ status: 'reconnecting', message: null });
+
+  const runResync = async (): Promise<void> => {
+    options.setRealtimeState({ status: 'resyncing', message: null });
+    try {
+      const refreshed = await options.listAgentsFn();
+      options.applyAgents(refreshed);
+      options.setRealtimeState({ status: 'realtime', message: null });
+    } catch (error) {
+      options.setRealtimeState({
+        status: 'error',
+        message: withErrorMessage(error, 'Failed to resync agents list'),
+      });
+    }
+  };
+
+  try {
+    const realtimeClient = options.createRealtimeClientFn({
+      dataSource: AGENTS_LIST_REALTIME_DATA_SOURCE,
+      channel: 'agents:list',
+      onMessage: (message) => {
+        if (message.type === 'snapshot_ready') {
+          options.setRealtimeState({ status: 'realtime', message: null });
+          return;
+        }
+
+        if (message.type === 'agent_summary_updated') {
+          options.applyAgents((previousAgents) =>
+            mergeAgentSummary(previousAgents, message.payload.agent)
+          );
+          options.setRealtimeState({ status: 'realtime', message: null });
+          return;
+        }
+
+        if (message.type === 'error') {
+          options.setRealtimeState({ status: 'error', message: message.payload.detail });
+        }
+      },
+      onResyncRequired: () => {
+        void runResync();
+      },
+      onParseError: (_raw, error) => {
+        options.setRealtimeState({
+          status: 'error',
+          message: withErrorMessage(error, 'Failed to parse realtime message'),
+        });
+      },
+      onDisconnected: () => {
+        options.setRealtimeState({
+          status: 'disconnected',
+          message: 'Realtime connection closed unexpectedly',
+        });
+      },
+    });
+
+    realtimeClient.connect();
+    return realtimeClient;
+  } catch (error) {
+    options.setRealtimeState({
+      status: 'error',
+      message: withErrorMessage(error, 'Failed to connect realtime channel'),
+    });
+    return null;
+  }
+}
+
+function formatRealtimeStatus(status: RealtimeStatus): string {
+  if (status === 'realtime') {
+    return 'realtime';
+  }
+  if (status === 'reconnecting') {
+    return 'reconnecting';
+  }
+  if (status === 'resyncing') {
+    return 'resyncing';
+  }
+  if (status === 'disconnected') {
+    return 'disconnected';
+  }
+  return 'error';
+}
 
 /**
  * AgentsList page - v0.1 observer minimal implementation
@@ -24,19 +150,45 @@ export function AgentsList(): JSX.Element {
   const [agents, setAgents] = useState<AgentListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [realtimeState, setRealtimeState] = useState<RealtimeState>({
+    status: 'reconnecting',
+    message: null,
+  });
 
   useEffect(() => {
     let cancelled = false;
+    let realtimeHandle: { close: () => void } | null = null;
 
-    async function fetchAgents() {
+    async function loadSnapshotAndSubscribe() {
       try {
-        const data = await listAgents();
+        const handle = await startAgentsListRealtime({
+          listAgentsFn: listAgents,
+          createRealtimeClientFn: createObserverRealtimeClient,
+          applyAgents: (update) => {
+            if (cancelled) {
+              return;
+            }
+            setAgents((previousAgents) =>
+              typeof update === 'function' ? update(previousAgents) : update
+            );
+          },
+          setRealtimeState: (state) => {
+            if (!cancelled) {
+              setRealtimeState(state);
+            }
+          },
+        });
+
         if (!cancelled) {
-          setAgents(data);
+          realtimeHandle = handle;
+        } else {
+          handle?.close();
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to fetch agents');
+          const message = withErrorMessage(err, 'Failed to fetch agents');
+          setError(message);
+          setRealtimeState({ status: 'error', message });
         }
       } finally {
         if (!cancelled) {
@@ -45,10 +197,11 @@ export function AgentsList(): JSX.Element {
       }
     }
 
-    fetchAgents();
+    void loadSnapshotAndSubscribe();
 
     return () => {
       cancelled = true;
+      realtimeHandle?.close();
     };
   }, []);
 
@@ -78,6 +231,10 @@ export function AgentsList(): JSX.Element {
         <header style={headerStyle}>
           <h1 style={titleStyle}>Agents</h1>
           <p style={subtitleStyle}>Select an agent to view its topology</p>
+          <p style={metaStyle}>
+            Realtime ({AGENTS_LIST_REALTIME_DATA_SOURCE}): {formatRealtimeStatus(realtimeState.status)}
+            {realtimeState.message ? ` - ${realtimeState.message}` : ''}
+          </p>
         </header>
 
         <div style={listContainerStyle}>
@@ -157,6 +314,12 @@ const subtitleStyle: React.CSSProperties = {
   fontSize: '0.875rem',
   color: '#6b7280',
   margin: 0,
+};
+
+const metaStyle: React.CSSProperties = {
+  fontSize: '0.8125rem',
+  color: '#4b5563',
+  margin: '0.5rem 0 0 0',
 };
 
 const listContainerStyle: React.CSSProperties = {
