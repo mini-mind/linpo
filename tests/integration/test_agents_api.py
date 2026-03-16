@@ -265,3 +265,129 @@ def test_openclaw_presence_noise_is_filtered_from_node_events(monkeypatch: Any) 
     assert 'Node: linpo-observer · mode webchat' not in descriptions
 
 
+def test_http_routes_read_updated_snapshots_from_event_driven_state(monkeypatch: Any) -> None:
+    import app.services.observer_data as observer_data
+    from app.domain.agent import Agent, AgentStatus
+    from app.domain.event import EventRecord, EventType
+    from app.domain.node import TopologyNode
+
+    source = observer_data.StubObserverDataSource()
+    apply_event = getattr(source, 'apply_event', None)
+    event_cls = getattr(observer_data, 'ObserverRealtimeEvent', None)
+
+    assert callable(apply_event), 'StubObserverDataSource should expose apply_event'
+    assert event_cls is not None, 'ObserverRealtimeEvent should exist'
+
+    monkeypatch.setattr(observer_data, '_DATA_SOURCE', source)
+
+    updated_agent = Agent(
+        id='agent-root-observer',
+        name='Root Observer Agent',
+        status=AgentStatus.RUNNING,
+        is_active=True,
+        last_active_at='2026-03-16T09:10:00Z',
+        root_node_id='node-root-observer',
+    )
+    updated_root_node = TopologyNode(
+        id='node-root-observer',
+        agent_id='agent-root-observer',
+        name='Root Observer Agent',
+        status=AgentStatus.RUNNING,
+        is_active=True,
+        child_count=0,
+        parent_id=None,
+        last_active_started_at='2026-03-16T09:10:00Z',
+    )
+    updated_event = EventRecord(
+        id='event-node-root-observer-task-finished',
+        node_id='node-root-observer',
+        type=EventType.TASK_FINISHED,
+        timestamp='2026-03-16T09:11:00Z',
+        description='Root Observer Agent finished a realtime refresh.',
+    )
+
+    apply_event(event_cls(type='agent_summary_updated', agent=updated_agent))
+    apply_event(
+        event_cls(
+            type='topology_updated',
+            agent_id=updated_agent.id,
+            nodes=[updated_root_node],
+        )
+    )
+    apply_event(
+        event_cls(
+            type='node_events_appended',
+            agent_id=updated_agent.id,
+            node_id=updated_root_node.id,
+            events=[updated_event],
+        )
+    )
+
+    list_status, _, list_body = request('GET', '/agents')
+    assert list_status == 200
+    list_payload = cast(list[dict[str, Any]], json.loads(list_body.decode('utf-8')))
+    assert list_payload[0] == {
+        'id': 'agent-root-observer',
+        'name': 'Root Observer Agent',
+        'status': 'running',
+        'is_active': True,
+        'last_active_at': '2026-03-16T09:10:00Z',
+    }
+
+    detail_status, _, detail_body = request('GET', '/agents/agent-root-observer')
+    assert detail_status == 200
+    detail_payload = cast(dict[str, Any], json.loads(detail_body.decode('utf-8')))
+    assert detail_payload == {
+        'id': 'agent-root-observer',
+        'name': 'Root Observer Agent',
+        'status': 'running',
+        'is_active': True,
+        'root_node_id': 'node-root-observer',
+        'root_child_count': 0,
+        'total_node_count': 1,
+        'last_active_at': '2026-03-16T09:10:00Z',
+        'nodes': [
+            {
+                'id': 'node-root-observer',
+                'name': 'Root Observer Agent',
+                'status': 'running',
+                'is_active': True,
+                'child_count': 0,
+                'parent_id': None,
+            }
+        ],
+    }
+
+    node_status, _, node_body = request('GET', '/agents/agent-root-observer/nodes/node-root-observer')
+    assert node_status == 200
+    node_payload = cast(dict[str, Any], json.loads(node_body.decode('utf-8')))
+    assert node_payload == {
+        'id': 'node-root-observer',
+        'name': 'Root Observer Agent',
+        'status': 'running',
+        'is_active': True,
+        'last_active_started_at': '2026-03-16T09:10:00Z',
+        'events': [
+            {
+                'id': 'event-node-root-created',
+                'node_id': 'node-root-observer',
+                'type': 'agent_created',
+                'timestamp': '2026-03-16T08:30:00Z',
+                'description': 'Root Observer Agent was created for observer monitoring.',
+            },
+            {
+                'id': 'event-node-root-activity-started',
+                'node_id': 'node-root-observer',
+                'type': 'activity_started',
+                'timestamp': '2026-03-16T08:30:00Z',
+                'description': 'Root Observer Agent started coordinating subagents.',
+            },
+            {
+                'id': 'event-node-root-observer-task-finished',
+                'node_id': 'node-root-observer',
+                'type': 'task_finished',
+                'timestamp': '2026-03-16T09:11:00Z',
+                'description': 'Root Observer Agent finished a realtime refresh.',
+            }
+        ],
+    }

@@ -95,6 +95,6 @@ def get_node_detail(
                 timestamp=event.timestamp,
                 description=event.description,
             )
-            for event in data_source_impl.list_events(node.id)
+            for event in data_source_impl.list_events(agent_id, node.id)
         ],
     )
