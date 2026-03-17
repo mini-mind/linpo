@@ -55,7 +55,6 @@ class OpenClawClient:
         session_key: str,
         action: AgentControlAction,
         request_id: str | None = None,
-        message: str | None = None,
     ) -> dict[str, Any]:
         resolved_request_id = request_id or self._next_control_request_id()
         return self._run_sync(
@@ -63,7 +62,6 @@ class OpenClawClient:
                 session_key=session_key,
                 action=action,
                 request_id=resolved_request_id,
-                message=message,
             )
         )
 
@@ -176,15 +174,12 @@ class OpenClawClient:
         session_key: str,
         action: AgentControlAction,
         request_id: str,
-        message: str | None = None,
     ) -> dict[str, Any]:
         request = self._build_control_request(
             session_key=session_key,
             action=action,
             request_id=request_id,
-            message=message,
         )
-
 
         try:
             async with websockets.connect(cast(str, self._base_url), origin=cast(Origin, self._origin)) as ws:
@@ -203,7 +198,28 @@ class OpenClawClient:
             raise
         except HTTPException:
             raise
-        except Exception as exc:  # pragma: no cover - exercised via integration tests
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"OpenClaw operator control failed: {exc}") from exc
+
+    async def _send_control_request(self, request: dict[str, Any]) -> dict[str, Any]:
+        try:
+            async with websockets.connect(cast(str, self._base_url), origin=cast(Origin, self._origin)) as ws:
+                await self._perform_handshake(
+                    ws,
+                    client_id="openclaw-control-ui",
+                    display_name="linpo-operator",
+                    mode="webchat",
+                    role="operator",
+                    scopes=["operator.admin", "operator.approvals", "operator.pairing"],
+                    device=None,
+                )
+                await ws.send(json.dumps(request))
+                return await self._expect_control_response_by_id(ws, expected_id=request["id"])
+        except TimeoutError:
+            raise
+        except HTTPException:
+            raise
+        except Exception as exc:
             raise HTTPException(status_code=503, detail=f"OpenClaw operator control failed: {exc}") from exc
 
     async def _perform_handshake(
@@ -335,7 +351,6 @@ class OpenClawClient:
         session_key: str,
         action: AgentControlAction,
         request_id: str,
-        message: str | None = None,
     ) -> dict[str, Any]:
         if action == AgentControlAction.PAUSE:
             return {
@@ -347,72 +362,83 @@ class OpenClawClient:
                 },
             }
 
-        if action == AgentControlAction.SEND_MESSAGE:
-            return {
-                "type": "req",
-                "id": request_id,
-                "method": "chat.send",
-                "params": {
-                    "sessionKey": session_key,
-                    "idempotencyKey": request_id,
-                    "message": message or "",
-                },
-            }
+        raise ValueError(f"Unsupported control action: {action.value}")
 
-        raise ValueError(f"Unsupported control action for OpenClaw v0.3: {action.value}")
+    def _build_chat_send_request(
+        self,
+        *,
+        session_key: str,
+        request_id: str,
+        message: str,
+    ) -> dict[str, Any]:
+        return {
+            "type": "req",
+            "id": request_id,
+            "method": "chat.send",
+            "params": {
+                "sessionKey": session_key,
+                "idempotencyKey": request_id,
+                "message": message,
+            },
+        }
+
+    def _send_chat_send(
+        self,
+        *,
+        session_key: str,
+        request_id: str,
+        message: str,
+    ) -> dict[str, Any]:
+        request = self._build_chat_send_request(
+            session_key=session_key,
+            request_id=request_id,
+            message=message,
+        )
+        return self._run_sync(self._send_control_request(request))
 
     def _next_control_request_id(self) -> str:
         return f"control-{uuid4().hex[:12]}"
 
 
-class OpenClawOperatorService:
-    _SUPPORTED_ACTIONS = {
-        AgentControlAction.PAUSE,
-        AgentControlAction.RESUME,
-        AgentControlAction.SEND_MESSAGE,
-    }
+@dataclass(frozen=True)
+class ChatSendResult:
+    request_id: str
+    agent_id: str
+    status: str
+    message: str | None = None
 
+
+@dataclass(frozen=True)
+class ChatAbortResult:
+    request_id: str
+    agent_id: str
+    aborted: bool
+    run_ids: list[str]
+    message: str | None = None
+    correlation_hint: str | None = None
+
+
+class OpenClawOperatorService:
     def __init__(self, client: OpenClawClient | None = None) -> None:
         self._client = client or OpenClawClient()
 
-    def send_action(
-        self,
-        *,
-        agent_id: str,
-        action: AgentControlAction,
-    ) -> AgentControlResult:
-        if action not in self._SUPPORTED_ACTIONS:
-            raise HTTPException(status_code=400, detail=f"Unsupported control action: {action.value}")
-
+    def chat_abort(self, *, agent_id: str) -> ChatAbortResult:
         request_id = self._client.next_control_request_id()
-
-        if action == AgentControlAction.RESUME:
-            return AgentControlResult(
-                request_id=request_id,
-                agent_id=agent_id,
-                action=action,
-                status=AgentControlStatus.FAILED,
-            )
-
-        if action == AgentControlAction.SEND_MESSAGE:
-            raise HTTPException(
-                status_code=400,
-                detail="SEND_MESSAGE requires message parameter, use send_message method",
-            )
 
         try:
             session_key = self._client.resolve_agent_session_key(agent_id)
             result = self._client.send_operator_action(
                 session_key=session_key,
-                action=action,
+                action=AgentControlAction.PAUSE,
                 request_id=request_id,
             )
         except TimeoutError:
-            return AgentControlResult(
+            return ChatAbortResult(
                 request_id=request_id,
                 agent_id=agent_id,
-                action=action,
-                status=AgentControlStatus.TIMEOUT,
+                aborted=False,
+                run_ids=[],
+                message="Timeout",
             )
 
         response_request_id = result.get("id")
@@ -420,39 +446,100 @@ class OpenClawOperatorService:
             response_request_id = request_id
 
         if result.get("ok") is not True:
-            return AgentControlResult(
+            return ChatAbortResult(
                 request_id=response_request_id,
                 agent_id=agent_id,
-                action=action,
-                status=AgentControlStatus.FAILED,
+                aborted=False,
+                run_ids=[],
             )
 
         payload = result.get("payload")
         if not isinstance(payload, dict):
-            return AgentControlResult(
+            return ChatAbortResult(
                 request_id=response_request_id,
                 agent_id=agent_id,
-                action=action,
-                status=AgentControlStatus.FAILED,
-                message="OpenClaw pause response missing payload",
+                aborted=False,
+                run_ids=[],
+                message="Response missing payload",
             )
 
         aborted = payload.get("aborted")
         run_ids = payload.get("runIds")
-        if aborted is not True or not isinstance(run_ids, list) or len(run_ids) == 0:
-            return AgentControlResult(
+        if aborted is not True or not isinstance(run_ids, list):
+            return ChatAbortResult(
                 request_id=response_request_id,
                 agent_id=agent_id,
-                action=action,
-                status=AgentControlStatus.FAILED,
-                message="OpenClaw pause was not applied",
+                aborted=False,
+                run_ids=[],
+                message="Abort not applied",
             )
 
-        return AgentControlResult(
+        return ChatAbortResult(
             request_id=response_request_id,
             agent_id=agent_id,
+            aborted=True,
+            run_ids=[str(rid) for rid in run_ids],
+        )
+
+    def chat_send(self, *, agent_id: str, message: str) -> ChatSendResult:
+        request_id = self._client.next_control_request_id()
+
+        try:
+            session_key = self._client.resolve_agent_session_key(agent_id)
+            result = self._client._send_chat_send(
+                session_key=session_key,
+                request_id=request_id,
+                message=message,
+            )
+        except TimeoutError:
+            return ChatSendResult(
+                request_id=request_id,
+                agent_id=agent_id,
+                status="timeout",
+                message="Timeout",
+            )
+        except Exception as exc:
+            return ChatSendResult(
+                request_id=request_id,
+                agent_id=agent_id,
+                status="failed",
+                message=str(exc),
+            )
+
+        response_request_id = result.get("id")
+        if not isinstance(response_request_id, str):
+            response_request_id = request_id
+
+        if result.get("ok") is not True:
+            return ChatSendResult(
+                request_id=response_request_id,
+                agent_id=agent_id,
+                status="failed",
+            )
+
+        return ChatSendResult(
+            request_id=response_request_id,
+            agent_id=agent_id,
+            status="accepted",
+        )
+
+    def send_action(
+        self,
+        *,
+        agent_id: str,
+        action: AgentControlAction,
+    ) -> AgentControlResult:
+        if action != AgentControlAction.PAUSE:
+            raise HTTPException(status_code=400, detail=f"Unsupported control action: {action.value}")
+
+        result = self.chat_abort(agent_id=agent_id)
+        return AgentControlResult(
+            request_id=result.request_id,
+            agent_id=result.agent_id,
             action=action,
-            status=AgentControlStatus.ACCEPTED,
+            status=AgentControlStatus.ACCEPTED if result.aborted else AgentControlStatus.FAILED,
+            message=result.message,
+            correlation_hint=result.correlation_hint,
         )
 
     def send_message(
@@ -461,46 +548,11 @@ class OpenClawOperatorService:
         agent_id: str,
         message: str,
     ) -> AgentControlResult:
-        request_id = self._client.next_control_request_id()
-
-        try:
-            session_key = self._client.resolve_agent_session_key(agent_id)
-            result = self._client.send_operator_action(
-                session_key=session_key,
-                action=AgentControlAction.SEND_MESSAGE,
-                request_id=request_id,
-                message=message,
-            )
-        except TimeoutError:
-            return AgentControlResult(
-                request_id=request_id,
-                agent_id=agent_id,
-                action=AgentControlAction.SEND_MESSAGE,
-                status=AgentControlStatus.TIMEOUT,
-            )
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(
-                status_code=503,
-                detail=f"OpenClaw send message failed: {exc}",
-            )
-
-        response_request_id = result.get("id")
-        if not isinstance(response_request_id, str):
-            response_request_id = request_id
-
-        if result.get("ok") is not True:
-            return AgentControlResult(
-                request_id=response_request_id,
-                agent_id=agent_id,
-                action=AgentControlAction.SEND_MESSAGE,
-                status=AgentControlStatus.FAILED,
-            )
-
+        result = self.chat_send(agent_id=agent_id, message=message)
         return AgentControlResult(
-            request_id=response_request_id,
-            agent_id=agent_id,
-            action=AgentControlAction.SEND_MESSAGE,
-            status=AgentControlStatus.ACCEPTED,
+            request_id=result.request_id,
+            agent_id=result.agent_id,
+            action=AgentControlAction.PAUSE,
+            status=AgentControlStatus.ACCEPTED if result.status == "accepted" else AgentControlStatus.FAILED,
+            message=result.message,
         )

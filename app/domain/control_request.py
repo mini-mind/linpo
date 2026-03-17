@@ -13,8 +13,6 @@ class ControlRequestStatus(str, Enum):
 
 class AgentControlAction(str, Enum):
     PAUSE = "pause"
-    RESUME = "resume"
-    SEND_MESSAGE = "send_message"
 
 
 class AgentControlStatus(str, Enum):

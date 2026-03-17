@@ -5,7 +5,7 @@
 
 export type AgentStatus = 'idle' | 'running' | 'finished' | 'error';
 
-export type ControlAction = 'pause' | 'resume' | 'send_message';
+export type ControlAction = 'pause';
 
 export type ControlRequestStatus = 'sending' | 'accepted' | 'applied' | 'failed' | 'timeout';
 
@@ -90,27 +90,6 @@ export interface ControlRequest {
   action: ControlAction;
   status: ControlRequestStatus;
   correlation_hint?: string;
-}
-
-/**
- * Control request response - POST /agents/{agent_id}/control
- */
-export interface ControlRequestResponse {
-  request_id: string;
-  status: 'accepted' | 'failed' | 'timeout';
-  message?: string;
-  correlation_hint?: string;
-}
-
-export interface SendMessageRequest {
-  message: string;
-}
-
-export interface SendMessageResponse {
-  request_id: string;
-  agent_id: string;
-  status: 'accepted' | 'failed' | 'timeout';
-  message?: string;
 }
 
 export type ObserverChannel = 'agents:list' | `agent:${string}:detail`;

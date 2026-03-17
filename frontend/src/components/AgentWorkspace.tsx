@@ -219,21 +219,10 @@ export function AgentWorkspace(): JSX.Element {
     if (!agentId) return;
     setControlRequest({ requestId: null, status: 'sending', action: 'pause' });
     try {
-      const response = await sendControlRequest(agentId, 'pause');
-      setControlRequest({ requestId: response.request_id, status: response.status === 'accepted' ? 'accepted' : 'failed', action: 'pause' });
+      const response = await sendControlRequest(agentId);
+      setControlRequest({ requestId: response.request_id, status: response.aborted ? 'accepted' : 'failed', action: 'pause' });
     } catch {
       setControlRequest({ requestId: null, status: 'failed', action: 'pause' });
-    }
-  };
-
-  const handleResume = async (): Promise<void> => {
-    if (!agentId) return;
-    setControlRequest({ requestId: null, status: 'sending', action: 'resume' });
-    try {
-      const response = await sendControlRequest(agentId, 'resume');
-      setControlRequest({ requestId: response.request_id, status: response.status === 'accepted' ? 'accepted' : 'failed', action: 'resume' });
-    } catch {
-      setControlRequest({ requestId: null, status: 'failed', action: 'resume' });
     }
   };
 
@@ -404,13 +393,9 @@ export function AgentWorkspace(): JSX.Element {
                   {sendMessageStatus === 'failed' && (
                     <span style={failedBadgeStyle}>发送失败</span>
                   )}
-                  {agent.status === 'running' ? (
+                  {agent.status === 'running' && (
                     <button type="button" style={isPending ? getDisabledButtonStyle(isMobile) : dangerButtonStyle} onClick={handlePause} disabled={isPending}>
                       {isPending && controlRequest.status === 'sending' ? '暂停中...' : '暂停'}
-                    </button>
-                  ) : (
-                    <button type="button" style={isPending ? getDisabledButtonStyle(isMobile) : successButtonStyle} onClick={handleResume} disabled={isPending}>
-                      {isPending && controlRequest.status === 'sending' ? '恢复中...' : '恢复'}
                     </button>
                   )}
                   {controlRequest.status && controlRequest.status !== 'sending' && (

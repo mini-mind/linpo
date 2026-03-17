@@ -1,7 +1,6 @@
 from pydantic import BaseModel
 
 from app.domain.agent import AgentStatus
-from app.domain.control_request import AgentControlAction, AgentControlStatus
 from app.domain.event import EventType
 
 
@@ -49,23 +48,3 @@ class NodeDetailResponse(BaseModel):
     is_active: bool
     last_active_started_at: str | None
     events: list[EventRecordItem]
-
-
-class AgentControlResponse(BaseModel):
-    request_id: str
-    agent_id: str
-    action: AgentControlAction
-    status: AgentControlStatus
-    message: str | None = None
-    correlation_hint: str | None = None
-
-
-class SendMessageRequest(BaseModel):
-    message: str
-
-
-class SendMessageResponse(BaseModel):
-    request_id: str
-    agent_id: str
-    status: AgentControlStatus
-    message: str | None = None
