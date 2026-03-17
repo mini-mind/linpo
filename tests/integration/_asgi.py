@@ -12,14 +12,16 @@ def request(
     method: str,
     path: str,
     headers: dict[str, str] | None = None,
+    body: bytes | None = None,
 ) -> tuple[int, dict[str, str], bytes]:
-    return asyncio.run(_request(method, path, headers=headers))
+    return asyncio.run(_request(method, path, headers=headers, body=body))
 
 
 async def _request(
     method: str,
     path: str,
     headers: dict[str, str] | None = None,
+    body: bytes | None = None,
 ) -> tuple[int, dict[str, str], bytes]:
     raw_headers = [
         (key.lower().encode("latin-1"), value.encode("latin-1"))
@@ -44,7 +46,7 @@ async def _request(
     messages: list[Message] = []
 
     async def receive() -> Message:
-        return {"type": "http.request", "body": b"", "more_body": False}
+        return {"type": "http.request", "body": body or b"", "more_body": False}
 
     async def send(message: Message) -> None:
         messages.append(message)

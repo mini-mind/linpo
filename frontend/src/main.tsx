@@ -1,8 +1,8 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
-import { AgentDetail } from './components/AgentDetail';
-import { AgentsList } from './components/AgentsList';
+import { AgentWorkspace } from './components/AgentWorkspace';
+import { InstanceTopology } from './components/InstanceTopology';
 
 const rootElement = document.getElementById('root');
 
@@ -14,8 +14,8 @@ function App(): JSX.Element {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<AgentsList />} />
-        <Route path="/agents/:agentId" element={<AgentDetail />} />
+        <Route path="/" element={<InstanceTopology />} />
+        <Route path="/agents/:agentId" element={<AgentWorkspace />} />
       </Routes>
     </BrowserRouter>
   );

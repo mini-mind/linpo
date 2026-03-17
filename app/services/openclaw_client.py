@@ -7,10 +7,17 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from threading import Thread
 from typing import Any, TypeVar, cast
+from uuid import uuid4
 
 from fastapi import HTTPException
 import websockets
 from websockets.typing import Origin
+
+from app.domain.control_request import (
+    AgentControlAction,
+    AgentControlResult,
+    AgentControlStatus,
+)
 
 
 T = TypeVar("T")
@@ -38,6 +45,58 @@ class OpenClawClient:
 
     def stream_agent_events(self, on_message: Callable[[dict[str, Any]], None]) -> None:
         self._run_sync(self._stream_agent_events(on_message))
+
+    def connect_operator(self) -> dict[str, Any]:
+        return self._run_sync(self._connect_operator())
+
+    def send_operator_action(
+        self,
+        *,
+        session_key: str,
+        action: AgentControlAction,
+        request_id: str | None = None,
+        message: str | None = None,
+    ) -> dict[str, Any]:
+        resolved_request_id = request_id or self._next_control_request_id()
+        return self._run_sync(
+            self._send_operator_action(
+                session_key=session_key,
+                action=action,
+                request_id=resolved_request_id,
+                message=message,
+            )
+        )
+
+    def next_control_request_id(self) -> str:
+        return self._next_control_request_id()
+
+    def resolve_agent_session_key(self, agent_id: str) -> str:
+        snapshot = self.fetch_snapshot().snapshot
+        health = snapshot.get("health")
+        if not isinstance(health, dict):
+            raise HTTPException(status_code=503, detail="OpenClaw snapshot missing health payload")
+        agents = health.get("agents")
+        if not isinstance(agents, list):
+            raise HTTPException(status_code=503, detail="OpenClaw snapshot missing agents list")
+
+        for item in agents:
+            if not isinstance(item, dict) or item.get("agentId") != agent_id:
+                continue
+            sessions = item.get("sessions")
+            if not isinstance(sessions, dict):
+                break
+            recent = sessions.get("recent")
+            if not isinstance(recent, list) or not recent:
+                break
+            first = recent[0]
+            if not isinstance(first, dict):
+                break
+            session_key = first.get("key")
+            if isinstance(session_key, str) and session_key:
+                return session_key
+            break
+
+        raise HTTPException(status_code=503, detail=f"OpenClaw agent {agent_id} missing session key")
 
     def _run_sync(self, coroutine: Coroutine[Any, Any, T]) -> T:
         try:
@@ -94,14 +153,90 @@ class OpenClawClient:
         except Exception as exc:  # pragma: no cover - exercised via integration tests
             raise HTTPException(status_code=503, detail=f"OpenClaw realtime failed: {exc}") from exc
 
-    async def _perform_handshake(self, ws: websockets.ClientConnection) -> dict[str, Any]:
+    async def _connect_operator(self) -> dict[str, Any]:
+        try:
+            async with websockets.connect(cast(str, self._base_url), origin=cast(Origin, self._origin)) as ws:
+                return await self._perform_handshake(
+                    ws,
+                    client_id="openclaw-control-ui",
+                    display_name="linpo-operator",
+                    mode="webchat",
+                    role="operator",
+                    scopes=["operator.admin", "operator.approvals", "operator.pairing"],
+                    device=None,
+                )
+        except HTTPException:
+            raise
+        except Exception as exc:  # pragma: no cover - exercised via integration tests
+            raise HTTPException(status_code=503, detail=f"OpenClaw operator connection failed: {exc}") from exc
+
+    async def _send_operator_action(
+        self,
+        *,
+        session_key: str,
+        action: AgentControlAction,
+        request_id: str,
+        message: str | None = None,
+    ) -> dict[str, Any]:
+        request = self._build_control_request(
+            session_key=session_key,
+            action=action,
+            request_id=request_id,
+            message=message,
+        )
+
+
+        try:
+            async with websockets.connect(cast(str, self._base_url), origin=cast(Origin, self._origin)) as ws:
+                await self._perform_handshake(
+                    ws,
+                    client_id="openclaw-control-ui",
+                    display_name="linpo-operator",
+                    mode="webchat",
+                    role="operator",
+                    scopes=["operator.admin", "operator.approvals", "operator.pairing"],
+                    device=None,
+                )
+                await ws.send(json.dumps(request))
+                return await self._expect_control_response_by_id(ws, expected_id=request["id"])
+        except TimeoutError:
+            raise
+        except HTTPException:
+            raise
+        except Exception as exc:  # pragma: no cover - exercised via integration tests
+            raise HTTPException(status_code=503, detail=f"OpenClaw operator control failed: {exc}") from exc
+
+    async def _perform_handshake(
+        self,
+        ws: websockets.ClientConnection,
+        *,
+        client_id: str = "webchat-ui",
+        display_name: str = "linpo-observer",
+        mode: str = "webchat",
+        role: str | None = None,
+        scopes: list[str] | None = None,
+        device: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         await self._expect_message(ws, expected_type="event", expected_event="connect.challenge")
-        await ws.send(json.dumps(self._build_connect_request()))
+        await ws.send(
+            json.dumps(
+                self._build_connect_request(
+                    client_id=client_id,
+                    display_name=display_name,
+                    mode=mode,
+                    role=role,
+                    scopes=scopes,
+                    device=device,
+                )
+            )
+        )
         hello = await self._expect_message(ws, expected_type="res", expected_id="connect-1")
 
         if not hello.get("ok"):
             error = hello.get("error", {})
             message = error.get("message", "unknown OpenClaw error")
+            if "pair" in str(message).lower():
+                raise HTTPException(status_code=403, detail="OpenClaw pairing required")
             raise HTTPException(status_code=503, detail=f"OpenClaw handshake failed: {message}")
 
         payload = hello.get("payload")
@@ -126,6 +261,21 @@ class OpenClawClient:
             raise HTTPException(status_code=503, detail="OpenClaw returned unexpected handshake response id")
         return message
 
+    async def _expect_control_response_by_id(
+        self,
+        ws: websockets.ClientConnection,
+        *,
+        expected_id: str,
+    ) -> dict[str, Any]:
+        skipped_messages = 0
+        while skipped_messages < 32:
+            message = await self._receive_message(ws)
+            if message.get("type") == "res" and message.get("id") == expected_id:
+                return message
+            skipped_messages += 1
+
+        raise HTTPException(status_code=503, detail="OpenClaw returned too many non-target control messages")
+
     async def _receive_message(self, ws: websockets.ClientConnection) -> dict[str, Any]:
         raw = await asyncio.wait_for(ws.recv(), timeout=5)
         try:
@@ -137,21 +287,220 @@ class OpenClawClient:
             raise HTTPException(status_code=503, detail="OpenClaw returned unexpected handshake message type")
         return message
 
-    def _build_connect_request(self) -> dict[str, Any]:
+    def _build_connect_request(
+        self,
+        *,
+        client_id: str,
+        display_name: str,
+        mode: str,
+        role: str | None = None,
+        scopes: list[str] | None = None,
+        device: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "minProtocol": 3,
+            "maxProtocol": 3,
+            "client": {
+                "id": client_id,
+                "displayName": display_name,
+                "version": "0.1.0",
+                "mode": mode,
+                "platform": "linux",
+            },
+            "auth": {"token": self._token},
+        }
+        if role is not None:
+            params["role"] = role
+        if scopes:
+            params["scopes"] = scopes
+        if device is not None:
+            params["device"] = device
+
         return {
             "type": "req",
             "id": "connect-1",
             "method": "connect",
-            "params": {
-                "minProtocol": 3,
-                "maxProtocol": 3,
-                "client": {
-                    "id": "webchat-ui",
-                    "displayName": "linpo-observer",
-                    "version": "0.1.0",
-                    "mode": "webchat",
-                    "platform": "linux",
-                },
-                "auth": {"token": self._token},
-            },
+            "params": params,
         }
+
+    def _build_operator_device(self) -> dict[str, Any]:
+        return {
+            "id": os.getenv("OPENCLAW_OPERATOR_DEVICE_ID", "linpo-operator-device"),
+            "displayName": os.getenv("OPENCLAW_OPERATOR_DEVICE_NAME", "Linpo Operator"),
+        }
+
+    def _build_control_request(
+        self,
+        *,
+        session_key: str,
+        action: AgentControlAction,
+        request_id: str,
+        message: str | None = None,
+    ) -> dict[str, Any]:
+        if action == AgentControlAction.PAUSE:
+            return {
+                "type": "req",
+                "id": request_id,
+                "method": "chat.abort",
+                "params": {
+                    "sessionKey": session_key,
+                },
+            }
+
+        if action == AgentControlAction.SEND_MESSAGE:
+            return {
+                "type": "req",
+                "id": request_id,
+                "method": "chat.send",
+                "params": {
+                    "sessionKey": session_key,
+                    "idempotencyKey": request_id,
+                    "message": message or "",
+                },
+            }
+
+        raise ValueError(f"Unsupported control action for OpenClaw v0.3: {action.value}")
+
+    def _next_control_request_id(self) -> str:
+        return f"control-{uuid4().hex[:12]}"
+
+
+class OpenClawOperatorService:
+    _SUPPORTED_ACTIONS = {
+        AgentControlAction.PAUSE,
+        AgentControlAction.RESUME,
+        AgentControlAction.SEND_MESSAGE,
+    }
+
+    def __init__(self, client: OpenClawClient | None = None) -> None:
+        self._client = client or OpenClawClient()
+
+    def send_action(
+        self,
+        *,
+        agent_id: str,
+        action: AgentControlAction,
+    ) -> AgentControlResult:
+        if action not in self._SUPPORTED_ACTIONS:
+            raise HTTPException(status_code=400, detail=f"Unsupported control action: {action.value}")
+
+        request_id = self._client.next_control_request_id()
+
+        if action == AgentControlAction.RESUME:
+            return AgentControlResult(
+                request_id=request_id,
+                agent_id=agent_id,
+                action=action,
+                status=AgentControlStatus.FAILED,
+            )
+
+        if action == AgentControlAction.SEND_MESSAGE:
+            raise HTTPException(
+                status_code=400,
+                detail="SEND_MESSAGE requires message parameter, use send_message method",
+            )
+
+        try:
+            session_key = self._client.resolve_agent_session_key(agent_id)
+            result = self._client.send_operator_action(
+                session_key=session_key,
+                action=action,
+                request_id=request_id,
+            )
+        except TimeoutError:
+            return AgentControlResult(
+                request_id=request_id,
+                agent_id=agent_id,
+                action=action,
+                status=AgentControlStatus.TIMEOUT,
+            )
+
+        response_request_id = result.get("id")
+        if not isinstance(response_request_id, str):
+            response_request_id = request_id
+
+        if result.get("ok") is not True:
+            return AgentControlResult(
+                request_id=response_request_id,
+                agent_id=agent_id,
+                action=action,
+                status=AgentControlStatus.FAILED,
+            )
+
+        payload = result.get("payload")
+        if not isinstance(payload, dict):
+            return AgentControlResult(
+                request_id=response_request_id,
+                agent_id=agent_id,
+                action=action,
+                status=AgentControlStatus.FAILED,
+                message="OpenClaw pause response missing payload",
+            )
+
+        aborted = payload.get("aborted")
+        run_ids = payload.get("runIds")
+        if aborted is not True or not isinstance(run_ids, list) or len(run_ids) == 0:
+            return AgentControlResult(
+                request_id=response_request_id,
+                agent_id=agent_id,
+                action=action,
+                status=AgentControlStatus.FAILED,
+                message="OpenClaw pause was not applied",
+            )
+
+        return AgentControlResult(
+            request_id=response_request_id,
+            agent_id=agent_id,
+            action=action,
+            status=AgentControlStatus.ACCEPTED,
+        )
+
+    def send_message(
+        self,
+        *,
+        agent_id: str,
+        message: str,
+    ) -> AgentControlResult:
+        request_id = self._client.next_control_request_id()
+
+        try:
+            session_key = self._client.resolve_agent_session_key(agent_id)
+            result = self._client.send_operator_action(
+                session_key=session_key,
+                action=AgentControlAction.SEND_MESSAGE,
+                request_id=request_id,
+                message=message,
+            )
+        except TimeoutError:
+            return AgentControlResult(
+                request_id=request_id,
+                agent_id=agent_id,
+                action=AgentControlAction.SEND_MESSAGE,
+                status=AgentControlStatus.TIMEOUT,
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"OpenClaw send message failed: {exc}",
+            )
+
+        response_request_id = result.get("id")
+        if not isinstance(response_request_id, str):
+            response_request_id = request_id
+
+        if result.get("ok") is not True:
+            return AgentControlResult(
+                request_id=response_request_id,
+                agent_id=agent_id,
+                action=AgentControlAction.SEND_MESSAGE,
+                status=AgentControlStatus.FAILED,
+            )
+
+        return AgentControlResult(
+            request_id=response_request_id,
+            agent_id=agent_id,
+            action=AgentControlAction.SEND_MESSAGE,
+            status=AgentControlStatus.ACCEPTED,
+        )

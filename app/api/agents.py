@@ -1,15 +1,25 @@
 from fastapi import APIRouter, HTTPException, Query
 
 from app.api.schemas import (
+    AgentControlAction,
+    AgentControlResponse,
+    AgentControlStatus,
     AgentDetailResponse,
     AgentListItem,
     EventRecordItem,
     NodeDetailResponse,
+    SendMessageRequest,
+    SendMessageResponse,
     TopologyNodeItem,
 )
 from app.services.observer_data import get_observer_data_source
+from app.services.openclaw_client import OpenClawOperatorService
 
 router = APIRouter()
+
+
+def get_openclaw_operator_service() -> OpenClawOperatorService:
+    return OpenClawOperatorService()
 
 
 @router.get("/agents", response_model=list[AgentListItem])
@@ -97,4 +107,73 @@ def get_node_detail(
             )
             for event in data_source_impl.list_events(agent_id, node.id)
         ],
+    )
+
+
+@router.post("/agents/{agent_id}/control", response_model=AgentControlResponse)
+def control_agent(
+    agent_id: str,
+    action: AgentControlAction = Query(...),
+    data_source: str | None = Query(default=None),
+) -> AgentControlResponse:
+    if data_source != "openclaw":
+        raise HTTPException(
+            status_code=503,
+            detail="Control is only available with the OpenClaw data source",
+        )
+
+    service = get_openclaw_operator_service()
+    result = service.send_action(agent_id=agent_id, action=action)
+
+    if result.status == AgentControlStatus.ACCEPTED and result.action == AgentControlAction.PAUSE:
+        data_source_impl = get_observer_data_source(data_source)
+        register_pending = getattr(data_source_impl, "register_pending_control_request", None)
+        if not callable(register_pending):
+            raise HTTPException(
+                status_code=503,
+                detail="OpenClaw correlation state unavailable",
+            )
+        register_pending(
+            request_id=result.request_id,
+            agent_id=result.agent_id,
+            action=result.action.value,
+            correlation_hint=result.correlation_hint,
+        )
+
+    return AgentControlResponse(
+        request_id=result.request_id,
+        agent_id=result.agent_id,
+        action=result.action,
+        status=result.status,
+        message=result.message,
+        correlation_hint=result.correlation_hint,
+    )
+
+
+@router.post("/agents/{agent_id}/send-message", response_model=SendMessageResponse)
+def send_message(
+    agent_id: str,
+    body: SendMessageRequest,
+    data_source: str | None = Query(default=None),
+) -> SendMessageResponse:
+    if data_source != "openclaw":
+        raise HTTPException(
+            status_code=503,
+            detail="Send message is only available with the OpenClaw data source",
+        )
+
+    if not body.message or not body.message.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Message cannot be empty",
+        )
+
+    service = get_openclaw_operator_service()
+    result = service.send_message(agent_id=agent_id, message=body.message.strip())
+
+    return SendMessageResponse(
+        request_id=result.request_id,
+        agent_id=result.agent_id,
+        status=result.status,
+        message=result.message,
     )

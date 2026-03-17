@@ -122,6 +122,296 @@ def test_get_agent_detail_exposes_root_identity_and_total_node_count() -> None:
     assert payload["root_child_count"] == 2
 
 
+def test_control_requires_openclaw_data_source() -> None:
+    status_code, _, body = request(
+        "POST",
+        "/agents/agent-root-observer/control?action=pause",
+        headers={"content-type": "application/json"},
+    )
+
+    assert status_code == 503
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {"detail": "Control is only available with the OpenClaw data source"}
+
+
+def test_control_rejects_missing_action_query_param() -> None:
+    status_code, _, body = request(
+        "POST",
+        "/agents/agent-root-observer/control?data_source=openclaw",
+        headers={"content-type": "application/json"},
+    )
+
+    assert status_code == 422
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    detail = cast(list[dict[str, Any]], payload["detail"])
+    assert detail[0]["loc"] == ["query", "action"]
+
+
+def test_control_rejects_invalid_action_query_value() -> None:
+    status_code, _, body = request(
+        "POST",
+        "/agents/agent-root-observer/control?data_source=openclaw&action=stop",
+        headers={"content-type": "application/json"},
+    )
+
+    assert status_code == 422
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    detail = cast(list[dict[str, Any]], payload["detail"])
+    assert detail[0]["loc"] == ["query", "action"]
+
+
+def test_control_requires_pairing_before_operator_actions(monkeypatch: Any) -> None:
+    from app.api import agents as agents_api
+    from fastapi import HTTPException
+
+    class FakeOperatorService:
+        def send_action(self, *, agent_id: str, action: str) -> Any:
+            del agent_id, action
+            raise HTTPException(status_code=403, detail="OpenClaw pairing required")
+
+    monkeypatch.setattr(agents_api, "get_openclaw_operator_service", lambda: FakeOperatorService())
+
+    status_code, _, body = request(
+        "POST",
+        "/agents/agent-root-observer/control?data_source=openclaw&action=pause",
+        headers={"content-type": "application/json"},
+    )
+
+    assert status_code == 403
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {"detail": "OpenClaw pairing required"}
+
+
+def test_control_returns_accepted_ack_for_pause(monkeypatch: Any) -> None:
+    from app.api import agents as agents_api
+    from app.api.schemas import AgentControlAction, AgentControlResponse, AgentControlStatus
+
+    class FakeOperatorService:
+        def send_action(self, *, agent_id: str, action: AgentControlAction) -> AgentControlResponse:
+            assert agent_id == "agent-root-observer"
+            assert action == AgentControlAction.PAUSE
+            return AgentControlResponse(
+                request_id="control-test-accepted",
+                agent_id=agent_id,
+                action=AgentControlAction.PAUSE,
+                status=AgentControlStatus.ACCEPTED,
+                correlation_hint="agent:agent-root-observer action:pause",
+            )
+
+    class FakeCorrelationDataSource:
+        def register_pending_control_request(
+            self,
+            *,
+            request_id: str,
+            agent_id: str,
+            action: str,
+            correlation_hint: str | None,
+        ) -> None:
+            assert request_id == "control-test-accepted"
+            assert agent_id == "agent-root-observer"
+            assert action == "pause"
+            assert correlation_hint == "agent:agent-root-observer action:pause"
+
+    monkeypatch.setattr(agents_api, "get_openclaw_operator_service", lambda: FakeOperatorService())
+    monkeypatch.setattr(agents_api, "get_observer_data_source", lambda _data_source=None: FakeCorrelationDataSource())
+
+    status_code, _, body = request(
+        "POST",
+        "/agents/agent-root-observer/control?data_source=openclaw&action=pause",
+        headers={"content-type": "application/json"},
+    )
+
+    assert status_code == 200
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {
+        "request_id": "control-test-accepted",
+        "agent_id": "agent-root-observer",
+        "action": "pause",
+        "status": "accepted",
+        "message": None,
+        "correlation_hint": "agent:agent-root-observer action:pause",
+    }
+
+
+def test_control_returns_error_when_accepted_pause_cannot_register_pending_request(
+    monkeypatch: Any,
+) -> None:
+    from app.api import agents as agents_api
+    from app.api.schemas import AgentControlAction, AgentControlResponse, AgentControlStatus
+    from fastapi import HTTPException
+
+    class FakeOperatorService:
+        def send_action(self, *, agent_id: str, action: AgentControlAction) -> AgentControlResponse:
+            assert agent_id == "agent-root-observer"
+            assert action == AgentControlAction.PAUSE
+            return AgentControlResponse(
+                request_id="control-test-accepted-missing-registry",
+                agent_id=agent_id,
+                action=AgentControlAction.PAUSE,
+                status=AgentControlStatus.ACCEPTED,
+                correlation_hint="agent:agent-root-observer action:pause",
+            )
+
+    def _raise_registry_error(_data_source: str | None = None) -> Any:
+        raise HTTPException(status_code=503, detail="OpenClaw correlation state unavailable")
+
+    monkeypatch.setattr(agents_api, "get_openclaw_operator_service", lambda: FakeOperatorService())
+    monkeypatch.setattr(agents_api, "get_observer_data_source", _raise_registry_error)
+
+    status_code, _, body = request(
+        "POST",
+        "/agents/agent-root-observer/control?data_source=openclaw&action=pause",
+        headers={"content-type": "application/json"},
+    )
+
+    assert status_code == 503
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {"detail": "OpenClaw correlation state unavailable"}
+
+
+def test_control_returns_failed_status_when_protocol_response_does_not_confirm_abort(monkeypatch: Any) -> None:
+    from app.api import agents as agents_api
+    from app.api.schemas import AgentControlAction, AgentControlResponse, AgentControlStatus
+
+    class FakeOperatorService:
+        def send_action(self, *, agent_id: str, action: AgentControlAction) -> AgentControlResponse:
+            assert agent_id == "agent-root-observer"
+            assert action == AgentControlAction.PAUSE
+            return AgentControlResponse(
+                request_id="control-test-not-aborted",
+                agent_id=agent_id,
+                action=AgentControlAction.PAUSE,
+                status=AgentControlStatus.FAILED,
+                message="OpenClaw pause was not applied",
+                correlation_hint=None,
+            )
+
+    monkeypatch.setattr(agents_api, "get_openclaw_operator_service", lambda: FakeOperatorService())
+
+    status_code, _, body = request(
+        "POST",
+        "/agents/agent-root-observer/control?data_source=openclaw&action=pause",
+        headers={"content-type": "application/json"},
+    )
+
+    assert status_code == 200
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {
+        "request_id": "control-test-not-aborted",
+        "agent_id": "agent-root-observer",
+        "action": "pause",
+        "status": "failed",
+        "message": "OpenClaw pause was not applied",
+        "correlation_hint": None,
+    }
+
+
+def test_control_returns_failed_status_for_resume(monkeypatch: Any) -> None:
+    from app.api import agents as agents_api
+    from app.api.schemas import AgentControlAction, AgentControlResponse, AgentControlStatus
+
+    class FakeOperatorService:
+        def send_action(self, *, agent_id: str, action: AgentControlAction) -> AgentControlResponse:
+            assert agent_id == "agent-root-observer"
+            assert action == AgentControlAction.RESUME
+            return AgentControlResponse(
+                request_id="control-test-resume",
+                agent_id=agent_id,
+                action=AgentControlAction.RESUME,
+                status=AgentControlStatus.FAILED,
+            )
+
+    monkeypatch.setattr(agents_api, "get_openclaw_operator_service", lambda: FakeOperatorService())
+
+    status_code, _, body = request(
+        "POST",
+        "/agents/agent-root-observer/control?data_source=openclaw&action=resume",
+        headers={"content-type": "application/json"},
+    )
+
+    assert status_code == 200
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {
+        "request_id": "control-test-resume",
+        "agent_id": "agent-root-observer",
+        "action": "resume",
+        "status": "failed",
+        "message": None,
+        "correlation_hint": None,
+    }
+
+
+def test_control_passthrough_failed_status_from_operator_service(monkeypatch: Any) -> None:
+    from app.api import agents as agents_api
+    from app.api.schemas import AgentControlAction, AgentControlResponse, AgentControlStatus
+
+    class FakeOperatorService:
+        def send_action(self, *, agent_id: str, action: AgentControlAction) -> AgentControlResponse:
+            assert agent_id == "agent-root-observer"
+            assert action == AgentControlAction.PAUSE
+            return AgentControlResponse(
+                request_id="control-test-failed",
+                agent_id=agent_id,
+                action=AgentControlAction.PAUSE,
+                status=AgentControlStatus.FAILED,
+            )
+
+    monkeypatch.setattr(agents_api, "get_openclaw_operator_service", lambda: FakeOperatorService())
+
+    status_code, _, body = request(
+        "POST",
+        "/agents/agent-root-observer/control?data_source=openclaw&action=pause",
+        headers={"content-type": "application/json"},
+    )
+
+    assert status_code == 200
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {
+        "request_id": "control-test-failed",
+        "agent_id": "agent-root-observer",
+        "action": "pause",
+        "status": "failed",
+        "message": None,
+        "correlation_hint": None,
+    }
+
+
+def test_control_passthrough_timeout_status_from_operator_service(monkeypatch: Any) -> None:
+    from app.api import agents as agents_api
+    from app.api.schemas import AgentControlAction, AgentControlResponse, AgentControlStatus
+
+    class FakeOperatorService:
+        def send_action(self, *, agent_id: str, action: AgentControlAction) -> AgentControlResponse:
+            assert agent_id == "agent-root-observer"
+            assert action == AgentControlAction.PAUSE
+            return AgentControlResponse(
+                request_id="control-test-timeout",
+                agent_id=agent_id,
+                action=AgentControlAction.PAUSE,
+                status=AgentControlStatus.TIMEOUT,
+                message="control request timed out",
+            )
+
+    monkeypatch.setattr(agents_api, "get_openclaw_operator_service", lambda: FakeOperatorService())
+
+    status_code, _, body = request(
+        "POST",
+        "/agents/agent-root-observer/control?data_source=openclaw&action=pause",
+        headers={"content-type": "application/json"},
+    )
+
+    assert status_code == 200
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {
+        "request_id": "control-test-timeout",
+        "agent_id": "agent-root-observer",
+        "action": "pause",
+        "status": "timeout",
+        "message": "control request timed out",
+        "correlation_hint": None,
+    }
+
+
 def test_openclaw_data_source_errors_are_reported_explicitly() -> None:
     status_code, _, body = request("GET", "/agents?data_source=openclaw")
 
@@ -390,4 +680,99 @@ def test_http_routes_read_updated_snapshots_from_event_driven_state(monkeypatch:
                 'description': 'Root Observer Agent finished a realtime refresh.',
             }
         ],
+    }
+
+
+def test_send_message_requires_openclaw_data_source() -> None:
+    status_code, _, body = request(
+        "POST",
+        "/agents/agent-root-observer/send-message",
+        body=json.dumps({"message": "test message"}).encode("utf-8"),
+        headers={"content-type": "application/json"},
+    )
+
+    assert status_code == 503
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {"detail": "Send message is only available with the OpenClaw data source"}
+
+
+def test_send_message_rejects_empty_message() -> None:
+    status_code, _, body = request(
+        "POST",
+        "/agents/agent-root-observer/send-message?data_source=openclaw",
+        body=json.dumps({"message": ""}).encode("utf-8"),
+        headers={"content-type": "application/json"},
+    )
+
+    assert status_code == 400
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {"detail": "Message cannot be empty"}
+
+
+def test_send_message_returns_accepted_status(monkeypatch: Any) -> None:
+    from app.api import agents as agents_api
+    from app.api.schemas import AgentControlStatus
+    from app.domain.control_request import AgentControlAction, AgentControlResult
+
+    class FakeOperatorService:
+        def send_message(self, *, agent_id: str, message: str) -> AgentControlResult:
+            assert agent_id == "agent-root-observer"
+            assert message == "test message"
+            return AgentControlResult(
+                request_id="send-msg-test-accepted",
+                agent_id=agent_id,
+                action=AgentControlAction.SEND_MESSAGE,
+                status=AgentControlStatus.ACCEPTED,
+            )
+
+    monkeypatch.setattr(agents_api, "get_openclaw_operator_service", lambda: FakeOperatorService())
+
+    status_code, _, body = request(
+        "POST",
+        "/agents/agent-root-observer/send-message?data_source=openclaw",
+        headers={"content-type": "application/json"},
+        body=json.dumps({"message": "test message"}).encode("utf-8"),
+    )
+
+    assert status_code == 200
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {
+        "request_id": "send-msg-test-accepted",
+        "agent_id": "agent-root-observer",
+        "status": "accepted",
+        "message": None,
+    }
+
+
+def test_send_message_returns_failed_status_on_error(monkeypatch: Any) -> None:
+    from app.api import agents as agents_api
+    from app.api.schemas import AgentControlStatus
+    from app.domain.control_request import AgentControlAction, AgentControlResult
+
+    class FakeOperatorService:
+        def send_message(self, *, agent_id: str, message: str) -> AgentControlResult:
+            return AgentControlResult(
+                request_id="send-msg-test-failed",
+                agent_id=agent_id,
+                action=AgentControlAction.SEND_MESSAGE,
+                status=AgentControlStatus.FAILED,
+                message="Session not found",
+            )
+
+    monkeypatch.setattr(agents_api, "get_openclaw_operator_service", lambda: FakeOperatorService())
+
+    status_code, _, body = request(
+        "POST",
+        "/agents/agent-root-observer/send-message?data_source=openclaw",
+        headers={"content-type": "application/json"},
+        body=json.dumps({"message": "test message"}).encode("utf-8"),
+    )
+
+    assert status_code == 200
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {
+        "request_id": "send-msg-test-failed",
+        "agent_id": "agent-root-observer",
+        "status": "failed",
+        "message": "Session not found",
     }

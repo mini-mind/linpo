@@ -5,6 +5,10 @@
 
 export type AgentStatus = 'idle' | 'running' | 'finished' | 'error';
 
+export type ControlAction = 'pause' | 'resume' | 'send_message';
+
+export type ControlRequestStatus = 'sending' | 'accepted' | 'applied' | 'failed' | 'timeout';
+
 export type EventType =
   | 'agent_created'
   | 'subagent_created'
@@ -77,6 +81,38 @@ export interface NodeDetailResponse {
   events: EventRecord[];
 }
 
+/**
+ * Control request - represents a control operation sent to an agent
+ */
+export interface ControlRequest {
+  request_id: string;
+  agent_id: string;
+  action: ControlAction;
+  status: ControlRequestStatus;
+  correlation_hint?: string;
+}
+
+/**
+ * Control request response - POST /agents/{agent_id}/control
+ */
+export interface ControlRequestResponse {
+  request_id: string;
+  status: 'accepted' | 'failed' | 'timeout';
+  message?: string;
+  correlation_hint?: string;
+}
+
+export interface SendMessageRequest {
+  message: string;
+}
+
+export interface SendMessageResponse {
+  request_id: string;
+  agent_id: string;
+  status: 'accepted' | 'failed' | 'timeout';
+  message?: string;
+}
+
 export type ObserverChannel = 'agents:list' | `agent:${string}:detail`;
 
 export type ObserverRealtimeMessageType =
@@ -84,6 +120,7 @@ export type ObserverRealtimeMessageType =
   | 'agent_summary_updated'
   | 'topology_updated'
   | 'node_events_appended'
+  | 'control_request_updated'
   | 'resync_required'
   | 'error';
 
@@ -115,6 +152,10 @@ export interface ResyncRequiredPayload {
   reason: string;
 }
 
+export interface ControlRequestUpdatedPayload {
+  control_request: ControlRequest;
+}
+
 export interface ErrorPayload {
   detail: string;
 }
@@ -141,6 +182,10 @@ export type ResyncRequiredMessage = ObserverRealtimeEnvelope<
   'resync_required',
   ResyncRequiredPayload
 >;
+export type ControlRequestUpdatedMessage = ObserverRealtimeEnvelope<
+  'control_request_updated',
+  ControlRequestUpdatedPayload
+>;
 export type ErrorMessage = ObserverRealtimeEnvelope<'error', ErrorPayload>;
 
 export type ObserverRealtimeMessage =
@@ -148,6 +193,7 @@ export type ObserverRealtimeMessage =
   | AgentSummaryUpdatedMessage
   | TopologyUpdatedMessage
   | NodeEventsAppendedMessage
+  | ControlRequestUpdatedMessage
   | ResyncRequiredMessage
   | ErrorMessage;
 
@@ -162,6 +208,7 @@ const observerRealtimeTypes: ReadonlySet<ObserverRealtimeMessageType> = new Set(
   'agent_summary_updated',
   'topology_updated',
   'node_events_appended',
+  'control_request_updated',
   'resync_required',
   'error',
 ]);
@@ -215,6 +262,9 @@ function isPayloadCompatible(
       typeof payload.node_id === 'string' &&
       Array.isArray(payload.events)
     );
+  }
+  if (type === 'control_request_updated') {
+    return isRecord(payload.control_request) && typeof payload.control_request.request_id === 'string';
   }
   if (type === 'resync_required') {
     return typeof payload.reason === 'string';

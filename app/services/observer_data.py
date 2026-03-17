@@ -9,6 +9,7 @@ from typing import Any, Literal, Protocol
 from fastapi import HTTPException
 
 from app.domain.agent import Agent, AgentStatus
+from app.domain.control_request import ControlRequestRecord, ControlRequestStatus
 from app.domain.event import EventRecord, EventType
 from app.domain.node import TopologyNode
 from app.services import stub_data
@@ -19,6 +20,7 @@ ObserverRealtimeEventType = Literal[
     "agent_summary_updated",
     "topology_updated",
     "node_events_appended",
+    "control_request_updated",
     "resync_required",
     "error",
 ]
@@ -163,6 +165,107 @@ class ObserverStateStore:
         return list(self._events_by_node.get((agent_id, node_id), []))
 
 
+class PendingControlRequestRegistry:
+    def __init__(self) -> None:
+        self._records_by_request_id: dict[str, ControlRequestRecord] = {}
+        self._deadline_by_request_id: dict[str, datetime] = {}
+
+    def register_accepted(
+        self,
+        *,
+        request_id: str,
+        agent_id: str,
+        action: str,
+        correlation_hint: str | None,
+        timeout_seconds: float,
+    ) -> ControlRequestRecord:
+        now = datetime.now(tz=UTC)
+        record = ControlRequestRecord(
+            request_id=request_id,
+            agent_id=agent_id,
+            action=action,
+            status=ControlRequestStatus.ACCEPTED,
+            created_at=now,
+            accepted_at=now,
+            correlation_hint=correlation_hint,
+        )
+        self._records_by_request_id[request_id] = record
+        self._deadline_by_request_id[request_id] = datetime.fromtimestamp(
+            now.timestamp() + max(0.0, timeout_seconds),
+            tz=UTC,
+        )
+        return record
+
+    def get(self, request_id: str) -> ControlRequestRecord | None:
+        return self._records_by_request_id.get(request_id)
+
+    def match_pending(self, *, agent_id: str, action: str) -> ControlRequestRecord | None:
+        candidates = [
+            record
+            for record in self._records_by_request_id.values()
+            if record.agent_id == agent_id
+            and record.action == action
+            and record.status == ControlRequestStatus.ACCEPTED
+        ]
+        if len(candidates) != 1:
+            return None
+        return candidates[0]
+
+    def mark_applied(self, request_id: str) -> ControlRequestRecord | None:
+        current = self._records_by_request_id.get(request_id)
+        if current is None or current.status != ControlRequestStatus.ACCEPTED:
+            return current
+
+        now = datetime.now(tz=UTC)
+        updated = ControlRequestRecord(
+            request_id=current.request_id,
+            agent_id=current.agent_id,
+            action=current.action,
+            status=ControlRequestStatus.APPLIED,
+            created_at=current.created_at,
+            accepted_at=current.accepted_at,
+            applied_at=now,
+            error_code=current.error_code,
+            error_message=current.error_message,
+            correlation_hint=current.correlation_hint,
+        )
+        self._records_by_request_id[request_id] = updated
+        self._deadline_by_request_id.pop(request_id, None)
+        return updated
+
+    def mark_expired(self) -> list[ControlRequestRecord]:
+        now = datetime.now(tz=UTC)
+        expired_request_ids = [
+            request_id
+            for request_id, deadline in self._deadline_by_request_id.items()
+            if deadline <= now
+        ]
+        timed_out: list[ControlRequestRecord] = []
+        for request_id in expired_request_ids:
+            current = self._records_by_request_id.get(request_id)
+            if current is None or current.status != ControlRequestStatus.ACCEPTED:
+                self._deadline_by_request_id.pop(request_id, None)
+                continue
+
+            updated = ControlRequestRecord(
+                request_id=current.request_id,
+                agent_id=current.agent_id,
+                action=current.action,
+                status=ControlRequestStatus.TIMEOUT,
+                created_at=current.created_at,
+                accepted_at=current.accepted_at,
+                applied_at=None,
+                error_code=current.error_code,
+                error_message=current.error_message,
+                correlation_hint=current.correlation_hint,
+            )
+            self._records_by_request_id[request_id] = updated
+            self._deadline_by_request_id.pop(request_id, None)
+            timed_out.append(updated)
+
+        return timed_out
+
+
 class ObserverDataSource(Protocol):
     def list_agents(self) -> list[Agent]: ...
 
@@ -259,6 +362,13 @@ class StubObserverDataSource(StateBackedObserverDataSource):
 class OpenClawObserverDataSource(StateBackedObserverDataSource):
     def __init__(self, client: OpenClawObserverClient | None = None) -> None:
         self._client = client or OpenClawClient()
+        raw_timeout = os.getenv("LINPO_CONTROL_CONFIRM_TIMEOUT_SECONDS", "5")
+        try:
+            timeout_seconds = float(raw_timeout)
+        except ValueError:
+            timeout_seconds = 5.0
+        self._control_request_timeout_seconds = max(0.0, timeout_seconds)
+        self._control_requests = PendingControlRequestRegistry()
         super().__init__()
         self._ensure_realtime_runtime()
         self.load_snapshot(**self._build_snapshot())
@@ -282,6 +392,34 @@ class OpenClawObserverDataSource(StateBackedObserverDataSource):
     def list_events(self, agent_id: str, node_id: str) -> list[EventRecord]:
         self._ensure_snapshot_loaded()
         return super().list_events(agent_id, node_id)
+
+    def register_pending_control_request(
+        self,
+        *,
+        request_id: str,
+        agent_id: str,
+        action: str,
+        correlation_hint: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> ControlRequestRecord:
+        self._ensure_snapshot_loaded()
+        record = self._control_requests.register_accepted(
+            request_id=request_id,
+            agent_id=agent_id,
+            action=action,
+            correlation_hint=correlation_hint,
+            timeout_seconds=(
+                self._control_request_timeout_seconds
+                if timeout_seconds is None
+                else timeout_seconds
+            ),
+        )
+        self.apply_event(self._build_control_request_event(record))
+        return record
+
+    def get_control_request(self, request_id: str) -> ControlRequestRecord | None:
+        self._ensure_snapshot_loaded()
+        return self._control_requests.get(request_id)
 
     def _ensure_snapshot_loaded(self) -> None:
         if hasattr(self, "_state_store"):
@@ -314,6 +452,9 @@ class OpenClawObserverDataSource(StateBackedObserverDataSource):
             if not self._should_apply_realtime_event(event):
                 continue
             self.apply_event(event)
+            self._apply_control_request_confirmation(event)
+
+        self._apply_control_request_timeouts()
 
     def _build_snapshot(self) -> dict[str, Any]:
         snapshot = self._client.fetch_snapshot().snapshot
@@ -599,6 +740,88 @@ class OpenClawObserverDataSource(StateBackedObserverDataSource):
 
         return ordered_events
 
+    def _apply_control_request_confirmation(self, event: ObserverRealtimeEvent) -> None:
+        confirmed_agent_id = self._pause_confirmation_agent_id(event)
+        if confirmed_agent_id is None:
+            return
+
+        pending = self._control_requests.match_pending(agent_id=confirmed_agent_id, action="pause")
+        if pending is None:
+            return
+
+        updated = self._control_requests.mark_applied(pending.request_id)
+        if updated is None:
+            return
+        self.apply_event(self._build_control_request_event(updated))
+
+    def _pause_confirmation_agent_id(self, event: ObserverRealtimeEvent) -> str | None:
+        if event.type != "control_request_updated":
+            return None
+        payload = event.payload or {}
+        if not isinstance(payload, dict):
+            return None
+        chat_payload = payload.get("chat")
+        if not isinstance(chat_payload, dict):
+            return None
+        if chat_payload.get("state") != "aborted":
+            return None
+        session_key = chat_payload.get("sessionKey")
+        if not isinstance(session_key, str) or not session_key:
+            return None
+        return self._agent_id_from_session_key(session_key)
+
+    def _agent_id_from_session_key(self, session_key: str) -> str | None:
+        for agent in self.list_agents():
+            if self._session_key_for_agent(agent.id) == session_key:
+                return agent.id
+        return None
+
+    def _session_key_for_agent(self, agent_id: str) -> str | None:
+        snapshot = self._client.fetch_snapshot().snapshot
+        health = self._require_dict(
+            snapshot.get("health"),
+            detail="OpenClaw snapshot missing health payload",
+        )
+        agents_payload = health.get("agents")
+        if not isinstance(agents_payload, list):
+            return None
+        for item in agents_payload:
+            if not isinstance(item, dict) or item.get("agentId") != agent_id:
+                continue
+            sessions = item.get("sessions")
+            if not isinstance(sessions, dict):
+                return None
+            recent = sessions.get("recent")
+            if not isinstance(recent, list) or not recent:
+                return None
+            first = recent[0]
+            if not isinstance(first, dict):
+                return None
+            session_key = first.get("key")
+            if isinstance(session_key, str) and session_key:
+                return session_key
+            return None
+        return None
+
+    def _apply_control_request_timeouts(self) -> None:
+        for record in self._control_requests.mark_expired():
+            self.apply_event(self._build_control_request_event(record))
+
+    def _build_control_request_event(self, record: ControlRequestRecord) -> ObserverRealtimeEvent:
+        return ObserverRealtimeEvent(
+            type="control_request_updated",
+            agent_id=record.agent_id,
+            payload={
+                "control_request": {
+                    "request_id": record.request_id,
+                    "agent_id": record.agent_id,
+                    "action": record.action,
+                    "status": record.status.value,
+                    "correlation_hint": record.correlation_hint,
+                }
+            },
+        )
+
     def _map_realtime_message(self, message: dict[str, Any]) -> ObserverRealtimeEvent | None:
         if message.get("type") != "event":
             return None
@@ -608,6 +831,11 @@ class OpenClawObserverDataSource(StateBackedObserverDataSource):
             message.get("payload"),
             detail=f"OpenClaw realtime event {event_name} missing payload",
         )
+        if event_name == "chat":
+            return ObserverRealtimeEvent(
+                type="control_request_updated",
+                payload={"chat": payload},
+            )
         if event_name in {
             "agent.summary.updated",
             "agent.updated",
@@ -768,6 +996,8 @@ def _channels_for_event(event: ObserverRealtimeEvent) -> list[str]:
     if event.type == "agent_summary_updated" and event.agent is not None:
         return [agents_list_channel(), agent_detail_channel(event.agent.id)]
     if event.type in {"topology_updated", "node_events_appended"} and event.agent_id is not None:
+        return [agent_detail_channel(event.agent_id)]
+    if event.type == "control_request_updated" and event.agent_id is not None:
         return [agent_detail_channel(event.agent_id)]
     return []
 

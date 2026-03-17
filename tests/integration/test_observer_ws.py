@@ -758,6 +758,92 @@ def test_websocket_supports_openclaw_detail_realtime(monkeypatch: Any) -> None:
     }
 
 
+def test_websocket_exposes_control_request_status_on_existing_detail_channel(
+    monkeypatch: Any,
+) -> None:
+    class FakeClient:
+        def fetch_snapshot(self) -> Any:
+            return type(
+                "Snapshot",
+                (),
+                {
+                    "snapshot": {
+                        "health": {
+                            "defaultAgentId": "main",
+                            "ts": 1773630417090,
+                            "agents": [
+                                {
+                                    "agentId": "main",
+                                    "status": "running",
+                                    "isActive": True,
+                                    "sessions": {"recent": [{"key": "agent:main:main", "updatedAt": 1773632400000}]},
+                                }
+                            ],
+                        },
+                        "presence": [],
+                    }
+                },
+            )()
+
+        def stream_agent_events(
+            self,
+            on_message: Callable[[dict[str, Any]], None],
+        ) -> None:
+            on_message(
+                {
+                    "type": "event",
+                    "event": "chat",
+                    "payload": {
+                        "sessionKey": "agent:main:main",
+                        "runId": "run-1",
+                        "state": "aborted",
+                        "seq": 12,
+                        "stopReason": "operator_abort",
+                    },
+                }
+            )
+
+    source = observer_data.OpenClawObserverDataSource(client=FakeClient())
+    source.register_pending_control_request(
+        request_id="control-main-pause-1",
+        agent_id="main",
+        action="pause",
+        correlation_hint="agent:main action:pause",
+    )
+    monkeypatch.setattr(
+        realtime_api,
+        "get_observer_data_source",
+        lambda _data_source=None: source,
+        raising=False,
+    )
+
+    messages = websocket(
+        "/ws/observer?data_source=openclaw",
+        messages=[
+            {
+                "type": "subscribe",
+                "channel": observer_data.agent_detail_channel("main"),
+            }
+        ],
+        idle_hooks=[lambda: None, lambda: None],
+    )
+
+    payloads = _sent_json(cast(list[dict[str, Any]], messages))
+    control_updates = [payload for payload in payloads if payload["type"] == "control_request_updated"]
+
+    assert len(control_updates) == 1
+    assert control_updates[0]["channel"] == observer_data.agent_detail_channel("main")
+    assert control_updates[0]["payload"] == {
+        "control_request": {
+            "request_id": "control-main-pause-1",
+            "agent_id": "main",
+            "action": "pause",
+            "status": "applied",
+            "correlation_hint": "agent:main action:pause",
+        }
+    }
+
+
 def test_websocket_openclaw_detail_channel_still_errors_for_unknown_agent(
     monkeypatch: Any,
 ) -> None:

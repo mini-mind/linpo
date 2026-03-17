@@ -1,7 +1,11 @@
 import type {
   AgentDetailResponse,
   AgentListItem,
+  ControlAction,
+  ControlRequestResponse,
   NodeDetailResponse,
+  SendMessageRequest,
+  SendMessageResponse,
 } from './types';
 
 const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
@@ -53,4 +57,47 @@ export async function getNodeDetail(
   nodeId: string
 ): Promise<NodeDetailResponse> {
   return fetchApi<NodeDetailResponse>(`/agents/${agentId}/nodes/${nodeId}`);
+}
+
+/**
+ * POST /agents/{agent_id}/control - Send control request to agent
+ */
+export async function sendControlRequest(
+  agentId: string,
+  action: ControlAction
+): Promise<ControlRequestResponse> {
+  const path = `/agents/${agentId}/control?action=${action}`;
+  const response = await fetch(`${API_BASE_URL}${withDefaultDataSource(path)}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status} ${response.statusText}`);
+  }
+
+  return response.json() as Promise<ControlRequestResponse>;
+}
+
+export async function sendMessage(
+  agentId: string,
+  message: string
+): Promise<SendMessageResponse> {
+  const path = `/agents/${agentId}/send-message`;
+  const response = await fetch(`${API_BASE_URL}${withDefaultDataSource(path)}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ message } as SendMessageRequest),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || `API error: ${response.status} ${response.statusText}`);
+  }
+
+  return response.json() as Promise<SendMessageResponse>;
 }
