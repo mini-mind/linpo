@@ -109,6 +109,10 @@ def _is_valid_subscribe_message(message: object) -> bool:
     if not isinstance(channel, str):
         return False
 
+    if isinstance(channel, str) and channel.startswith("session:") and channel.endswith(":messages"):
+        session_key = channel[len("session:"):-len(":messages")]
+        return bool(session_key)
+
     if not channel.startswith("agent:") or not channel.endswith(":detail"):
         return False
 
@@ -127,6 +131,11 @@ def _parse_last_seq(value: object) -> int | None:
 def _validate_channel(channel: str, data_source: RealtimeObserverDataSource) -> None:
     if channel == agents_list_channel():
         return
+
+    if channel.startswith("session:") and channel.endswith(":messages"):
+        session_key = channel[len("session:") : -len(":messages")]
+        if session_key:
+            return
 
     agent_id = channel[len("agent:") : -len(":detail")]
     if data_source.get_agent(agent_id) is None:
@@ -221,6 +230,16 @@ def _event_payload(event: ObserverRealtimeEvent) -> dict[str, Any]:
             "node_id": event.node_id,
             "events": [_serialize_event(item) for item in event.events],
         }
+    if event.type == "session_messages_updated" and event.session_key is not None:
+        payload = {
+            "session_key": event.session_key,
+            "messages": event.messages or [],
+        }
+        if isinstance(event.payload, dict):
+            update_mode = event.payload.get("update_mode")
+            if isinstance(update_mode, str):
+                payload["update_mode"] = update_mode
+        return payload
     return event.payload or {}
 
 

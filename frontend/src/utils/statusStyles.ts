@@ -1,12 +1,20 @@
 import type React from 'react';
+import type { AgentStatus as ApiAgentStatus } from '../api/types';
 
-export type AgentStatus = 'idle' | 'running' | 'finished' | 'error';
+export type AgentStatus = ApiAgentStatus;
 
 const STATUS_COLORS: Record<AgentStatus, { bg: string; text: string }> = {
   idle: { bg: '#f3f4f6', text: '#6b7280' },
   running: { bg: '#dcfce7', text: '#166534' },
   finished: { bg: '#dbeafe', text: '#1e40af' },
   error: { bg: '#fee2e2', text: '#dc2626' },
+};
+
+export const STATUS_DOT_COLORS: Record<AgentStatus, string> = {
+  idle: '#9ca3af',
+  running: '#22c55e',
+  finished: '#3b82f6',
+  error: '#ef4444',
 };
 
 /**

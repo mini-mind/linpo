@@ -17,8 +17,19 @@ class AgentControlAction(str, Enum):
 
 class AgentControlStatus(str, Enum):
     ACCEPTED = "accepted"
+    APPLIED = "applied"
     FAILED = "failed"
     TIMEOUT = "timeout"
+
+
+class ControlErrorCode(str, Enum):
+    """细分错误类型，用于 UI 展示不同错误提示"""
+    PAIRING_REQUIRED = "pairing_required"      # 设备未配对
+    UNAUTHORIZED = "unauthorized"              # 权限不足
+    SESSION_NOT_FOUND = "session_not_found"    # 会话不存在
+    AGENT_NOT_FOUND = "agent_not_found"        # Agent 不存在
+    RATE_LIMITED = "rate_limited"              # 请求过快
+    INTERNAL_ERROR = "internal_error"          # 服务端错误
 
 
 @dataclass(frozen=True)
@@ -43,3 +54,4 @@ class AgentControlResult:
     status: AgentControlStatus
     message: str | None = None
     correlation_hint: str | None = None
+    error_code: ControlErrorCode | None = None

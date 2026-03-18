@@ -9,6 +9,93 @@ export type ControlAction = 'pause';
 
 export type ControlRequestStatus = 'sending' | 'accepted' | 'applied' | 'failed' | 'timeout';
 
+/**
+ * Model item - used in GET /chat/models response
+ */
+export interface ModelItem {
+  id: string;
+  name: string;
+  provider: string;
+}
+
+export interface SessionPatchResponse {
+  updated: boolean;
+}
+
+export interface SessionPatchRequest {
+  agentId?: string;
+  model?: string;
+  thinkingLevel?: string;
+}
+
+export interface SessionResetResponse {
+  reset: boolean;
+}
+
+export interface SessionDeleteResponse {
+  deleted: boolean;
+}
+
+export interface ChatSendRequest {
+  agentId: string;
+  sessionKey: string;
+  message: string;
+}
+
+export interface ChatSendResponse {
+  request_id: string;
+  agent_id: string;
+  status: string;
+  message?: string;
+}
+
+/**
+ * Session list item - used in GET /chat/sessions response
+ */
+export interface SessionListItem {
+  key: string;
+  kind: 'direct' | 'group' | 'global' | 'unknown';
+  label: string | null;
+  derived_title: string | null;
+  last_message_preview: string | null;
+  updated_at: number | null;
+}
+
+/**
+ * Sessions list response - GET /chat/sessions
+ */
+export interface SessionsListResponse {
+  ts: number;
+  count: number;
+  sessions: SessionListItem[];
+  defaults?: {
+    modelProvider?: string;
+    model?: string;
+  } | null;
+}
+
+/**
+ * Session preview item - a single message in preview
+ */
+export interface SessionPreviewItem {
+  role: 'user' | 'assistant' | 'tool' | 'system' | 'other';
+  text: string;
+}
+
+/**
+ * Session preview - response for a single session preview
+ */
+export interface SessionPreview {
+  key: string;
+  status: 'ok' | 'empty' | 'missing' | 'error';
+  items: SessionPreviewItem[];
+}
+
+export interface SessionsPreviewResponse {
+  ts: number;
+  previews: SessionPreview[];
+}
+
 export type EventType =
   | 'agent_created'
   | 'subagent_created'
@@ -92,7 +179,7 @@ export interface ControlRequest {
   correlation_hint?: string;
 }
 
-export type ObserverChannel = 'agents:list' | `agent:${string}:detail`;
+export type ObserverChannel = 'agents:list' | `agent:${string}:detail` | `session:${string}:messages`;
 
 export type ObserverRealtimeMessageType =
   | 'snapshot_ready'
@@ -100,6 +187,7 @@ export type ObserverRealtimeMessageType =
   | 'topology_updated'
   | 'node_events_appended'
   | 'control_request_updated'
+  | 'session_messages_updated'
   | 'resync_required'
   | 'error';
 
@@ -135,6 +223,12 @@ export interface ControlRequestUpdatedPayload {
   control_request: ControlRequest;
 }
 
+export interface SessionMessagesUpdatedPayload {
+  session_key: string;
+  messages: SessionPreviewItem[];
+  update_mode?: 'replace' | 'append_chunk';
+}
+
 export interface ErrorPayload {
   detail: string;
 }
@@ -165,6 +259,10 @@ export type ControlRequestUpdatedMessage = ObserverRealtimeEnvelope<
   'control_request_updated',
   ControlRequestUpdatedPayload
 >;
+export type SessionMessagesUpdatedMessage = ObserverRealtimeEnvelope<
+  'session_messages_updated',
+  SessionMessagesUpdatedPayload
+>;
 export type ErrorMessage = ObserverRealtimeEnvelope<'error', ErrorPayload>;
 
 export type ObserverRealtimeMessage =
@@ -173,6 +271,7 @@ export type ObserverRealtimeMessage =
   | TopologyUpdatedMessage
   | NodeEventsAppendedMessage
   | ControlRequestUpdatedMessage
+  | SessionMessagesUpdatedMessage
   | ResyncRequiredMessage
   | ErrorMessage;
 
@@ -188,6 +287,7 @@ const observerRealtimeTypes: ReadonlySet<ObserverRealtimeMessageType> = new Set(
   'topology_updated',
   'node_events_appended',
   'control_request_updated',
+  'session_messages_updated',
   'resync_required',
   'error',
 ]);
@@ -199,15 +299,26 @@ export function buildAgentDetailChannel(agentId: string): `agent:${string}:detai
   return `agent:${agentId}:detail`;
 }
 
+export function buildSessionMessagesChannel(sessionKey: string): `session:${string}:messages` {
+  if (!sessionKey) {
+    throw new Error('sessionKey is required');
+  }
+  return `session:${sessionKey}:messages`;
+}
+
 export function isObserverChannel(value: string): value is ObserverChannel {
   if (value === 'agents:list') {
     return true;
   }
-  if (!value.startsWith('agent:') || !value.endsWith(':detail')) {
-    return false;
+  if (value.startsWith('agent:') && value.endsWith(':detail')) {
+    const agentId = value.slice('agent:'.length, -':detail'.length);
+    return agentId.length > 0;
   }
-  const agentId = value.slice('agent:'.length, -':detail'.length);
-  return agentId.length > 0;
+  if (value.startsWith('session:') && value.endsWith(':messages')) {
+    const sessionKey = value.slice('session:'.length, -':messages'.length);
+    return sessionKey.length > 0;
+  }
+  return false;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -244,6 +355,16 @@ function isPayloadCompatible(
   }
   if (type === 'control_request_updated') {
     return isRecord(payload.control_request) && typeof payload.control_request.request_id === 'string';
+  }
+  if (type === 'session_messages_updated') {
+    if (typeof payload.session_key !== 'string' || !Array.isArray(payload.messages)) {
+      return false;
+    }
+    return (
+      payload.update_mode === undefined ||
+      payload.update_mode === 'replace' ||
+      payload.update_mode === 'append_chunk'
+    );
   }
   if (type === 'resync_required') {
     return typeof payload.reason === 'string';

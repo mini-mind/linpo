@@ -21,6 +21,7 @@ ObserverRealtimeEventType = Literal[
     "topology_updated",
     "node_events_appended",
     "control_request_updated",
+    "session_messages_updated",
     "resync_required",
     "error",
 ]
@@ -35,6 +36,8 @@ class ObserverRealtimeEvent:
     nodes: list[TopologyNode] = field(default_factory=list)
     events: list[EventRecord] = field(default_factory=list)
     payload: dict[str, Any] | None = None
+    session_key: str | None = None
+    messages: list[dict] | None = None
 
 
 @dataclass(frozen=True)
@@ -434,8 +437,12 @@ class OpenClawObserverDataSource(StateBackedObserverDataSource):
             return
         if channel.startswith("agent:") and channel.endswith(":detail"):
             return
+        if channel.startswith("session:") and channel.endswith(":messages"):
+            session_key = channel[len("session:") : -len(":messages")]
+            if session_key:
+                return
         raise ValueError(
-            "OpenClaw realtime currently supports agents:list and agent:{agent_id}:detail only"
+            "OpenClaw realtime currently supports agents:list, agent:{agent_id}:detail, and session:{session_key}:messages only"
         )
 
     def pump_realtime(self, channel: str) -> None:
@@ -594,6 +601,7 @@ class OpenClawObserverDataSource(StateBackedObserverDataSource):
         self._realtime_thread: Thread | None = None
         self._pending_realtime_events: dict[str, ObserverRealtimeEvent] = {}
         self._pending_realtime_error: str | None = None
+        self._session_key_by_run_id: dict[str, str] = {}
         self._realtime_activity = Event()
 
     def _ensure_realtime_started(self) -> None:
@@ -899,6 +907,44 @@ class OpenClawObserverDataSource(StateBackedObserverDataSource):
                 ],
             )
 
+        if event_name == "agent":
+            run_id = payload.get("runId")
+            session_key = payload.get("sessionKey")
+            if isinstance(run_id, str) and isinstance(session_key, str) and session_key:
+                self._session_key_by_run_id[run_id] = session_key
+
+            stream = payload.get("stream")
+            if stream == "lifecycle" and isinstance(run_id, str):
+                data = payload.get("data")
+                phase = data.get("phase") if isinstance(data, dict) else None
+                if phase in {"end", "error"}:
+                    self._session_key_by_run_id.pop(run_id, None)
+                return None
+
+            if stream != "assistant":
+                return None  # Skip non-assistant streams for now
+
+            resolved_session_key = session_key
+            if (not isinstance(resolved_session_key, str) or not resolved_session_key) and isinstance(run_id, str):
+                resolved_session_key = self._session_key_by_run_id.get(run_id)
+            if not isinstance(resolved_session_key, str) or not resolved_session_key:
+                return None
+
+            data = payload.get("data")
+            if not isinstance(data, dict):
+                return None
+
+            text = data.get("text")
+            if not isinstance(text, str) or not text:
+                return None
+
+            return ObserverRealtimeEvent(
+                type="session_messages_updated",
+                session_key=resolved_session_key,
+                messages=[{"role": "assistant", "text": text}],
+                payload={"update_mode": "append_chunk"},
+            )
+
         return None
 
     def _map_topology_node(self, *, agent_id: str, payload: dict[str, Any]) -> TopologyNode:
@@ -992,6 +1038,10 @@ def agent_detail_channel(agent_id: str) -> str:
     return f"agent:{agent_id}:detail"
 
 
+def session_messages_channel(session_key: str) -> str:
+    return f"session:{session_key}:messages"
+
+
 def _channels_for_event(event: ObserverRealtimeEvent) -> list[str]:
     if event.type == "agent_summary_updated" and event.agent is not None:
         return [agents_list_channel(), agent_detail_channel(event.agent.id)]
@@ -999,6 +1049,8 @@ def _channels_for_event(event: ObserverRealtimeEvent) -> list[str]:
         return [agent_detail_channel(event.agent_id)]
     if event.type == "control_request_updated" and event.agent_id is not None:
         return [agent_detail_channel(event.agent_id)]
+    if event.type == "session_messages_updated" and event.session_key is not None:
+        return [session_messages_channel(event.session_key)]
     return []
 
 

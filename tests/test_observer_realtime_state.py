@@ -358,6 +358,74 @@ def test_operator_service_requires_strict_true_ok_for_accepted_status() -> None:
     assert response.correlation_hint is None
 
 
+def test_operator_service_send_message_uses_explicit_session_key_without_resolving() -> None:
+    action_enum = getattr(openclaw_client, "AgentControlAction", None)
+    status_enum = getattr(openclaw_client, "AgentControlStatus", None)
+    service_cls = getattr(openclaw_client, "OpenClawOperatorService", None)
+
+    assert action_enum is not None, "AgentControlAction should exist"
+    assert status_enum is not None, "AgentControlStatus should exist"
+    assert service_cls is not None, "OpenClawOperatorService should exist"
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, object]] = []
+
+        def next_control_request_id(self) -> str:
+            return "control-send-message-1"
+
+        def resolve_agent_session_key(self, agent_id: str) -> str:
+            self.calls.append(("resolve_agent_session_key", agent_id))
+            return "agent:agent-realtime:fallback"
+
+        def _send_chat_send(
+            self,
+            *,
+            session_key: str,
+            request_id: str,
+            message: str,
+        ) -> dict[str, object]:
+            self.calls.append(
+                (
+                    "_send_chat_send",
+                    {
+                        "session_key": session_key,
+                        "request_id": request_id,
+                        "message": message,
+                    },
+                )
+            )
+            return {
+                "id": request_id,
+                "ok": True,
+                "payload": {"ok": True},
+            }
+
+    client = FakeClient()
+    service = service_cls(client=client)
+
+    response = service.send_message(
+        agent_id="agent-realtime",
+        session_key="agent:agent-realtime:main",
+        message="hello from explicit session",
+    )
+
+    assert response.agent_id == "agent-realtime"
+    assert response.action == action_enum.PAUSE
+    assert response.status == status_enum.ACCEPTED
+    assert response.request_id == "control-send-message-1"
+    assert client.calls == [
+        (
+            "_send_chat_send",
+            {
+                "session_key": "agent:agent-realtime:main",
+                "request_id": "control-send-message-1",
+                "message": "hello from explicit session",
+            },
+        )
+    ]
+
+
 def test_openclaw_client_builds_protocol_shaped_control_request_with_session_key() -> None:
     action_enum = getattr(openclaw_client, "AgentControlAction", None)
     client_cls = getattr(openclaw_client, "OpenClawClient", None)
@@ -737,48 +805,6 @@ def test_openclaw_client_send_operator_action_maps_pairing_failures_to_403(
     assert exc_info.value.detail == "OpenClaw pairing required"
     assert len(ws.sent) == 1
     assert ws.sent[0]["method"] == "connect"
-
-
-def test_operator_service_marks_resume_as_failed_without_user_input_path() -> None:
-    action_enum = getattr(openclaw_client, "AgentControlAction", None)
-    status_enum = getattr(openclaw_client, "AgentControlStatus", None)
-    service_cls = getattr(openclaw_client, "OpenClawOperatorService", None)
-
-    assert action_enum is not None, "AgentControlAction should exist"
-    assert status_enum is not None, "AgentControlStatus should exist"
-    assert service_cls is not None, "OpenClawOperatorService should exist"
-
-    class FakeClient:
-        def __init__(self) -> None:
-            self.calls: list[str] = []
-
-        def next_control_request_id(self) -> str:
-            return "control-resume-1"
-
-        def connect_operator(self) -> dict[str, object]:
-            self.calls.append("connect_operator")
-            return {"sessionId": "operator-session"}
-
-        def send_operator_action(self, *, agent_id: str, action: object) -> dict[str, object]:
-            self.calls.append("send_operator_action")
-            del agent_id, action
-            return {"ok": True}
-
-    client = FakeClient()
-    service = service_cls(client=client)
-
-    response = service.send_action(
-        agent_id="agent-realtime",
-        action=action_enum.RESUME,
-    )
-
-    assert response.agent_id == "agent-realtime"
-    assert response.action == action_enum.RESUME
-    assert response.status == status_enum.FAILED
-    assert response.request_id == "control-resume-1"
-    assert response.message is None
-    assert response.correlation_hint is None
-    assert client.calls == []
 
 
 def test_observer_state_store_updates_snapshots_from_standard_events() -> None:

@@ -10,11 +10,25 @@
 
 开发阶段域名暂定为：`linpo.duckdns.org`
 
+## 开发环境
+
+| 机器 | IP | 用途 |
+|------|-----|------|
+| 本机 | `175.178.213.10` | Linpo 服务端（前端 5173，后端 8000） |
+| ravin | `68.64.179.125` | 远程客户端联调（SSH: `ravin@68.64.179.125`） |
+
+### 本机 OpenClaw 实例
+
+| 名称 | 端口 | Token |
+|------|------|-------|
+| claw1 | 18789 | `lhdWYU1MGLCWNwbHaQsIjlPkiSt5LKhEh9PjAtElrlE` |
+| claw2 | 28789 | `ZUE 6oLmaH2DEuC3A3mJYe_l-q3yLOqVSLiLsAGfmJQ` |
+| claw3 | 38789 | (查看容器环境变量) |
+
 ## 当前阶段
 
-- **当前稳定基线**：v0.3 单实例控制接入已完成
-- **v0.3 核心能力**：operator 接入 + pause/send_message 控制 + realtime 状态确认闭环
-- **下一阶段**：v0.4 单实例控制完善（对接 OpenClaw 全量控制 API）
+- **当前稳定基线**：v0.4 单实例控制完善已完成
+- **v0.4 核心能力**：session 管理 + model 切换 + realtime 状态闭环
 - **公网访问**：前端 `http://175.178.213.10:5173`，后端 `http://175.178.213.10:8000`
 
 ## 版本路线
@@ -22,13 +36,36 @@
 ```
 v0.1 ─ Observer 起点（已完成）
 v0.2 ─ Realtime Observer（已完成）
-v0.3 ─ 单实例控制接入验证（已完成）← 当前基线
-v0.4 ─ 单实例控制完善（进行中）← 下一阶段
-│      └─ 对接 OpenClaw 全量控制 API
+v0.3 ─ 单实例控制接入验证（已完成）
+v0.4 ─ 单实例控制完善（已完成）← 当前基线
 v0.5 ─ 用户模型 + 实例配置
 v0.6 ─ 多实例聚合视图
 v0.7 ─ 跨实例消息传递
 ```
+
+## v0.4 功能清单
+
+v0.4 单实例控制完善，在 v0.3 基础上新增以下能力：
+
+### 会话列表
+- **API**: `GET /sessions` - 获取当前 agent 的所有会话列表
+- **前端**: SessionList 组件，支持会话列表展示与选择
+
+### 消息预览
+- **API**: `GET /sessions/{session_id}/preview` - 获取会话消息预览
+- **前端**: 预览 UI，展示会话最近消息摘要
+
+### 模型切换
+- **API**: `GET /models` - 获取可用模型列表；`PATCH /sessions/{session_id}` - 切换会话模型
+- **前端**: ModelSelector 组件，支持桌面端与移动端模型选择
+
+### 会话管理
+- **API**: `POST /sessions/{session_id}/reset` - 重置会话；`DELETE /sessions/{session_id}` - 删除会话
+- **前端**: SessionActions 组件，提供重置与删除操作入口
+
+### 控制状态完善
+- 细化控制响应状态：`applied`（已应用）、`timeout`（超时）
+- 细化错误类型：`no_active_chat`、`no_operator`、`send_failed` 等
 
 ## v0.3 控制功能
 
@@ -100,7 +137,7 @@ asyncio.run(create_chat())
 |------|------|------|
 | 产品需求（含版本路线） | `docs/prd/2026-03-15-linpo-v0.1-observer-prd.md` | 当前有效的产品边界与版本演进路线 |
 | v0.3 控制接入计划 | `docs/plans/2026-03-17-linpo-v0.3-single-agent-control-plan.md` | v0.3 最小控制闭环验证（已完成） |
-| **v0.4 控制完善计划** | `docs/plans/2026-03-18-linpo-v0.4-single-instance-control-completion-plan.md` | v0.4 单实例控制完善（下一阶段） |
+| **v0.4 控制完善计划** | `docs/plans/2026-03-18-linpo-v0.4-single-instance-control-completion-plan.md` | v0.4 单实例控制完善（已完成） |
 | **OpenClaw API 参考** | `OPENCLAW_API.md` | OpenClaw WebSocket API 完整清单，v0.4 对接依据 |
 | v0.1 架构边界 | `docs/architecture/2026-03-15-observer-architecture.md` | observer 架构边界与后续演进参考 |
 | v0.2 demo runbook | `docs/plans/2026-03-16-observer-demo-runbook.md` | 当前 realtime observer 主路径的本地演示与联调检查说明 |

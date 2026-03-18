@@ -17,6 +17,7 @@ from app.domain.control_request import (
     AgentControlAction,
     AgentControlResult,
     AgentControlStatus,
+    ControlErrorCode,
 )
 
 
@@ -382,6 +383,86 @@ class OpenClawClient:
             },
         }
 
+    def _build_sessions_list_request(
+        self,
+        *,
+        agent_id: str | None,
+        limit: int,
+        include_derived_titles: bool,
+        include_last_message: bool,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "limit": limit,
+            "includeDerivedTitles": include_derived_titles,
+            "includeLastMessage": include_last_message,
+        }
+        if agent_id is not None:
+            params["agentId"] = agent_id
+
+        return {
+            "type": "req",
+            "id": f"sessions-list-{uuid4().hex[:8]}",
+            "method": "sessions.list",
+            "params": params,
+        }
+
+    def _build_sessions_preview_request(
+        self,
+        *,
+        keys: list[str],
+        limit: int,
+        max_chars: int,
+    ) -> dict[str, Any]:
+        return {
+            "type": "req",
+            "id": f"sessions-preview-{uuid4().hex[:8]}",
+            "method": "sessions.preview",
+            "params": {
+                "keys": keys,
+                "limit": limit,
+                "maxChars": max_chars,
+            },
+        }
+
+    def _build_sessions_patch_request(
+        self,
+        *,
+        key: str,
+        agent_id: str | None,
+        model: str | None,
+        thinking_level: str | None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"key": key}
+        if agent_id is not None:
+            params["agentId"] = agent_id
+        if model is not None:
+            params["model"] = model
+        if thinking_level is not None:
+            params["thinkingLevel"] = thinking_level
+
+        return {
+            "type": "req",
+            "id": f"sessions-patch-{uuid4().hex[:8]}",
+            "method": "sessions.patch",
+            "params": params,
+        }
+
+    def _build_sessions_reset_request(self, *, key: str) -> dict[str, Any]:
+        return {
+            "type": "req",
+            "id": f"sessions-reset-{uuid4().hex[:8]}",
+            "method": "sessions.reset",
+            "params": {"key": key},
+        }
+
+    def _build_sessions_delete_request(self, *, key: str) -> dict[str, Any]:
+        return {
+            "type": "req",
+            "id": f"sessions-delete-{uuid4().hex[:8]}",
+            "method": "sessions.delete",
+            "params": {"key": key},
+        }
+
     def _send_chat_send(
         self,
         *,
@@ -396,6 +477,72 @@ class OpenClawClient:
         )
         return self._run_sync(self._send_control_request(request))
 
+    def sessions_list(
+        self,
+        *,
+        agent_id: str | None = None,
+        limit: int = 50,
+        include_derived_titles: bool = True,
+        include_last_message: bool = True,
+    ) -> dict[str, Any]:
+        request = self._build_sessions_list_request(
+            agent_id=agent_id,
+            limit=limit,
+            include_derived_titles=include_derived_titles,
+            include_last_message=include_last_message,
+        )
+        return self._run_sync(self._send_control_request(request))
+
+    def sessions_preview(
+        self,
+        *,
+        keys: list[str],
+        limit: int = 20,
+        max_chars: int = 2000,
+    ) -> dict[str, Any]:
+        request = self._build_sessions_preview_request(
+            keys=keys,
+            limit=limit,
+            max_chars=max_chars,
+        )
+        return self._run_sync(self._send_control_request(request))
+
+    def sessions_patch(
+        self,
+        *,
+        key: str,
+        agent_id: str | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+    ) -> dict[str, Any]:
+        request = self._build_sessions_patch_request(
+            key=key,
+            agent_id=agent_id,
+            model=model,
+            thinking_level=thinking_level,
+        )
+        return self._run_sync(self._send_control_request(request))
+
+    def sessions_reset(self, *, key: str) -> dict[str, Any]:
+        request = self._build_sessions_reset_request(key=key)
+        return self._run_sync(self._send_control_request(request))
+
+    def sessions_delete(self, *, key: str) -> dict[str, Any]:
+        request = self._build_sessions_delete_request(key=key)
+        return self._run_sync(self._send_control_request(request))
+
+    def _build_models_list_request(self) -> dict[str, Any]:
+        return {
+            "type": "req",
+            "id": f"models-list-{uuid4().hex[:8]}",
+            "method": "models.list",
+            "params": {},
+        }
+
+    def models_list(self) -> dict[str, Any]:
+        request = self._build_models_list_request()
+        return self._run_sync(self._send_control_request(request))
+
     def _next_control_request_id(self) -> str:
         return f"control-{uuid4().hex[:12]}"
 
@@ -406,6 +553,8 @@ class ChatSendResult:
     agent_id: str
     status: str
     message: str | None = None
+    error_code: ControlErrorCode | None = None
+    is_timeout: bool = False
 
 
 @dataclass(frozen=True)
@@ -416,11 +565,28 @@ class ChatAbortResult:
     run_ids: list[str]
     message: str | None = None
     correlation_hint: str | None = None
+    error_code: ControlErrorCode | None = None
+    is_timeout: bool = False
 
 
 class OpenClawOperatorService:
     def __init__(self, client: OpenClawClient | None = None) -> None:
         self._client = client or OpenClawClient()
+
+    def _map_error_code(self, exc: Exception) -> ControlErrorCode:
+        if isinstance(exc, HTTPException):
+            detail = str(exc.detail).lower()
+            if "pair" in detail:
+                return ControlErrorCode.PAIRING_REQUIRED
+            if "unauthorized" in detail or exc.status_code == 403:
+                return ControlErrorCode.UNAUTHORIZED
+            if "session" in detail and ("not found" in detail or "missing" in detail):
+                return ControlErrorCode.SESSION_NOT_FOUND
+            if "agent" in detail and ("not found" in detail or "missing" in detail):
+                return ControlErrorCode.AGENT_NOT_FOUND
+            if "rate" in detail or "limit" in detail:
+                return ControlErrorCode.RATE_LIMITED
+        return ControlErrorCode.INTERNAL_ERROR
 
     def chat_abort(self, *, agent_id: str) -> ChatAbortResult:
         request_id = self._client.next_control_request_id()
@@ -438,7 +604,16 @@ class OpenClawOperatorService:
                 agent_id=agent_id,
                 aborted=False,
                 run_ids=[],
-                message="Timeout",
+                is_timeout=True,
+            )
+        except Exception as exc:
+            return ChatAbortResult(
+                request_id=request_id,
+                agent_id=agent_id,
+                aborted=False,
+                run_ids=[],
+                message=str(exc),
+                error_code=self._map_error_code(exc),
             )
 
         response_request_id = result.get("id")
@@ -446,11 +621,13 @@ class OpenClawOperatorService:
             response_request_id = request_id
 
         if result.get("ok") is not True:
+            error = result.get("error", {})
             return ChatAbortResult(
                 request_id=response_request_id,
                 agent_id=agent_id,
                 aborted=False,
                 run_ids=[],
+                error_code=self._map_error_code_from_response(error),
             )
 
         payload = result.get("payload")
@@ -460,7 +637,7 @@ class OpenClawOperatorService:
                 agent_id=agent_id,
                 aborted=False,
                 run_ids=[],
-                message="Response missing payload",
+                error_code=ControlErrorCode.INTERNAL_ERROR,
             )
 
         aborted = payload.get("aborted")
@@ -471,7 +648,8 @@ class OpenClawOperatorService:
                 agent_id=agent_id,
                 aborted=False,
                 run_ids=[],
-                message="Abort not applied",
+                message="OpenClaw pause was not applied",
+                error_code=ControlErrorCode.INTERNAL_ERROR,
             )
 
         return ChatAbortResult(
@@ -481,11 +659,48 @@ class OpenClawOperatorService:
             run_ids=[str(rid) for rid in run_ids],
         )
 
-    def chat_send(self, *, agent_id: str, message: str) -> ChatSendResult:
+    def _map_error_code_from_response(self, error: dict[str, Any] | str) -> ControlErrorCode:
+        if isinstance(error, str):
+            error_lower = error.lower()
+            if "pair" in error_lower:
+                return ControlErrorCode.PAIRING_REQUIRED
+            if "unauthorized" in error_lower:
+                return ControlErrorCode.UNAUTHORIZED
+            if "session" in error_lower:
+                return ControlErrorCode.SESSION_NOT_FOUND
+            if "agent" in error_lower:
+                return ControlErrorCode.AGENT_NOT_FOUND
+            if "rate" in error_lower or "limit" in error_lower:
+                return ControlErrorCode.RATE_LIMITED
+            return ControlErrorCode.INTERNAL_ERROR
+
+        code = error.get("code") if isinstance(error, dict) else None
+        if isinstance(code, str):
+            code_lower = code.lower()
+            if "pair" in code_lower:
+                return ControlErrorCode.PAIRING_REQUIRED
+            if "unauthorized" in code_lower or "forbidden" in code_lower:
+                return ControlErrorCode.UNAUTHORIZED
+            if "session" in code_lower:
+                return ControlErrorCode.SESSION_NOT_FOUND
+            if "agent" in code_lower:
+                return ControlErrorCode.AGENT_NOT_FOUND
+            if "rate" in code_lower:
+                return ControlErrorCode.RATE_LIMITED
+
+        message = error.get("message", "") if isinstance(error, dict) else ""
+        return self._map_error_code_from_response(message)
+
+    def chat_send(
+        self,
+        *,
+        agent_id: str,
+        message: str,
+        session_key: str,
+    ) -> ChatSendResult:
         request_id = self._client.next_control_request_id()
 
         try:
-            session_key = self._client.resolve_agent_session_key(agent_id)
             result = self._client._send_chat_send(
                 session_key=session_key,
                 request_id=request_id,
@@ -496,7 +711,7 @@ class OpenClawOperatorService:
                 request_id=request_id,
                 agent_id=agent_id,
                 status="timeout",
-                message="Timeout",
+                is_timeout=True,
             )
         except Exception as exc:
             return ChatSendResult(
@@ -504,6 +719,7 @@ class OpenClawOperatorService:
                 agent_id=agent_id,
                 status="failed",
                 message=str(exc),
+                error_code=self._map_error_code(exc),
             )
 
         response_request_id = result.get("id")
@@ -511,10 +727,12 @@ class OpenClawOperatorService:
             response_request_id = request_id
 
         if result.get("ok") is not True:
+            error = result.get("error", {})
             return ChatSendResult(
                 request_id=response_request_id,
                 agent_id=agent_id,
                 status="failed",
+                error_code=self._map_error_code_from_response(error),
             )
 
         return ChatSendResult(
@@ -533,26 +751,49 @@ class OpenClawOperatorService:
             raise HTTPException(status_code=400, detail=f"Unsupported control action: {action.value}")
 
         result = self.chat_abort(agent_id=agent_id)
+        status = AgentControlStatus.ACCEPTED
+        message = result.message
+        if not result.aborted:
+            if result.is_timeout:
+                status = AgentControlStatus.TIMEOUT
+                message = None
+            else:
+                status = AgentControlStatus.FAILED
         return AgentControlResult(
             request_id=result.request_id,
             agent_id=result.agent_id,
             action=action,
-            status=AgentControlStatus.ACCEPTED if result.aborted else AgentControlStatus.FAILED,
-            message=result.message,
+            status=status,
+            message=message,
             correlation_hint=result.correlation_hint,
+            error_code=result.error_code,
         )
 
     def send_message(
         self,
         *,
         agent_id: str,
+        session_key: str,
         message: str,
     ) -> AgentControlResult:
-        result = self.chat_send(agent_id=agent_id, message=message)
+        result = self.chat_send(
+            agent_id=agent_id,
+            session_key=session_key,
+            message=message,
+        )
+        status = AgentControlStatus.ACCEPTED
+        result_message = result.message
+        if result.status != "accepted":
+            if result.is_timeout:
+                status = AgentControlStatus.TIMEOUT
+                result_message = None
+            else:
+                status = AgentControlStatus.FAILED
         return AgentControlResult(
             request_id=result.request_id,
             agent_id=result.agent_id,
             action=AgentControlAction.PAUSE,
-            status=AgentControlStatus.ACCEPTED if result.status == "accepted" else AgentControlStatus.FAILED,
-            message=result.message,
+            status=status,
+            message=result_message,
+            error_code=result.error_code,
         )

@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
 import type React from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getDefaultObserverDataSource, listAgents } from '../api/client';
 import {
@@ -8,13 +8,7 @@ import {
   type ObserverRealtimeClientOptions,
 } from '../api/realtimeClient';
 import type { AgentListItem } from '../api/types';
-
-type RealtimeStatus = 'realtime' | 'reconnecting' | 'resyncing' | 'disconnected' | 'error';
-
-interface RealtimeState {
-  status: RealtimeStatus;
-  message: string | null;
-}
+import { useIsMobile } from '../hooks/useIsMobile';
 
 type AgentsUpdate = AgentListItem[] | ((previous: AgentListItem[]) => AgentListItem[]);
 
@@ -22,11 +16,9 @@ interface StartAgentsListRealtimeOptions {
   listAgentsFn: () => Promise<AgentListItem[]>;
   createRealtimeClientFn: (options: ObserverRealtimeClientOptions) => ObserverRealtimeClient;
   applyAgents: (update: AgentsUpdate) => void;
-  setRealtimeState: (state: RealtimeState) => void;
 }
 
 const AGENTS_LIST_REALTIME_DATA_SOURCE = getDefaultObserverDataSource();
-const MOBILE_BREAKPOINT = 768;
 
 function withErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
@@ -49,20 +41,12 @@ async function startAgentsListRealtime(
 ): Promise<{ close: () => void } | null> {
   const snapshot = await options.listAgentsFn();
   options.applyAgents(snapshot);
-  options.setRealtimeState({ status: 'reconnecting', message: null });
 
   const runResync = async (): Promise<void> => {
-    options.setRealtimeState({ status: 'resyncing', message: null });
     try {
       const refreshed = await options.listAgentsFn();
       options.applyAgents(refreshed);
-      options.setRealtimeState({ status: 'realtime', message: null });
-    } catch (error) {
-      options.setRealtimeState({
-        status: 'error',
-        message: withErrorMessage(error, '同步实例列表失败'),
-      });
-    }
+    } catch { }
   };
 
   try {
@@ -70,74 +54,37 @@ async function startAgentsListRealtime(
       dataSource: AGENTS_LIST_REALTIME_DATA_SOURCE,
       channel: 'agents:list',
       onMessage: (message) => {
-        if (message.type === 'snapshot_ready') {
-          options.setRealtimeState({ status: 'realtime', message: null });
-          return;
-        }
-
         if (message.type === 'agent_summary_updated') {
           options.applyAgents((previousAgents) =>
             mergeAgentSummary(previousAgents, message.payload.agent)
           );
-          options.setRealtimeState({ status: 'realtime', message: null });
-          return;
-        }
-
-        if (message.type === 'error') {
-          options.setRealtimeState({ status: 'error', message: message.payload.detail });
         }
       },
       onResyncRequired: () => {
         void runResync();
       },
-      onParseError: (_raw, error) => {
-        options.setRealtimeState({
-          status: 'error',
-          message: withErrorMessage(error, '解析实时消息失败'),
-        });
-      },
-      onDisconnected: () => {
-        options.setRealtimeState({
-          status: 'disconnected',
-          message: '实时连接意外断开',
-        });
-      },
     });
 
     realtimeClient.connect();
     return realtimeClient;
-  } catch (error) {
-    options.setRealtimeState({
-      status: 'error',
-      message: withErrorMessage(error, '连接实时通道失败'),
-    });
+  } catch {
     return null;
   }
 }
 
-const STATUS_LABELS: Record<RealtimeStatus, string> = {
-  realtime: '已连接',
-  reconnecting: '重连中',
-  resyncing: '同步中',
-  disconnected: '已断开',
-  error: '错误',
-};
-
-function useIsMobile(): boolean {
-  const [isMobile, setIsMobile] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    return window.innerWidth < MOBILE_BREAKPOINT;
-  });
-
-  useEffect(() => {
-    const handleResize = () => {
-      setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
-    };
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
-  return isMobile;
+function formatLastActive(isoString: string | null): string {
+  if (!isoString) return '未知';
+  try {
+    const date = new Date(isoString);
+    return date.toLocaleString('zh-CN', {
+      month: 'numeric',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return '未知';
+  }
 }
 
 export function InstanceTopology(): JSX.Element {
@@ -146,10 +93,7 @@ export function InstanceTopology(): JSX.Element {
   const [agents, setAgents] = useState<AgentListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [realtimeState, setRealtimeState] = useState<RealtimeState>({
-    status: 'reconnecting',
-    message: null,
-  });
+  const [selectedAgent, setSelectedAgent] = useState<AgentListItem | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -168,11 +112,6 @@ export function InstanceTopology(): JSX.Element {
               typeof update === 'function' ? update(previousAgents) : update
             );
           },
-          setRealtimeState: (state) => {
-            if (!cancelled) {
-              setRealtimeState(state);
-            }
-          },
         });
 
         if (!cancelled) {
@@ -184,7 +123,6 @@ export function InstanceTopology(): JSX.Element {
         if (!cancelled) {
           const message = withErrorMessage(err, '获取实例列表失败');
           setError(message);
-          setRealtimeState({ status: 'error', message });
         }
       } finally {
         if (!cancelled) {
@@ -201,8 +139,19 @@ export function InstanceTopology(): JSX.Element {
     };
   }, []);
 
-  const handleInstanceClick = (agentId: string): void => {
-    navigate(`/agents/${agentId}`);
+  const handleInstanceClick = (agent: AgentListItem): void => {
+    setSelectedAgent(agent);
+  };
+
+  const handleCloseModal = (): void => {
+    setSelectedAgent(null);
+  };
+
+  const handleGoToSession = (): void => {
+    if (selectedAgent) {
+      navigate(`/session/${selectedAgent.id}`);
+      setSelectedAgent(null);
+    }
   };
 
   if (loading) {
@@ -223,27 +172,11 @@ export function InstanceTopology(): JSX.Element {
 
   return (
     <div style={getContainerStyle(isMobile)}>
-      <div style={getHeaderStyle(isMobile)}>
-        <h1 style={getTitleStyle(isMobile)}>灵盘</h1>
-        <p style={getSubtitleStyle(isMobile)}>实例拓扑视图</p>
-        <p style={metaStyle}>
-          实时状态: {STATUS_LABELS[realtimeState.status]}
-          {realtimeState.message ? ` - ${realtimeState.message}` : ''}
-        </p>
-      </div>
-
-      <div style={getToolbarStyle(isMobile)}>
-        <button type="button" disabled style={getDisabledButtonStyle(isMobile)}>
-          添加实例
-          <span style={tagStyle}>暂不支持</span>
-        </button>
-      </div>
-
       <div style={getCanvasStyle(isMobile)}>
         {agents.length === 0 ? (
           <div style={emptyStyle}>
             <p style={emptyTextStyle}>暂无实例</p>
-            <p style={emptyHintStyle}>点击上方"添加实例"连接您的 OpenClaw 实例</p>
+            <p style={emptyHintStyle}>添加实例开始使用</p>
           </div>
         ) : (
           <div style={topologyContainerStyle}>
@@ -252,7 +185,7 @@ export function InstanceTopology(): JSX.Element {
                 key={agent.id}
                 type="button"
                 style={getInstanceNodeStyle(agent.status, agent.is_active, isMobile)}
-                onClick={() => handleInstanceClick(agent.id)}
+                onClick={() => handleInstanceClick(agent)}
               >
                 <div style={nodeIconStyle}>
                   <InstanceIcon status={agent.status} isActive={agent.is_active} size={isMobile ? 32 : 40} />
@@ -268,9 +201,6 @@ export function InstanceTopology(): JSX.Element {
                       {agent.is_active ? '● 活跃' : '○ 不活跃'}
                     </span>
                   </div>
-                  <span style={healthBadgeStyle(agent.is_active, realtimeState.status)}>
-                    {realtimeState.status === 'realtime' ? '已连接' : realtimeState.status === 'reconnecting' ? '重连中' : '离线'}
-                  </span>
                 </div>
                 {index < agents.length - 1 && !isMobile && (
                   <svg style={connectionLineStyle} aria-hidden="true">
@@ -291,6 +221,75 @@ export function InstanceTopology(): JSX.Element {
           </div>
         )}
       </div>
+
+      {selectedAgent && (
+        <div
+          style={modalOverlayStyle}
+          onClick={handleCloseModal}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') handleCloseModal();
+          }}
+          role="button"
+          tabIndex={0}
+        >
+          {/* eslint-disable-next-line jsx-a11y/prefer-tag-over-role */}
+          <div
+            style={getModalStyle(isMobile)}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={() => {}}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="modal-title"
+          >
+            <div style={modalHeaderStyle}>
+              <h2 style={modalTitleStyle}>{selectedAgent.name}</h2>
+              <button
+                type="button"
+                style={closeButtonStyle}
+                onClick={handleCloseModal}
+                aria-label="关闭"
+              >
+                ×
+              </button>
+            </div>
+            <div style={modalBodyStyle}>
+              <div style={infoRowStyle}>
+                <span style={infoLabelStyle}>实例 ID</span>
+                <span style={infoValueStyle}>{selectedAgent.id}</span>
+              </div>
+              <div style={infoRowStyle}>
+                <span style={infoLabelStyle}>运行状态</span>
+                <span style={getInfoValueWithStatusStyle(selectedAgent.status)}>
+                  {selectedAgent.status === 'running' ? '运行中' : selectedAgent.status === 'idle' ? '空闲' : selectedAgent.status}
+                </span>
+              </div>
+              <div style={infoRowStyle}>
+                <span style={infoLabelStyle}>活跃状态</span>
+                <span style={selectedAgent.is_active ? activeInfoStyle : inactiveInfoStyle}>
+                  {selectedAgent.is_active ? '● 活跃' : '○ 不活跃'}
+                </span>
+              </div>
+              <div style={infoRowStyle}>
+                <span style={infoLabelStyle}>最后活跃</span>
+                <span style={infoValueStyle}>{formatLastActive(selectedAgent.last_active_at)}</span>
+              </div>
+            </div>
+            <div style={modalFooterStyle}>
+              <button
+                type="button"
+                style={sessionButtonStyle}
+                onClick={handleGoToSession}
+              >
+                进入会话
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <button type="button" disabled style={getFabStyle(isMobile)} title="添加实例">
+        +
+      </button>
     </div>
   );
 }
@@ -309,59 +308,13 @@ function InstanceIcon({ status, isActive, size }: { status: string; isActive: bo
 
 function getContainerStyle(isMobile: boolean): React.CSSProperties {
   return {
-    minHeight: '100vh',
+    height: '100%',
     padding: isMobile ? '1rem' : '2rem',
     background: '#f4f1ea',
     color: '#1f2933',
     fontFamily: 'system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif',
-  };
-}
-
-function getHeaderStyle(isMobile: boolean): React.CSSProperties {
-  return {
-    marginBottom: isMobile ? '1rem' : '1.5rem',
-    textAlign: 'center',
-  };
-}
-
-function getTitleStyle(isMobile: boolean): React.CSSProperties {
-  return {
-    fontSize: isMobile ? '1.5rem' : '2rem',
-    fontWeight: 700,
-    margin: '0 0 0.25rem 0',
-    color: '#1f2933',
-  };
-}
-
-function getSubtitleStyle(isMobile: boolean): React.CSSProperties {
-  return {
-    fontSize: isMobile ? '0.875rem' : '1rem',
-    color: '#6b7280',
-    margin: 0,
-  };
-}
-
-function getToolbarStyle(isMobile: boolean): React.CSSProperties {
-  return {
-    display: 'flex',
-    justifyContent: 'center',
-    gap: '1rem',
-    marginBottom: isMobile ? '1rem' : '2rem',
-  };
-}
-
-function getDisabledButtonStyle(isMobile: boolean): React.CSSProperties {
-  return {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '0.5rem',
-    padding: isMobile ? '0.375rem 0.75rem' : '0.5rem 1rem',
-    fontSize: isMobile ? '0.75rem' : '0.875rem',
-    borderRadius: '0.375rem',
-    border: '1px solid #d1d5db',
-    background: '#f9fafb',
-    color: '#9ca3af',
-    cursor: 'not-allowed',
+    overflow: 'auto',
+    boxSizing: 'border-box',
   };
 }
 
@@ -408,20 +361,6 @@ function getNodeNameStyle(isMobile: boolean): React.CSSProperties {
     color: '#1f2933',
   };
 }
-
-const metaStyle: React.CSSProperties = {
-  fontSize: '0.75rem',
-  color: '#9ca3af',
-  margin: '0.5rem 0 0 0',
-};
-
-const tagStyle: React.CSSProperties = {
-  fontSize: '0.625rem',
-  padding: '0.125rem 0.375rem',
-  background: '#fee2e2',
-  color: '#991b1b',
-  borderRadius: '0.25rem',
-};
 
 const topologyContainerStyle: React.CSSProperties = {
   display: 'flex',
@@ -497,18 +436,6 @@ const nodeBadgesStyle: React.CSSProperties = {
   gap: '0.5rem',
 };
 
-function healthBadgeStyle(isActive: boolean, realtimeStatus: string): React.CSSProperties {
-  const isConnected = realtimeStatus === 'realtime';
-  return {
-    fontSize: '0.625rem',
-    padding: '0.125rem 0.375rem',
-    borderRadius: '9999px',
-    background: isActive && isConnected ? '#dcfce7' : '#f3f4f6',
-    color: isActive && isConnected ? '#166534' : '#6b7280',
-    fontWeight: 500,
-  };
-}
-
 const healthPulseStyle: React.CSSProperties = {
   position: 'absolute',
   top: '50%',
@@ -527,5 +454,142 @@ const connectionLineStyle: React.CSSProperties = {
   left: '0',
   width: '100%',
   height: '4rem',
-  pointerEvents: 'none',
+};
+
+function getFabStyle(isMobile: boolean): React.CSSProperties {
+  return {
+    position: 'fixed',
+    bottom: isMobile ? 'calc(56px + 1rem)' : '2rem',
+    right: '1rem',
+    width: '48px',
+    height: '48px',
+    borderRadius: '50%',
+    border: 'none',
+    background: '#6b7280',
+    color: '#fff',
+    fontSize: '1.25rem',
+    cursor: 'not-allowed',
+    opacity: 0.5,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+    zIndex: 90,
+  };
+}
+
+const modalOverlayStyle: React.CSSProperties = {
+  position: 'fixed',
+  top: 0,
+  left: 0,
+  right: 0,
+  bottom: 0,
+  background: 'rgba(0, 0, 0, 0.5)',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  zIndex: 200,
+};
+
+function getModalStyle(isMobile: boolean): React.CSSProperties {
+  return {
+    background: '#fff',
+    borderRadius: '0.75rem',
+    width: isMobile ? 'calc(100% - 2rem)' : '400px',
+    maxWidth: '90%',
+    boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+    overflow: 'hidden',
+  };
+}
+
+const modalHeaderStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  padding: '1rem 1.25rem',
+  borderBottom: '1px solid #e5e7eb',
+};
+
+const modalTitleStyle: React.CSSProperties = {
+  fontSize: '1.125rem',
+  fontWeight: 600,
+  color: '#1f2933',
+  margin: 0,
+};
+
+const closeButtonStyle: React.CSSProperties = {
+  width: '32px',
+  height: '32px',
+  borderRadius: '0.375rem',
+  border: 'none',
+  background: 'transparent',
+  color: '#6b7280',
+  fontSize: '1.5rem',
+  cursor: 'pointer',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  lineHeight: 1,
+};
+
+const modalBodyStyle: React.CSSProperties = {
+  padding: '1.25rem',
+};
+
+const infoRowStyle: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  padding: '0.75rem 0',
+  borderBottom: '1px solid #f3f4f6',
+};
+
+const infoLabelStyle: React.CSSProperties = {
+  fontSize: '0.875rem',
+  color: '#6b7280',
+};
+
+const infoValueStyle: React.CSSProperties = {
+  fontSize: '0.875rem',
+  color: '#1f2933',
+  fontWeight: 500,
+};
+
+function getInfoValueWithStatusStyle(status: string): React.CSSProperties {
+  return {
+    fontSize: '0.875rem',
+    color: status === 'running' ? '#10b981' : status === 'idle' ? '#6b7280' : '#1f2933',
+    fontWeight: 500,
+  };
+}
+
+const activeInfoStyle: React.CSSProperties = {
+  fontSize: '0.875rem',
+  color: '#10b981',
+  fontWeight: 500,
+};
+
+const inactiveInfoStyle: React.CSSProperties = {
+  fontSize: '0.875rem',
+  color: '#9ca3af',
+  fontWeight: 500,
+};
+
+const modalFooterStyle: React.CSSProperties = {
+  padding: '1rem 1.25rem',
+  borderTop: '1px solid #e5e7eb',
+  display: 'flex',
+  justifyContent: 'flex-end',
+};
+
+const sessionButtonStyle: React.CSSProperties = {
+  padding: '0.625rem 1.25rem',
+  background: '#3b82f6',
+  color: '#fff',
+  border: 'none',
+  borderRadius: '0.5rem',
+  fontSize: '0.875rem',
+  fontWeight: 500,
+  cursor: 'pointer',
+  transition: 'background 0.2s',
 };

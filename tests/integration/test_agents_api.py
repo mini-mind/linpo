@@ -56,25 +56,47 @@ def test_chat_send_rejects_empty_message() -> None:
     assert payload == {"detail": "Message cannot be empty"}
 
 
+def test_chat_send_requires_session_key() -> None:
+    status_code, _, body = request(
+        "POST",
+        "/chat/send?agentId=agent-root-observer&data_source=openclaw",
+        body=json.dumps({"message": "test message"}).encode("utf-8"),
+        headers={"content-type": "application/json"},
+    )
+
+    assert status_code == 400
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {"detail": "sessionKey is required"}
+
+
 def test_chat_send_returns_accepted_status(monkeypatch: Any) -> None:
     from app.api import agents as agents_api
-    from app.services.openclaw_client import ChatSendResult
+    from app.domain.control_request import AgentControlAction
+    from app.services.openclaw_client import AgentControlResult, AgentControlStatus
 
     class FakeOperatorService:
-        def chat_send(self, *, agent_id: str, message: str) -> ChatSendResult:
+        def send_message(
+            self,
+            *,
+            agent_id: str,
+            session_key: str,
+            message: str,
+        ) -> AgentControlResult:
             assert agent_id == "agent-root-observer"
+            assert session_key == "agent:main:main"
             assert message == "test message"
-            return ChatSendResult(
+            return AgentControlResult(
                 request_id="send-msg-test-accepted",
                 agent_id=agent_id,
-                status="accepted",
+                action=AgentControlAction.PAUSE,
+                status=AgentControlStatus.ACCEPTED,
             )
 
     monkeypatch.setattr(agents_api, "get_openclaw_operator_service", lambda: FakeOperatorService())
 
     status_code, _, body = request(
         "POST",
-        "/chat/send?agentId=agent-root-observer&data_source=openclaw",
+        "/chat/send?agentId=agent-root-observer&data_source=openclaw&sessionKey=agent:main:main",
         body=json.dumps({"message": "test message"}).encode("utf-8"),
         headers={"content-type": "application/json"},
     )
@@ -89,16 +111,67 @@ def test_chat_send_returns_accepted_status(monkeypatch: Any) -> None:
     }
 
 
-def test_chat_send_returns_failed_status_on_error(monkeypatch: Any) -> None:
+def test_chat_send_passes_session_key_to_operator_service(monkeypatch: Any) -> None:
     from app.api import agents as agents_api
-    from app.services.openclaw_client import ChatSendResult
+    from app.domain.control_request import AgentControlAction
+    from app.services.openclaw_client import AgentControlResult, AgentControlStatus
 
     class FakeOperatorService:
-        def chat_send(self, *, agent_id: str, message: str) -> ChatSendResult:
-            return ChatSendResult(
+        def send_message(
+            self,
+            *,
+            agent_id: str,
+            session_key: str,
+            message: str,
+        ) -> AgentControlResult:
+            assert agent_id == "agent-root-observer"
+            assert session_key == "agent:main:main"
+            assert message == "test message"
+            return AgentControlResult(
+                request_id="send-msg-test-session-key",
+                agent_id=agent_id,
+                action=AgentControlAction.PAUSE,
+                status=AgentControlStatus.ACCEPTED,
+            )
+
+    monkeypatch.setattr(agents_api, "get_openclaw_operator_service", lambda: FakeOperatorService())
+
+    status_code, _, body = request(
+        "POST",
+        "/chat/send?agentId=agent-root-observer&data_source=openclaw&sessionKey=agent:main:main",
+        body=json.dumps({"message": "test message"}).encode("utf-8"),
+        headers={"content-type": "application/json"},
+    )
+
+    assert status_code == 200
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {
+        "request_id": "send-msg-test-session-key",
+        "agent_id": "agent-root-observer",
+        "status": "accepted",
+        "message": None,
+    }
+
+
+def test_chat_send_returns_failed_status_on_error(monkeypatch: Any) -> None:
+    from app.api import agents as agents_api
+    from app.domain.control_request import AgentControlAction
+    from app.services.openclaw_client import AgentControlResult, AgentControlStatus
+
+    class FakeOperatorService:
+        def send_message(
+            self,
+            *,
+            agent_id: str,
+            session_key: str,
+            message: str,
+        ) -> AgentControlResult:
+            assert session_key == "agent:main:main"
+            return AgentControlResult(
                 request_id="send-msg-test-failed",
                 agent_id=agent_id,
-                status="failed",
+                action=AgentControlAction.PAUSE,
+                status=AgentControlStatus.FAILED,
                 message="Session not found",
             )
 
@@ -106,7 +179,7 @@ def test_chat_send_returns_failed_status_on_error(monkeypatch: Any) -> None:
 
     status_code, _, body = request(
         "POST",
-        "/chat/send?agentId=agent-root-observer&data_source=openclaw",
+        "/chat/send?agentId=agent-root-observer&data_source=openclaw&sessionKey=agent:main:main",
         body=json.dumps({"message": "test message"}).encode("utf-8"),
         headers={"content-type": "application/json"},
     )
@@ -134,19 +207,26 @@ def test_chat_abort_requires_openclaw_data_source() -> None:
 
 def test_chat_abort_returns_aborted_status(monkeypatch: Any) -> None:
     from app.api import agents as agents_api
-    from app.services.openclaw_client import ChatAbortResult
+    from app.domain.control_request import AgentControlAction
+    from app.services.openclaw_client import AgentControlResult, AgentControlStatus
 
     class FakeOperatorService:
-        def chat_abort(self, *, agent_id: str) -> ChatAbortResult:
+        def send_action(self, *, agent_id: str, action: AgentControlAction) -> AgentControlResult:
             assert agent_id == "agent-root-observer"
-            return ChatAbortResult(
+            assert action == AgentControlAction.PAUSE
+            return AgentControlResult(
                 request_id="abort-test-accepted",
                 agent_id=agent_id,
-                aborted=True,
-                run_ids=["run-1", "run-2"],
+                action=action,
+                status=AgentControlStatus.ACCEPTED,
             )
 
+    class FakeDataSource:
+        def register_pending_control_request(self, *args: object, **kwargs: object) -> None:
+            pass
+
     monkeypatch.setattr(agents_api, "get_openclaw_operator_service", lambda: FakeOperatorService())
+    monkeypatch.setattr(agents_api, "get_observer_data_source", lambda _: FakeDataSource())
 
     status_code, _, body = request(
         "POST",
@@ -159,7 +239,7 @@ def test_chat_abort_returns_aborted_status(monkeypatch: Any) -> None:
         "request_id": "abort-test-accepted",
         "agent_id": "agent-root-observer",
         "aborted": True,
-        "run_ids": ["run-1", "run-2"],
+        "run_ids": [],
         "message": None,
     }
 
@@ -482,3 +562,258 @@ def test_http_routes_read_updated_snapshots_from_event_driven_state(monkeypatch:
             }
         ],
     }
+
+
+def test_list_sessions_requires_openclaw_data_source() -> None:
+    status_code, _, body = request("GET", "/chat/sessions")
+    assert status_code == 503
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {"detail": "sessions.list is only available with the OpenClaw data source"}
+
+
+def test_list_sessions_returns_sessions_list(monkeypatch: Any) -> None:
+    from app.api import agents as agents_api
+
+    class FakeClient:
+        def sessions_list(self, **kwargs: Any) -> dict[str, Any]:
+            return {
+                "ok": True,
+                "payload": {
+                    "ts": 1234567890000,
+                    "count": 2,
+                    "sessions": [
+                        {
+                            "key": "agent:main:main",
+                            "kind": "direct",
+                            "label": None,
+                            "derivedTitle": "Session about Python",
+                            "lastMessagePreview": "Write a Python script",
+                            "updatedAt": 1234567890000,
+                        },
+                        {
+                            "key": "agent:main:secondary",
+                            "kind": "direct",
+                            "label": "Secondary Session",
+                            "derivedTitle": None,
+                            "lastMessagePreview": None,
+                            "updatedAt": 1234567880000,
+                        },
+                    ],
+                    "defaults": {"model": "claude-sonnet-4"},
+                }
+            }
+
+    monkeypatch.setattr(agents_api, "OpenClawClient", FakeClient)
+
+    status_code, _, body = request("GET", "/chat/sessions?data_source=openclaw")
+    assert status_code == 200
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload["ts"] == 1234567890000
+    assert payload["count"] == 2
+    assert len(payload["sessions"]) == 2
+    assert payload["sessions"][0]["key"] == "agent:main:main"
+    assert payload["sessions"][0]["derived_title"] == "Session about Python"
+
+
+def test_preview_sessions_requires_openclaw_data_source() -> None:
+    status_code, _, body = request("GET", "/chat/sessions/preview?keys=agent:main:main")
+    assert status_code == 503
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {"detail": "sessions.preview is only available with the OpenClaw data source"}
+
+
+def test_preview_sessions_returns_message_previews(monkeypatch: Any) -> None:
+    from app.api import agents as agents_api
+
+    class FakeClient:
+        def sessions_preview(self, **kwargs: Any) -> dict[str, Any]:
+            assert kwargs["max_chars"] == 2000
+            return {
+                "ok": True,
+                "payload": {
+                    "ts": 1234567890000,
+                    "previews": [
+                        {
+                            "key": "agent:main:main",
+                            "status": "ok",
+                            "items": [
+                                {"role": "user", "text": "Write a Python script"},
+                                {"role": "assistant", "text": "Here's a Python script..."},
+                            ],
+                        }
+                    ]
+                }
+            }
+
+    monkeypatch.setattr(agents_api, "OpenClawClient", FakeClient)
+
+    status_code, _, body = request(
+        "GET", "/chat/sessions/preview?keys=agent:main:main&data_source=openclaw"
+    )
+    assert status_code == 200
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload["ts"] == 1234567890000
+    assert len(payload["previews"]) == 1
+    assert payload["previews"][0]["key"] == "agent:main:main"
+    assert payload["previews"][0]["status"] == "ok"
+    assert len(payload["previews"][0]["items"]) == 2
+    assert payload["previews"][0]["items"][0]["role"] == "user"
+
+
+def test_openclaw_client_sessions_preview_uses_default_max_chars_2000(monkeypatch: Any) -> None:
+    from app.services.openclaw_client import OpenClawClient
+
+    client = OpenClawClient.__new__(OpenClawClient)
+    captured: dict[str, Any] = {}
+
+    def fake_build_sessions_preview_request(
+        *,
+        keys: list[str],
+        limit: int,
+        max_chars: int,
+    ) -> dict[str, Any]:
+        captured["keys"] = keys
+        captured["limit"] = limit
+        captured["max_chars"] = max_chars
+        return {"type": "req", "id": "test", "method": "sessions.preview", "params": {}}
+
+    monkeypatch.setattr(client, "_build_sessions_preview_request", fake_build_sessions_preview_request)
+    monkeypatch.setattr(client, "_send_control_request", lambda request: {"ok": True, "payload": {}})
+    monkeypatch.setattr(client, "_run_sync", lambda result: result)
+
+    result = client.sessions_preview(keys=["agent:main:main"])
+
+    assert result == {"ok": True, "payload": {}}
+    assert captured["keys"] == ["agent:main:main"]
+    assert captured["limit"] == 20
+    assert captured["max_chars"] == 2000
+
+
+def test_list_models_requires_openclaw_data_source() -> None:
+    status_code, _, body = request("GET", "/chat/models")
+    assert status_code == 503
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {"detail": "models.list is only available with the OpenClaw data source"}
+
+
+def test_list_models_returns_available_models(monkeypatch: Any) -> None:
+    from app.api import agents as agents_api
+
+    class FakeClient:
+        def models_list(self) -> dict[str, Any]:
+            return {
+                "ok": True,
+                "payload": {
+                    "models": [
+                        {
+                            "id": "claude-sonnet-4",
+                            "name": "Claude Sonnet 4",
+                            "provider": "anthropic",
+                            "contextWindow": 200000,
+                            "reasoning": True,
+                        },
+                        {
+                            "id": "gpt-4o",
+                            "name": "GPT-4o",
+                            "provider": "openai",
+                            "contextWindow": 128000,
+                            "reasoning": False,
+                        },
+                    ]
+                }
+            }
+
+    monkeypatch.setattr(agents_api, "OpenClawClient", FakeClient)
+
+    status_code, _, body = request("GET", "/chat/models?data_source=openclaw")
+    assert status_code == 200
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert len(payload["models"]) == 2
+    assert payload["models"][0]["id"] == "claude-sonnet-4"
+    assert payload["models"][0]["name"] == "Claude Sonnet 4"
+    assert payload["models"][0]["provider"] == "anthropic"
+
+
+def test_patch_session_requires_openclaw_data_source() -> None:
+    status_code, _, body = request(
+        "PATCH",
+        "/chat/sessions/agent:main:main",
+        body=json.dumps({"model": "claude-sonnet-4"}).encode("utf-8"),
+        headers={"content-type": "application/json"},
+    )
+    assert status_code == 503
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {"detail": "sessions.patch is only available with the OpenClaw data source"}
+
+
+def test_patch_session_updates_session_model(monkeypatch: Any) -> None:
+    from app.api import agents as agents_api
+
+    class FakeClient:
+        def sessions_patch(self, **kwargs: Any) -> dict[str, Any]:
+            assert kwargs["key"] == "agent:main:main"
+            assert kwargs["model"] == "claude-sonnet-4"
+            assert kwargs["thinking_level"] == "high"
+            return {"ok": True, "payload": {"ok": True}}
+
+    monkeypatch.setattr(agents_api, "OpenClawClient", FakeClient)
+
+    status_code, _, body = request(
+        "PATCH",
+        "/chat/sessions/agent:main:main?data_source=openclaw",
+        body=json.dumps({"model": "claude-sonnet-4", "thinking_level": "high"}).encode("utf-8"),
+        headers={"content-type": "application/json"},
+    )
+    assert status_code == 200
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {"updated": True}
+
+
+def test_reset_session_requires_openclaw_data_source() -> None:
+    status_code, _, body = request("POST", "/chat/sessions/agent:main:main/reset")
+    assert status_code == 503
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {"detail": "sessions.reset is only available with the OpenClaw data source"}
+
+
+def test_reset_session_clears_history(monkeypatch: Any) -> None:
+    from app.api import agents as agents_api
+
+    class FakeClient:
+        def sessions_reset(self, **kwargs: Any) -> dict[str, Any]:
+            assert kwargs["key"] == "agent:main:main"
+            return {"ok": True, "payload": {"ok": True}}
+
+    monkeypatch.setattr(agents_api, "OpenClawClient", FakeClient)
+
+    status_code, _, body = request(
+        "POST", "/chat/sessions/agent:main:main/reset?data_source=openclaw"
+    )
+    assert status_code == 200
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {"reset": True}
+
+
+def test_delete_session_requires_openclaw_data_source() -> None:
+    status_code, _, body = request("DELETE", "/chat/sessions/agent:main:main")
+    assert status_code == 503
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {"detail": "sessions.delete is only available with the OpenClaw data source"}
+
+
+def test_delete_session_removes_session(monkeypatch: Any) -> None:
+    from app.api import agents as agents_api
+
+    class FakeClient:
+        def sessions_delete(self, **kwargs: Any) -> dict[str, Any]:
+            assert kwargs["key"] == "agent:main:main"
+            return {"ok": True, "payload": {"deleted": True}}
+
+    monkeypatch.setattr(agents_api, "OpenClawClient", FakeClient)
+
+    status_code, _, body = request(
+        "DELETE", "/chat/sessions/agent:main:main?data_source=openclaw"
+    )
+    assert status_code == 200
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {"deleted": True}

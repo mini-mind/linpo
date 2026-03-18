@@ -758,6 +758,105 @@ def test_websocket_supports_openclaw_detail_realtime(monkeypatch: Any) -> None:
     }
 
 
+def test_websocket_supports_openclaw_session_messages_channel(monkeypatch: Any) -> None:
+    session_key = "agent:main:main"
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self._streamed = False
+
+        def fetch_snapshot(self) -> Any:
+            return type(
+                "Snapshot",
+                (),
+                {
+                    "snapshot": {
+                        "health": {
+                            "defaultAgentId": "main",
+                            "ts": 1773630417090,
+                            "agents": [
+                                {
+                                    "agentId": "main",
+                                    "sessions": {"recent": [{"key": session_key, "updatedAt": 1773632400000}]},
+                                }
+                            ],
+                        },
+                        "presence": [],
+                    }
+                },
+            )()
+
+        def stream_agent_events(
+            self,
+            on_message: Callable[[dict[str, Any]], None],
+        ) -> None:
+            if self._streamed:
+                return
+            self._streamed = True
+            on_message(
+                {
+                    "type": "event",
+                    "event": "agent",
+                    "payload": {
+                        "runId": "run-1",
+                        "stream": "lifecycle",
+                        "sessionKey": session_key,
+                        "data": {"phase": "start"},
+                    },
+                }
+            )
+            on_message(
+                {
+                    "type": "event",
+                    "event": "agent",
+                    "payload": {
+                        "runId": "run-1",
+                        "stream": "assistant",
+                        "data": {"text": "hello from assistant"},
+                    },
+                }
+            )
+
+    source = observer_data.OpenClawObserverDataSource(client=FakeClient())
+    monkeypatch.setattr(
+        realtime_api,
+        "get_observer_data_source",
+        lambda _data_source=None: source,
+        raising=False,
+    )
+
+    messages = websocket(
+        "/ws/observer?data_source=openclaw",
+        messages=[
+            {
+                "type": "subscribe",
+                "channel": observer_data.session_messages_channel(session_key),
+            }
+        ],
+        idle_hooks=[lambda: None, lambda: None],
+    )
+
+    payloads = _sent_json(cast(list[dict[str, Any]], messages))
+    assert [payload["type"] for payload in payloads] == [
+        "snapshot_ready",
+        "session_messages_updated",
+    ]
+    assert payloads[0]["channel"] == observer_data.session_messages_channel(session_key)
+    assert payloads[0]["seq"] == 0
+    assert payloads[0]["payload"] == {"status": "ok"}
+    assert payloads[1] == {
+        "type": "session_messages_updated",
+        "channel": observer_data.session_messages_channel(session_key),
+        "seq": 1,
+        "timestamp": payloads[1]["timestamp"],
+        "payload": {
+            "session_key": session_key,
+            "messages": [{"role": "assistant", "text": "hello from assistant"}],
+            "update_mode": "append_chunk",
+        },
+    }
+
+
 def test_websocket_exposes_control_request_status_on_existing_detail_channel(
     monkeypatch: Any,
 ) -> None:
