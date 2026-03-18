@@ -48,19 +48,19 @@ v0.7 ─ 跨实例消息传递
 v0.4 单实例控制完善，在 v0.3 基础上新增以下能力：
 
 ### 会话列表
-- **API**: `GET /sessions` - 获取当前 agent 的所有会话列表
+- **API**: `GET /chat/sessions` - 获取当前 agent 的所有会话列表
 - **前端**: SessionList 组件，支持会话列表展示与选择
 
 ### 消息预览
-- **API**: `GET /sessions/{session_id}/preview` - 获取会话消息预览
+- **API**: `GET /chat/sessions/preview` - 获取会话消息预览
 - **前端**: 预览 UI，展示会话最近消息摘要
 
 ### 模型切换
-- **API**: `GET /models` - 获取可用模型列表；`PATCH /sessions/{session_id}` - 切换会话模型
+- **API**: `GET /chat/models` - 获取可用模型列表；`PATCH /chat/sessions/{key}` - 切换会话模型
 - **前端**: ModelSelector 组件，支持桌面端与移动端模型选择
 
 ### 会话管理
-- **API**: `POST /sessions/{session_id}/reset` - 重置会话；`DELETE /sessions/{session_id}` - 删除会话
+- **API**: `POST /chat/sessions/{key}/reset` - 重置会话；`DELETE /chat/sessions/{key}` - 删除会话
 - **前端**: SessionActions 组件，提供重置与删除操作入口
 
 ### 控制状态完善

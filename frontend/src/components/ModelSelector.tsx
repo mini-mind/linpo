@@ -46,7 +46,7 @@ export function ModelSelector({
 									key={`${model.id}-${model.provider}-${index}`}
 									value={model.id}
 								>
-									{model.name}
+									{model.name} ({model.provider})
 								</option>
 							))}
 						</>

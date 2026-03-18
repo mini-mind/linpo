@@ -270,14 +270,36 @@ agent   — agent 状态变化
 chat    — 聊天消息流
 ```
 
-### 11.2 v0.4：单实例控制完善
+### 11.2 v0.4：单实例控制完善（已完成）
 
-**架构变更：**
+> **完成日期**：2026-03-18
+> **提交**：`50a4dd6`
 
-- 控制操作完整实现（start/pause/resume/send）
-- 控制状态反馈 UI（成功/失败/超时）
-- 错误处理与重试机制
-- 单实例 Agent 管理 UI（agents.list/bindings）
+**已落地：**
+
+| 能力 | 后端 API | 前端组件 |
+|------|----------|----------|
+| 会话列表 | `GET /chat/sessions` | `SessionList.tsx` |
+| 消息预览 | `GET /chat/sessions/preview` | `AgentWorkspace.tsx` |
+| 模型切换 | `GET /chat/models` + `PATCH /chat/sessions/{key}` | `ModelSelector.tsx` |
+| 会话重置 | `POST /chat/sessions/{key}/reset` | `SessionActions.tsx` |
+| 会话删除 | `DELETE /chat/sessions/{key}` | `SessionActions.tsx` |
+| 发送消息 | `POST /agents/{agent_id}/send-message` | `AgentWorkspace.tsx` |
+| 暂停控制 | `POST /agents/{agent_id}/pause` | `SessionActions.tsx` |
+
+**控制状态流转：**
+```
+sending → accepted → applied
+    ↓         ↓        ↓
+  failed   failed   failed
+    ↓         ↓
+  timeout  timeout
+```
+
+**未落地（OpenClaw 不支持）：**
+
+- `start`/`resume` 控制动作
+- `agents.list`/`bindings` 管理
 
 **不变项：**
 
