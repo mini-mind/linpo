@@ -9,7 +9,11 @@ description = "Linpo minimal FastAPI bootstrap"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+  "bcrypt>=4.0.1,<4.1.0",
+  "cryptography>=45.0.0,<46.0.0",
   "fastapi>=0.111.0,<1.0.0",
+  "psycopg[binary]>=3.2.0,<4.0.0",
+  "sqlalchemy>=2.0.14,<2.1.0",
   "uvicorn>=0.41.0,<1.0.0",
   "websockets>=15.0.1,<16.0.0",
 ]
