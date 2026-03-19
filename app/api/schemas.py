@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.domain.agent import AgentStatus
 from app.domain.event import EventType
@@ -120,4 +120,57 @@ class SessionResetResponse(BaseModel):
 
 
 class SessionDeleteResponse(BaseModel):
+    deleted: bool
+
+
+class InstanceWriteRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str
+    type: str
+    endpoint: str
+    gateway_token: str = Field(alias="gatewayToken")
+
+
+class InstancePatchRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str | None = None
+    type: str | None = None
+    endpoint: str | None = None
+    gateway_token: str | None = Field(default=None, alias="gatewayToken")
+
+    @field_validator("gateway_token", mode="before")
+    @classmethod
+    def normalize_blank_gateway_token(cls, value: object) -> object:
+        if value == "":
+            return None
+        return value
+
+
+class InstanceItem(BaseModel):
+    id: str
+    name: str
+    type: str
+    endpoint: str
+    status: str
+    last_check_at: str | None
+    created_at: str
+
+
+class InstanceValidationResponse(BaseModel):
+    ok: bool
+    status: str
+    message: str
+    code: str | None = None
+
+
+class InstanceValidationErrorResponse(BaseModel):
+    ok: bool
+    status: str
+    message: str
+    code: str | None = None
+
+
+class InstanceDeleteResponse(BaseModel):
     deleted: bool

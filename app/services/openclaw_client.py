@@ -31,15 +31,24 @@ class OpenClawSnapshot:
 
 
 class OpenClawClient:
-    def __init__(self) -> None:
-        self._base_url = os.getenv("OPENCLAW_BASE_URL")
-        self._token = os.getenv("OPENCLAW_GATEWAY_TOKEN")
-        self._origin = os.getenv("OPENCLAW_ORIGIN", "http://127.0.0.1:28789")
+    def __init__(
+        self,
+        *,
+        base_url: str | None = None,
+        gateway_token: str | None = None,
+        origin: str | None = None,
+    ) -> None:
+        self._base_url = base_url or os.getenv("OPENCLAW_BASE_URL")
+        self._token = gateway_token or os.getenv("OPENCLAW_GATEWAY_TOKEN")
+        self._origin = origin or os.getenv("OPENCLAW_ORIGIN", "http://127.0.0.1:28789")
 
         if not self._base_url:
             raise HTTPException(status_code=503, detail="OpenClaw data source is not configured")
         if not self._token:
             raise HTTPException(status_code=503, detail="OpenClaw gateway token is not configured")
+
+    def config_key(self) -> tuple[str | None, str | None, str]:
+        return (self._base_url, self._token, self._origin)
 
     def fetch_snapshot(self) -> OpenClawSnapshot:
         return self._run_sync(self._fetch_snapshot())

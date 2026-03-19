@@ -1,5 +1,9 @@
-from fastapi import APIRouter, HTTPException, Query
+from dataclasses import dataclass
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from app.api.schemas import (
     AgentDetailResponse,
@@ -19,7 +23,14 @@ from app.api.schemas import (
     SessionsListResponse,
     TopologyNodeItem,
 )
+from app.db.session import get_session
 from app.domain.control_request import AgentControlAction
+from app.services.auth_service import get_authenticated_user
+from app.services.instance_service import (
+    InstanceNotFoundError,
+    InstanceOpenClawContext,
+    InstanceService,
+)
 from app.services.observer_data import get_observer_data_source
 from app.services.openclaw_client import OpenClawClient, OpenClawOperatorService
 
@@ -30,12 +41,86 @@ def get_openclaw_operator_service() -> OpenClawOperatorService:
     return OpenClawOperatorService()
 
 
+def get_instance_service() -> InstanceService:
+    return InstanceService()
+
+
+@dataclass(frozen=True)
+class RequestOpenClawContext:
+    client: OpenClawClient
+    cache_key: object
+
+
+def get_request_openclaw_context(
+    request: Request,
+    instance_id: UUID | None = Query(default=None, alias="instanceId"),
+    db_session: Session = Depends(get_session),
+    instance_service: InstanceService = Depends(get_instance_service),
+) -> RequestOpenClawContext | None:
+    if instance_id is None:
+        return None
+
+    current_user = get_authenticated_user(db_session, request)
+    if current_user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+
+    try:
+        instance_context = instance_service.get_openclaw_context(
+            db_session,
+            user_id=current_user.id,
+            instance_id=instance_id,
+        )
+    except InstanceNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found") from exc
+
+    return RequestOpenClawContext(
+        client=_build_openclaw_client(instance_context),
+        cache_key=instance_context.cache_key,
+    )
+
+
+def _build_openclaw_client(instance_context: InstanceOpenClawContext) -> OpenClawClient:
+    return OpenClawClient(
+        base_url=instance_context.websocket_url,
+        gateway_token=instance_context.gateway_token,
+        origin=instance_context.origin,
+    )
+
+
+def _resolve_observer_data_source(
+    data_source: str | None,
+    request_context: RequestOpenClawContext | None,
+):
+    if request_context is None:
+        return get_observer_data_source(data_source)
+    return get_observer_data_source(
+        data_source,
+        client=request_context.client,
+        cache_key=request_context.cache_key,
+    )
+
+
+def _resolve_openclaw_client(request_context: RequestOpenClawContext | None) -> OpenClawClient:
+    return request_context.client if request_context is not None else OpenClawClient()
+
+
+def _resolve_operator_service(
+    request_context: RequestOpenClawContext | None,
+) -> OpenClawOperatorService:
+    if request_context is None:
+        return get_openclaw_operator_service()
+    return OpenClawOperatorService(client=request_context.client)
+
+
 # === Observer API ===
 
 
 @router.get("/agents", response_model=list[AgentListItem])
-def list_agents(data_source: str | None = Query(default=None)) -> list[AgentListItem]:
-    data_source_impl = get_observer_data_source(data_source)
+def list_agents(
+    data_source: str | None = Query(default=None),
+    request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
+) -> list[AgentListItem]:
+    data_source_impl = _resolve_observer_data_source(data_source, request_context)
     return [
         AgentListItem(
             id=agent.id,
@@ -50,9 +135,11 @@ def list_agents(data_source: str | None = Query(default=None)) -> list[AgentList
 
 @router.get("/agents/{agent_id}", response_model=AgentDetailResponse)
 def get_agent_detail(
-    agent_id: str, data_source: str | None = Query(default=None)
+    agent_id: str,
+    data_source: str | None = Query(default=None),
+    request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
 ) -> AgentDetailResponse:
-    data_source_impl = get_observer_data_source(data_source)
+    data_source_impl = _resolve_observer_data_source(data_source, request_context)
     agent = data_source_impl.get_agent(agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
@@ -92,8 +179,9 @@ def get_node_detail(
     agent_id: str,
     node_id: str,
     data_source: str | None = Query(default=None),
+    request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
 ) -> NodeDetailResponse:
-    data_source_impl = get_observer_data_source(data_source)
+    data_source_impl = _resolve_observer_data_source(data_source, request_context)
     agent = data_source_impl.get_agent(agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
@@ -145,6 +233,7 @@ def chat_send(
     agent_id: str = Query(..., alias="agentId"),
     session_key: str = Query(default="", alias="sessionKey"),
     data_source: str | None = Query(default=None),
+    request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
 ) -> ChatSendResponse:
     """Send a message to an agent's chat session.
 
@@ -169,7 +258,7 @@ def chat_send(
             detail="sessionKey is required",
         )
 
-    service = get_openclaw_operator_service()
+    service = _resolve_operator_service(request_context)
     result = service.send_message(
         agent_id=agent_id,
         session_key=resolved_session_key,
@@ -188,6 +277,7 @@ def chat_send(
 def chat_abort(
     agent_id: str = Query(..., alias="agentId"),
     data_source: str | None = Query(default=None),
+    request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
 ) -> ChatAbortResponse:
     """Abort an agent's running chat session.
 
@@ -199,11 +289,11 @@ def chat_abort(
             detail="chat.abort is only available with the OpenClaw data source",
         )
 
-    service = get_openclaw_operator_service()
+    service = _resolve_operator_service(request_context)
     result = service.send_action(agent_id=agent_id, action=AgentControlAction.PAUSE)
 
     if result.status.value == "accepted":
-        data_source_impl = get_observer_data_source(data_source)
+        data_source_impl = _resolve_observer_data_source(data_source, request_context)
         register_pending = getattr(data_source_impl, "register_pending_control_request", None)
         if callable(register_pending):
             register_pending(
@@ -228,6 +318,7 @@ def chat_abort(
 @router.get("/chat/models", response_model=ModelsListResponse)
 def list_models(
     data_source: str | None = Query(default=None),
+    request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
 ) -> ModelsListResponse:
     if data_source != "openclaw":
         raise HTTPException(
@@ -235,7 +326,7 @@ def list_models(
             detail="models.list is only available with the OpenClaw data source",
         )
 
-    client = OpenClawClient()
+    client = _resolve_openclaw_client(request_context)
     result = client.models_list()
 
     if not result.get("ok"):
@@ -272,6 +363,7 @@ def list_sessions(
     include_derived_titles: bool = Query(default=True, alias="includeDerivedTitles"),
     include_last_message: bool = Query(default=True, alias="includeLastMessage"),
     data_source: str | None = Query(default=None),
+    request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
 ) -> SessionsListResponse:
     if data_source != "openclaw":
         raise HTTPException(
@@ -279,7 +371,7 @@ def list_sessions(
             detail="sessions.list is only available with the OpenClaw data source",
         )
 
-    client = OpenClawClient()
+    client = _resolve_openclaw_client(request_context)
     result = client.sessions_list(
         agent_id=agent_id,
         include_derived_titles=include_derived_titles,
@@ -326,6 +418,7 @@ def preview_sessions(
     limit: int = Query(default=20),
     max_chars: int = Query(default=2000, alias="maxChars"),
     data_source: str | None = Query(default=None),
+    request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
 ) -> SessionsPreviewResponse:
     if data_source != "openclaw":
         raise HTTPException(
@@ -333,7 +426,7 @@ def preview_sessions(
             detail="sessions.preview is only available with the OpenClaw data source",
         )
 
-    client = OpenClawClient()
+    client = _resolve_openclaw_client(request_context)
     result = client.sessions_preview(
         keys=keys.split(","),
         limit=limit,
@@ -378,6 +471,7 @@ def patch_session(
     key: str,
     body: SessionPatchRequest,
     data_source: str | None = Query(default=None),
+    request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
 ) -> SessionPatchResponse:
     if data_source != "openclaw":
         raise HTTPException(
@@ -385,7 +479,7 @@ def patch_session(
             detail="sessions.patch is only available with the OpenClaw data source",
         )
 
-    client = OpenClawClient()
+    client = _resolve_openclaw_client(request_context)
     result = client.sessions_patch(
         key=key,
         agent_id=body.agent_id,
@@ -407,6 +501,7 @@ def patch_session(
 def reset_session(
     key: str,
     data_source: str | None = Query(default=None),
+    request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
 ) -> SessionResetResponse:
     if data_source != "openclaw":
         raise HTTPException(
@@ -414,7 +509,7 @@ def reset_session(
             detail="sessions.reset is only available with the OpenClaw data source",
         )
 
-    client = OpenClawClient()
+    client = _resolve_openclaw_client(request_context)
     result = client.sessions_reset(key=key)
 
     if not result.get("ok"):
@@ -431,6 +526,7 @@ def reset_session(
 def delete_session(
     key: str,
     data_source: str | None = Query(default=None),
+    request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
 ) -> SessionDeleteResponse:
     if data_source != "openclaw":
         raise HTTPException(
@@ -438,7 +534,7 @@ def delete_session(
             detail="sessions.delete is only available with the OpenClaw data source",
         )
 
-    client = OpenClawClient()
+    client = _resolve_openclaw_client(request_context)
     result = client.sessions_delete(key=key)
 
     if not result.get("ok"):

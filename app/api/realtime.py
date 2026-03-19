@@ -1,14 +1,20 @@
 import asyncio
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, WebSocket
 from fastapi.websockets import WebSocketDisconnect
+from sqlalchemy.orm import Session
 
+from app.db.session import get_database_url, get_engine
 from app.domain.agent import Agent
 from app.domain.event import EventRecord
 from app.domain.node import TopologyNode
+from app.services.auth_service import get_authenticated_user
+from app.services.instance_service import InstanceNotFoundError, InstanceOpenClawContext, InstanceService
 from app.services.observer_data import (
     BufferedObserverEvent,
     ObserverRealtimeEvent,
@@ -17,8 +23,15 @@ from app.services.observer_data import (
     get_observer_data_source,
     get_observer_data_source_name,
 )
+from app.services.openclaw_client import OpenClawClient
 
 router = APIRouter()
+
+
+@dataclass(frozen=True)
+class RealtimeOpenClawContext:
+    client: OpenClawClient
+    cache_key: object
 
 
 class RealtimeObserverDataSource(Protocol):
@@ -29,6 +42,69 @@ class RealtimeObserverDataSource(Protocol):
     def validate_realtime_channel(self, channel: str) -> None: ...
 
     def pump_realtime(self, channel: str) -> None: ...
+
+
+def _build_openclaw_client(instance_context: InstanceOpenClawContext) -> OpenClawClient:
+    return OpenClawClient(
+        base_url=instance_context.websocket_url,
+        gateway_token=instance_context.gateway_token,
+        origin=instance_context.origin,
+    )
+
+
+def _resolve_realtime_openclaw_context(
+    websocket: WebSocket,
+    *,
+    data_source_name: str,
+) -> RealtimeOpenClawContext | None:
+    if data_source_name != "openclaw":
+        return None
+
+    raw_instance_id = websocket.query_params.get("instanceId")
+    if raw_instance_id is None:
+        return None
+
+    try:
+        instance_id = UUID(raw_instance_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid instanceId") from exc
+
+    with Session(get_engine(get_database_url())) as db_session:
+        current_user = get_authenticated_user(db_session, cast(Any, websocket))
+        if current_user is None:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+        instance_service = InstanceService()
+        try:
+            instance_context = instance_service.get_openclaw_context(
+                db_session,
+                user_id=current_user.id,
+                instance_id=instance_id,
+            )
+        except InstanceNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Instance not found") from exc
+
+    return RealtimeOpenClawContext(
+        client=_build_openclaw_client(instance_context),
+        cache_key=instance_context.cache_key,
+    )
+
+
+def _resolve_realtime_data_source(
+    data_source_name: str,
+    request_context: RealtimeOpenClawContext | None,
+) -> RealtimeObserverDataSource:
+    if request_context is None:
+        return cast(RealtimeObserverDataSource, get_observer_data_source(data_source_name))
+
+    return cast(
+        RealtimeObserverDataSource,
+        get_observer_data_source(
+            data_source_name,
+            client=request_context.client,
+            cache_key=request_context.cache_key,
+        ),
+    )
 
 
 @router.websocket("/ws/observer")
@@ -46,10 +122,11 @@ async def observer_websocket(websocket: WebSocket) -> None:
         last_seq = _parse_last_seq(message.get("last_seq"))
         data_source_name = websocket.query_params.get("data_source")
         selected_data_source = get_observer_data_source_name(data_source_name)
-        data_source = cast(
-            RealtimeObserverDataSource,
-            get_observer_data_source(selected_data_source),
+        request_context = _resolve_realtime_openclaw_context(
+            websocket,
+            data_source_name=selected_data_source,
         )
+        data_source = _resolve_realtime_data_source(selected_data_source, request_context)
 
         data_source.validate_realtime_channel(channel)
         _validate_channel(channel, data_source)

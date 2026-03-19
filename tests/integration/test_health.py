@@ -63,6 +63,23 @@ def test_health_endpoint_allows_configured_public_origin_for_preflight() -> None
     assert headers["access-control-allow-origin"] == "http://175.178.213.10:5173"
 
 
+def test_health_preflight_echoes_requested_content_type_header() -> None:
+    status_code, headers, _ = request(
+        "OPTIONS",
+        "/health",
+        headers={
+            "Origin": "http://175.178.213.10:5173",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+
+    assert status_code == 200
+    assert headers["access-control-allow-origin"] == "http://175.178.213.10:5173"
+    assert headers["access-control-allow-credentials"] == "true"
+    assert headers["access-control-allow-headers"] == "content-type"
+
+
 def test_legacy_demo_routes_are_not_exposed() -> None:
     legacy_paths = (
         "/sessions",

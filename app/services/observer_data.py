@@ -1055,8 +1055,7 @@ def _channels_for_event(event: ObserverRealtimeEvent) -> list[str]:
 
 
 _DATA_SOURCE: ObserverDataSource = StubObserverDataSource()
-_OPENCLAW_DATA_SOURCE: ObserverDataSource | None = None
-_OPENCLAW_DATA_SOURCE_CONFIG: tuple[str | None, str | None, str] | None = None
+_OPENCLAW_DATA_SOURCES: dict[object, ObserverDataSource] = {}
 _OPENCLAW_DATA_SOURCE_LOCK = Lock()
 
 
@@ -1072,19 +1071,27 @@ def _openclaw_data_source_config() -> tuple[str | None, str | None, str]:
     )
 
 
-def get_observer_data_source(data_source: str | None = None) -> ObserverDataSource:
-    global _OPENCLAW_DATA_SOURCE, _OPENCLAW_DATA_SOURCE_CONFIG
+def get_observer_data_source(
+    data_source: str | None = None,
+    *,
+    client: OpenClawClient | None = None,
+    cache_key: object | None = None,
+) -> ObserverDataSource:
 
     selected = get_observer_data_source_name(data_source)
 
     if selected == "stub":
         return _DATA_SOURCE
     if selected == "openclaw":
-        config = _openclaw_data_source_config()
+        resolved_cache_key = cache_key or (client.config_key() if client is not None else _openclaw_data_source_config())
         with _OPENCLAW_DATA_SOURCE_LOCK:
-            if _OPENCLAW_DATA_SOURCE is None or _OPENCLAW_DATA_SOURCE_CONFIG != config:
-                _OPENCLAW_DATA_SOURCE = OpenClawObserverDataSource()
-                _OPENCLAW_DATA_SOURCE_CONFIG = config
-            return _OPENCLAW_DATA_SOURCE
+            if resolved_cache_key not in _OPENCLAW_DATA_SOURCES:
+                if client is None:
+                    _OPENCLAW_DATA_SOURCES[resolved_cache_key] = OpenClawObserverDataSource()
+                else:
+                    _OPENCLAW_DATA_SOURCES[resolved_cache_key] = OpenClawObserverDataSource(
+                        client=client
+                    )
+            return _OPENCLAW_DATA_SOURCES[resolved_cache_key]
 
     raise HTTPException(status_code=400, detail=f"Unsupported data source: {selected}")
