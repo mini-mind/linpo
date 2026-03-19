@@ -4,7 +4,7 @@
 
 当前产品方向已切换为：
 
-> **面向人类的 agent 运行观测入口：用户登录后可以查看自己的 agents，并进入单个 agent 的拓扑视图，观察其与 subagents 的结构关系、活跃状态与历史事件。**
+> **面向人类的 agent / instance 运行观测入口：用户登录后可以查看自己的实例，并通过拓扑视图观察实例状态；后续逐步扩展到跨实例场景下的 agent 结构关系、活跃状态与历史事件。**
 
 当前仓库已完成一次项目级重置：旧版 roboard 的实现、设计与配置已迁出当前仓库根目录，仅作为仓库外本地归档参考，不再作为当前项目的权威来源。
 
@@ -25,10 +25,24 @@
 | claw2 | 28789 | `ZUE 6oLmaH2DEuC3A3mJYe_l-q3yLOqVSLiLsAGfmJQ` |
 | claw3 | 38789 | (查看容器环境变量) |
 
+## 运行时前置条件
+
+v0.5+ 运行需要以下环境配置：
+
+| 依赖 | 说明 |
+|------|------|
+| PostgreSQL | 用户与实例配置持久化，需配置 `LINPO_DATABASE_URL` |
+| 服务端会话 | 登录态保持依赖服务端 session cookie，无需单独 secret，但后端需可稳定持久运行 |
+| 加密密钥 | Gateway Token 加密存储，需配置 `LINPO_SECRET_ENCRYPTION_KEY` |
+| CORS 来源 | 公网前端联调时需正确配置 `LINPO_CORS_ALLOW_ORIGINS` |
+| 前端 API 地址 | 前端需配置 `VITE_API_BASE_URL`（如 `http://175.178.213.10:8000`） |
+| OpenClaw 联调环境 | 如需同时验证 observer / session 相关链路，后端还需具备可用的 `OPENCLAW_BASE_URL`、`OPENCLAW_GATEWAY_TOKEN`、`OPENCLAW_ORIGIN` |
+
 ## 当前阶段
 
-- **当前稳定基线**：v0.4 单实例控制完善已完成
-- **v0.4 核心能力**：session 管理 + model 切换 + realtime 状态闭环
+- **当前目标版本**：v0.6 多实例聚合视图
+- **当前稳定基线**：v0.5 用户模型 + 实例配置（已完成，公网验证通过）
+- **v0.5 核心能力**：用户认证 + 实例配置 + 实例归属
 - **公网访问**：前端 `http://175.178.213.10:5173`，后端 `http://175.178.213.10:8000`
 
 ## 版本路线
@@ -37,9 +51,9 @@
 v0.1 ─ Observer 起点（已完成）
 v0.2 ─ Realtime Observer（已完成）
 v0.3 ─ 单实例控制接入验证（已完成）
-v0.4 ─ 单实例控制完善（已完成）← 当前基线
-v0.5 ─ 用户模型 + 实例配置
-v0.6 ─ 多实例聚合视图
+v0.4 ─ 单实例控制完善（已完成）
+v0.5 ─ 用户模型 + 实例配置（已完成，公网验证通过）
+v0.6 ─ 多实例聚合视图 ← 当前目标
 v0.7 ─ 跨实例消息传递
 ```
 
@@ -56,8 +70,8 @@ v0.4 单实例控制完善，在 v0.3 基础上新增以下能力：
 - **前端**: 预览 UI，展示会话最近消息摘要
 
 ### 模型切换
-- **API**: `GET /chat/models` - 获取可用模型列表；`PATCH /chat/sessions/{key}` - 切换会话模型
-- **前端**: ModelSelector 组件，支持桌面端与移动端模型选择
+- **API**: `GET /chat/models` - 获取可用模型列表；`PATCH /chat/sessions/{key}` - 切换会话模型（按会话独立）
+- **前端**: ModelSelector 组件，支持桌面端与移动端模型选择，切换仅影响当前会话
 
 ### 会话管理
 - **API**: `POST /chat/sessions/{key}/reset` - 重置会话；`DELETE /chat/sessions/{key}` - 删除会话
@@ -66,6 +80,40 @@ v0.4 单实例控制完善，在 v0.3 基础上新增以下能力：
 ### 控制状态完善
 - 细化控制响应状态：`applied`（已应用）、`timeout`（超时）
 - 细化错误类型：`no_active_chat`、`no_operator`、`send_failed` 等
+
+## v0.5 功能清单
+
+v0.5 用户模型与实例配置基础，已完成公网验证。
+
+### 用户认证
+- 用户名 + 密码注册与登录
+- PostgreSQL 持久化用户与实例配置
+- 服务端 session cookie 保持登录态
+- 侧边栏底部用户名触发账户菜单，内含退出登录
+
+### 实例配置
+- 每个用户最多配置 3 个 OpenClaw 实例
+- 实例保存前验证 endpoint 连通性与 token 可用性
+- Gateway Token 后端加密存储
+
+### 实例拓扑视图
+- 拓扑页展示当前用户的实例节点
+- 点击节点弹出实例详情
+- 空状态引导用户新增第一个实例
+
+### 会话页实例列表
+- 会话页始终展示实例列表，侧边栏直接进入亦显示
+- 左侧实例列表 + 右侧工作区双栏布局
+
+### 公网验证结果
+- 注册/登录流程：通过
+- Session cookie 登录态保持：通过
+- claw1 公网实例（`175.178.213.10:18789`）连通性验证：通过
+- 实例拓扑详情展示：通过
+- Session 入口与 current-instance 行为：通过
+
+### 非目标范围
+- 不引入 OAuth、RBAC、软删除、找回密码、多组织/团队模型
 
 ## v0.3 控制功能
 
@@ -136,9 +184,10 @@ asyncio.run(create_chat())
 | 文档 | 路径 | 说明 |
 |------|------|------|
 | 产品需求（含版本路线） | `docs/prd/2026-03-15-linpo-v0.1-observer-prd.md` | 当前有效的产品边界与版本演进路线 |
+| **v0.5 用户模型计划** | `docs/plans/2026-03-18-linpo-v0.5-user-model-and-instance-config-design.md` | v0.5 用户模型与实例配置设计（已完成） |
 | v0.3 控制接入计划 | `docs/plans/2026-03-17-linpo-v0.3-single-agent-control-plan.md` | v0.3 最小控制闭环验证（已完成） |
-| **v0.4 控制完善计划** | `docs/plans/2026-03-18-linpo-v0.4-single-instance-control-completion-plan.md` | v0.4 单实例控制完善（已完成） |
-| **OpenClaw API 参考** | `OPENCLAW_API.md` | OpenClaw WebSocket API 完整清单，v0.4 对接依据 |
+| v0.4 控制完善计划 | `docs/plans/2026-03-18-linpo-v0.4-single-instance-control-completion-plan.md` | v0.4 单实例控制完善（已完成） |
+| OpenClaw API 参考 | `OPENCLAW_API.md` | OpenClaw WebSocket API 完整清单，v0.4 对接依据 |
 | v0.1 架构边界 | `docs/architecture/2026-03-15-observer-architecture.md` | observer 架构边界与后续演进参考 |
 | v0.2 demo runbook | `docs/plans/2026-03-16-observer-demo-runbook.md` | 当前 realtime observer 主路径的本地演示与联调检查说明 |
 | 仓库治理 | `AGENTS.md` | 当前项目治理规则 |

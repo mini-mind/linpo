@@ -1,7 +1,7 @@
 # 灵盘（Linpo）
 
 ## 概览
-灵盘（Linpo）是一个从小闭环起步、逐步扩张的平台型项目。当前有效产品方向是**面向人类的 agent 运行观测入口**：用户登录后可以查看自己的 agents，并进入单个 agent 的拓扑视图，观察其与 subagents 的结构关系、活跃状态与历史事件。
+灵盘（Linpo）是一个从小闭环起步、逐步扩张的平台型项目。当前有效产品方向是**面向人类的 agent / instance 运行观测入口**：用户登录后可以查看自己的实例，并进入实例拓扑与会话视图，观察实例状态、agent 入口与历史事件。
 
 当前仓库已完成一次项目级重置：旧版 roboard 的实现、文档与配置已移出当前仓库根目录，仅作为仓库外本地归档参考，不再作为当前项目权威来源。
 
@@ -25,9 +25,9 @@
 ## 查阅入口
 
 | 文档总入口 | `README.md` | 仓库导航与当前文档索引 |
-| 产品需求 | `docs/plans/2026-03-15-linpo-v0.1-observer-design.md` | 灵盘 v0.1 observer 设计共识 |
-| 初始架构 | `docs/architecture/` | 待按 observer 方向重新冻结架构边界 |
-| 第一阶段计划 | `docs/plans/` | 待按 observer 方向重新拆解实施计划 |
+| 产品需求 | `docs/prd/2026-03-15-linpo-v0.1-observer-prd.md` | 当前有效的产品边界与版本路线 |
+| 当前架构 | `docs/architecture/2026-03-15-observer-architecture.md` | observer 当前架构边界与版本演进参考 |
+| 当前阶段计划 | `docs/plans/2026-03-18-linpo-v0.5-user-model-and-instance-config-design.md` | v0.5 用户模型与实例配置设计/实施记录 |
 
 
 ## 所有权

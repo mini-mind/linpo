@@ -308,31 +308,66 @@ sending → accepted → applied
 
 ### 11.3 v0.5：用户模型 + 实例配置基础
 
-**新增数据模型：**
+> **状态**：已完成
+>
+> **完成日期**：2026-03-18
+> **设计文档**：`docs/plans/2026-03-18-linpo-v0.5-user-model-and-instance-config-design.md`
+
+**已落地设计约束：**
+
+| 约束项 | 决策 |
+|--------|------|
+| 登录方式 | 用户名 + 密码 |
+| 数据库存储 | PostgreSQL |
+| 实例保存前验证 | 必须验证 endpoint 可连通性与 token 可用性 |
+| 实例上限 | 每个用户最多 3 个实例 |
+| Token 存储 | Gateway Token 后端加密存储 |
+| 实例类型 | 首期只支持 `openclaw` |
+
+**数据模型：**
 
 ```
 User {
-  id: string
-  email: string
+  id: UUID
+  username: string(64)      // 唯一
+  password_hash: text       // bcrypt 哈希
   created_at: timestamp
 }
 
 Instance {
-  id: string
-  user_id: string
-  name: string
-  type: "openclaw" | "kimiclaw" | "autoclaw"  // 预留扩展
-  endpoint: string
-  status: "active" | "inactive" | "error"
+  id: UUID
+  user_id: UUID             // 外键关联 User
+  name: string(100)
+  type: string(32)          // 首期仅 "openclaw"
+  endpoint: text            // OpenClaw gateway 地址
+  gateway_token_enc: text   // 加密存储的 token
+  status: string(32)        // "active" | "inactive"
+  last_check_at: timestamp  // 最后验证时间
+  created_at: timestamp
+}
+
+AuthSession {
+  session_id: string        // 服务端 session cookie
+  user_id: UUID
   created_at: timestamp
 }
 ```
 
+**UI 设计约束：**
+
+- 侧边栏底部账户区域只展示用户入口，不展示实例信息
+- 拓扑页保持全局拓扑视野，实例以节点形式展示，详情通过弹窗展示
+- 空状态引导用户新增第一个实例
+
+**非目标范围：**
+
+- 不引入 OAuth、RBAC、软删除、找回密码、多组织/团队模型
+
 **架构变更：**
 
-- Linpo 后端需要用户认证层（OAuth / email-password）
-- 用户 ↔ 实例映射关系存储（私有实例模式）
-- 实例配置入口（用户自助配置 endpoint、名称、类型）
+- 后端新增 `/auth` 与 `/instances` 两组 API
+- PostgreSQL 持久化用户与实例配置
+- 服务端 session cookie 维持登录态
 - 为 v0.6 多实例聚合做准备
 
 ### 11.4 v0.6：多实例聚合视图 ← 核心差异化
