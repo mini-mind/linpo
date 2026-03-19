@@ -1,7 +1,57 @@
 /**
- * API types matching backend schemas from app/api/schemas.py
- * These types correspond to the backend Pydantic models
+ * Instance types matching backend schemas from app/api/schemas.py
+ * Used for /instances API
  */
+
+export interface InstanceItem {
+  id: string;
+  name: string;
+  type: string;
+  endpoint: string;
+  status: string;
+  last_check_at: string | null;
+  created_at: string;
+}
+
+export interface InstanceWriteRequest {
+  name: string;
+  type: string;
+  endpoint: string;
+  gatewayToken: string;
+}
+
+export interface InstancePatchRequest {
+  name?: string;
+  type?: string;
+  endpoint?: string;
+  gatewayToken?: string;
+}
+
+export interface InstanceValidationResponse {
+  ok: boolean;
+  status: string;
+  message: string;
+  code?: string | null;
+}
+
+export interface InstanceValidationErrorResponse {
+  ok: boolean;
+  status: string;
+  message: string;
+  code?: string | null;
+}
+
+export interface InstanceDeleteResponse {
+  deleted: boolean;
+}
+
+export type InstanceValidationErrorCode =
+  | 'auth_failed'
+  | 'connection_failed'
+  | 'timeout'
+  | 'unsafe_endpoint'
+  | 'instance_limit_exceeded'
+  | 'unknown';
 
 export type AgentStatus = 'idle' | 'running' | 'finished' | 'error';
 

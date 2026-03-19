@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createObserverRealtimeClient, type WebSocketLike } from './realtimeClient';
 import {
@@ -88,6 +88,31 @@ describe('observer realtime message parsing', () => {
 });
 
 describe('observer realtime client', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it('adds selected instance context to observer websocket url', () => {
+    window.localStorage.setItem('linpo.currentInstanceId', 'instance-1');
+    const fakeSocket = new FakeWebSocket();
+    const socketFactory = vi.fn(() => fakeSocket);
+
+    const client = createObserverRealtimeClient({
+      baseUrl: 'http://linpo.test:8000',
+      dataSource: 'openclaw',
+      channel: 'agents:list',
+      onMessage: vi.fn(),
+      createWebSocket: socketFactory,
+    });
+
+    client.connect();
+    fakeSocket.emitOpen();
+
+    expect(socketFactory).toHaveBeenCalledWith(
+      'ws://linpo.test:8000/ws/observer?data_source=openclaw&instanceId=instance-1'
+    );
+  });
+
   it('sends subscribe payload when websocket opens', () => {
     const fakeSocket = new FakeWebSocket();
     const socketFactory = vi.fn(() => fakeSocket);

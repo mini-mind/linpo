@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Navigate, NavLink, Outlet } from 'react-router-dom';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { ToastProvider, useToast } from '../hooks/useToast';
+import { AccountMenu } from './AccountMenu';
 
 function ToastContainer(): JSX.Element {
   const { toasts, removeToast } = useToast();
@@ -81,6 +82,7 @@ export function Layout(): JSX.Element {
                   </NavLink>
                 ))}
               </nav>
+              <AccountMenu />
             </aside>
             <main style={mainStyle}>
               <Outlet />

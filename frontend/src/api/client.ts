@@ -10,6 +10,7 @@ import type {
   SessionsListResponse,
   SessionsPreviewResponse,
 } from './types';
+import { getStoredCurrentInstanceId } from '../hooks/useCurrentInstance';
 
 const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
 const inferredApiBaseUrl = `${window.location.protocol}//${window.location.hostname}:8000`;
@@ -21,14 +22,44 @@ function withDefaultDataSource(path: string): string {
   return `${path}${separator}data_source=${DEFAULT_OBSERVER_DATA_SOURCE}`;
 }
 
+function withSelectedInstanceContext(path: string): string {
+  const currentInstanceId = getStoredCurrentInstanceId();
+  if (!currentInstanceId) {
+    return path;
+  }
+
+  const separator = path.includes('?') ? '&' : '?';
+  return `${path}${separator}instanceId=${encodeURIComponent(currentInstanceId)}`;
+}
+
+function withBusinessContext(path: string): string {
+  return withSelectedInstanceContext(withDefaultDataSource(path));
+}
+
 export function getDefaultObserverDataSource(): string {
   return DEFAULT_OBSERVER_DATA_SOURCE;
 }
 
-async function fetchApi<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${withDefaultDataSource(path)}`);
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
+async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path)}`, {
+    ...options,
+    credentials: 'include',
+    headers: {
+      ...options?.headers,
+    },
+  });
   if (!response.ok) {
-    throw new Error(`API error: ${response.status} ${response.statusText}`);
+    throw new ApiError(response.status, `API error: ${response.status} ${response.statusText}`);
   }
   return response.json() as Promise<T>;
 }
@@ -49,7 +80,9 @@ export async function getNodeDetail(
 }
 
 export async function listModels(): Promise<ModelItem[]> {
-  const response = await fetch(`${API_BASE_URL}${withDefaultDataSource('/chat/models')}`);
+  const response = await fetch(`${API_BASE_URL}${withBusinessContext('/chat/models')}`, {
+    credentials: 'include',
+  });
   if (!response.ok) {
     throw new Error(`API error: ${response.status} ${response.statusText}`);
   }
@@ -67,10 +100,11 @@ export async function patchSession(
   if (patch.model) body.model = patch.model;
   if (patch.thinkingLevel) body.thinking_level = patch.thinkingLevel;
 
-  const response = await fetch(`${API_BASE_URL}${withDefaultDataSource(path)}`, {
+  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    credentials: 'include',
   });
 
   if (!response.ok) {
@@ -86,7 +120,9 @@ export async function listSessions(agentId?: string): Promise<SessionsListRespon
   if (agentId) params.set('agentId', agentId);
   const query = params.toString();
   const path = query ? `/chat/sessions?${query}` : '/chat/sessions';
-  const response = await fetch(`${API_BASE_URL}${withDefaultDataSource(path)}`);
+  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path)}`, {
+    credentials: 'include',
+  });
   if (!response.ok) {
     throw new Error(`API error: ${response.status} ${response.statusText}`);
   }
@@ -108,10 +144,14 @@ export async function previewSessions(keys: string[]): Promise<SessionsPreviewRe
     };
   }
   const params = new URLSearchParams();
-  keys.forEach((key) => params.append("keys", key));
-  params.set("maxChars", "2000");
+  keys.forEach((key) => {
+    params.append('keys', key);
+  });
+  params.set('maxChars', '2000');
   const path = `/chat/sessions/preview?${params.toString()}`;
-  const response = await fetch(`${API_BASE_URL}${withDefaultDataSource(path)}`);
+  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path)}`, {
+    credentials: 'include',
+  });
   if (!response.ok) {
     throw new Error(`API error: ${response.status} ${response.statusText}`);
   }
@@ -142,10 +182,11 @@ export async function chatSend(
     sessionKey: request.sessionKey,
   }).toString();
   const path = `/chat/send?${query}`;
-  const response = await fetch(`${API_BASE_URL}${withDefaultDataSource(path)}`, {
+  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message: request.message }),
+    credentials: 'include',
   });
 
   if (!response.ok) {
@@ -158,9 +199,10 @@ export async function chatSend(
 
 export async function chatAbort(agentId: string): Promise<ChatAbortResponse> {
   const path = `/chat/abort?agentId=${agentId}`;
-  const response = await fetch(`${API_BASE_URL}${withDefaultDataSource(path)}`, {
+  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
   });
 
   if (!response.ok) {
@@ -176,9 +218,10 @@ export const sendMessage = chatSend;
 
 export async function resetSession(sessionKey: string): Promise<void> {
   const path = `/chat/sessions/${sessionKey}/reset`;
-  const response = await fetch(`${API_BASE_URL}${withDefaultDataSource(path)}`, {
+  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
   });
 
   if (!response.ok) {
@@ -189,8 +232,9 @@ export async function resetSession(sessionKey: string): Promise<void> {
 
 export async function deleteSession(sessionKey: string): Promise<void> {
   const path = `/chat/sessions/${sessionKey}`;
-  const response = await fetch(`${API_BASE_URL}${withDefaultDataSource(path)}`, {
+  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path)}`, {
     method: 'DELETE',
+    credentials: 'include',
   });
 
   if (!response.ok) {

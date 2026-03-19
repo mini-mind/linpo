@@ -1,79 +1,16 @@
 import type React from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getDefaultObserverDataSource, listAgents } from '../api/client';
-import {
-  createObserverRealtimeClient,
-  type ObserverRealtimeClient,
-  type ObserverRealtimeClientOptions,
-} from '../api/realtimeClient';
-import type { AgentListItem } from '../api/types';
+import { listInstances, deleteInstance } from '../api/instanceClient';
+import { InstanceFormModal } from './InstanceFormModal';
+import type { InstanceItem } from '../api/types';
+import { useCurrentInstanceId } from '../hooks/useCurrentInstance';
 import { useIsMobile } from '../hooks/useIsMobile';
 
-type AgentsUpdate = AgentListItem[] | ((previous: AgentListItem[]) => AgentListItem[]);
+const MAX_INSTANCES = 3;
 
-interface StartAgentsListRealtimeOptions {
-  listAgentsFn: () => Promise<AgentListItem[]>;
-  createRealtimeClientFn: (options: ObserverRealtimeClientOptions) => ObserverRealtimeClient;
-  applyAgents: (update: AgentsUpdate) => void;
-}
-
-const AGENTS_LIST_REALTIME_DATA_SOURCE = getDefaultObserverDataSource();
-
-function withErrorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : fallback;
-}
-
-function mergeAgentSummary(
-  previousAgents: AgentListItem[],
-  updatedAgent: AgentListItem
-): AgentListItem[] {
-  const targetIndex = previousAgents.findIndex((agent) => agent.id === updatedAgent.id);
-  if (targetIndex < 0) {
-    return [...previousAgents, updatedAgent];
-  }
-
-  return previousAgents.map((agent, index) => (index === targetIndex ? updatedAgent : agent));
-}
-
-async function startAgentsListRealtime(
-  options: StartAgentsListRealtimeOptions
-): Promise<{ close: () => void } | null> {
-  const snapshot = await options.listAgentsFn();
-  options.applyAgents(snapshot);
-
-  const runResync = async (): Promise<void> => {
-    try {
-      const refreshed = await options.listAgentsFn();
-      options.applyAgents(refreshed);
-    } catch { }
-  };
-
-  try {
-    const realtimeClient = options.createRealtimeClientFn({
-      dataSource: AGENTS_LIST_REALTIME_DATA_SOURCE,
-      channel: 'agents:list',
-      onMessage: (message) => {
-        if (message.type === 'agent_summary_updated') {
-          options.applyAgents((previousAgents) =>
-            mergeAgentSummary(previousAgents, message.payload.agent)
-          );
-        }
-      },
-      onResyncRequired: () => {
-        void runResync();
-      },
-    });
-
-    realtimeClient.connect();
-    return realtimeClient;
-  } catch {
-    return null;
-  }
-}
-
-function formatLastActive(isoString: string | null): string {
-  if (!isoString) return '未知';
+function formatLastCheck(isoString: string | null): string {
+  if (!isoString) return '从未';
   try {
     const date = new Date(isoString);
     return date.toLocaleString('zh-CN', {
@@ -90,69 +27,93 @@ function formatLastActive(isoString: string | null): string {
 export function InstanceTopology(): JSX.Element {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
-  const [agents, setAgents] = useState<AgentListItem[]>([]);
+  const [currentInstanceId, setCurrentInstanceId, clearCurrentInstanceId] = useCurrentInstanceId();
+  const [instances, setInstances] = useState<InstanceItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedAgent, setSelectedAgent] = useState<AgentListItem | null>(null);
+  const [selectedInstance, setSelectedInstance] = useState<InstanceItem | null>(null);
+  const [isFormModalOpen, setIsFormModalOpen] = useState(false);
+  const [editingInstance, setEditingInstance] = useState<InstanceItem | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    let realtimeHandle: { close: () => void } | null = null;
-
-    async function loadSnapshotAndSubscribe() {
-      try {
-        const handle = await startAgentsListRealtime({
-          listAgentsFn: listAgents,
-          createRealtimeClientFn: createObserverRealtimeClient,
-          applyAgents: (update) => {
-            if (cancelled) {
-              return;
-            }
-            setAgents((previousAgents) =>
-              typeof update === 'function' ? update(previousAgents) : update
-            );
-          },
-        });
-
-        if (!cancelled) {
-          realtimeHandle = handle;
-        } else {
-          handle?.close();
-        }
-      } catch (err) {
-        if (!cancelled) {
-          const message = withErrorMessage(err, '获取实例列表失败');
-          setError(message);
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
+  const loadInstances = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await listInstances();
+      setInstances(data);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '获取实例列表失败';
+      setError(message);
+    } finally {
+      setLoading(false);
     }
-
-    void loadSnapshotAndSubscribe();
-
-    return () => {
-      cancelled = true;
-      realtimeHandle?.close();
-    };
   }, []);
 
-  const handleInstanceClick = (agent: AgentListItem): void => {
-    setSelectedAgent(agent);
-  };
+  useEffect(() => {
+    void loadInstances();
+  }, [loadInstances]);
 
-  const handleCloseModal = (): void => {
-    setSelectedAgent(null);
-  };
+  const handleInstanceClick = useCallback((instance: InstanceItem): void => {
+    setCurrentInstanceId(instance.id);
+    setSelectedInstance(instance);
+    setDetailError(null);
+  }, [setCurrentInstanceId]);
 
-  const handleGoToSession = (): void => {
-    if (selectedAgent) {
-      navigate(`/session/${selectedAgent.id}`);
-      setSelectedAgent(null);
+  const handleCloseDetailModal = useCallback((): void => {
+    setSelectedInstance(null);
+    setDetailError(null);
+  }, []);
+
+  const handleOpenCreateModal = useCallback((): void => {
+    setEditingInstance(null);
+    setIsFormModalOpen(true);
+  }, []);
+
+  const handleOpenEditModal = useCallback((): void => {
+    if (selectedInstance) {
+      setEditingInstance(selectedInstance);
+      setSelectedInstance(null);
+      setIsFormModalOpen(true);
     }
-  };
+  }, [selectedInstance]);
+
+  const handleCloseFormModal = useCallback((): void => {
+    setIsFormModalOpen(false);
+    setEditingInstance(null);
+  }, []);
+
+  const handleFormSuccess = useCallback((): void => {
+    setIsFormModalOpen(false);
+    setEditingInstance(null);
+    void loadInstances();
+  }, [loadInstances]);
+
+  const handleDeleteInstance = useCallback(async (): Promise<void> => {
+    if (!selectedInstance) return;
+    
+    try {
+      await deleteInstance(selectedInstance.id);
+      if (currentInstanceId === selectedInstance.id) {
+        clearCurrentInstanceId();
+      }
+      setSelectedInstance(null);
+      setDetailError(null);
+      void loadInstances();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '删除实例失败';
+      setDetailError(message);
+    }
+  }, [clearCurrentInstanceId, currentInstanceId, selectedInstance, loadInstances]);
+
+  const handleGoToSession = useCallback((): void => {
+    if (selectedInstance) {
+      setCurrentInstanceId(selectedInstance.id);
+      navigate('/session');
+    }
+  }, [selectedInstance, navigate, setCurrentInstanceId]);
+
+  const canAddMore = instances.length < MAX_INSTANCES;
 
   if (loading) {
     return (
@@ -173,132 +134,163 @@ export function InstanceTopology(): JSX.Element {
   return (
     <div style={getContainerStyle(isMobile)}>
       <div style={getCanvasStyle(isMobile)}>
-        {agents.length === 0 ? (
-          <div style={emptyStyle}>
-            <p style={emptyTextStyle}>暂无实例</p>
-            <p style={emptyHintStyle}>添加实例开始使用</p>
+        {instances.length === 0 ? (
+          <div style={emptyStateStyle}>
+            <div style={emptyIconStyle}>
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="1.5">
+                <title>Empty State Icon</title>
+                <rect x="2" y="3" width="20" height="14" rx="2" />
+                <line x1="8" y1="21" x2="16" y2="21" />
+                <line x1="12" y1="17" x2="12" y2="21" />
+              </svg>
+            </div>
+            <p style={emptyTitleStyle}>暂无实例</p>
+            <p style={emptyHintStyle}>点击右下角按钮添加第一个实例</p>
           </div>
         ) : (
           <div style={topologyContainerStyle}>
-            {agents.map((agent, index) => (
+            {instances.map((instance) => (
               <button
-                key={agent.id}
+                key={instance.id}
                 type="button"
-                style={getInstanceNodeStyle(agent.status, agent.is_active, isMobile)}
-                onClick={() => handleInstanceClick(agent)}
+                style={getInstanceNodeStyle(instance.status, isMobile)}
+                onClick={() => handleInstanceClick(instance)}
+                aria-label={`实例 ${instance.name}`}
               >
                 <div style={nodeIconStyle}>
-                  <InstanceIcon status={agent.status} isActive={agent.is_active} size={isMobile ? 32 : 40} />
-                  {agent.is_active && <div style={healthPulseStyle} />}
+                  <InstanceIcon status={instance.status} size={isMobile ? 32 : 40} />
+                  {instance.status === 'active' && <div style={healthPulseStyle} />}
                 </div>
                 <div style={nodeInfoStyle}>
-                  <span style={getNodeNameStyle(isMobile)}>{agent.name}</span>
+                  <span style={getNodeNameStyle(isMobile)}>{instance.name}</span>
                   <div style={nodeBadgesStyle}>
-                    <span style={nodeStatusStyle}>
-                      {agent.status === 'running' ? '运行中' : agent.status === 'idle' ? '空闲' : agent.status}
-                    </span>
-                    <span style={agent.is_active ? nodeActiveStyle : nodeInactiveStyle}>
-                      {agent.is_active ? '● 活跃' : '○ 不活跃'}
+                    <span style={getStatusBadgeStyle(instance.status)}>
+                      {instance.status === 'active' ? '活跃' : '未活跃'}
                     </span>
                   </div>
+                  <span style={nodeEndpointStyle}>{instance.endpoint}</span>
                 </div>
-                {index < agents.length - 1 && !isMobile && (
-                  <svg style={connectionLineStyle} aria-hidden="true">
-                    <title>连接线</title>
-                    <line
-                      x1="50%"
-                      y1="100%"
-                      x2="50%"
-                      y2="150%"
-                      stroke="#d1d5db"
-                      strokeWidth="2"
-                      strokeDasharray="5,5"
-                    />
-                  </svg>
-                )}
               </button>
             ))}
           </div>
         )}
       </div>
 
-      {selectedAgent && (
-        <div
-          style={modalOverlayStyle}
-          onClick={handleCloseModal}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') handleCloseModal();
-          }}
-          role="button"
-          tabIndex={0}
-        >
-          {/* eslint-disable-next-line jsx-a11y/prefer-tag-over-role */}
+      {/* Instance Detail Modal */}
+      {selectedInstance && (
+        <div style={modalOverlayStyle}>
+          <button
+            type="button"
+            style={modalBackdropButtonStyle}
+            onClick={handleCloseDetailModal}
+            aria-label="关闭详情弹窗遮罩"
+            data-testid="detail-modal-overlay"
+          />
           <div
             style={getModalStyle(isMobile)}
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={() => {}}
             role="dialog"
             aria-modal="true"
-            aria-labelledby="modal-title"
+            aria-labelledby="detail-modal-title"
           >
             <div style={modalHeaderStyle}>
-              <h2 style={modalTitleStyle}>{selectedAgent.name}</h2>
+              <h2 id="detail-modal-title" style={modalTitleStyle}>实例详情</h2>
               <button
                 type="button"
                 style={closeButtonStyle}
-                onClick={handleCloseModal}
-                aria-label="关闭"
+                onClick={handleCloseDetailModal}
+                aria-label="关闭详情弹窗"
               >
                 ×
               </button>
             </div>
             <div style={modalBodyStyle}>
+              {detailError && (
+                <div style={detailErrorStyle}>
+                  <span style={errorTextStyle}>{detailError}</span>
+                </div>
+              )}
               <div style={infoRowStyle}>
-                <span style={infoLabelStyle}>实例 ID</span>
-                <span style={infoValueStyle}>{selectedAgent.id}</span>
+                <span style={infoLabelStyle}>实例名称</span>
+                <span style={infoValueStyle}>{selectedInstance.name}</span>
               </div>
               <div style={infoRowStyle}>
-                <span style={infoLabelStyle}>运行状态</span>
-                <span style={getInfoValueWithStatusStyle(selectedAgent.status)}>
-                  {selectedAgent.status === 'running' ? '运行中' : selectedAgent.status === 'idle' ? '空闲' : selectedAgent.status}
+                <span style={infoLabelStyle}>类型</span>
+                <span style={infoValueStyle}>{selectedInstance.type}</span>
+              </div>
+              <div style={infoRowStyle}>
+                <span style={infoLabelStyle}>端点地址</span>
+                <span style={infoValueStyle}>{selectedInstance.endpoint}</span>
+              </div>
+              <div style={infoRowStyle}>
+                <span style={infoLabelStyle}>状态</span>
+                <span style={getStatusBadgeStyle(selectedInstance.status)}>
+                  {selectedInstance.status === 'active' ? '活跃' : '未活跃'}
                 </span>
               </div>
               <div style={infoRowStyle}>
-                <span style={infoLabelStyle}>活跃状态</span>
-                <span style={selectedAgent.is_active ? activeInfoStyle : inactiveInfoStyle}>
-                  {selectedAgent.is_active ? '● 活跃' : '○ 不活跃'}
-                </span>
+                <span style={infoLabelStyle}>最后检查</span>
+                <span style={infoValueStyle}>{formatLastCheck(selectedInstance.last_check_at)}</span>
               </div>
               <div style={infoRowStyle}>
-                <span style={infoLabelStyle}>最后活跃</span>
-                <span style={infoValueStyle}>{formatLastActive(selectedAgent.last_active_at)}</span>
+                <span style={infoLabelStyle}>创建时间</span>
+                <span style={infoValueStyle}>{formatLastCheck(selectedInstance.created_at)}</span>
               </div>
             </div>
             <div style={modalFooterStyle}>
               <button
                 type="button"
+                style={deleteButtonStyle}
+                onClick={handleDeleteInstance}
+              >
+                删除
+              </button>
+              <button
+                type="button"
+                style={editButtonStyle}
+                onClick={handleOpenEditModal}
+              >
+                编辑
+              </button>
+              <button
+                type="button"
                 style={sessionButtonStyle}
                 onClick={handleGoToSession}
               >
-                进入会话
+                进入会话页
               </button>
             </div>
           </div>
         </div>
       )}
 
-      <button type="button" disabled style={getFabStyle(isMobile)} title="添加实例">
+      {/* Instance Form Modal */}
+      {isFormModalOpen && (
+        <InstanceFormModal
+          instance={editingInstance}
+          onClose={handleCloseFormModal}
+          onSuccess={handleFormSuccess}
+        />
+      )}
+
+      {/* FAB - Add Instance */}
+      <button
+        type="button"
+        style={getFabStyle(isMobile, canAddMore)}
+        onClick={canAddMore ? handleOpenCreateModal : undefined}
+        disabled={!canAddMore}
+        title={canAddMore ? '添加实例' : '最多可添加3个实例'}
+        aria-label={canAddMore ? '添加实例' : '已达到实例数量上限'}
+      >
         +
       </button>
     </div>
   );
 }
 
-function InstanceIcon({ status, isActive, size }: { status: string; isActive: boolean; size: number }): JSX.Element {
-  const color = isActive ? '#10b981' : status === 'running' ? '#3b82f6' : '#9ca3af';
+function InstanceIcon({ status, size }: { status: string; size: number }): JSX.Element {
+  const color = status === 'active' ? '#10b981' : '#9ca3af';
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" aria-label="实例图标">
-      <title>实例</title>
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" aria-hidden="true">
       <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
       <line x1="8" y1="21" x2="16" y2="21" />
       <line x1="12" y1="17" x2="12" y2="21" />
@@ -328,112 +320,86 @@ function getCanvasStyle(isMobile: boolean): React.CSSProperties {
   };
 }
 
-function getInstanceNodeStyle(status: string, isActive: boolean, isMobile: boolean): React.CSSProperties {
-  const borderColor = isActive ? '#10b981' : status === 'running' ? '#3b82f6' : '#d1d5db';
-  const shadow = isActive ? '0 0 0 3px rgba(16, 185, 129, 0.1)' : 'none';
+const topologyContainerStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  gap: '1rem',
+  width: '100%',
+  maxWidth: '400px',
+};
+
+function getInstanceNodeStyle(status: string, isMobile: boolean): React.CSSProperties {
+  const borderColor = status === 'active' ? '#10b981' : '#d1d5db';
+  const shadow = status === 'active' ? '0 0 0 3px rgba(16, 185, 129, 0.1)' : 'none';
 
   return {
     display: 'flex',
-    flexDirection: 'column',
     alignItems: 'center',
-    padding: isMobile ? '1rem' : '1.5rem 2rem',
+    gap: '1rem',
+    padding: isMobile ? '1rem' : '1.25rem',
     background: '#fff',
     border: `2px solid ${borderColor}`,
     borderRadius: isMobile ? '0.75rem' : '1rem',
     cursor: 'pointer',
     transition: 'all 0.2s',
     boxShadow: shadow,
-    position: 'relative',
-    marginBottom: isMobile ? '0.75rem' : '4rem',
-    minWidth: isMobile ? 'unset' : '200px',
-    width: isMobile ? '100%' : 'auto',
-    maxWidth: isMobile ? '300px' : 'none',
+    width: '100%',
+    textAlign: 'left',
     fontFamily: 'inherit',
     fontSize: 'inherit',
     color: 'inherit',
   };
 }
 
-function getNodeNameStyle(isMobile: boolean): React.CSSProperties {
-  return {
-    fontSize: isMobile ? '1rem' : '1.125rem',
-    fontWeight: 600,
-    color: '#1f2933',
-  };
-}
-
-const topologyContainerStyle: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  gap: '0',
-  width: '100%',
-};
-
-const emptyStyle: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  justifyContent: 'center',
-  padding: '2rem',
-};
-
-const emptyTextStyle: React.CSSProperties = {
-  fontSize: '1rem',
-  color: '#6b7280',
-  margin: 0,
-};
-
-const emptyHintStyle: React.CSSProperties = {
-  fontSize: '0.875rem',
-  color: '#9ca3af',
-  margin: '0.5rem 0 0 0',
-  textAlign: 'center',
-};
-
-const textStyle: React.CSSProperties = {
-  color: '#6b7280',
-  textAlign: 'center',
-  padding: '2rem',
-};
-
-const errorStyle: React.CSSProperties = {
-  color: '#dc2626',
-  textAlign: 'center',
-  padding: '2rem',
-};
-
 const nodeIconStyle: React.CSSProperties = {
-  marginBottom: '0.5rem',
   position: 'relative',
+  flexShrink: 0,
 };
 
 const nodeInfoStyle: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  alignItems: 'center',
   gap: '0.25rem',
+  flex: 1,
+  minWidth: 0,
 };
 
-const nodeStatusStyle: React.CSSProperties = {
-  fontSize: '0.75rem',
-  color: '#6b7280',
-};
-
-const nodeActiveStyle: React.CSSProperties = {
-  fontSize: '0.75rem',
-  color: '#10b981',
-};
-
-const nodeInactiveStyle: React.CSSProperties = {
-  fontSize: '0.75rem',
-  color: '#9ca3af',
-};
+function getNodeNameStyle(isMobile: boolean): React.CSSProperties {
+  return {
+    fontSize: isMobile ? '1rem' : '1.125rem',
+    fontWeight: 600,
+    color: '#1f2933',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  };
+}
 
 const nodeBadgesStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: '0.5rem',
+};
+
+function getStatusBadgeStyle(status: string): React.CSSProperties {
+  const isActive = status === 'active';
+  return {
+    fontSize: '0.75rem',
+    padding: '0.125rem 0.5rem',
+    borderRadius: '0.25rem',
+    background: isActive ? '#dcfce7' : '#f3f4f6',
+    color: isActive ? '#166534' : '#6b7280',
+    fontWeight: 500,
+  };
+}
+
+const nodeEndpointStyle: React.CSSProperties = {
+  fontSize: '0.75rem',
+  color: '#6b7280',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
 };
 
 const healthPulseStyle: React.CSSProperties = {
@@ -448,35 +414,44 @@ const healthPulseStyle: React.CSSProperties = {
   animation: 'pulse 2s ease-in-out infinite',
 };
 
-const connectionLineStyle: React.CSSProperties = {
-  position: 'absolute',
-  bottom: '-4rem',
-  left: '0',
-  width: '100%',
-  height: '4rem',
+const emptyStateStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: '2rem',
+  textAlign: 'center',
 };
 
-function getFabStyle(isMobile: boolean): React.CSSProperties {
-  return {
-    position: 'fixed',
-    bottom: isMobile ? 'calc(56px + 1rem)' : '2rem',
-    right: '1rem',
-    width: '48px',
-    height: '48px',
-    borderRadius: '50%',
-    border: 'none',
-    background: '#6b7280',
-    color: '#fff',
-    fontSize: '1.25rem',
-    cursor: 'not-allowed',
-    opacity: 0.5,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-    zIndex: 90,
-  };
-}
+const emptyIconStyle: React.CSSProperties = {
+  marginBottom: '1rem',
+  opacity: 0.5,
+};
+
+const emptyTitleStyle: React.CSSProperties = {
+  fontSize: '1rem',
+  color: '#6b7280',
+  margin: '0 0 0.5rem 0',
+  fontWeight: 500,
+};
+
+const emptyHintStyle: React.CSSProperties = {
+  fontSize: '0.875rem',
+  color: '#9ca3af',
+  margin: 0,
+};
+
+const textStyle: React.CSSProperties = {
+  color: '#6b7280',
+  textAlign: 'center',
+  padding: '2rem',
+};
+
+const errorStyle: React.CSSProperties = {
+  color: '#dc2626',
+  textAlign: 'center',
+  padding: '2rem',
+};
 
 const modalOverlayStyle: React.CSSProperties = {
   position: 'fixed',
@@ -491,8 +466,20 @@ const modalOverlayStyle: React.CSSProperties = {
   zIndex: 200,
 };
 
+const modalBackdropButtonStyle: React.CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  border: 'none',
+  background: 'transparent',
+  padding: 0,
+  margin: 0,
+  cursor: 'pointer',
+};
+
 function getModalStyle(isMobile: boolean): React.CSSProperties {
   return {
+    position: 'relative',
+    zIndex: 1,
     background: '#fff',
     borderRadius: '0.75rem',
     width: isMobile ? 'calc(100% - 2rem)' : '400px',
@@ -555,34 +542,15 @@ const infoValueStyle: React.CSSProperties = {
   fontWeight: 500,
 };
 
-function getInfoValueWithStatusStyle(status: string): React.CSSProperties {
-  return {
-    fontSize: '0.875rem',
-    color: status === 'running' ? '#10b981' : status === 'idle' ? '#6b7280' : '#1f2933',
-    fontWeight: 500,
-  };
-}
-
-const activeInfoStyle: React.CSSProperties = {
-  fontSize: '0.875rem',
-  color: '#10b981',
-  fontWeight: 500,
-};
-
-const inactiveInfoStyle: React.CSSProperties = {
-  fontSize: '0.875rem',
-  color: '#9ca3af',
-  fontWeight: 500,
-};
-
 const modalFooterStyle: React.CSSProperties = {
   padding: '1rem 1.25rem',
   borderTop: '1px solid #e5e7eb',
   display: 'flex',
   justifyContent: 'flex-end',
+  gap: '0.75rem',
 };
 
-const sessionButtonStyle: React.CSSProperties = {
+const editButtonStyle: React.CSSProperties = {
   padding: '0.625rem 1.25rem',
   background: '#3b82f6',
   color: '#fff',
@@ -591,5 +559,61 @@ const sessionButtonStyle: React.CSSProperties = {
   fontSize: '0.875rem',
   fontWeight: 500,
   cursor: 'pointer',
-  transition: 'background 0.2s',
 };
+
+const deleteButtonStyle: React.CSSProperties = {
+  padding: '0.625rem 1.25rem',
+  background: '#fef2f2',
+  color: '#dc2626',
+  border: '1px solid #fecaca',
+  borderRadius: '0.5rem',
+  fontSize: '0.875rem',
+  fontWeight: 500,
+  cursor: 'pointer',
+};
+
+const sessionButtonStyle: React.CSSProperties = {
+  padding: '0.625rem 1.25rem',
+  background: '#10b981',
+  color: '#fff',
+  border: 'none',
+  borderRadius: '0.5rem',
+  fontSize: '0.875rem',
+  fontWeight: 500,
+  cursor: 'pointer',
+};
+
+const detailErrorStyle: React.CSSProperties = {
+  padding: '0.75rem',
+  background: '#fef2f2',
+  borderRadius: '0.5rem',
+  marginBottom: '1rem',
+};
+
+const errorTextStyle: React.CSSProperties = {
+  fontSize: '0.875rem',
+  color: '#dc2626',
+};
+
+function getFabStyle(isMobile: boolean, canAdd: boolean): React.CSSProperties {
+  return {
+    position: 'fixed',
+    bottom: isMobile ? 'calc(56px + 1rem)' : '2rem',
+    right: '1rem',
+    width: '48px',
+    height: '48px',
+    borderRadius: '50%',
+    border: 'none',
+    background: canAdd ? '#3b82f6' : '#6b7280',
+    color: '#fff',
+    fontSize: '1.5rem',
+    cursor: canAdd ? 'pointer' : 'not-allowed',
+    opacity: canAdd ? 1 : 0.5,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+    zIndex: 90,
+    transition: 'all 0.2s',
+  };
+}
