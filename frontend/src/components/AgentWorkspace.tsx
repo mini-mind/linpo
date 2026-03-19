@@ -160,6 +160,30 @@ export function resolveSelectedSessionKey(
 	return sessions[0]?.key ?? null;
 }
 
+export function getSessionModel(
+	sessionModels: Record<string, string>,
+	sessionKey: string,
+	defaultModel: string | null,
+): string | null {
+	return sessionModels[sessionKey] ?? defaultModel ?? null;
+}
+
+export function updateSessionModel(
+	sessionModels: Record<string, string>,
+	sessionKey: string,
+	modelId: string,
+): Record<string, string> {
+	return { ...sessionModels, [sessionKey]: modelId };
+}
+
+export function shouldShowModelUpdateStatus(
+	status: "idle" | "updating" | "success" | "failed",
+	updateSessionKey: string | null,
+	currentSessionKey: string | null,
+): boolean {
+	return status !== "idle" && updateSessionKey === currentSessionKey;
+}
+
 export function getPreviewItemsForSession(
 	response: SessionsPreviewResponse,
 	sessionKey: string,
@@ -372,10 +396,11 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 	>("idle");
 	const [models, setModels] = useState<ModelItem[]>([]);
 	const [modelsLoading, setModelsLoading] = useState(false);
-	const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+	const [sessionModels, setSessionModels] = useState<Record<string, string>>({});
 	const [modelUpdateStatus, setModelUpdateStatus] = useState<
 		"idle" | "updating" | "success" | "failed"
 	>("idle");
+	const [modelUpdateSessionKey, setModelUpdateSessionKey] = useState<string | null>(null);
 	const [selectedSessionKey, setSelectedSessionKey] = useState<string | null>(
 		null,
 	);
@@ -539,9 +564,17 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 					setSelectedSessionKey((currentKey) =>
 						resolveSelectedSessionKey(nextSessions, currentKey),
 					);
-					if (defaults?.model) {
-						setSelectedModelId(defaults.model);
-					}
+				if (defaults?.model) {
+					setSessionModels((prev) => {
+						const next: Record<string, string> = { ...prev };
+						for (const session of nextSessions) {
+							if (!next[session.key]) {
+								next[session.key] = defaults.model as string;
+							}
+						}
+						return next;
+					});
+				}
 					if (nextSessions.length === 0) {
 						setPreviewItems([]);
 						setPreviewLoading(false);
@@ -705,17 +738,25 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 	}, [activeTab, selectedSessionKey, refreshPreview, scrollToBottom]);
 
 	const handleModelChange = async (newModelId: string): Promise<void> => {
-		if (!agentId || !selectedSessionKey || newModelId === selectedModelId)
+		const sessionKey = selectedSessionKey;
+		if (!agentId || !sessionKey || newModelId === getSessionModel(sessionModels, sessionKey, null))
 			return;
+		setModelUpdateSessionKey(sessionKey);
 		setModelUpdateStatus("updating");
 		try {
-			await patchSession(selectedSessionKey, { model: newModelId });
-			setSelectedModelId(newModelId);
+			await patchSession(sessionKey, { model: newModelId });
+			setSessionModels((prev) => updateSessionModel(prev, sessionKey, newModelId));
 			setModelUpdateStatus("success");
-			setTimeout(() => setModelUpdateStatus("idle"), 2000);
+			setTimeout(() => {
+				setModelUpdateStatus("idle");
+				setModelUpdateSessionKey(null);
+			}, 2000);
 		} catch {
 			setModelUpdateStatus("failed");
-			setTimeout(() => setModelUpdateStatus("idle"), 3000);
+			setTimeout(() => {
+				setModelUpdateStatus("idle");
+				setModelUpdateSessionKey(null);
+			}, 3000);
 		}
 	};
 
@@ -726,6 +767,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 			setPreviewItems([]);
 			setPreviewLoading(true);
 			setModelUpdateStatus("idle");
+			setModelUpdateSessionKey(null);
 		},
 		[selectedSessionKey],
 	);
@@ -760,8 +802,11 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		setPreviewItems([]);
 		setPreviewLoading(Boolean(nextSessionKey));
 
-		if (defaults?.model) {
-			setSelectedModelId(defaults.model);
+		if (defaults?.model && nextSessionKey) {
+			setSessionModels((prev) => ({
+				...prev,
+				[nextSessionKey]: defaults.model as string,
+			}));
 		}
 
 		if (!nextSessionKey) {
@@ -870,12 +915,15 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 
 	const isPending =
 		controlRequest.status === "sending" || controlRequest.status === "accepted";
-	const modelSelectorStatus =
-		modelUpdateStatus === "idle" ? null : modelUpdateStatus;
+	const modelSelectorStatus: "updating" | "success" | "failed" | null =
+		shouldShowModelUpdateStatus(modelUpdateStatus, modelUpdateSessionKey, selectedSessionKey)
+			? (modelUpdateStatus as "updating" | "success" | "failed")
+			: null;
 	const emptySessionText = selectedSessionKey ? "暂无消息" : "暂无可用会话";
 	const emptySessionHint = selectedSessionKey
 		? "发送消息开始对话"
 		: "请选择其他会话或等待新消息进入";
+	const currentSessionModel = getSessionModel(sessionModels, selectedSessionKey ?? "", null);
 
 	return (
 		<div style={getContainerStyle(isMobile)}>
@@ -998,14 +1046,14 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 								<div style={getInputContainerStyle()}>
 									<div style={getInputAreaStyle(isMobile)}>
 										<div style={composerToolsStyle}>
-											<ModelSelector
-												models={models}
-												selectedId={selectedModelId}
-												onChange={handleModelChange}
-												loading={modelsLoading}
-												disabled={!selectedSessionKey || previewLoading}
-												updateStatus={modelSelectorStatus}
-											/>
+										<ModelSelector
+											models={models}
+											selectedId={currentSessionModel}
+											onChange={handleModelChange}
+											loading={modelsLoading}
+											disabled={!selectedSessionKey || previewLoading}
+											updateStatus={modelSelectorStatus}
+										/>
 										</div>
 										<div style={getInputRowStyle(isMobile)}>
 											<textarea

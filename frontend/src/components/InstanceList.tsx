@@ -1,12 +1,12 @@
 import type React from 'react';
-import { useEffect, useState } from 'react';
-import { listAgents } from '../api/client';
-import type { AgentListItem, AgentStatus } from '../api/types';
-import { STATUS_DOT_COLORS } from '../utils/statusStyles';
+import type { InstanceItem } from '../api/types';
 
 interface InstanceListProps {
-  selectedAgentId: string | null;
-  onSelectAgent: (agentId: string) => void;
+  instances: InstanceItem[];
+  loading: boolean;
+  error: string | null;
+  selectedInstanceId: string | null;
+  onSelectInstance: (instanceId: string) => void;
 }
 
 function formatRelativeTime(timestamp: string | null): string {
@@ -28,37 +28,26 @@ function formatRelativeTime(timestamp: string | null): string {
   return date.toLocaleDateString('zh-CN');
 }
 
-export function InstanceList({ selectedAgentId, onSelectAgent }: InstanceListProps): JSX.Element {
-  const [agents, setAgents] = useState<AgentListItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+function getStatusDotColor(status: string): string {
+  switch (status) {
+    case 'connected':
+      return '#22c55e';
+    case 'disconnected':
+      return '#ef4444';
+    case 'pending':
+      return '#f59e0b';
+    default:
+      return '#6b7280';
+  }
+}
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function fetchAgents(): Promise<void> {
-      setLoading(true);
-      setError(null);
-      try {
-        const agentList = await listAgents();
-        if (!cancelled) {
-          setAgents(agentList);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : '获取实例列表失败');
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    }
-
-    void fetchAgents();
-    return () => { cancelled = true; };
-  }, []);
-
+export function InstanceList({
+  instances,
+  loading,
+  error,
+  selectedInstanceId,
+  onSelectInstance,
+}: InstanceListProps): JSX.Element {
   if (loading) {
     return (
       <div style={containerStyle}>
@@ -75,7 +64,7 @@ export function InstanceList({ selectedAgentId, onSelectAgent }: InstanceListPro
     );
   }
 
-  if (agents.length === 0) {
+  if (instances.length === 0) {
     return (
       <div style={containerStyle}>
         <div style={emptyStyle}>暂无实例</div>
@@ -86,24 +75,24 @@ export function InstanceList({ selectedAgentId, onSelectAgent }: InstanceListPro
   return (
     <div style={containerStyle}>
       <div style={listStyle}>
-        {agents.map((agent) => {
-          const isSelected = agent.id === selectedAgentId;
+        {instances.map((instance) => {
+          const isSelected = instance.id === selectedInstanceId;
           return (
             <button
-              key={agent.id}
+              key={instance.id}
               type="button"
               style={getItemStyle(isSelected)}
-              onClick={() => onSelectAgent(agent.id)}
+              onClick={() => onSelectInstance(instance.id)}
             >
               <div style={itemHeaderStyle}>
                 <span
-                  style={getStatusDotStyle(agent.status)}
-                  title={`状态: ${agent.status}`}
+                  style={getStatusDotStyle(instance.status)}
+                  title={`状态: ${instance.status}`}
                 />
-                <span style={itemNameStyle}>{agent.name}</span>
+                <span style={itemNameStyle}>{instance.name}</span>
               </div>
               <span style={itemTimeStyle}>
-                {formatRelativeTime(agent.last_active_at)}
+                {formatRelativeTime(instance.last_check_at)}
               </span>
             </button>
           );
@@ -171,12 +160,12 @@ const itemHeaderStyle: React.CSSProperties = {
   gap: '0.5rem',
 };
 
-function getStatusDotStyle(status: AgentStatus): React.CSSProperties {
+function getStatusDotStyle(status: string): React.CSSProperties {
   return {
     width: '8px',
     height: '8px',
     borderRadius: '50%',
-    background: STATUS_DOT_COLORS[status] ?? STATUS_DOT_COLORS.idle,
+    background: getStatusDotColor(status),
     flexShrink: 0,
   };
 }
