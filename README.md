@@ -26,6 +26,13 @@
 - PostgreSQL：Docker 容器 `postgres:16`，当前通过宿主机端口 `40193` 暴露
 - OpenClaw 实例：Docker 容器（如 `claw1` / `claw2` / `claw3`）
 
+### 运行与验收验证约定
+
+- 后端测试统一使用：`/data/projects/linpo/.venv/bin/pytest`（不依赖系统全局 `pytest`）。
+- 执行测试/验证命令前，先按仓库当前文件结构确认目标路径真实存在，再运行命令。
+- 浏览器侧端到端验收优先从 `ravin` 发起 Playwright，作为远程验证入口。
+- Playwright 端到端验收目标为已部署端点：前端 `http://175.178.213.10:5173`、后端 `http://175.178.213.10:8000`。
+
 
 | 名称 | 端口 | Token |
 |------|------|-------|
@@ -212,4 +219,3 @@ asyncio.run(create_chat())
 - 先定文档，再做实现
 - 不复用旧 roboard 的平台世界观作为当前约束
 - 不在方向未冻结前预建大而全的代码骨架
-

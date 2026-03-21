@@ -2,17 +2,11 @@ import type React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import {
-	deleteSession,
 	getAgentDetail,
 	getDefaultObserverDataSource,
 	getNodeDetail,
-	listModels,
 	listSessions,
-	patchSession,
 	previewSessions,
-	resetSession,
-	sendControlRequest,
-	sendMessage,
 } from "../api/client";
 import {
 	createObserverRealtimeClient,
@@ -23,21 +17,16 @@ import {
 	type AgentDetailResponse,
 	buildAgentDetailChannel,
 	buildSessionMessagesChannel,
-	type ControlAction,
-	type ControlRequestStatus,
 	type EventRecord,
-	type ModelItem,
 	type NodeDetailResponse,
 	type SessionListItem,
-	type SessionsPreviewResponse,
 	type SessionPreviewItem,
+	type SessionsPreviewResponse,
 	type TopologyNode,
 } from "../api/types";
-import { ModelSelector } from "./ModelSelector";
+import { useIsMobile } from "../hooks/useIsMobile";
 import { SessionActions } from "./SessionActions";
 import { SessionList } from "./SessionList";
-import { useIsMobile } from "../hooks/useIsMobile";
-import { useToast } from "../hooks/useToast";
 
 type RealtimeStatus =
 	| "realtime"
@@ -56,26 +45,6 @@ interface RealtimeState {
 	message: string | null;
 }
 
-interface ControlRequestState {
-	requestId: string | null;
-	status: ControlRequestStatus | null;
-	action: ControlAction | null;
-	errorType?: string | null;
-}
-
-export function initialControlRequestState(): ControlRequestState {
-	return { requestId: null, status: null, action: null, errorType: null };
-}
-
-export function applyControlRequestUpdate(
-	previous: ControlRequestState,
-	requestId: string,
-	status: ControlRequestStatus,
-): ControlRequestState {
-	if (previous.requestId !== requestId) return previous;
-	return { ...previous, status, errorType: null };
-}
-
 type AgentDetailUpdate =
 	| AgentDetailResponse
 	| null
@@ -89,10 +58,6 @@ interface StartAgentDetailRealtimeOptions {
 	) => ObserverRealtimeClient;
 	applyAgent: (update: AgentDetailUpdate) => void;
 	setRealtimeState?: (state: RealtimeState) => void;
-	onControlRequestUpdated?: (
-		requestId: string,
-		status: ControlRequestStatus,
-	) => void;
 }
 
 const AGENT_DETAIL_REALTIME_DATA_SOURCE = getDefaultObserverDataSource();
@@ -132,24 +97,15 @@ function mergeAgentDetailTopology(
 	};
 }
 
-export function getFallbackSessionKeyAfterDelete(
-	sessions: ReadonlyArray<Pick<SessionListItem, "key">>,
-	deletedKey: string,
-): string | null {
-	const deletedIndex = sessions.findIndex((session) => session.key === deletedKey);
-	if (deletedIndex === -1) {
-		return sessions[0]?.key ?? null;
-	}
-
-	return sessions[deletedIndex + 1]?.key ?? sessions[deletedIndex - 1]?.key ?? null;
-}
-
 export function resolveSelectedSessionKey(
 	sessions: ReadonlyArray<Pick<SessionListItem, "key">>,
 	currentKey: string | null,
 	preferredKey: string | null = null,
 ): string | null {
-	if (preferredKey && sessions.some((session) => session.key === preferredKey)) {
+	if (
+		preferredKey &&
+		sessions.some((session) => session.key === preferredKey)
+	) {
 		return preferredKey;
 	}
 
@@ -158,6 +114,22 @@ export function resolveSelectedSessionKey(
 	}
 
 	return sessions[0]?.key ?? null;
+}
+
+export function getFallbackSessionKeyAfterDelete(
+	sessions: ReadonlyArray<Pick<SessionListItem, "key">>,
+	deletedKey: string,
+): string | null {
+	const deletedIndex = sessions.findIndex(
+		(session) => session.key === deletedKey,
+	);
+	if (deletedIndex === -1) {
+		return sessions[0]?.key ?? null;
+	}
+
+	return (
+		sessions[deletedIndex + 1]?.key ?? sessions[deletedIndex - 1]?.key ?? null
+	);
 }
 
 export function getSessionModel(
@@ -311,13 +283,6 @@ export async function startAgentDetailRealtime(
 					});
 					return;
 				}
-				if (message.type === "control_request_updated") {
-					const { control_request } = message.payload;
-					options.onControlRequestUpdated?.(
-						control_request.request_id,
-						control_request.status,
-					);
-				}
 			},
 			onResyncRequired: () => {
 				void runResync();
@@ -353,17 +318,6 @@ const STATUS_BADGE_CN: Record<string, string> = {
 	error: "错误",
 };
 
-const CONTROL_ERROR_TYPE_CN: Record<string, string> = {
-	pairing_required: "设备未配对",
-	unauthorized: "权限不足",
-	session_not_found: "会话不存在",
-	agent_not_found: "Agent 不存在",
-	rate_limited: "请求过快",
-	internal_error: "服务端错误",
-};
-
-const CONTROL_TIMEOUT_MS = 30000;
-
 const EVENT_TYPE_CN: Record<string, string> = {
 	agent_created: "代理创建",
 	subagent_created: "子代理创建",
@@ -377,30 +331,15 @@ const EVENT_TYPE_CN: Record<string, string> = {
 };
 
 export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
-  const { agentId: paramAgentId } = useParams<{ agentId: string }>();
-  const agentId = props.agentId ?? paramAgentId;
-  const isMobile = useIsMobile();
-  const { addToast } = useToast();
-  const [agent, setAgent] = useState<AgentDetailResponse | null>(null);
+	const { agentId: paramAgentId } = useParams<{ agentId: string }>();
+	const agentId = props.agentId ?? paramAgentId;
+	const isMobile = useIsMobile();
+	const [agent, setAgent] = useState<AgentDetailResponse | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
-	const [controlRequest, setControlRequest] = useState<ControlRequestState>(
-		initialControlRequestState(),
-	);
 	const [activeTab, setActiveTab] = useState<WorkspaceTab>("session");
-	const [messageText, setMessageText] = useState("");
 	const [nodeDetail, setNodeDetail] = useState<NodeDetailResponse | null>(null);
 	const [nodeDetailLoading, setNodeDetailLoading] = useState(false);
-	const [sendMessageStatus, setSendMessageStatus] = useState<
-		"idle" | "sending" | "success" | "failed"
-	>("idle");
-	const [models, setModels] = useState<ModelItem[]>([]);
-	const [modelsLoading, setModelsLoading] = useState(false);
-	const [sessionModels, setSessionModels] = useState<Record<string, string>>({});
-	const [modelUpdateStatus, setModelUpdateStatus] = useState<
-		"idle" | "updating" | "success" | "failed"
-	>("idle");
-	const [modelUpdateSessionKey, setModelUpdateSessionKey] = useState<string | null>(null);
 	const [selectedSessionKey, setSelectedSessionKey] = useState<string | null>(
 		null,
 	);
@@ -408,134 +347,9 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 	const [previewLoading, setPreviewLoading] = useState(false);
 	const [sessions, setSessions] = useState<SessionListItem[]>([]);
 
-	const controlTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const messagesAreaRef = useRef<HTMLDivElement | null>(null);
 	const sessionRealtimeRef = useRef<ObserverRealtimeClient | null>(null);
 	const prevSessionKeyRef = useRef<string | null>(null);
-
-	const clearControlTimeout = useCallback((): void => {
-		if (controlTimeoutRef.current) {
-			clearTimeout(controlTimeoutRef.current);
-			controlTimeoutRef.current = null;
-		}
-	}, []);
-
-  const handlePause = async (): Promise<void> => {
-    if (!agentId) return;
-    clearControlTimeout();
-    setControlRequest({
-      requestId: null,
-      status: "sending",
-      action: "pause",
-      errorType: null,
-    });
-
-    try {
-      const response = await sendControlRequest(agentId);
-      const newStatus: ControlRequestStatus = response.aborted
-        ? "accepted"
-        : "failed";
-      const errorType = response.error_type ?? null;
-
-      setControlRequest({
-        requestId: response.request_id,
-        status: newStatus,
-        action: "pause",
-        errorType,
-      });
-
-      if (newStatus === "accepted") {
-        addToast('暂停请求已发送', 'info');
-        controlTimeoutRef.current = setTimeout(() => {
-          setControlRequest((prev) => {
-            if (prev.status === "accepted") {
-              return { ...prev, status: "timeout" };
-            }
-            return prev;
-          });
-        }, CONTROL_TIMEOUT_MS);
-      } else {
-        const errorMsg = errorType
-          ? CONTROL_ERROR_TYPE_CN[errorType] || errorType
-          : response.message?.trim() || '未检测到可暂停的运行任务';
-        addToast(`暂停失败: ${errorMsg}`, 'error');
-      }
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : '暂停请求失败';
-      setControlRequest({
-        requestId: null,
-        status: "failed",
-        action: "pause",
-        errorType: "internal_error",
-      });
-      addToast(`暂停失败: ${errorMsg}`, 'error');
-    }
-  };
-
-  const handleSendMessage = async (): Promise<void> => {
-    const trimmedMessage = messageText.trim();
-    if (!agentId || !selectedSessionKey || !trimmedMessage) return;
-    setSendMessageStatus("sending");
-    try {
-      const response = await sendMessage(
-        agentId,
-        selectedSessionKey,
-        trimmedMessage,
-      );
-      if (response.status === "accepted") {
-        setSendMessageStatus("success");
-        setMessageText("");
-        setTimeout(() => setSendMessageStatus("idle"), 2000);
-        setPreviewItems((prev) => [
-          ...prev,
-          { role: "user", text: trimmedMessage }
-        ]);
-        scrollToBottom();
-      } else {
-        setSendMessageStatus("failed");
-        addToast('发送消息失败', 'error');
-        setTimeout(() => setSendMessageStatus("idle"), 3000);
-      }
-    } catch (err) {
-      setSendMessageStatus("failed");
-      const errorMsg = err instanceof Error ? err.message : '发送失败';
-      addToast(`发送消息失败: ${errorMsg}`, 'error');
-      setTimeout(() => setSendMessageStatus("idle"), 3000);
-    }
-  };
-
-	const handleControlRequestUpdated = useCallback(
-		(requestId: string, status: ControlRequestStatus): void => {
-			if (status === "applied" || status === "failed") {
-				clearControlTimeout();
-			}
-			setControlRequest((prev) =>
-				applyControlRequestUpdate(prev, requestId, status),
-			);
-		},
-		[clearControlTimeout],
-	);
-
-	useEffect(() => {
-		let cancelled = false;
-		async function loadModels(): Promise<void> {
-			setModelsLoading(true);
-			try {
-				const modelList = await listModels();
-				if (!cancelled) {
-					setModels(modelList);
-				}
-			} catch {
-				if (!cancelled) setModels([]);
-			} finally {
-				if (!cancelled) setModelsLoading(false);
-			}
-		}
-		void loadModels();
-		return () => {
-			cancelled = true;
-		};
-	}, []);
 
 	useEffect(() => {
 		if (!agentId) {
@@ -558,23 +372,12 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		let cancelled = false;
 		async function fetchSessionState(): Promise<void> {
 			try {
-				const { sessions: nextSessions, defaults } = await listSessions(agentId);
+				const { sessions: nextSessions } = await listSessions(agentId);
 				if (!cancelled) {
 					setSessions(nextSessions);
 					setSelectedSessionKey((currentKey) =>
 						resolveSelectedSessionKey(nextSessions, currentKey),
 					);
-				if (defaults?.model) {
-					setSessionModels((prev) => {
-						const next: Record<string, string> = { ...prev };
-						for (const session of nextSessions) {
-							if (!next[session.key]) {
-								next[session.key] = defaults.model as string;
-							}
-						}
-						return next;
-					});
-				}
 					if (nextSessions.length === 0) {
 						setPreviewItems([]);
 						setPreviewLoading(false);
@@ -658,17 +461,17 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 				const response = await previewSessions([sessionKey]);
 				const nextItems = getPreviewItemsForSession(response, sessionKey);
 				setPreviewItems((previousItems) =>
-				arePreviewItemsEqual(previousItems, nextItems)
-					? previousItems
-					: nextItems,
-			);
+					arePreviewItemsEqual(previousItems, nextItems)
+						? previousItems
+						: nextItems,
+				);
 				if (nextItems.length > 0) {
 					scrollToBottom();
 				}
 			} catch {
 				setPreviewItems((previousItems) =>
-				previousItems.length === 0 ? previousItems : [],
-			);
+					previousItems.length === 0 ? previousItems : [],
+				);
 			} finally {
 				setPreviewLoading(false);
 			}
@@ -697,26 +500,26 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 						message.payload.session_key === sessionKey
 					) {
 						const shouldMergeRealtimeChunk =
-						message.payload.update_mode === "append_chunk" ||
-						(message.payload.update_mode === undefined &&
-							message.payload.messages.length === 1 &&
-							message.payload.messages[0]?.role === "assistant");
+							message.payload.update_mode === "append_chunk" ||
+							(message.payload.update_mode === undefined &&
+								message.payload.messages.length === 1 &&
+								message.payload.messages[0]?.role === "assistant");
 
-					if (shouldMergeRealtimeChunk) {
-						setPreviewItems((previousItems) =>
-							mergePreviewItemsFromRealtime(
-								previousItems,
-								message.payload.messages,
-							),
-						);
-					} else {
-						setPreviewItems((previousItems) =>
-							arePreviewItemsEqual(previousItems, message.payload.messages)
-								? previousItems
-								: message.payload.messages,
-						);
-					}
-					scrollToBottom();
+						if (shouldMergeRealtimeChunk) {
+							setPreviewItems((previousItems) =>
+								mergePreviewItemsFromRealtime(
+									previousItems,
+									message.payload.messages,
+								),
+							);
+						} else {
+							setPreviewItems((previousItems) =>
+								arePreviewItemsEqual(previousItems, message.payload.messages)
+									? previousItems
+									: message.payload.messages,
+							);
+						}
+						scrollToBottom();
 					}
 				},
 				onResyncRequired: () => {
@@ -737,83 +540,15 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		};
 	}, [activeTab, selectedSessionKey, refreshPreview, scrollToBottom]);
 
-	const handleModelChange = async (newModelId: string): Promise<void> => {
-		const sessionKey = selectedSessionKey;
-		if (!agentId || !sessionKey || newModelId === getSessionModel(sessionModels, sessionKey, null))
-			return;
-		setModelUpdateSessionKey(sessionKey);
-		setModelUpdateStatus("updating");
-		try {
-			await patchSession(sessionKey, { model: newModelId });
-			setSessionModels((prev) => updateSessionModel(prev, sessionKey, newModelId));
-			setModelUpdateStatus("success");
-			setTimeout(() => {
-				setModelUpdateStatus("idle");
-				setModelUpdateSessionKey(null);
-			}, 2000);
-		} catch {
-			setModelUpdateStatus("failed");
-			setTimeout(() => {
-				setModelUpdateStatus("idle");
-				setModelUpdateSessionKey(null);
-			}, 3000);
-		}
-	};
-
 	const handleSessionSelect = useCallback(
 		(sessionKey: string): void => {
 			if (sessionKey === selectedSessionKey) return;
 			setSelectedSessionKey(sessionKey);
 			setPreviewItems([]);
 			setPreviewLoading(true);
-			setModelUpdateStatus("idle");
-			setModelUpdateSessionKey(null);
 		},
 		[selectedSessionKey],
 	);
-
-	const handleResetSession = useCallback(async (): Promise<void> => {
-		const sessionKey = selectedSessionKey;
-		if (!sessionKey) return;
-
-		await resetSession(sessionKey);
-		setPreviewItems([]);
-		await refreshPreview(sessionKey);
-	}, [selectedSessionKey, refreshPreview]);
-
-	const handleDeleteSession = useCallback(async (): Promise<void> => {
-		if (!agentId || !selectedSessionKey) return;
-
-		const fallbackKey = getFallbackSessionKeyAfterDelete(
-			sessions,
-			selectedSessionKey,
-		);
-		await deleteSession(selectedSessionKey);
-
-		const { sessions: nextSessions, defaults } = await listSessions(agentId);
-		const nextSessionKey = resolveSelectedSessionKey(
-			nextSessions,
-			null,
-			fallbackKey,
-		);
-
-		setSessions(nextSessions);
-		setSelectedSessionKey(nextSessionKey);
-		setPreviewItems([]);
-		setPreviewLoading(Boolean(nextSessionKey));
-
-		if (defaults?.model && nextSessionKey) {
-			setSessionModels((prev) => ({
-				...prev,
-				[nextSessionKey]: defaults.model as string,
-			}));
-		}
-
-		if (!nextSessionKey) {
-			setPreviewLoading(false);
-			prevSessionKeyRef.current = null;
-		}
-	}, [agentId, selectedSessionKey, sessions]);
 
 	useEffect(() => {
 		if (!agentId) {
@@ -824,7 +559,6 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		setLoading(true);
 		setError(null);
 		setAgent(null);
-		setControlRequest(initialControlRequestState());
 
 		let cancelled = false;
 		let realtimeHandle: { close: () => void } | null = null;
@@ -840,9 +574,6 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 						setAgent((previousAgent) =>
 							typeof update === "function" ? update(previousAgent) : update,
 						);
-					},
-					onControlRequestUpdated: (requestId, status) => {
-						if (!cancelled) handleControlRequestUpdated(requestId, status);
 					},
 				});
 				if (!cancelled) {
@@ -863,7 +594,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 			cancelled = true;
 			realtimeHandle?.close();
 		};
-	}, [agentId, handleControlRequestUpdated]);
+	}, [agentId]);
 
 	useEffect(() => {
 		if (!agentId || !agent) return;
@@ -913,43 +644,36 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		);
 	}
 
-	const isPending =
-		controlRequest.status === "sending" || controlRequest.status === "accepted";
-	const modelSelectorStatus: "updating" | "success" | "failed" | null =
-		shouldShowModelUpdateStatus(modelUpdateStatus, modelUpdateSessionKey, selectedSessionKey)
-			? (modelUpdateStatus as "updating" | "success" | "failed")
-			: null;
 	const emptySessionText = selectedSessionKey ? "暂无消息" : "暂无可用会话";
 	const emptySessionHint = selectedSessionKey
-		? "发送消息开始对话"
+		? "当前阶段仅保留观察与进入能力"
 		: "请选择其他会话或等待新消息进入";
-	const currentSessionModel = getSessionModel(sessionModels, selectedSessionKey ?? "", null);
 
 	return (
 		<div style={getContainerStyle(isMobile)}>
 			<div style={getTabsStyle(isMobile)}>
-        <button
-          type="button"
-          style={
-            activeTab === "session"
-              ? getActiveTabStyle(isMobile)
-              : getTabStyle(isMobile)
-          }
-          onClick={() => setActiveTab("session")}
-        >
-          消息
-        </button>
-        <button
-          type="button"
-          style={
-            activeTab === "status"
-              ? getActiveTabStyle(isMobile)
-              : getTabStyle(isMobile)
-          }
-          onClick={() => setActiveTab("status")}
-        >
-          状态
-        </button>
+				<button
+					type="button"
+					style={
+						activeTab === "session"
+							? getActiveTabStyle(isMobile)
+							: getTabStyle(isMobile)
+					}
+					onClick={() => setActiveTab("session")}
+				>
+					消息
+				</button>
+				<button
+					type="button"
+					style={
+						activeTab === "status"
+							? getActiveTabStyle(isMobile)
+							: getTabStyle(isMobile)
+					}
+					onClick={() => setActiveTab("status")}
+				>
+					状态
+				</button>
 				<button
 					type="button"
 					style={
@@ -982,7 +706,9 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 							<div style={sessionPanelHeaderStyle}>
 								<div>
 									<h2 style={sessionPanelTitleStyle}>会话列表</h2>
-									<p style={sessionPanelHintStyle}>切换会话会同步更新预览与实时频道</p>
+									<p style={sessionPanelHintStyle}>
+										切换会话会同步更新预览与实时频道
+									</p>
 								</div>
 								<span style={sessionCountBadgeStyle}>{sessions.length} 个</span>
 							</div>
@@ -1002,17 +728,9 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 										{selectedSessionKey ?? "暂无可选会话"}
 									</span>
 								</div>
-                                {selectedSessionKey && (
-                                  <SessionActions
-                                    sessionKey={selectedSessionKey}
-                                    onReset={handleResetSession}
-                                    onDelete={handleDeleteSession}
-                                    onPause={handlePause}
-                                    showPauseButton={agent?.status === "running"}
-                                    isPausing={isPending}
-                                    disabled={previewLoading}
-                                  />
-                                )}
+								{selectedSessionKey && (
+									<SessionActions sessionKey={selectedSessionKey} />
+								)}
 							</div>
 							<div style={getChatboxContainerStyle()}>
 								<div style={getChatMessagesAreaStyle(isMobile)}>
@@ -1023,8 +741,12 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 											</div>
 										) : previewItems.length === 0 ? (
 											<div style={messagesEmptyStyle}>
-												<span style={messagesEmptyTextStyle}>{emptySessionText}</span>
-												<span style={messagesEmptyHintStyle}>{emptySessionHint}</span>
+												<span style={messagesEmptyTextStyle}>
+													{emptySessionText}
+												</span>
+												<span style={messagesEmptyHintStyle}>
+													{emptySessionHint}
+												</span>
 											</div>
 										) : (
 											<div style={previewListStyle}>
@@ -1043,70 +765,10 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 										)}
 									</div>
 								</div>
-								<div style={getInputContainerStyle()}>
-									<div style={getInputAreaStyle(isMobile)}>
-										<div style={composerToolsStyle}>
-										<ModelSelector
-											models={models}
-											selectedId={currentSessionModel}
-											onChange={handleModelChange}
-											loading={modelsLoading}
-											disabled={!selectedSessionKey || previewLoading}
-											updateStatus={modelSelectorStatus}
-										/>
-										</div>
-										<div style={getInputRowStyle(isMobile)}>
-											<textarea
-												value={messageText}
-												onChange={(e) => setMessageText(e.target.value)}
-												onKeyDown={(e) => {
-													if (e.key === "Enter" && !e.shiftKey) {
-														e.preventDefault();
-														if (
-															messageText.trim() &&
-															selectedSessionKey &&
-															sendMessageStatus !== "sending"
-														) {
-															void handleSendMessage();
-														}
-													}
-													// Shift+Enter 默认行为就是换行，无需特殊处理
-												}}
-												placeholder="输入消息... (Enter 发送, Shift+Enter 换行)"
-												style={getChatInputStyle(isMobile)}
-												aria-label="消息输入"
-											/>
-											<div style={getInputButtonColumnStyle(isMobile)}>
-												<button
-													type="button"
-													style={
-														sendMessageStatus === "sending" ||
-														!messageText.trim() ||
-														!selectedSessionKey
-															? getDisabledButtonStyle(isMobile)
-															: primaryButtonStyle
-													}
-													onClick={handleSendMessage}
-													disabled={
-														sendMessageStatus === "sending" ||
-														!messageText.trim() ||
-														!selectedSessionKey
-													}
-												>
-												{sendMessageStatus === "sending"
-													? "发送中..."
-													: sendMessageStatus === "success"
-														? "已发送"
-                                  : "发送"}
-                                        </button>
-                                      </div>
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        )}
+							</div>
+						</div>
+					</div>
+				)}
 
 				{activeTab === "status" && (
 					<div style={detailTabStyle}>
@@ -1443,78 +1105,7 @@ function getChatMessagesAreaStyle(isMobile: boolean): React.CSSProperties {
 		minWidth: 0,
 		minHeight: 0,
 		overflow: "hidden",
-		paddingBottom: isMobile ? "220px" : "180px",
-	};
-}
-
-function getInputContainerStyle(): React.CSSProperties {
-	return {
-		position: "absolute",
-		bottom: 0,
-		left: 0,
-		right: 0,
-		background: "#fff",
-		borderTop: "1px solid #e5e7eb",
-		zIndex: 10,
-	};
-}
-
-function getInputAreaStyle(isMobile: boolean): React.CSSProperties {
-	return {
-		padding: isMobile ? "0.75rem" : "0.75rem 1rem",
-		background: "#fff",
-	};
-}
-
-function getChatInputStyle(isMobile: boolean): React.CSSProperties {
-	return {
-		flex: 1,
-		padding: isMobile ? "0.5rem" : "0.75rem",
-		fontSize: isMobile ? "0.8125rem" : "0.875rem",
-		borderRadius: "0.375rem",
-		border: "1px solid #d1d5db",
-		background: "#f9fafb",
-		color: "#1f2933",
-		minHeight: isMobile ? "60px" : "80px",
-		resize: "none",
-		boxSizing: "border-box",
-	};
-}
-
-const composerToolsStyle: React.CSSProperties = {
-	marginBottom: "0.75rem",
-};
-
-function getInputRowStyle(isMobile: boolean): React.CSSProperties {
-	return {
-		display: "flex",
-		flexDirection: isMobile ? "column" : "row",
-		gap: "0.5rem",
-	};
-}
-
-function getInputButtonColumnStyle(isMobile: boolean): React.CSSProperties {
-	return {
-		display: "flex",
-		flexDirection: isMobile ? "row" : "column",
-		gap: "0.5rem",
-		flexShrink: 0,
-	};
-}
-
-function getDisabledButtonStyle(isMobile: boolean): React.CSSProperties {
-	return {
-		padding: isMobile ? "0.375rem 0.625rem" : "0.5rem 1rem",
-		fontSize: isMobile ? "0.75rem" : "0.875rem",
-		fontWeight: 500,
-		borderRadius: "0.375rem",
-		border: "1px solid #d1d5db",
-		background: "#f3f4f6",
-		color: "#9ca3af",
-		cursor: "not-allowed",
-		display: "inline-flex",
-		alignItems: "center",
-		gap: "0.25rem",
+		paddingBottom: isMobile ? "1rem" : "1.25rem",
 	};
 }
 
@@ -1692,17 +1283,6 @@ const placeholderTitleStyle: React.CSSProperties = {
 	fontWeight: 600,
 	color: "#1f2933",
 	margin: "0 0 0.75rem 0",
-};
-
-const primaryButtonStyle: React.CSSProperties = {
-	padding: "0.5rem 1rem",
-	fontSize: "0.875rem",
-	fontWeight: 500,
-	borderRadius: "0.375rem",
-	border: "none",
-	background: "#3b82f6",
-	color: "#fff",
-	cursor: "pointer",
 };
 
 const textStyle: React.CSSProperties = {

@@ -32,9 +32,9 @@ export function Layout(): JSX.Element {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const navItems = [
+    { to: '/overview', label: '总览', icon: '◌' },
     { to: '/topology', label: '拓扑', icon: '◇' },
     { to: '/session', label: '会话', icon: '◉' },
-    { to: '/collab', label: '协作', icon: '◈' },
   ];
 
   return (

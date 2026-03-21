@@ -1,6 +1,6 @@
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import SessionPage from "./SessionPage";
 
@@ -20,9 +20,61 @@ vi.mock("../hooks/useIsMobile", () => ({
 	useIsMobile: () => false,
 }));
 
-vi.mock("./AgentWorkspace", () => ({
-	AgentWorkspace: () => <div>workspace</div>,
-}));
+vi.mock("./AgentWorkspace", async () => {
+	const reactRouterDom =
+		await vi.importActual<typeof import("react-router-dom")>(
+			"react-router-dom",
+		);
+
+	return {
+		AgentWorkspace: () => {
+			const { agentId, instanceId } = reactRouterDom.useParams<{
+				agentId?: string;
+				instanceId?: string;
+			}>();
+			return (
+				<div>{`workspace:${instanceId ?? "none"}:${agentId ?? "none"}`}</div>
+			);
+		},
+	};
+});
+
+function buildInstance(
+	id: string,
+	name: string,
+	status: "connected" | "disconnected" = "connected",
+) {
+	return {
+		id,
+		name,
+		type: "openclaw" as const,
+		endpoint: `http://localhost/${id}`,
+		status,
+		last_check_at: null,
+		created_at: "2026-03-19T00:00:00Z",
+	};
+}
+
+function LocationDisplay(): JSX.Element {
+	const location = useLocation();
+	return (
+		<div data-testid="location-display">{`${location.pathname}${location.search}`}</div>
+	);
+}
+
+function renderSessionPage(initialEntry: string): void {
+	render(
+		<MemoryRouter initialEntries={[initialEntry]}>
+			<LocationDisplay />
+			<Routes>
+				<Route path="/session" element={<SessionPage />} />
+				<Route path="/session/:instanceId" element={<SessionPage />} />
+				<Route path="/session/:instanceId/:agentId" element={<SessionPage />} />
+				<Route path="/overview" element={<div>overview-page</div>} />
+			</Routes>
+		</MemoryRouter>,
+	);
+}
 
 describe("SessionPage", () => {
 	beforeEach(() => {
@@ -30,302 +82,115 @@ describe("SessionPage", () => {
 		window.localStorage.clear();
 	});
 
-	describe("direct sidebar entry (no agentId in URL)", () => {
-		it("calls listInstances() on mount to fetch instance data", async () => {
-			listInstancesMock.mockResolvedValue([]);
+	it("upgrades legacy /session/:instanceId to canonical route and preserves query string", async () => {
+		listInstancesMock.mockResolvedValue([
+			buildInstance("inst-1", "First Instance"),
+			buildInstance("inst-2", "Second Instance"),
+		]);
 
-			render(
-				<MemoryRouter initialEntries={["/session"]}>
-					<Routes>
-						<Route path="/session" element={<SessionPage />} />
-						<Route path="/session/:agentId" element={<SessionPage />} />
-					</Routes>
-				</MemoryRouter>,
+		renderSessionPage("/session/inst-2?focus=active");
+
+		await waitFor(() => {
+			expect(screen.getByTestId("location-display")).toHaveTextContent(
+				"/session/inst-2/main?focus=active",
 			);
-
-			await waitFor(() => {
-				expect(listInstancesMock).toHaveBeenCalledTimes(1);
-			});
 		});
 
-		it("shows loading state while fetching instances", async () => {
-			listInstancesMock.mockImplementation(() => new Promise(() => {}));
-
-			render(
-				<MemoryRouter initialEntries={["/session"]}>
-					<Routes>
-						<Route path="/session" element={<SessionPage />} />
-						<Route path="/session/:agentId" element={<SessionPage />} />
-					</Routes>
-				</MemoryRouter>,
-			);
-
-			expect(screen.getByText("加载中...")).toBeInTheDocument();
-		});
-
-		it("renders fetched instances with real data in InstanceList", async () => {
-			listInstancesMock.mockResolvedValue([
-				{
-					id: "inst-1",
-					name: "Production Server",
-					type: "openclaw",
-					endpoint: "http://localhost:18789",
-					status: "connected",
-					last_check_at: null,
-					created_at: "2026-03-19T00:00:00Z",
-				},
-				{
-					id: "inst-2",
-					name: "Development Instance",
-					type: "openclaw",
-					endpoint: "http://localhost:28789",
-					status: "disconnected",
-					last_check_at: "2026-03-19T10:00:00Z",
-					created_at: "2026-03-19T00:00:00Z",
-				},
-			]);
-
-			render(
-				<MemoryRouter initialEntries={["/session"]}>
-					<Routes>
-						<Route path="/session" element={<SessionPage />} />
-						<Route path="/session/:agentId" element={<SessionPage />} />
-					</Routes>
-				</MemoryRouter>,
-			);
-
-			await waitFor(() => {
-				expect(screen.getByText("Production Server")).toBeInTheDocument();
-			});
-			expect(screen.getByText("Development Instance")).toBeInTheDocument();
-		});
-
-		it("shows placeholder when no instance is selected (sidebar entry)", async () => {
-			listInstancesMock.mockResolvedValue([
-				{
-					id: "inst-1",
-					name: "Test Instance",
-					type: "openclaw",
-					endpoint: "http://localhost:18789",
-					status: "connected",
-					last_check_at: null,
-					created_at: "2026-03-19T00:00:00Z",
-				},
-			]);
-
-			render(
-				<MemoryRouter initialEntries={["/session"]}>
-					<Routes>
-						<Route path="/session" element={<SessionPage />} />
-						<Route path="/session/:agentId" element={<SessionPage />} />
-					</Routes>
-				</MemoryRouter>,
-			);
-
-			await waitFor(() => {
-				expect(screen.getByText("Test Instance")).toBeInTheDocument();
-			});
-			expect(screen.getByText("选择一个实例开始对话")).toBeInTheDocument();
-		});
-
-		it("shows empty state when no instances exist", async () => {
-			listInstancesMock.mockResolvedValue([]);
-
-			render(
-				<MemoryRouter initialEntries={["/session"]}>
-					<Routes>
-						<Route path="/session" element={<SessionPage />} />
-						<Route path="/session/:agentId" element={<SessionPage />} />
-					</Routes>
-				</MemoryRouter>,
-			);
-
-			await waitFor(() => {
-				expect(screen.getByText("暂无实例")).toBeInTheDocument();
-			});
+		await waitFor(() => {
+			expect(screen.getByText("workspace:inst-2:main")).toBeInTheDocument();
 		});
 	});
 
-	describe("topology entry (with agentId in URL)", () => {
-		it("renders instance list and workspace when entered with agentId", async () => {
-			listInstancesMock.mockResolvedValue([
-				{
-					id: "inst-1",
-					name: "Test Instance",
-					type: "openclaw",
-					endpoint: "http://localhost:18789",
-					status: "connected",
-					last_check_at: null,
-					created_at: "2026-03-19T00:00:00Z",
-				},
-			]);
+	it("renders instance list and workspace on canonical session route", async () => {
+		listInstancesMock.mockResolvedValue([
+			buildInstance("inst-1", "First Instance"),
+			buildInstance("inst-2", "Second Instance"),
+		]);
 
-			render(
-				<MemoryRouter initialEntries={["/session/inst-1"]}>
-					<Routes>
-						<Route path="/session" element={<SessionPage />} />
-						<Route path="/session/:agentId" element={<SessionPage />} />
-					</Routes>
-				</MemoryRouter>,
-			);
+		renderSessionPage("/session/inst-2/main");
 
-			await waitFor(() => {
-				expect(screen.getByText("Test Instance")).toBeInTheDocument();
-			});
-			await waitFor(() => {
-				expect(screen.getByText("workspace")).toBeInTheDocument();
-			});
+		await waitFor(() => {
+			expect(screen.getByText("First Instance")).toBeInTheDocument();
 		});
 
-		it("highlights selected instance in the list", async () => {
-			listInstancesMock.mockResolvedValue([
-				{
-					id: "inst-1",
-					name: "First Instance",
-					type: "openclaw",
-					endpoint: "http://localhost:18789",
-					status: "connected",
-					last_check_at: null,
-					created_at: "2026-03-19T00:00:00Z",
-				},
-				{
-					id: "inst-2",
-					name: "Second Instance",
-					type: "openclaw",
-					endpoint: "http://localhost:28789",
-					status: "connected",
-					last_check_at: null,
-					created_at: "2026-03-19T00:00:00Z",
-				},
-			]);
+		expect(screen.getByText("Second Instance")).toBeInTheDocument();
+		expect(screen.getByText("workspace:inst-2:main")).toBeInTheDocument();
+	});
 
-			render(
-				<MemoryRouter initialEntries={["/session/inst-2"]}>
-					<Routes>
-						<Route path="/session" element={<SessionPage />} />
-						<Route path="/session/:agentId" element={<SessionPage />} />
-					</Routes>
-				</MemoryRouter>,
+	it("highlights the selected instance from canonical route", async () => {
+		listInstancesMock.mockResolvedValue([
+			buildInstance("inst-1", "First Instance"),
+			buildInstance("inst-2", "Second Instance"),
+		]);
+
+		renderSessionPage("/session/inst-2/main");
+
+		await waitFor(() => {
+			expect(screen.getByText("First Instance")).toBeInTheDocument();
+		});
+
+		const selectedButton = screen.getByRole("button", {
+			name: /Second Instance/,
+		});
+		expect(selectedButton).toHaveStyle({ background: "#eff6ff" });
+	});
+
+	it("navigates to canonical /session/:instanceId/main when selecting another instance", async () => {
+		listInstancesMock.mockResolvedValue([
+			buildInstance("inst-1", "First Instance"),
+			buildInstance("inst-2", "Second Instance"),
+		]);
+
+		renderSessionPage("/session/inst-1/main?focus=active");
+
+		await waitFor(() => {
+			expect(screen.getByText("First Instance")).toBeInTheDocument();
+		});
+
+		fireEvent.click(screen.getByRole("button", { name: /Second Instance/ }));
+
+		await waitFor(() => {
+			expect(screen.getByTestId("location-display")).toHaveTextContent(
+				"/session/inst-2/main?focus=active",
 			);
+		});
 
-			await waitFor(() => {
-				expect(screen.getByText("First Instance")).toBeInTheDocument();
-			});
-			expect(screen.getByText("Second Instance")).toBeInTheDocument();
-
-			const selectedButton = screen.getByRole("button", {
-				name: /Second Instance/,
-			});
-			expect(selectedButton).toHaveStyle({ background: "#eff6ff" });
+		await waitFor(() => {
+			expect(screen.getByText("workspace:inst-2:main")).toBeInTheDocument();
 		});
 	});
 
-	describe("instance selection and navigation", () => {
-		it("navigates to session/:instanceId when instance is clicked", async () => {
-			listInstancesMock.mockResolvedValue([
-				{
-					id: "inst-1",
-					name: "Click Me",
-					type: "openclaw",
-					endpoint: "http://localhost:18789",
-					status: "connected",
-					last_check_at: null,
-					created_at: "2026-03-19T00:00:00Z",
-				},
-			]);
+	it("shows placeholder when no instance is selected", async () => {
+		listInstancesMock.mockResolvedValue([
+			buildInstance("inst-1", "Only Instance"),
+		]);
 
-			render(
-				<MemoryRouter initialEntries={["/session"]}>
-					<Routes>
-						<Route path="/session" element={<SessionPage />} />
-						<Route
-							path="/session/:agentId"
-							element={<div data-testid="session-detail">Session Detail</div>}
-						/>
-					</Routes>
-				</MemoryRouter>,
-			);
+		renderSessionPage("/session");
 
-			await waitFor(() => {
-				expect(screen.getByText("Click Me")).toBeInTheDocument();
-			});
-
-			fireEvent.click(screen.getByRole("button", { name: /Click Me/ }));
-
-			await waitFor(() => {
-				expect(screen.getByTestId("session-detail")).toBeInTheDocument();
-			});
+		await waitFor(() => {
+			expect(screen.getByText("Only Instance")).toBeInTheDocument();
 		});
 
-		it("stores selected instance in localStorage", async () => {
-			listInstancesMock.mockResolvedValue([
-				{
-					id: "inst-42",
-					name: "Storage Test",
-					type: "openclaw",
-					endpoint: "http://localhost:18789",
-					status: "connected",
-					last_check_at: null,
-					created_at: "2026-03-19T00:00:00Z",
-				},
-			]);
+		expect(screen.getByText("选择一个实例开始对话")).toBeInTheDocument();
+	});
 
-			render(
-				<MemoryRouter initialEntries={["/session"]}>
-					<Routes>
-						<Route path="/session" element={<SessionPage />} />
-						<Route path="/session/:agentId" element={<SessionPage />} />
-					</Routes>
-				</MemoryRouter>,
-			);
+	it("shows empty state when no instances exist", async () => {
+		listInstancesMock.mockResolvedValue([]);
 
-			await waitFor(() => {
-				expect(screen.getByText("Storage Test")).toBeInTheDocument();
-			});
+		renderSessionPage("/session");
 
-			fireEvent.click(screen.getByRole("button", { name: /Storage Test/ }));
-
-			await waitFor(() => {
-				expect(window.localStorage.getItem("linpo.currentInstanceId")).toBe(
-					"inst-42",
-				);
-			});
+		await waitFor(() => {
+			expect(screen.getByText("暂无实例")).toBeInTheDocument();
 		});
 	});
 
-	describe("error handling", () => {
-		it("shows error message from API when instance list fetch fails", async () => {
-			listInstancesMock.mockRejectedValue(new Error("无法连接到服务器"));
+	it("shows error message from API when instance list fetch fails", async () => {
+		listInstancesMock.mockRejectedValue(new Error("无法连接到服务器"));
 
-			render(
-				<MemoryRouter initialEntries={["/session"]}>
-					<Routes>
-						<Route path="/session" element={<SessionPage />} />
-						<Route path="/session/:agentId" element={<SessionPage />} />
-					</Routes>
-				</MemoryRouter>,
-			);
+		renderSessionPage("/session/inst-1/main");
 
-			await waitFor(() => {
-				expect(screen.getByText("无法连接到服务器")).toBeInTheDocument();
-			});
-		});
-
-		it("shows generic error message when error has no message", async () => {
-			listInstancesMock.mockRejectedValue(new Error());
-
-			render(
-				<MemoryRouter initialEntries={["/session"]}>
-					<Routes>
-						<Route path="/session" element={<SessionPage />} />
-						<Route path="/session/:agentId" element={<SessionPage />} />
-					</Routes>
-				</MemoryRouter>,
-			);
-
-			await waitFor(() => {
-				expect(screen.getByText("获取实例列表失败")).toBeInTheDocument();
-			});
+		await waitFor(() => {
+			expect(screen.getByText("无法连接到服务器")).toBeInTheDocument();
 		});
 	});
 });

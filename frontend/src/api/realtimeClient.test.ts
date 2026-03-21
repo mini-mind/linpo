@@ -92,7 +92,7 @@ describe('observer realtime client', () => {
     window.localStorage.clear();
   });
 
-  it('adds selected instance context to observer websocket url', () => {
+  it('does not inject storage instance context into observer websocket url', () => {
     window.localStorage.setItem('linpo.currentInstanceId', 'instance-1');
     const fakeSocket = new FakeWebSocket();
     const socketFactory = vi.fn(() => fakeSocket);
@@ -109,7 +109,7 @@ describe('observer realtime client', () => {
     fakeSocket.emitOpen();
 
     expect(socketFactory).toHaveBeenCalledWith(
-      'ws://linpo.test:8000/ws/observer?data_source=openclaw&instanceId=instance-1'
+      'ws://linpo.test:8000/ws/observer?data_source=openclaw'
     );
   });
 

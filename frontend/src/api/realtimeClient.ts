@@ -5,7 +5,6 @@ import {
   parseObserverRealtimeMessage,
   type ResyncRequiredMessage,
 } from './types';
-import { getStoredCurrentInstanceId } from '../hooks/useCurrentInstance';
 
 export interface WebSocketLike {
   addEventListener(type: string, listener: (event?: unknown) => void): void;
@@ -53,10 +52,6 @@ function toWebSocketUrl(apiBaseUrl: string, dataSource: string): string {
   const url = new URL(OBSERVER_WS_PATH, apiBaseUrl);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   url.searchParams.set('data_source', dataSource);
-  const currentInstanceId = getStoredCurrentInstanceId();
-  if (currentInstanceId) {
-    url.searchParams.set('instanceId', currentInstanceId);
-  }
   return url.toString();
 }
 

@@ -290,7 +290,7 @@ describe('Layout sidebar account area', () => {
     expect(screen.getByText('退出登录')).toBeInTheDocument();
   });
 
-  it('closes menu with Escape key', async () => {
+  it('keeps topology as a direct navigation entry', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
       status: 200,
@@ -304,7 +304,9 @@ describe('Layout sidebar account area', () => {
             <AuthProvider>
               <Routes>
                 <Route element={<Layout />}>
+                  <Route path="/overview" element={<div>总览页内容</div>} />
                   <Route path="/topology" element={<div>拓扑页内容</div>} />
+                  <Route path="/session" element={<div>会话页内容</div>} />
                 </Route>
               </Routes>
             </AuthProvider>
@@ -313,15 +315,41 @@ describe('Layout sidebar account area', () => {
       </TestWrapper>
     );
 
-    const usernameButton = await screen.findByLabelText('打开账户菜单');
+    await screen.findByText('testuser');
 
-    await userEvent.click(usernameButton);
-    expect(usernameButton).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByText('退出登录')).toBeInTheDocument();
+    const topologyLink = screen.getAllByRole('link', { name: /拓扑/ })[0];
+    expect(topologyLink).toHaveAttribute('href', '/topology');
+  });
 
-    await userEvent.keyboard('{Escape}');
+  it('shows overview as primary navigation entry', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'user-1', username: 'testuser' }),
+    });
 
-    expect(usernameButton).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByText('退出登录')).not.toBeInTheDocument();
+    render(
+      <TestWrapper initialPath="/overview">
+        <BrowserRouter>
+          <ToastProvider>
+            <AuthProvider>
+              <Routes>
+                <Route element={<Layout />}>
+                  <Route path="/overview" element={<div>总览页内容</div>} />
+                  <Route path="/topology" element={<div>拓扑页内容</div>} />
+                  <Route path="/session" element={<div>会话页内容</div>} />
+                </Route>
+              </Routes>
+            </AuthProvider>
+          </ToastProvider>
+        </BrowserRouter>
+      </TestWrapper>
+    );
+
+    await screen.findByText('testuser');
+
+    const overviewLink = screen.getAllByRole('link', { name: /总览/ })[0];
+    expect(overviewLink).toHaveAttribute('href', '/overview');
+    expect(screen.queryByRole('link', { name: /协作/ })).not.toBeInTheDocument();
   });
 });

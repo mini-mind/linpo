@@ -1,8 +1,8 @@
 import type {
   AgentDetailResponse,
+  AgentListItem,
   ChatSendRequest,
   ChatSendResponse,
-  AgentListItem,
   ModelItem,
   NodeDetailResponse,
   SessionPatchRequest,
@@ -10,7 +10,6 @@ import type {
   SessionsListResponse,
   SessionsPreviewResponse,
 } from './types';
-import { getStoredCurrentInstanceId } from '../hooks/useCurrentInstance';
 
 const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
 const inferredApiBaseUrl = `${window.location.protocol}//${window.location.hostname}:8000`;
@@ -22,18 +21,8 @@ function withDefaultDataSource(path: string): string {
   return `${path}${separator}data_source=${DEFAULT_OBSERVER_DATA_SOURCE}`;
 }
 
-function withSelectedInstanceContext(path: string): string {
-  const currentInstanceId = getStoredCurrentInstanceId();
-  if (!currentInstanceId) {
-    return path;
-  }
-
-  const separator = path.includes('?') ? '&' : '?';
-  return `${path}${separator}instanceId=${encodeURIComponent(currentInstanceId)}`;
-}
-
 function withBusinessContext(path: string): string {
-  return withSelectedInstanceContext(withDefaultDataSource(path));
+  return withDefaultDataSource(path);
 }
 
 export function getDefaultObserverDataSource(): string {

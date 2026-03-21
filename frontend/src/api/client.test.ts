@@ -11,7 +11,7 @@ describe('business API client instance context', () => {
     vi.stubGlobal('fetch', fetchMock);
   });
 
-  it('adds selected instance context and credentials to observer requests', async () => {
+  it('does not inject storage instance context into observer requests', async () => {
     window.localStorage.setItem('linpo.currentInstanceId', 'instance-1');
     fetchMock.mockResolvedValue({
       ok: true,
@@ -23,12 +23,12 @@ describe('business API client instance context', () => {
     await listAgents();
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8000/agents?data_source=openclaw&instanceId=instance-1',
+      'http://localhost:8000/agents?data_source=openclaw',
       expect.objectContaining({ credentials: 'include' }),
     );
   });
 
-  it('adds selected instance context to chat requests', async () => {
+  it('does not inject storage instance context into chat requests', async () => {
     window.localStorage.setItem('linpo.currentInstanceId', 'instance-1');
     fetchMock.mockResolvedValue({
       ok: true,
@@ -40,7 +40,7 @@ describe('business API client instance context', () => {
     await chatSend('main', 'agent:main:main', 'hello');
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8000/chat/send?agentId=main&sessionKey=agent%3Amain%3Amain&data_source=openclaw&instanceId=instance-1',
+      'http://localhost:8000/chat/send?agentId=main&sessionKey=agent%3Amain%3Amain&data_source=openclaw',
       expect.objectContaining({
         method: 'POST',
         credentials: 'include',

@@ -1,6 +1,6 @@
 import type React from "react";
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { listInstances } from "../api/instanceClient";
 import type { InstanceItem } from "../api/types";
 import { setStoredCurrentInstanceId } from "../hooks/useCurrentInstance";
@@ -9,14 +9,32 @@ import { AgentWorkspace } from "./AgentWorkspace";
 import { InstanceList } from "./InstanceList";
 
 const LEFT_PANEL_WIDTH = 280;
+const DEFAULT_SESSION_AGENT_ID = "main";
+
+export function buildCanonicalSessionPath(
+	instanceId: string,
+	agentId = DEFAULT_SESSION_AGENT_ID,
+	search = "",
+): string {
+	return `/session/${encodeURIComponent(instanceId)}/${encodeURIComponent(agentId)}${search}`;
+}
 
 export default function SessionPage(): JSX.Element {
-	const { agentId } = useParams<{ agentId: string }>();
+	const { instanceId, agentId } = useParams<{
+		instanceId?: string;
+		agentId?: string;
+	}>();
+	const location = useLocation();
 	const navigate = useNavigate();
 	const isMobile = useIsMobile();
 	const [instances, setInstances] = useState<InstanceItem[]>([]);
 	const [instancesLoading, setInstancesLoading] = useState(false);
 	const [instancesError, setInstancesError] = useState<string | null>(null);
+	const selectedInstanceId = instanceId ?? null;
+	const selectedAgentId = agentId ?? null;
+	const hasCanonicalSessionRoute = Boolean(
+		selectedInstanceId && selectedAgentId,
+	);
 
 	useEffect(() => {
 		setInstancesLoading(true);
@@ -36,9 +54,24 @@ export default function SessionPage(): JSX.Element {
 			.finally(() => setInstancesLoading(false));
 	}, []);
 
+	useEffect(() => {
+		if (selectedInstanceId && !selectedAgentId) {
+			navigate(
+				buildCanonicalSessionPath(
+					selectedInstanceId,
+					DEFAULT_SESSION_AGENT_ID,
+					location.search,
+				),
+				{ replace: true },
+			);
+		}
+	}, [location.search, navigate, selectedAgentId, selectedInstanceId]);
+
 	const handleSelectInstance = (id: string): void => {
 		setStoredCurrentInstanceId(id);
-		navigate(`/session/${id}`);
+		navigate(
+			buildCanonicalSessionPath(id, DEFAULT_SESSION_AGENT_ID, location.search),
+		);
 	};
 
 	const handleMobileSelect = (
@@ -47,18 +80,24 @@ export default function SessionPage(): JSX.Element {
 		const selectedId = e.target.value;
 		if (selectedId) {
 			setStoredCurrentInstanceId(selectedId);
-			navigate(`/session/${selectedId}`);
+			navigate(
+				buildCanonicalSessionPath(
+					selectedId,
+					DEFAULT_SESSION_AGENT_ID,
+					location.search,
+				),
+			);
 		}
 	};
 
-	const selectedInstance = instances.find((i) => i.id === agentId);
+	const selectedInstance = instances.find((i) => i.id === selectedInstanceId);
 
 	if (isMobile) {
 		return (
 			<div style={mobileContainerStyle}>
 				<div style={mobileHeaderStyle}>
 					<select
-						value={agentId ?? ""}
+						value={selectedInstanceId ?? ""}
 						onChange={handleMobileSelect}
 						style={mobileSelectStyle}
 						disabled={instancesLoading}
@@ -84,8 +123,8 @@ export default function SessionPage(): JSX.Element {
 						</span>
 					)}
 				</div>
-				{agentId ? (
-					<AgentWorkspace key={agentId} />
+				{hasCanonicalSessionRoute ? (
+					<AgentWorkspace key={`${selectedInstanceId}:${selectedAgentId}`} />
 				) : (
 					<div style={mobilePlaceholderStyle}>
 						<span style={mobilePlaceholderTextStyle}>
@@ -105,13 +144,13 @@ export default function SessionPage(): JSX.Element {
 						instances={instances}
 						loading={instancesLoading}
 						error={instancesError}
-						selectedInstanceId={agentId ?? null}
+						selectedInstanceId={selectedInstanceId}
 						onSelectInstance={handleSelectInstance}
 					/>
 				</div>
 				<div style={getRightPanelStyle()}>
-					{agentId ? (
-						<AgentWorkspace key={agentId} />
+					{hasCanonicalSessionRoute ? (
+						<AgentWorkspace key={`${selectedInstanceId}:${selectedAgentId}`} />
 					) : (
 						<div style={placeholderStyle}>
 							<span style={placeholderTextStyle}>选择一个实例开始对话</span>
