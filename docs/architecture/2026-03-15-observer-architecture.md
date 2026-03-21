@@ -34,42 +34,49 @@ Linpo v0.1 只承担一件事：
 
 ## 3. 信息架构
 
-### 3.1 顶层入口
+### 3.1 四层结构（当前 v0.6 冻结）
 
-用户登录后首先进入 **Agents 列表页**。
+用户登录后首先进入 **`/overview` 总览页**。
 
-列表页职责仅包含：
+Linpo 当前采用 **overview → topology / kanban → session** 的产品结构：
 
-- 告诉用户自己有哪些 agents
-- 支持用户进入单个 agent 的详情页
+冻结术语：**overview = 总览层主舞台，topology = workbench，kanban = 聚合工作信号视图，session = drill-down**。
 
-列表页不承担：
+| 层级 | 路由 | 职责 |
+|------|------|------|
+| **总览层** | `/overview` | 默认 landing，全局脉搏主舞台 |
+| **工作台层** | `/topology` | `workbench`，承接结构/配置工作台与固定动作环 |
+| **看板层** | `/kanban` | 聚合工作项、协作状态与关键工作信号 |
+| **接管层** | `/session/:instanceId/:agentId` | drill-down 页，显式身份参数 |
 
-- 总控大盘
-- 异常中心
-- 编排入口
-- 复杂分析仪表盘
-- 资源监控中心
+**关键约束：**
+
+- **首页汇报感硬红线**：首页汇报感禁止额外 prompt 注入，仅基于现有状态/事件/活跃度归纳生成，禁止向 agent 静默发送额外 prompt
+- **动作环首期范围**：仅承载 `查看 / 进入 / 配置 / 关系`，同屏仅单开；不支持 drill-down 的节点禁用“进入”
+- **禁止 destructive/runtime controls**：首期 topology 与 session 主路径不暴露 pause/reset/send/delete 等 destructive/runtime controls
+- **路由真源**：`/session/:instanceId/:agentId` 的 URL 参数为唯一真源；`/session` 与 `/session/:instanceId` 仅作为兼容重定向入口，不承载长期状态
+- **消息历史展示**：普通消息支持 Markdown 渲染；工具调用统一折叠为摘要说明气泡，不直接暴露原始 JSON
 
 ### 3.2 主对象
 
-v0.1 的主对象是 **Agent**。
+当前主对象是 **用户拥有的实例下的 agent 聚合视角**。
 
 原因是：
 
-- 当前产品切入口是单 agent（含 subagents）运行观测
-- Agent 是最稳定的入口单位
-- task / run / session 更适合作为未来衍生视角，而不是当前首页主对象
+- 当前产品切入口已从单 agent 列表提升到多实例聚合观察
+- `overview` 负责跨实例的聚合观察入口
+- `topology` 负责实例 / agents / skills / ACP 关系与配置工作台
+- `kanban` 负责聚合工作信号，而不是单纯任务系统
+- `session` 是 drill-down 承接页，不是首页主对象
 
-### 3.3 Agent 详情页
+### 3.3 页面职责
 
-点击某个 agent 后进入详情页。
-
-详情页的中心视图是：
-
-> **完整的 Agent / Subagent 拓扑图**
-
-详情页围绕这张图组织状态查看与节点详情，而不是围绕聊天流组织内容。
+| 页面 | 路由 | 职责 |
+|------|------|------|
+| 总览页 | `/overview` | 全局脉搏主舞台，回答“谁在干活、哪里值得巡视”；首页汇报感禁止额外 prompt 注入 |
+| 拓扑工作台 | `/topology` | `workbench`，展示实例 / agents / skills / ACP 关系，提供固定动作环与配置入口 |
+| 看板页 | `/kanban` | 聚合工作项、协作状态与关键工作信号，不扩张成审批/治理平台 |
+| 会话接管页 | `/session/:instanceId/:agentId` | `drill-down` 页，从 overview / topology / kanban 的进入动作跳转；URL 参数为真源 |
 
 ---
 
@@ -311,7 +318,7 @@ sending → accepted → applied
 > **状态**：已完成
 >
 > **完成日期**：2026-03-18
-> **设计文档**：`docs/plans/2026-03-18-linpo-v0.5-user-model-and-instance-config-design.md`
+> **说明**：该阶段能力已并入当前 README / PRD / active `.sisyphus` plan 的 v0.6 基线，不再单独依赖旧 v0.5 plan 文件。
 
 **已落地设计约束：**
 

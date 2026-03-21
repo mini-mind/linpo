@@ -26,8 +26,8 @@
 
 | 文档总入口 | `README.md` | 仓库导航与当前文档索引 |
 | 产品需求 | `docs/prd/2026-03-15-linpo-v0.1-observer-prd.md` | 当前有效的产品边界与版本路线 |
-| 当前架构 | `docs/architecture/2026-03-15-observer-architecture.md` | observer 当前架构边界与版本演进参考 |
-| 当前阶段计划 | `docs/plans/2026-03-18-linpo-v0.5-user-model-and-instance-config-design.md` | v0.5 用户模型与实例配置设计/实施记录 |
+| 当前架构 | `docs/architecture/2026-03-15-observer-architecture.md` | 当前有效架构边界与 v0.6 IA/验收约束入口 |
+| 当前阶段计划 | `.sisyphus/plans/v0.6-execution-work-plan.md` | 当前活跃执行计划与最终验收门禁 |
 
 
 ## 开发环境与验证约定

@@ -1,0 +1,4 @@
+- 2026-03-21: 聚合 freshness 可用 `instances.status + last_check_at` 读时计算，实例级 diagnostics 同时补出 `recoverable`/`next_step`，即可在不做 DB 迁移的前提下稳定支撑 overview/topology/kanban 降级语义。
+- 2026-03-21: 会话消息历史展示应从“原始事件/JSON 暴露”收敛为“用户可读消息流”：普通消息支持 Markdown，工具调用统一折叠成摘要说明气泡。
+- 2026-03-21: Task 6 topology 重建采用 getAggregateTopology API，展示 instance/agent/skills/ACP 关系；skills/ACP 无数据时显示"未暴露"空态而非伪造节点。
+- 2026-03-21: 测试中实例名称会出现在多处（实例节点标题、agent 节点的 instance_name 元数据），应使用更精确的 aria-label 选择器如 `screen.getByRole("button", { name: "实例 测试实例1" })`。

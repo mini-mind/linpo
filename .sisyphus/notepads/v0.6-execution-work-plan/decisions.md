@@ -1,0 +1,6 @@
+- 2026-03-21: 新增 `app/services/aggregate_service.py` 作为聚合读模型中心，路由只保留鉴权与 service 调用；聚合 freshness 统一收敛为 `fresh` / `stale` / `failed`，partial failure 复用 diagnostics 的恢复建议。
+- 2026-03-21: v0.6 IA 扩展为 `overview` / `topology` / `kanban` 主导航 + `session` drill-down；会话消息历史同时纳入 Markdown 渲染与 tool-call 摘要气泡样式的执行边界。
+- 2026-03-21: 首页汇报感禁止额外 prompt 注入；不得通过静默向 agent 发送额外 prompt 制造汇报内容。
+- 2026-03-21: topology 首期动作环冻结为 `查看 / 进入 / 配置 / 关系`，同屏仅单开；不支持 drill-down 的节点禁用“进入”，且首期不暴露 pause/reset/send/delete 等 destructive/runtime controls。
+- 2026-03-21: `session/:instanceId/:agentId` 是唯一真源；`/session` 与 `/session/:instanceId` 仅作为兼容重定向入口，不承载长期状态。localStorage 只能作为 remembered state，不能覆盖 URL 已声明上下文。
+- 2026-03-21: 全部任务完成后，必须逐条核对实现成果与 active plan / PRD / architecture 的一致性；若仍有偏差，继续补齐并重新核对后才可宣告收口。

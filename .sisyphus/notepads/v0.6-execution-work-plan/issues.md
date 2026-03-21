@@ -1,0 +1,2 @@
+- 2026-03-21: 当前工作区的 v0.6 active plan 曾引用不存在的 `2026-03-21` docs 路径；后续必须以主工作区现存且已收敛的 `README.md`、`docs/prd/2026-03-15-linpo-v0.1-observer-prd.md`、`docs/architecture/2026-03-15-observer-architecture.md` 作为文档真源，不再依赖虚空引用。
+- 2026-03-21: worktree 中关于 URL 真源、动作环四词、无额外 prompt、remembered state 只作记忆层的约束，必须系统吸收到 v0.6 active plan，而不能只留在历史 notepads 中。
