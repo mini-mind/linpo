@@ -28,16 +28,17 @@ function App(): JSX.Element {
 						</Route>
 						<Route element={<ProtectedRoute />}>
 							<Route path="/" element={<Layout />}>
-								<Route index element={<RedirectToOverview />} />
-								<Route path="overview" element={<OverviewPage />} />
-								<Route path="topology" element={<TopologyPage />} />
-								<Route path="session" element={<SessionPage />} />
-								<Route path="session/:instanceId" element={<SessionPage />} />
+							<Route index element={<RedirectToOverview />} />
+							<Route path="overview" element={<OverviewPage />} />
+							<Route path="topology" element={<TopologyPage />} />
+							<Route path="kanban" element={<CollabPage />} />
+							<Route path="session" element={<SessionPage />} />
+							<Route path="session/:instanceId" element={<SessionPage />} />
 								<Route
 									path="session/:instanceId/:agentId"
 									element={<SessionPage />}
 								/>
-								<Route path="collab" element={<CollabPage />} />
+							<Route path="collab" element={<CollabPage />} />
 							</Route>
 						</Route>
 						<Route path="*" element={<Navigate to="/login" replace />} />

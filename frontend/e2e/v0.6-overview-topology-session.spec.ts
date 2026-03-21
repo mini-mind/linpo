@@ -1,3 +1,6 @@
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, type Page, type Route, test } from "@playwright/test";
 
 const DEFAULT_BASE_URL =
@@ -6,6 +9,16 @@ const DEFAULT_PASSWORD = "secret-123";
 const HEALTHY_OPENCLAW_ENDPOINT = "http://175.178.213.10:18789";
 const HEALTHY_OPENCLAW_GATEWAY_TOKEN =
 	"lhdWYU1MGLCWNwbHaQsIjlPkiSt5LKhEh9PjAtElrlE";
+const currentFilePath = fileURLToPath(import.meta.url);
+
+function evidencePath(fileName: string): string {
+	return path.resolve(path.dirname(currentFilePath), "../../.sisyphus/evidence", fileName);
+}
+
+async function captureEvidence(page: Page, fileName: string): Promise<void> {
+	await mkdir(path.dirname(evidencePath(fileName)), { recursive: true });
+	await page.screenshot({ path: evidencePath(fileName), fullPage: true });
+}
 
 function buildApiBaseUrl(): string {
 	const url = new URL(DEFAULT_BASE_URL);
@@ -163,6 +176,18 @@ test.describe("v0.6 browser acceptance", () => {
 		await expect(page.getByRole("dialog")).toBeHidden();
 
 		await page.getByRole("link", { name: `进入实例 ${instanceName}` }).first().click();
+		await expect(page).toHaveURL(new RegExp(`/session/${instance.id}/main$`));
+
+		await page.goto("/kanban");
+		await expect(page.locator('section[aria-label="kanban-page"]')).toBeVisible();
+		await expect(page.getByRole("heading", { name: "看板" })).toBeVisible();
+		await expect(page.getByText("聚合工作项、协作状态与关键工作信号")).toBeVisible();
+		await expect(page.getByText(instanceName).first()).toBeVisible();
+		await expect(
+			page.getByRole("link", { name: "进入会话 - main" }),
+		).toHaveAttribute("href", new RegExp(`/session/${instance.id}/main$`));
+		await captureEvidence(page, "task-9-playwright.png");
+		await page.getByRole("link", { name: "进入会话 - main" }).click();
 		await expect(page).toHaveURL(new RegExp(`/session/${instance.id}/main$`));
 	});
 
@@ -338,5 +363,19 @@ test.describe("v0.6 browser acceptance", () => {
 		await expect(
 			page.getByRole("link", { name: "进入 agent Healthy Agent" }),
 		).toHaveAttribute("href", "/session/instance-healthy/agent-healthy");
+
+		await page.goto("/kanban");
+		await expect(page.locator('section[aria-label="kanban-page"]')).toBeVisible();
+		await expect(page.getByRole("heading", { name: "看板" })).toBeVisible();
+		await expect(page.getByText("部分降级")).toBeVisible();
+		await expect(page.getByText("OpenClaw upstream unavailable")).toBeVisible();
+		await expect(
+			page.getByText("request_id · req-v06-overview-degraded"),
+		).toBeVisible();
+		await expect(page.getByText("recoverable · true")).toBeVisible();
+		await expect(
+			page.getByRole("link", { name: "进入会话 - Healthy Agent" }),
+		).toHaveAttribute("href", "/session/instance-healthy/agent-healthy");
+		await captureEvidence(page, "task-9-playwright-error.png");
 	});
 });
