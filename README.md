@@ -16,18 +16,21 @@ Linpo 当前采用四层入口语义：
 
 | 层级 | 路由 | 职责 |
 |------|------|------|
-| **总览层** | `/overview` | 默认 landing，全局脉搏主舞台，回答“谁在干活、哪里值得巡视” |
-| **工作台层** | `/topology` | `workbench`，承接结构/配置工作台，展示实例、agent、skill、外接 ACP 等关系 |
+| **总览层** | `/overview` | 默认 landing，全局脉搏主舞台，展示用户全部 agents，回答“谁在干活、哪里值得巡视” |
+| **工作台层** | `/topology` | `workbench`，承接结构/配置工作台，展示实例、agent、skill、外接 ACP 等关系并提供配置入口 |
 | **看板层** | `/kanban` | 聚合工作项、协作状态与关键工作信号，不扩张成完整审批/项目管理平台 |
 | **接管层** | `/session/:instanceId/:agentId` | `drill-down`，进入单 agent 上下文 |
 
 **关键约束：**
+- `overview` 以用户全部 agents 为默认概览对象，承担概览/巡视入口
 - 首页汇报感禁止额外 prompt 注入，只能基于已有状态/事件/活跃度生成
 - 工具调用消息不直接展示原始 JSON，而要折叠为摘要说明气泡
 - 会话消息历史支持 Markdown 渲染
+- `overview`、`topology`、`kanban` 三页都必须提供进入 agent 对话的入口，并统一落到 `/session/:instanceId/:agentId`
 - `/session/:instanceId/:agentId` 以 URL 参数为唯一真源；`/session` 与 `/session/:instanceId` 仅作为兼容重定向入口，不承载长期状态
 - topology 首期交互固定为 `查看 / 进入 / 配置 / 关系` 四类动作；不暴露 pause/reset/send/delete 等 destructive/runtime controls
-- 每个 major feature 完成后都要部署，并由 ravin 发起 Playwright 集成验证，覆盖改动功能与强相关链路
+- 不引入模板系统、工作流平台化或控制面扩张
+- 每个 major feature 完成后都要完成部署，并由 ravin 发起 Playwright 集成验证，覆盖改动功能与强相关链路
 - 后端新增/修改的核心逻辑必须有完整单元测试覆盖
 - 全部计划完成后，必须逐条核对实现成果是否符合 plan / PRD / architecture，不一致继续补齐再收口
 
@@ -78,8 +81,8 @@ v0.5+ 运行需要以下环境配置：
 
 - **当前目标版本**：v0.6 多实例聚合视图与 IA 收敛
 - **当前稳定基线**：v0.6A 多实例聚合数据模型与筛选/健康接口（已完成）
-- **当前推进策略**：将 Linpo 收敛为 `overview / topology / kanban / session drill-down` 结构；首页固定为 `/overview` 默认 landing，`/topology` 负责关系/配置工作台，`/kanban` 负责聚合工作信号，`/session/:instanceId/:agentId` 负责显式单 agent 接管
-- **当前产品语义**：overview 承担全局脉搏主舞台，topology 承担结构/配置工作台，kanban 承担聚合工作项/协作状态，session 页承担显式 `instanceId + agentId` drill-down
+- **当前推进策略**：将 Linpo 收敛为 `overview / topology / kanban / session drill-down` 结构；首页固定为 `/overview` 默认 landing，`overview` 负责用户全部 agents 的概览/巡视，`/topology` 负责关系/配置工作台，`/kanban` 负责聚合工作信号，`/session/:instanceId/:agentId` 负责显式单 agent 接管
+- **当前产品语义**：overview 承担全局脉搏主舞台并展示用户全部 agents，topology 承担结构/配置工作台，kanban 承担聚合工作项/协作状态，session 页承担显式 `instanceId + agentId` drill-down
 - **公网访问**：前端 `http://175.178.213.10:5173`，后端 `http://175.178.213.10:8000`
 
 ## 版本路线
@@ -99,9 +102,11 @@ v0.7 ─ 跨实例消息传递
 - `/overview` 默认 landing，全局脉搏主舞台
 - `/topology` workbench，结构/配置工作台，固定动作词 `查看 / 进入 / 配置 / 关系`
 - `/kanban` 聚合工作项、协作状态与关键信号
+- `overview / topology / kanban` 三页都可进入 agent 对话，并统一落到 `/session/:instanceId/:agentId`
 - `/session/:instanceId/:agentId` drill-down，URL 真源
 - 首页汇报感禁止额外 prompt 注入
 - 消息历史支持 Markdown，tool-call 展示为摘要气泡而非 raw JSON
+- 不引入模板系统、工作流平台化或控制面扩张
 
 ## 文档入口
 

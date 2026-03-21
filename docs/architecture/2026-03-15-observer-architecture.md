@@ -30,6 +30,8 @@ Linpo v0.1 只承担一件事：
 
 因此，当前架构必须围绕“结构可见性”和“状态可理解性”展开，而不是围绕执行控制面展开。
 
+当前 v0.6 也明确排除模板系统、工作流平台化与控制面扩张，所有新增页面与契约都必须服务于观测入口本身。
+
 ---
 
 ## 3. 信息架构
@@ -44,18 +46,21 @@ Linpo 当前采用 **overview → topology / kanban → session** 的产品结�
 
 | 层级 | 路由 | 职责 |
 |------|------|------|
-| **总览层** | `/overview` | 默认 landing，全局脉搏主舞台 |
-| **工作台层** | `/topology` | `workbench`，承接结构/配置工作台与固定动作环 |
+| **总览层** | `/overview` | 默认 landing，全局脉搏主舞台，展示用户全部 agents |
+| **工作台层** | `/topology` | `workbench`，承接结构/配置工作台与固定动作环，展示实例 / agents / skills / ACP 关系并提供配置入口 |
 | **看板层** | `/kanban` | 聚合工作项、协作状态与关键工作信号 |
 | **接管层** | `/session/:instanceId/:agentId` | drill-down 页，显式身份参数 |
 
 **关键约束：**
 
 - **首页汇报感硬红线**：首页汇报感禁止额外 prompt 注入，仅基于现有状态/事件/活跃度归纳生成，禁止向 agent 静默发送额外 prompt
+- **overview 对象**：`overview` 以用户全部 agents 为默认概览对象，承担概览 / 巡视入口
 - **动作环首期范围**：仅承载 `查看 / 进入 / 配置 / 关系`，同屏仅单开；不支持 drill-down 的节点禁用“进入”
 - **禁止 destructive/runtime controls**：首期 topology 与 session 主路径不暴露 pause/reset/send/delete 等 destructive/runtime controls
 - **路由真源**：`/session/:instanceId/:agentId` 的 URL 参数为唯一真源；`/session` 与 `/session/:instanceId` 仅作为兼容重定向入口，不承载长期状态
 - **消息历史展示**：普通消息支持 Markdown 渲染；工具调用统一折叠为摘要说明气泡，不直接暴露原始 JSON
+- **统一对话入口**：`overview`、`topology`、`kanban` 三页都必须提供进入 agent 对话的入口，并统一跳转到 `/session/:instanceId/:agentId`
+- **范围排除项**：不引入模板系统、工作流平台化或控制面扩张
 
 ### 3.2 主对象
 
@@ -64,7 +69,7 @@ Linpo 当前采用 **overview → topology / kanban → session** 的产品结�
 原因是：
 
 - 当前产品切入口已从单 agent 列表提升到多实例聚合观察
-- `overview` 负责跨实例的聚合观察入口
+- `overview` 负责跨实例的聚合观察入口，并展示用户全部 agents
 - `topology` 负责实例 / agents / skills / ACP 关系与配置工作台
 - `kanban` 负责聚合工作信号，而不是单纯任务系统
 - `session` 是 drill-down 承接页，不是首页主对象
@@ -73,10 +78,16 @@ Linpo 当前采用 **overview → topology / kanban → session** 的产品结�
 
 | 页面 | 路由 | 职责 |
 |------|------|------|
-| 总览页 | `/overview` | 全局脉搏主舞台，回答“谁在干活、哪里值得巡视”；首页汇报感禁止额外 prompt 注入 |
+| 总览页 | `/overview` | 全局脉搏主舞台，展示用户全部 agents，回答“谁在干活、哪里值得巡视”；首页汇报感禁止额外 prompt 注入 |
 | 拓扑工作台 | `/topology` | `workbench`，展示实例 / agents / skills / ACP 关系，提供固定动作环与配置入口 |
 | 看板页 | `/kanban` | 聚合工作项、协作状态与关键工作信号，不扩张成审批/治理平台 |
 | 会话接管页 | `/session/:instanceId/:agentId` | `drill-down` 页，从 overview / topology / kanban 的进入动作跳转；URL 参数为真源 |
+
+### 3.4 验收与收口约束
+
+- 每个 major feature 完成后都必须先部署，再从 `ravin` 发起 Playwright 集成验证，覆盖改动功能与强相关链路
+- 后端新增或修改的核心逻辑必须补齐完整单元测试覆盖，不能只靠浏览器联调兜底
+- 全部任务完成后，必须逐条核对实现成果与 active plan / PRD / architecture 的一致性，不一致继续补齐后再收口
 
 ---
 

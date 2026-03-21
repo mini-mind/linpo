@@ -4,3 +4,5 @@
 - 2026-03-21: topology 首期动作环冻结为 `查看 / 进入 / 配置 / 关系`，同屏仅单开；不支持 drill-down 的节点禁用“进入”，且首期不暴露 pause/reset/send/delete 等 destructive/runtime controls。
 - 2026-03-21: `session/:instanceId/:agentId` 是唯一真源；`/session` 与 `/session/:instanceId` 仅作为兼容重定向入口，不承载长期状态。localStorage 只能作为 remembered state，不能覆盖 URL 已声明上下文。
 - 2026-03-21: 全部任务完成后，必须逐条核对实现成果与 active plan / PRD / architecture 的一致性；若仍有偏差，继续补齐并重新核对后才可宣告收口。
+- 2026-03-22: v0.6 文档真源统一冻结为 `overview` 展示用户全部 agents 并承担概览 / 巡视，`topology` 展示实例 / agents / skills / ACP 关系并承担配置入口，`kanban` 聚合工作项 / 协作状态 / 关键工作信号，且三页都必须进入 `/session/:instanceId/:agentId`。
+- 2026-03-22: README / PRD / architecture / active plan 必须同时声明范围排除项，不引入模板系统、工作流平台化或控制面扩张，并保留“禁止额外 prompt 注入”与“分阶段 ravin Playwright 验收”的硬约束。
