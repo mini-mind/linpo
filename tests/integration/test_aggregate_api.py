@@ -106,10 +106,7 @@ def _install_aggregate_data_source(
     *,
     providers_by_token: dict[str, object],
 ) -> None:
-    try:
-        aggregate_api = importlib.import_module("app.api.aggregate")
-    except ModuleNotFoundError:
-        return
+    aggregate_service = importlib.import_module("app.services.aggregate_service")
 
     def fake_get_observer_data_source(
         data_source: str | None = None,
@@ -128,7 +125,11 @@ def _install_aggregate_data_source(
             raise provider
         return provider
 
-    monkeypatch.setattr(aggregate_api, "get_observer_data_source", fake_get_observer_data_source)
+    monkeypatch.setattr(
+        aggregate_service,
+        "get_observer_data_source",
+        fake_get_observer_data_source,
+    )
 
 
 class FakeObserverDataSource:
@@ -403,6 +404,75 @@ def test_overview_exposes_partial_failure_without_fake_empty_success(
             "freshness": {
                 "status": "fresh",
                 "checked_at": healthy["last_check_at"],
+            },
+        },
+    ]
+
+
+def test_overview_returns_failed_freshness_when_all_instances_fail(
+    isolated_database_url: str,
+    auth_cookie: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+
+    first = _create_instance(
+        auth_cookie,
+        name="first-instance",
+        endpoint="http://175.178.213.10:28795",
+        gateway_token="token-first",
+    )
+    second = _create_instance(
+        auth_cookie,
+        name="second-instance",
+        endpoint="http://175.178.213.10:28796",
+        gateway_token="token-second",
+    )
+
+    _install_aggregate_data_source(
+        monkeypatch,
+        providers_by_token={
+            "token-first": HTTPException(status_code=503, detail="First upstream unavailable"),
+            "token-second": HTTPException(status_code=429, detail="Second upstream throttled"),
+        },
+    )
+
+    status_code, _, body = request("GET", "/aggregate/overview", headers={"cookie": auth_cookie})
+
+    assert status_code == 200
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload["partial_failure"] is True
+    assert payload["freshness"] == {
+        "status": "failed",
+        "checked_at": second["last_check_at"],
+    }
+    assert payload["agents"] == []
+    assert payload["diagnostics"] == [
+        {
+            "instance_id": first["id"],
+            "instance_name": "first-instance",
+            "status": "failed",
+            "code": "source_unavailable",
+            "message": "First upstream unavailable",
+            "recoverable": True,
+            "next_step": "检查实例连通性或网关 token 后重试",
+            "freshness": {
+                "status": "failed",
+                "checked_at": first["last_check_at"],
+            },
+        },
+        {
+            "instance_id": second["id"],
+            "instance_name": "second-instance",
+            "status": "failed",
+            "code": "source_error",
+            "message": "Second upstream throttled",
+            "recoverable": True,
+            "next_step": "检查实例连通性或网关 token 后重试",
+            "freshness": {
+                "status": "failed",
+                "checked_at": second["last_check_at"],
             },
         },
     ]
