@@ -999,8 +999,7 @@ def test_get_observer_data_source_reuses_shared_openclaw_source(monkeypatch: pyt
             creations += 1
             super().__init__()
 
-    monkeypatch.setattr(observer_data, "_OPENCLAW_DATA_SOURCE", None, raising=False)
-    monkeypatch.setattr(observer_data, "_OPENCLAW_DATA_SOURCE_CONFIG", None, raising=False)
+    monkeypatch.setattr(observer_data, "_OPENCLAW_DATA_SOURCES", {}, raising=False)
     monkeypatch.setattr(
         observer_data,
         "OpenClawObserverDataSource",
@@ -1025,8 +1024,7 @@ def test_get_observer_data_source_rebuilds_openclaw_source_when_config_changes(
             creations += 1
             super().__init__()
 
-    monkeypatch.setattr(observer_data, "_OPENCLAW_DATA_SOURCE", None, raising=False)
-    monkeypatch.setattr(observer_data, "_OPENCLAW_DATA_SOURCE_CONFIG", None, raising=False)
+    monkeypatch.setattr(observer_data, "_OPENCLAW_DATA_SOURCES", {}, raising=False)
     monkeypatch.setattr(
         observer_data,
         "OpenClawObserverDataSource",
