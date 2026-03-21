@@ -45,6 +45,41 @@ export interface InstanceDeleteResponse {
   deleted: boolean;
 }
 
+export interface FreshnessInfo {
+  status: 'fresh' | 'stale' | 'failed';
+  checked_at: string | null;
+}
+
+export interface AggregateInstanceDiagnostic {
+  instance_id: string;
+  instance_name: string;
+  status: 'ok' | 'failed';
+  code: string | null;
+  message: string;
+  recoverable: boolean;
+  next_step: string | null;
+  freshness: FreshnessInfo;
+}
+
+export interface AggregateOverviewAgentItem {
+  instance_id: string;
+  instance_name: string;
+  agent_id: string;
+  agent_name: string;
+  status: AgentStatus;
+  is_active: boolean;
+  last_active_at: string | null;
+  drilldown_path: string;
+}
+
+export interface AggregateOverviewResponse {
+  request_id: string;
+  freshness: FreshnessInfo;
+  partial_failure: boolean;
+  diagnostics: AggregateInstanceDiagnostic[];
+  agents: AggregateOverviewAgentItem[];
+}
+
 export type InstanceValidationErrorCode =
   | 'auth_failed'
   | 'connection_failed'

@@ -1,246 +1,223 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as instanceClient from "../api/instanceClient";
-import type { InstanceItem } from "../api/types";
 
 import { OverviewPage } from "./OverviewPage";
+
+const { mockGetAggregateOverview } = vi.hoisted(() => ({
+	mockGetAggregateOverview: vi.fn(),
+}));
+
+vi.mock("../api/client", async () => {
+	const actual = await vi.importActual<typeof import("../api/client")>(
+		"../api/client",
+	);
+	return {
+		...actual,
+		getAggregateOverview: mockGetAggregateOverview,
+	};
+});
 
 vi.mock("../hooks/useIsMobile", () => ({
 	useIsMobile: () => false,
 }));
 
-const mockInstances: InstanceItem[] = [
-	{
-		id: "instance-1",
-		name: "测试实例1",
-		type: "openclaw",
-		endpoint: "http://127.0.0.1:28789",
-		status: "active",
-		last_check_at: "2025-03-18T10:00:00Z",
-		created_at: "2025-03-18T08:00:00Z",
-	},
-	{
-		id: "instance-2",
-		name: "测试实例2",
-		type: "openclaw",
-		endpoint: "http://127.0.0.1:38789",
-		status: "inactive",
-		last_check_at: null,
-		created_at: "2025-03-18T09:00:00Z",
-	},
-];
+const listInstancesSpy = vi.spyOn(instanceClient, "listInstances");
 
-const renderWithRouter = (initialEntries = ["/overview"]) => {
+const aggregateOverviewFixture = {
+	request_id: "req-overview-1",
+	freshness: {
+		status: "fresh",
+		checked_at: "2026-03-22T12:00:00Z",
+	},
+	partial_failure: false,
+	diagnostics: [
+		{
+			instance_id: "instance-alpha",
+			instance_name: "alpha-instance",
+			status: "ok",
+			code: null,
+			message: "ok",
+			recoverable: false,
+			next_step: null,
+			freshness: {
+				status: "fresh",
+				checked_at: "2026-03-22T12:00:00Z",
+			},
+		},
+	],
+	agents: [
+		{
+			instance_id: "instance-alpha",
+			instance_name: "alpha-instance",
+			agent_id: "agent-alpha",
+			agent_name: "Alpha Agent",
+			status: "running",
+			is_active: true,
+			last_active_at: "2026-03-22T11:58:00Z",
+			drilldown_path: "/session/instance-alpha/agent-alpha",
+		},
+		{
+			instance_id: "instance-beta",
+			instance_name: "beta-instance",
+			agent_id: "agent-beta",
+			agent_name: "Beta Agent",
+			status: "error",
+			is_active: false,
+			last_active_at: "2026-03-21T18:00:00Z",
+			drilldown_path: "/session/instance-beta/agent-beta",
+		},
+	],
+};
+
+const degradedOverviewFixture = {
+	request_id: "req-overview-2",
+	freshness: {
+		status: "stale",
+		checked_at: "2026-03-22T11:55:00Z",
+	},
+	partial_failure: true,
+	diagnostics: [
+		{
+			instance_id: "instance-failing",
+			instance_name: "failing-instance",
+			status: "failed",
+			code: "source_unavailable",
+			message: "OpenClaw upstream unavailable",
+			recoverable: true,
+			next_step: "检查实例连通性或网关 token 后重试",
+			freshness: {
+				status: "failed",
+				checked_at: "2026-03-22T11:50:00Z",
+			},
+		},
+		{
+			instance_id: "instance-healthy",
+			instance_name: "healthy-instance",
+			status: "ok",
+			code: null,
+			message: "ok",
+			recoverable: false,
+			next_step: null,
+			freshness: {
+				status: "fresh",
+				checked_at: "2026-03-22T11:55:00Z",
+			},
+		},
+	],
+	agents: [
+		{
+			instance_id: "instance-healthy",
+			instance_name: "healthy-instance",
+			agent_id: "agent-healthy",
+			agent_name: "Healthy Agent",
+			status: "running",
+			is_active: true,
+			last_active_at: "2026-03-22T11:54:00Z",
+			drilldown_path: "/session/instance-healthy/agent-healthy",
+		},
+	],
+};
+
+const zeroAgentOverviewFixture = {
+	request_id: "req-overview-3",
+	freshness: {
+		status: "fresh",
+		checked_at: "2026-03-22T12:05:00Z",
+	},
+	partial_failure: false,
+	diagnostics: [
+		{
+			instance_id: "instance-empty",
+			instance_name: "empty-instance",
+			status: "ok",
+			code: null,
+			message: "ok",
+			recoverable: false,
+			next_step: null,
+			freshness: {
+				status: "fresh",
+				checked_at: "2026-03-22T12:05:00Z",
+			},
+		},
+	],
+	agents: [],
+};
+
+function renderWithRouter(): ReturnType<typeof render> {
 	return render(
-		<MemoryRouter initialEntries={initialEntries}>
+		<MemoryRouter initialEntries={["/overview"]}>
 			<OverviewPage />
 		</MemoryRouter>,
 	);
-};
+}
 
 describe("OverviewPage", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		window.localStorage.clear();
+		listInstancesSpy.mockRejectedValue(
+			new Error("overview should not read /instances"),
+		);
 	});
 
-	afterEach(() => {
-		vi.restoreAllMocks();
+	it("renders aggregated agents and links each card to canonical session drill-down", async () => {
+		mockGetAggregateOverview.mockResolvedValue(aggregateOverviewFixture);
+
+		renderWithRouter();
+
+		await waitFor(() => {
+			expect(mockGetAggregateOverview).toHaveBeenCalledTimes(1);
+		});
+
+		expect(listInstancesSpy).not.toHaveBeenCalled();
+		expect(screen.getByText("Alpha Agent")).toBeInTheDocument();
+		expect(screen.getByText("Beta Agent")).toBeInTheDocument();
+
+		expect(
+			screen.getByRole("link", { name: /进入会话 - Alpha Agent/i }),
+		).toHaveAttribute("href", "/session/instance-alpha/agent-alpha");
+		expect(
+			screen.getByRole("link", { name: /进入会话 - Beta Agent/i }),
+		).toHaveAttribute("href", "/session/instance-beta/agent-beta");
 	});
 
-	describe("Loading and Error States", () => {
-		it("shows loading state while fetching instances", () => {
-			vi.spyOn(instanceClient, "listInstances").mockImplementation(
-				() => new Promise(() => {}),
-			);
+	it("keeps partial-failure overview readable and surfaces freshness plus diagnostics", async () => {
+		mockGetAggregateOverview.mockResolvedValue(degradedOverviewFixture);
 
-			renderWithRouter();
+		renderWithRouter();
 
-			expect(screen.getByText("加载中...")).toBeInTheDocument();
+		await waitFor(() => {
+			expect(screen.getByText("Healthy Agent")).toBeInTheDocument();
 		});
 
-		it("shows error state when fetch fails", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockRejectedValue(
-				new Error("网络错误"),
-			);
-
-			renderWithRouter();
-
-			await waitFor(() => {
-				expect(screen.getByText(/错误/i)).toBeInTheDocument();
-			});
-		});
+		expect(screen.getByText("聚合 freshness")).toBeInTheDocument();
+		expect(screen.getByText("stale")).toBeInTheDocument();
+		expect(screen.getByText("failing-instance")).toBeInTheDocument();
+		expect(
+			screen.getByText("OpenClaw upstream unavailable"),
+		).toBeInTheDocument();
+		expect(
+			screen.getByText("检查实例连通性或网关 token 后重试"),
+		).toBeInTheDocument();
 	});
 
-	describe("Empty State", () => {
-		it("renders empty state when no instances exist", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue([]);
+	it("uses watchlist wording instead of error wording when aggregate returns zero agents", async () => {
+		mockGetAggregateOverview.mockResolvedValue(zeroAgentOverviewFixture);
 
-			renderWithRouter();
+		renderWithRouter();
 
-			await waitFor(() => {
-				expect(screen.getByText("暂无实例")).toBeInTheDocument();
-			});
+		await waitFor(() => {
+			expect(screen.getByText("当前没有可下钻的 agent")).toBeInTheDocument();
 		});
 
-		it("shows navigation to topology in empty state", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue([]);
-
-			renderWithRouter();
-
-			await waitFor(() => {
-				expect(screen.getByText("暂无实例")).toBeInTheDocument();
-			});
-
-			// Should have a link/button to go to topology to add instances
-			expect(
-				screen.getByRole("link", { name: /前往拓扑/i }),
-			).toBeInTheDocument();
-		});
-	});
-
-	describe("Instance Summary Statistics", () => {
-		it("displays total instance count", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue(
-				mockInstances,
-			);
-
-			renderWithRouter();
-
-			await waitFor(() => {
-				expect(screen.getByText("实例总数")).toBeInTheDocument();
-			});
-
-			// Find the stat card containing "实例总数" and check its value
-			const totalCard = screen.getByText("实例总数").parentElement;
-			expect(totalCard).toHaveTextContent("2");
-		});
-
-		it("displays active instance count", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue(
-				mockInstances,
-			);
-
-			renderWithRouter();
-
-			await waitFor(() => {
-				expect(screen.getByText("活跃实例")).toBeInTheDocument();
-			});
-
-			// Find the stat card containing "活跃实例" and check its value
-			const activeCard = screen.getByText("活跃实例").parentElement;
-			expect(activeCard).toHaveTextContent("1");
-		});
-
-		it("displays inactive instance count as needing attention", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue(
-				mockInstances,
-			);
-
-			renderWithRouter();
-
-			await waitFor(() => {
-				expect(screen.getByText("需要关注")).toBeInTheDocument();
-			});
-
-			// Find the stat card containing "需要关注" and check its value
-			const attentionCard = screen.getByText("需要关注").parentElement;
-			expect(attentionCard).toHaveTextContent("1");
-		});
-	});
-
-	describe("Instance List", () => {
-		it("renders instance cards with name and status", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue(
-				mockInstances,
-			);
-
-			renderWithRouter();
-
-			await waitFor(() => {
-				expect(screen.getByText("测试实例1")).toBeInTheDocument();
-			});
-
-			expect(screen.getByText("测试实例2")).toBeInTheDocument();
-			expect(screen.getByText("活跃")).toBeInTheDocument();
-			expect(screen.getByText("未活跃")).toBeInTheDocument();
-		});
-
-		it("shows active instances with link to session page", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue(
-				mockInstances,
-			);
-
-			renderWithRouter();
-
-			await waitFor(() => {
-				expect(screen.getByText("测试实例1")).toBeInTheDocument();
-			});
-
-			// Active instance should have link to /session/:instanceId/main
-			const activeInstanceLink = screen.getByRole("link", {
-				name: /进入会话 - 测试实例1/i,
-			});
-			expect(activeInstanceLink).toHaveAttribute(
-				"href",
-				"/session/instance-1/main",
-			);
-		});
-
-		it("shows inactive instances with attention indicator", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue(
-				mockInstances,
-			);
-
-			renderWithRouter();
-
-			await waitFor(() => {
-				expect(screen.getByText("测试实例2")).toBeInTheDocument();
-			});
-
-			// Inactive instance should show attention indicator
-			expect(
-				screen.getByRole("img", { name: /需要关注/i }),
-			).toBeInTheDocument();
-		});
-	});
-
-	describe("Navigation", () => {
-		it("provides link to topology page", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue(
-				mockInstances,
-			);
-
-			renderWithRouter();
-
-			await waitFor(() => {
-				expect(screen.getByText("实例总数")).toBeInTheDocument();
-			});
-
-			const topologyLink = screen.getByRole("link", { name: /查看拓扑/i });
-			expect(topologyLink).toHaveAttribute("href", "/topology");
-		});
-
-		it("provides link to session page", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue(
-				mockInstances,
-			);
-
-			renderWithRouter();
-
-			await waitFor(() => {
-				expect(screen.getByText("实例总数")).toBeInTheDocument();
-			});
-
-			// The nav link says "进入会话" with icon prefix
-			const sessionNavLinks = screen.getAllByRole("link", { name: /进入会话/i });
-			// Find the one that goes to /session (not /session/:instanceId/main)
-			const sessionNavLink = sessionNavLinks.find(
-				(link) => link.getAttribute("href") === "/session",
-			);
-			expect(sessionNavLink).toBeDefined();
-			expect(sessionNavLink).toHaveAttribute("href", "/session");
-		});
+		expect(
+			screen.getByText("先巡视 watchlist 与接入状态，确认哪些实例值得继续观察。"),
+		).toBeInTheDocument();
+		expect(screen.queryByText(/^错误:/i)).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("link", { name: /前往拓扑/i }),
+		).toHaveAttribute("href", "/topology");
 	});
 });

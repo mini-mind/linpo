@@ -1,5 +1,5 @@
-import { resolveCurrentInstanceId } from '../hooks/useCurrentInstance';
 import type {
+  AggregateOverviewResponse,
   AgentDetailResponse,
   AgentListItem,
   ChatSendRequest,
@@ -11,6 +11,7 @@ import type {
   SessionsListResponse,
   SessionsPreviewResponse,
 } from './types';
+import { resolveCurrentInstanceId } from '../hooks/useCurrentInstance';
 
 const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
 const inferredApiBaseUrl = `${window.location.protocol}//${window.location.hostname}:8000`;
@@ -75,6 +76,12 @@ async function fetchApi<T>(
 
 export async function listAgents(options?: ObserverRequestOptions): Promise<AgentListItem[]> {
   return fetchApi<AgentListItem[]>('/agents', undefined, options);
+}
+
+export async function getAggregateOverview(
+  options?: ObserverRequestOptions
+): Promise<AggregateOverviewResponse> {
+  return fetchApi<AggregateOverviewResponse>('/aggregate/overview', undefined, options);
 }
 
 export async function getAgentDetail(

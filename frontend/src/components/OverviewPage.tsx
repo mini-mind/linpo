@@ -1,24 +1,27 @@
 import type React from "react";
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { listInstances } from "../api/instanceClient";
-import type { InstanceItem } from "../api/types";
+import { getAggregateOverview } from "../api/client";
+import type {
+	AggregateOverviewAgentItem,
+	AggregateOverviewResponse,
+} from "../api/types";
 import { useIsMobile } from "../hooks/useIsMobile";
 
 export function OverviewPage(): JSX.Element {
 	const isMobile = useIsMobile();
-	const [instances, setInstances] = useState<InstanceItem[]>([]);
+	const [overview, setOverview] = useState<AggregateOverviewResponse | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 
-	const loadInstances = useCallback(async () => {
+	const loadOverview = useCallback(async () => {
 		try {
 			setLoading(true);
 			setError(null);
-			const data = await listInstances();
-			setInstances(data);
+			const data = await getAggregateOverview();
+			setOverview(data);
 		} catch (err) {
-			const message = err instanceof Error ? err.message : "获取实例列表失败";
+			const message = err instanceof Error ? err.message : "获取总览失败";
 			setError(message);
 		} finally {
 			setLoading(false);
@@ -26,11 +29,8 @@ export function OverviewPage(): JSX.Element {
 	}, []);
 
 	useEffect(() => {
-		void loadInstances();
-	}, [loadInstances]);
-
-	const activeInstances = instances.filter((i) => i.status === "active");
-	const inactiveInstances = instances.filter((i) => i.status !== "active");
+		void loadOverview();
+	}, [loadOverview]);
 
 	if (loading) {
 		return (
@@ -48,55 +48,89 @@ export function OverviewPage(): JSX.Element {
 		);
 	}
 
+	const agents = overview?.agents ?? [];
+	const diagnostics = overview?.diagnostics ?? [];
+	const activeAgents = agents.filter((agent) => agent.is_active).length;
+	const watchlistAgents = agents.filter(isWatchlistAgent).length;
+
 	return (
 		<div style={getContainerStyle(isMobile)}>
-			{/* Page Header */}
 			<div style={headerStyle}>
 				<h1 style={titleStyle}>总览</h1>
-				<p style={subtitleStyle}>实例状态一览</p>
+				<p style={subtitleStyle}>全部 agents 的聚合观察入口</p>
 			</div>
 
-			{/* Statistics Cards */}
 			<div style={getStatsGridStyle(isMobile)}>
 				<div style={getStatCardStyle(isMobile)}>
-					<span style={statLabelStyle}>实例总数</span>
-					<span style={statValueStyle}>{instances.length}</span>
+					<span style={statLabelStyle}>全部 agents</span>
+					<span style={statValueStyle}>{agents.length}</span>
 				</div>
 				<div style={getStatCardStyle(isMobile, "success")}>
-					<span style={statLabelStyle}>活跃实例</span>
-					<span style={getStatValueColorStyle("success")}>
-						{activeInstances.length}
-					</span>
+					<span style={statLabelStyle}>活跃中</span>
+					<span style={getStatValueColorStyle("success")}>{activeAgents}</span>
 				</div>
 				<div style={getStatCardStyle(isMobile, "warning")}>
-					<span style={statLabelStyle}>需要关注</span>
+					<span style={statLabelStyle}>值得巡视</span>
 					<span style={getStatValueColorStyle("warning")}>
-						{inactiveInstances.length}
+						{watchlistAgents}
 					</span>
 				</div>
 			</div>
 
-			{/* Instance List or Empty State */}
-			{instances.length === 0 ? (
-				<div style={emptyStateStyle}>
-					<div style={emptyIconStyle}>
-						<svg
-							width="64"
-							height="64"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="#9ca3af"
-							strokeWidth="1.5"
-						>
-							<title>Empty State Icon</title>
-							<rect x="2" y="3" width="20" height="14" rx="2" />
-							<line x1="8" y1="21" x2="16" y2="21" />
-							<line x1="12" y1="17" x2="12" y2="21" />
-						</svg>
+			{overview ? (
+				<div style={summaryPanelStyle}>
+					<div style={summaryItemStyle}>
+						<span style={summaryLabelStyle}>聚合 freshness</span>
+						<strong style={summaryValueStyle}>
+							{overview.freshness.status}
+						</strong>
 					</div>
-					<p style={emptyTitleStyle}>暂无实例</p>
+					<div style={summaryItemStyle}>
+						<span style={summaryLabelStyle}>request id</span>
+						<strong style={summaryValueStyle}>{overview.request_id}</strong>
+					</div>
+					<div style={summaryItemStyle}>
+						<span style={summaryLabelStyle}>诊断状态</span>
+						<strong style={summaryValueStyle}>
+							{overview.partial_failure ? "部分降级" : "稳定"}
+						</strong>
+					</div>
+				</div>
+			) : null}
+
+			{diagnostics.length > 0 ? (
+				<div style={diagnosticsSectionStyle}>
+					<h2 style={sectionTitleStyle}>实例诊断</h2>
+					<div style={diagnosticsGridStyle}>
+						{diagnostics.map((diagnostic) => (
+							<div
+								key={diagnostic.instance_id}
+								style={getDiagnosticCardStyle(diagnostic.status === "failed")}
+							>
+								<div style={diagnosticHeaderStyle}>
+									<span style={diagnosticNameStyle}>
+										{diagnostic.instance_name}
+									</span>
+									<span style={getDiagnosticBadgeStyle(diagnostic.status)}>
+										{diagnostic.freshness.status}
+									</span>
+								</div>
+								<p style={diagnosticMessageStyle}>{diagnostic.message}</p>
+								{diagnostic.next_step ? (
+									<p style={diagnosticHintStyle}>{diagnostic.next_step}</p>
+								) : null}
+							</div>
+						))}
+					</div>
+				</div>
+			) : null}
+
+			{agents.length === 0 ? (
+				<div style={emptyStateStyle}>
+					<p style={emptyTitleStyle}>当前没有可下钻的 agent</p>
+					<p style={emptyHintStyle}>前往拓扑查看实例接入与当前配置。</p>
 					<p style={emptyHintStyle}>
-						前往拓扑页面添加你的第一个实例
+						先巡视 watchlist 与接入状态，确认哪些实例值得继续观察。
 					</p>
 					<Link to="/topology" style={emptyLinkStyle}>
 						前往拓扑
@@ -104,73 +138,16 @@ export function OverviewPage(): JSX.Element {
 				</div>
 			) : (
 				<>
-					{/* Instance Cards */}
-					<div style={getInstanceGridStyle(isMobile)}>
-						{instances.map((instance) => (
-							<div
-								key={instance.id}
-								style={getInstanceCardStyle(instance.status, isMobile)}
-							>
-								<div style={instanceHeaderStyle}>
-									<div style={instanceIconStyle}>
-										<InstanceIcon
-											status={instance.status}
-											size={24}
-										/>
-										{instance.status !== "active" && (
-											<img
-												src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23f59e0b'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath fill='%23fff' d='M12 6v6l4 2'/%3E%3C/svg%3E"
-												alt="需要关注"
-												style={attentionIconStyle}
-											/>
-										)}
-									</div>
-									<div style={instanceInfoStyle}>
-										<span style={instanceNameStyle}>
-											{instance.name}
-										</span>
-										<span
-											style={getStatusBadgeStyle(instance.status)}
-										>
-											{instance.status === "active"
-												? "活跃"
-												: "未活跃"}
-										</span>
-									</div>
-								</div>
-								<div style={instanceMetaStyle}>
-									<span style={instanceEndpointStyle}>
-										{instance.endpoint}
-									</span>
-								</div>
-								<div style={instanceActionsStyle}>
-									{instance.status === "active" ? (
-										<Link
-											to={`/session/${instance.id}/main`}
-											style={primaryButtonStyle}
-											aria-label={`进入会话 - ${instance.name}`}
-										>
-											进入会话
-										</Link>
-									) : (
-										<span style={disabledButtonStyle}>
-											实例未激活
-										</span>
-									)}
-								</div>
-							</div>
+					<div style={getAgentGridStyle(isMobile)}>
+						{agents.map((agent) => (
+							<AgentCard key={`${agent.instance_id}:${agent.agent_id}`} agent={agent} />
 						))}
 					</div>
 
-					{/* Navigation Links */}
-					<div style={getNavigationStyle(isMobile)}>
+					<div style={navigationStyle}>
 						<Link to="/topology" style={navLinkStyle}>
 							<span style={navIconStyle}>◇</span>
 							查看拓扑
-						</Link>
-						<Link to="/session" style={navLinkStyle}>
-							<span style={navIconStyle}>◉</span>
-							进入会话
 						</Link>
 					</div>
 				</>
@@ -179,32 +156,53 @@ export function OverviewPage(): JSX.Element {
 	);
 }
 
-function InstanceIcon({
-	status,
-	size,
-}: {
-	status: string;
-	size: number;
-}): JSX.Element {
-	const color = status === "active" ? "#10b981" : "#9ca3af";
+function AgentCard({ agent }: { agent: AggregateOverviewAgentItem }): JSX.Element {
 	return (
-		<svg
-			width={size}
-			height={size}
-			viewBox="0 0 24 24"
-			fill="none"
-			stroke={color}
-			strokeWidth="2"
-			aria-hidden="true"
-		>
-			<rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
-			<line x1="8" y1="21" x2="16" y2="21" />
-			<line x1="12" y1="17" x2="12" y2="21" />
-		</svg>
+		<div style={getAgentCardStyle(isWatchlistAgent(agent))}>
+			<div style={agentHeaderStyle}>
+				<div style={agentTitleBlockStyle}>
+					<span style={agentNameStyle}>{agent.agent_name}</span>
+					<span style={instanceNameStyle}>{agent.instance_name}</span>
+				</div>
+				<span style={getStatusBadgeStyle(agent.status, agent.is_active)}>
+					{getStatusLabel(agent)}
+				</span>
+			</div>
+			{agent.last_active_at ? (
+				<p style={metaStyle}>最近活动 {agent.last_active_at}</p>
+			) : (
+				<p style={metaStyle}>最近活动暂未上报</p>
+			)}
+			<div style={agentActionsStyle}>
+				<Link
+					to={agent.drilldown_path}
+					style={primaryButtonStyle}
+					aria-label={`进入会话 - ${agent.agent_name}`}
+				>
+					进入会话
+				</Link>
+			</div>
+		</div>
 	);
 }
 
-// Container Styles
+function isWatchlistAgent(agent: AggregateOverviewAgentItem): boolean {
+	return agent.status === "error" || !agent.is_active;
+}
+
+function getStatusLabel(agent: AggregateOverviewAgentItem): string {
+	if (agent.status === "error") {
+		return "异常";
+	}
+	if (agent.status === "running") {
+		return "运行中";
+	}
+	if (agent.status === "finished") {
+		return "已完成";
+	}
+	return agent.is_active ? "待命中" : "待巡视";
+}
+
 function getContainerStyle(isMobile: boolean): React.CSSProperties {
 	return {
 		height: "100%",
@@ -235,7 +233,6 @@ const subtitleStyle: React.CSSProperties = {
 	margin: 0,
 };
 
-// Statistics Grid
 function getStatsGridStyle(isMobile: boolean): React.CSSProperties {
 	return {
 		display: "grid",
@@ -298,8 +295,7 @@ function getStatValueColorStyle(
 	};
 }
 
-// Instance Grid
-function getInstanceGridStyle(isMobile: boolean): React.CSSProperties {
+function getAgentGridStyle(isMobile: boolean): React.CSSProperties {
 	return {
 		display: "grid",
 		gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(280px, 1fr))",
@@ -308,90 +304,68 @@ function getInstanceGridStyle(isMobile: boolean): React.CSSProperties {
 	};
 }
 
-function getInstanceCardStyle(
-	status: string,
-	isMobile: boolean,
-): React.CSSProperties {
-	const borderColor = status === "active" ? "#10b981" : "#f59e0b";
-
+function getAgentCardStyle(isWatchlist: boolean): React.CSSProperties {
 	return {
 		background: "#fff",
-		border: `2px solid ${borderColor}`,
+		border: `2px solid ${isWatchlist ? "#f59e0b" : "#10b981"}`,
 		borderRadius: "0.75rem",
-		padding: isMobile ? "1rem" : "1.25rem",
+		padding: "1.25rem",
 		display: "flex",
 		flexDirection: "column",
 		gap: "0.75rem",
 	};
 }
 
-const instanceHeaderStyle: React.CSSProperties = {
+const agentHeaderStyle: React.CSSProperties = {
 	display: "flex",
-	alignItems: "center",
+	justifyContent: "space-between",
+	alignItems: "flex-start",
 	gap: "0.75rem",
 };
 
-const instanceIconStyle: React.CSSProperties = {
-	position: "relative",
-	flexShrink: 0,
-};
-
-const attentionIconStyle: React.CSSProperties = {
-	position: "absolute",
-	bottom: "-4px",
-	right: "-4px",
-	width: "14px",
-	height: "14px",
-};
-
-const instanceInfoStyle: React.CSSProperties = {
+const agentTitleBlockStyle: React.CSSProperties = {
 	display: "flex",
 	flexDirection: "column",
 	gap: "0.25rem",
-	flex: 1,
 	minWidth: 0,
 };
 
-const instanceNameStyle: React.CSSProperties = {
+const agentNameStyle: React.CSSProperties = {
 	fontSize: "1rem",
 	fontWeight: 600,
 	color: "#1f2933",
-	overflow: "hidden",
-	textOverflow: "ellipsis",
-	whiteSpace: "nowrap",
 };
 
-function getStatusBadgeStyle(status: string): React.CSSProperties {
-	const isActive = status === "active";
+const instanceNameStyle: React.CSSProperties = {
+	fontSize: "0.8125rem",
+	color: "#6b7280",
+};
+
+function getStatusBadgeStyle(
+	status: AggregateOverviewAgentItem["status"],
+	isActive: boolean,
+): React.CSSProperties {
+	const isAttention = status === "error" || !isActive;
 	return {
 		fontSize: "0.75rem",
 		padding: "0.125rem 0.5rem",
 		borderRadius: "0.25rem",
-		background: isActive ? "#dcfce7" : "#fef3c7",
-		color: isActive ? "#166534" : "#92400e",
+		background: isAttention ? "#fef3c7" : "#dcfce7",
+		color: isAttention ? "#92400e" : "#166534",
 		fontWeight: 500,
-		alignSelf: "flex-start",
+		whiteSpace: "nowrap",
 	};
 }
 
-const instanceMetaStyle: React.CSSProperties = {
-	display: "flex",
-	alignItems: "center",
-	gap: "0.5rem",
-};
-
-const instanceEndpointStyle: React.CSSProperties = {
-	fontSize: "0.75rem",
+const metaStyle: React.CSSProperties = {
+	fontSize: "0.8125rem",
 	color: "#6b7280",
-	overflow: "hidden",
-	textOverflow: "ellipsis",
-	whiteSpace: "nowrap",
+	margin: 0,
 };
 
-const instanceActionsStyle: React.CSSProperties = {
+const agentActionsStyle: React.CSSProperties = {
 	display: "flex",
-	gap: "0.5rem",
-	marginTop: "0.25rem",
+	justifyContent: "flex-start",
 };
 
 const primaryButtonStyle: React.CSSProperties = {
@@ -405,23 +379,8 @@ const primaryButtonStyle: React.CSSProperties = {
 	fontSize: "0.875rem",
 	fontWeight: 500,
 	textDecoration: "none",
-	cursor: "pointer",
-	transition: "background 0.2s",
 };
 
-const disabledButtonStyle: React.CSSProperties = {
-	display: "inline-flex",
-	alignItems: "center",
-	justifyContent: "center",
-	padding: "0.5rem 1rem",
-	background: "#e5e7eb",
-	color: "#6b7280",
-	borderRadius: "0.5rem",
-	fontSize: "0.875rem",
-	fontWeight: 500,
-};
-
-// Empty State
 const emptyStateStyle: React.CSSProperties = {
 	display: "flex",
 	flexDirection: "column",
@@ -429,11 +388,9 @@ const emptyStateStyle: React.CSSProperties = {
 	justifyContent: "center",
 	padding: "3rem 2rem",
 	textAlign: "center",
-};
-
-const emptyIconStyle: React.CSSProperties = {
-	marginBottom: "1rem",
-	opacity: 0.5,
+	background: "rgba(255, 255, 255, 0.75)",
+	borderRadius: "0.75rem",
+	border: "1px solid #e5e7eb",
 };
 
 const emptyTitleStyle: React.CSSProperties = {
@@ -449,6 +406,102 @@ const emptyHintStyle: React.CSSProperties = {
 	margin: "0 0 1rem 0",
 };
 
+const summaryPanelStyle: React.CSSProperties = {
+	display: "grid",
+	gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+	gap: "0.75rem",
+	marginBottom: "1.5rem",
+};
+
+const summaryItemStyle: React.CSSProperties = {
+	background: "rgba(255, 255, 255, 0.72)",
+	border: "1px solid #d7d2c8",
+	borderRadius: "0.75rem",
+	padding: "0.875rem 1rem",
+	display: "flex",
+	flexDirection: "column",
+	gap: "0.35rem",
+};
+
+const summaryLabelStyle: React.CSSProperties = {
+	fontSize: "0.75rem",
+	textTransform: "uppercase",
+	letterSpacing: "0.05em",
+	color: "#6b7280",
+};
+
+const summaryValueStyle: React.CSSProperties = {
+	fontSize: "0.95rem",
+	fontWeight: 600,
+	color: "#1f2933",
+	wordBreak: "break-word",
+};
+
+const diagnosticsSectionStyle: React.CSSProperties = {
+	marginBottom: "1.5rem",
+};
+
+const sectionTitleStyle: React.CSSProperties = {
+	fontSize: "1rem",
+	fontWeight: 600,
+	color: "#1f2933",
+	margin: "0 0 0.75rem 0",
+};
+
+const diagnosticsGridStyle: React.CSSProperties = {
+	display: "grid",
+	gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
+	gap: "0.75rem",
+};
+
+function getDiagnosticCardStyle(isFailed: boolean): React.CSSProperties {
+	return {
+		background: "rgba(255, 255, 255, 0.9)",
+		border: `1px solid ${isFailed ? "#f59e0b" : "#e5e7eb"}`,
+		borderRadius: "0.75rem",
+		padding: "1rem",
+		display: "flex",
+		flexDirection: "column",
+		gap: "0.5rem",
+	};
+}
+
+const diagnosticHeaderStyle: React.CSSProperties = {
+	display: "flex",
+	justifyContent: "space-between",
+	alignItems: "center",
+	gap: "0.75rem",
+};
+
+const diagnosticNameStyle: React.CSSProperties = {
+	fontSize: "0.9rem",
+	fontWeight: 600,
+	color: "#1f2933",
+};
+
+function getDiagnosticBadgeStyle(status: "ok" | "failed"): React.CSSProperties {
+	return {
+		fontSize: "0.75rem",
+		padding: "0.125rem 0.5rem",
+		borderRadius: "999px",
+		background: status === "failed" ? "#fef3c7" : "#ecfdf5",
+		color: status === "failed" ? "#92400e" : "#166534",
+		fontWeight: 600,
+	};
+}
+
+const diagnosticMessageStyle: React.CSSProperties = {
+	margin: 0,
+	fontSize: "0.875rem",
+	color: "#1f2933",
+};
+
+const diagnosticHintStyle: React.CSSProperties = {
+	margin: 0,
+	fontSize: "0.8125rem",
+	color: "#6b7280",
+};
+
 const emptyLinkStyle: React.CSSProperties = {
 	display: "inline-flex",
 	alignItems: "center",
@@ -462,15 +515,11 @@ const emptyLinkStyle: React.CSSProperties = {
 	textDecoration: "none",
 };
 
-// Navigation
-function getNavigationStyle(isMobile: boolean): React.CSSProperties {
-	return {
-		display: "flex",
-		gap: "1rem",
-		flexWrap: "wrap",
-		justifyContent: isMobile ? "center" : "flex-start",
-	};
-}
+const navigationStyle: React.CSSProperties = {
+	display: "flex",
+	gap: "1rem",
+	flexWrap: "wrap",
+};
 
 const navLinkStyle: React.CSSProperties = {
 	display: "inline-flex",
@@ -484,14 +533,12 @@ const navLinkStyle: React.CSSProperties = {
 	fontSize: "0.875rem",
 	fontWeight: 500,
 	textDecoration: "none",
-	transition: "all 0.2s",
 };
 
 const navIconStyle: React.CSSProperties = {
 	fontSize: "1rem",
 };
 
-// Utility Styles
 const textStyle: React.CSSProperties = {
 	color: "#6b7280",
 	textAlign: "center",
