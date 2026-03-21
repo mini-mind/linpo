@@ -1,3 +1,4 @@
+import { resolveCurrentInstanceId } from '../hooks/useCurrentInstance';
 import type {
   AgentDetailResponse,
   AgentListItem,
@@ -16,13 +17,28 @@ const inferredApiBaseUrl = `${window.location.protocol}//${window.location.hostn
 const API_BASE_URL = configuredApiBaseUrl || inferredApiBaseUrl;
 const DEFAULT_OBSERVER_DATA_SOURCE = 'openclaw';
 
+export interface ObserverRequestOptions {
+  instanceId?: string | null;
+}
+
 function withDefaultDataSource(path: string): string {
   const separator = path.includes('?') ? '&' : '?';
   return `${path}${separator}data_source=${DEFAULT_OBSERVER_DATA_SOURCE}`;
 }
 
-function withBusinessContext(path: string): string {
-  return withDefaultDataSource(path);
+function withInstanceContext(path: string, options?: ObserverRequestOptions): string {
+  const instanceId = resolveCurrentInstanceId(options?.instanceId);
+  if (!instanceId) {
+    return path;
+  }
+
+  const url = new URL(path, 'http://linpo.local');
+  url.searchParams.set('instanceId', instanceId);
+  return `${url.pathname}${url.search}`;
+}
+
+function withBusinessContext(path: string, options?: ObserverRequestOptions): string {
+  return withInstanceContext(withDefaultDataSource(path), options);
 }
 
 export function getDefaultObserverDataSource(): string {
@@ -39,8 +55,12 @@ export class ApiError extends Error {
   }
 }
 
-async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path)}`, {
+async function fetchApi<T>(
+  path: string,
+  options?: RequestInit,
+  requestOptions?: ObserverRequestOptions
+): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, requestOptions)}`, {
     ...options,
     credentials: 'include',
     headers: {
@@ -53,23 +73,27 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export async function listAgents(): Promise<AgentListItem[]> {
-  return fetchApi<AgentListItem[]>('/agents');
+export async function listAgents(options?: ObserverRequestOptions): Promise<AgentListItem[]> {
+  return fetchApi<AgentListItem[]>('/agents', undefined, options);
 }
 
-export async function getAgentDetail(agentId: string): Promise<AgentDetailResponse> {
-  return fetchApi<AgentDetailResponse>(`/agents/${agentId}`);
+export async function getAgentDetail(
+  agentId: string,
+  options?: ObserverRequestOptions
+): Promise<AgentDetailResponse> {
+  return fetchApi<AgentDetailResponse>(`/agents/${agentId}`, undefined, options);
 }
 
 export async function getNodeDetail(
   agentId: string,
-  nodeId: string
+  nodeId: string,
+  options?: ObserverRequestOptions
 ): Promise<NodeDetailResponse> {
-  return fetchApi<NodeDetailResponse>(`/agents/${agentId}/nodes/${nodeId}`);
+  return fetchApi<NodeDetailResponse>(`/agents/${agentId}/nodes/${nodeId}`, undefined, options);
 }
 
-export async function listModels(): Promise<ModelItem[]> {
-  const response = await fetch(`${API_BASE_URL}${withBusinessContext('/chat/models')}`, {
+export async function listModels(options?: ObserverRequestOptions): Promise<ModelItem[]> {
+  const response = await fetch(`${API_BASE_URL}${withBusinessContext('/chat/models', options)}`, {
     credentials: 'include',
   });
   if (!response.ok) {
@@ -81,7 +105,8 @@ export async function listModels(): Promise<ModelItem[]> {
 
 export async function patchSession(
   sessionKey: string,
-  patch: SessionPatchRequest
+  patch: SessionPatchRequest,
+  options?: ObserverRequestOptions
 ): Promise<SessionPatchResponse> {
   const path = `/chat/sessions/${sessionKey}`;
   const body: Record<string, string> = {};
@@ -89,7 +114,7 @@ export async function patchSession(
   if (patch.model) body.model = patch.model;
   if (patch.thinkingLevel) body.thinking_level = patch.thinkingLevel;
 
-  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path)}`, {
+  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, options)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -104,12 +129,15 @@ export async function patchSession(
   return response.json() as Promise<SessionPatchResponse>;
 }
 
-export async function listSessions(agentId?: string): Promise<SessionsListResponse> {
+export async function listSessions(
+  agentId?: string,
+  options?: ObserverRequestOptions
+): Promise<SessionsListResponse> {
   const params = new URLSearchParams();
   if (agentId) params.set('agentId', agentId);
   const query = params.toString();
   const path = query ? `/chat/sessions?${query}` : '/chat/sessions';
-  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path)}`, {
+  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, options)}`, {
     credentials: 'include',
   });
   if (!response.ok) {
@@ -125,7 +153,10 @@ export async function listSessions(agentId?: string): Promise<SessionsListRespon
   };
 }
 
-export async function previewSessions(keys: string[]): Promise<SessionsPreviewResponse> {
+export async function previewSessions(
+  keys: string[],
+  options?: ObserverRequestOptions
+): Promise<SessionsPreviewResponse> {
   if (keys.length === 0) {
     return {
       ts: Date.now(),
@@ -138,7 +169,7 @@ export async function previewSessions(keys: string[]): Promise<SessionsPreviewRe
   });
   params.set('maxChars', '2000');
   const path = `/chat/sessions/preview?${params.toString()}`;
-  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path)}`, {
+  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, options)}`, {
     credentials: 'include',
   });
   if (!response.ok) {
@@ -163,7 +194,8 @@ interface ChatAbortResponse {
 export async function chatSend(
   agentId: string,
   sessionKey: string,
-  message: string
+  message: string,
+  options?: ObserverRequestOptions
 ): Promise<ChatSendResponse> {
   const request: ChatSendRequest = { agentId, sessionKey, message };
   const query = new URLSearchParams({
@@ -171,7 +203,7 @@ export async function chatSend(
     sessionKey: request.sessionKey,
   }).toString();
   const path = `/chat/send?${query}`;
-  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path)}`, {
+  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, options)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message: request.message }),
@@ -186,9 +218,12 @@ export async function chatSend(
   return response.json() as Promise<ChatSendResponse>;
 }
 
-export async function chatAbort(agentId: string): Promise<ChatAbortResponse> {
+export async function chatAbort(
+  agentId: string,
+  options?: ObserverRequestOptions
+): Promise<ChatAbortResponse> {
   const path = `/chat/abort?agentId=${agentId}`;
-  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path)}`, {
+  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, options)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
@@ -205,9 +240,12 @@ export async function chatAbort(agentId: string): Promise<ChatAbortResponse> {
 export const sendControlRequest = chatAbort;
 export const sendMessage = chatSend;
 
-export async function resetSession(sessionKey: string): Promise<void> {
+export async function resetSession(
+  sessionKey: string,
+  options?: ObserverRequestOptions
+): Promise<void> {
   const path = `/chat/sessions/${sessionKey}/reset`;
-  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path)}`, {
+  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, options)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
@@ -219,9 +257,12 @@ export async function resetSession(sessionKey: string): Promise<void> {
   }
 }
 
-export async function deleteSession(sessionKey: string): Promise<void> {
+export async function deleteSession(
+  sessionKey: string,
+  options?: ObserverRequestOptions
+): Promise<void> {
   const path = `/chat/sessions/${sessionKey}`;
-  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path)}`, {
+  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, options)}`, {
     method: 'DELETE',
     credentials: 'include',
   });

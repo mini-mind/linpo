@@ -67,6 +67,11 @@ export default function SessionPage(): JSX.Element {
 		}
 	}, [location.search, navigate, selectedAgentId, selectedInstanceId]);
 
+	useEffect(() => {
+		if (!selectedInstanceId) return;
+		setStoredCurrentInstanceId(selectedInstanceId);
+	}, [selectedInstanceId]);
+
 	const handleSelectInstance = (id: string): void => {
 		setStoredCurrentInstanceId(id);
 		navigate(
@@ -124,7 +129,11 @@ export default function SessionPage(): JSX.Element {
 					)}
 				</div>
 				{hasCanonicalSessionRoute ? (
-					<AgentWorkspace key={`${selectedInstanceId}:${selectedAgentId}`} />
+					<AgentWorkspace
+						key={`${selectedInstanceId}:${selectedAgentId}`}
+						instanceId={selectedInstanceId ?? undefined}
+						agentId={selectedAgentId ?? undefined}
+					/>
 				) : (
 					<div style={mobilePlaceholderStyle}>
 						<span style={mobilePlaceholderTextStyle}>
@@ -150,7 +159,11 @@ export default function SessionPage(): JSX.Element {
 				</div>
 				<div style={getRightPanelStyle()}>
 					{hasCanonicalSessionRoute ? (
-						<AgentWorkspace key={`${selectedInstanceId}:${selectedAgentId}`} />
+						<AgentWorkspace
+							key={`${selectedInstanceId}:${selectedAgentId}`}
+							instanceId={selectedInstanceId ?? undefined}
+							agentId={selectedAgentId ?? undefined}
+						/>
 					) : (
 						<div style={placeholderStyle}>
 							<span style={placeholderTextStyle}>选择一个实例开始对话</span>

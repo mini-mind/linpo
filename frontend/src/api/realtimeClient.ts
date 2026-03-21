@@ -1,3 +1,4 @@
+import { resolveCurrentInstanceId } from '../hooks/useCurrentInstance';
 import {
   type ObserverChannel,
   type ObserverRealtimeMessage,
@@ -15,6 +16,7 @@ export interface WebSocketLike {
 export interface ObserverRealtimeClientOptions {
   baseUrl?: string;
   dataSource: string;
+  instanceId?: string | null;
   channel: ObserverChannel;
   lastSeq?: number;
   onMessage: (message: ObserverRealtimeMessage) => void;
@@ -48,10 +50,18 @@ function resolveApiBaseUrl(overrideBaseUrl?: string): string {
   throw new Error('baseUrl is required when window is not available');
 }
 
-function toWebSocketUrl(apiBaseUrl: string, dataSource: string): string {
+function toWebSocketUrl(
+  apiBaseUrl: string,
+  dataSource: string,
+  instanceId?: string | null
+): string {
   const url = new URL(OBSERVER_WS_PATH, apiBaseUrl);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   url.searchParams.set('data_source', dataSource);
+  const resolvedInstanceId = resolveCurrentInstanceId(instanceId);
+  if (resolvedInstanceId) {
+    url.searchParams.set('instanceId', resolvedInstanceId);
+  }
   return url.toString();
 }
 
@@ -95,7 +105,9 @@ export function createObserverRealtimeClient(
     manuallyClosed = false;
     opened = false;
     closedBeforeOpen = false;
-    const ws = createWebSocket(toWebSocketUrl(apiBaseUrl, options.dataSource));
+    const ws = createWebSocket(
+      toWebSocketUrl(apiBaseUrl, options.dataSource, options.instanceId)
+    );
     socket = ws;
 
     ws.addEventListener('open', () => {

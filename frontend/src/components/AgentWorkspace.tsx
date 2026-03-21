@@ -38,6 +38,7 @@ type WorkspaceTab = "session" | "status" | "logs" | "files";
 
 interface AgentWorkspaceProps {
 	agentId?: string;
+	instanceId?: string;
 }
 
 interface RealtimeState {
@@ -331,8 +332,12 @@ const EVENT_TYPE_CN: Record<string, string> = {
 };
 
 export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
-	const { agentId: paramAgentId } = useParams<{ agentId: string }>();
+	const { agentId: paramAgentId, instanceId: paramInstanceId } = useParams<{
+		agentId: string;
+		instanceId?: string;
+	}>();
 	const agentId = props.agentId ?? paramAgentId;
+	const instanceId = props.instanceId ?? paramInstanceId ?? null;
 	const isMobile = useIsMobile();
 	const [agent, setAgent] = useState<AgentDetailResponse | null>(null);
 	const [loading, setLoading] = useState(true);
@@ -372,7 +377,9 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		let cancelled = false;
 		async function fetchSessionState(): Promise<void> {
 			try {
-				const { sessions: nextSessions } = await listSessions(agentId);
+				const { sessions: nextSessions } = await listSessions(agentId, {
+					instanceId,
+				});
 				if (!cancelled) {
 					setSessions(nextSessions);
 					setSelectedSessionKey((currentKey) =>
@@ -398,7 +405,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		return () => {
 			cancelled = true;
 		};
-	}, [activeTab, agentId]);
+	}, [activeTab, agentId, instanceId]);
 
 	const scrollToBottom = useCallback(() => {
 		setTimeout(() => {
@@ -421,7 +428,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		async function fetchPreview(): Promise<void> {
 			setPreviewLoading(true);
 			try {
-				const response = await previewSessions([sessionKey]);
+				const response = await previewSessions([sessionKey], { instanceId });
 				if (!cancelled) {
 					const nextItems = getPreviewItemsForSession(response, sessionKey);
 					setPreviewItems((previousItems) =>
@@ -447,7 +454,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		return () => {
 			cancelled = true;
 		};
-	}, [activeTab, selectedSessionKey, scrollToBottom]);
+	}, [activeTab, instanceId, selectedSessionKey, scrollToBottom]);
 
 	const refreshPreview = useCallback(
 		async (sessionKey: string | null = selectedSessionKey): Promise<void> => {
@@ -458,7 +465,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 			}
 			setPreviewLoading(true);
 			try {
-				const response = await previewSessions([sessionKey]);
+				const response = await previewSessions([sessionKey], { instanceId });
 				const nextItems = getPreviewItemsForSession(response, sessionKey);
 				setPreviewItems((previousItems) =>
 					arePreviewItemsEqual(previousItems, nextItems)
@@ -476,7 +483,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 				setPreviewLoading(false);
 			}
 		},
-		[selectedSessionKey, scrollToBottom],
+		[instanceId, selectedSessionKey, scrollToBottom],
 	);
 
 	useEffect(() => {
@@ -492,6 +499,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		const startSessionRealtime = (): void => {
 			const client = createObserverRealtimeClient({
 				dataSource: AGENT_DETAIL_REALTIME_DATA_SOURCE,
+				instanceId,
 				channel: buildSessionMessagesChannel(sessionKey),
 				onMessage: (message) => {
 					if (cancelled) return;
@@ -538,7 +546,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 			sessionRealtimeRef.current?.close();
 			sessionRealtimeRef.current = null;
 		};
-	}, [activeTab, selectedSessionKey, refreshPreview, scrollToBottom]);
+	}, [activeTab, instanceId, selectedSessionKey, refreshPreview, scrollToBottom]);
 
 	const handleSessionSelect = useCallback(
 		(sessionKey: string): void => {
@@ -567,8 +575,10 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 			try {
 				const handle = await startAgentDetailRealtime({
 					agentId: id,
-					getAgentDetailFn: getAgentDetail,
-					createRealtimeClientFn: createObserverRealtimeClient,
+					getAgentDetailFn: (currentAgentId) =>
+						getAgentDetail(currentAgentId, { instanceId }),
+					createRealtimeClientFn: (options) =>
+						createObserverRealtimeClient({ ...options, instanceId }),
 					applyAgent: (update) => {
 						if (cancelled) return;
 						setAgent((previousAgent) =>
@@ -594,7 +604,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 			cancelled = true;
 			realtimeHandle?.close();
 		};
-	}, [agentId]);
+	}, [agentId, instanceId]);
 
 	useEffect(() => {
 		if (!agentId || !agent) return;
@@ -606,7 +616,9 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		async function fetchNodeDetail(nodeId: string): Promise<void> {
 			setNodeDetailLoading(true);
 			try {
-				const detail = await getNodeDetail(currentAgentId, nodeId);
+				const detail = await getNodeDetail(currentAgentId, nodeId, {
+					instanceId,
+				});
 				if (!cancelled) setNodeDetail(detail);
 			} catch {
 			} finally {
@@ -618,7 +630,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		return () => {
 			cancelled = true;
 		};
-	}, [agentId, agent]);
+	}, [agentId, agent, instanceId]);
 
 	if (loading) {
 		return (

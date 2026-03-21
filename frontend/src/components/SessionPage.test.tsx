@@ -27,13 +27,19 @@ vi.mock("./AgentWorkspace", async () => {
 		);
 
 	return {
-		AgentWorkspace: () => {
+		AgentWorkspace: (props: {
+			agentId?: string;
+			instanceId?: string;
+		}) => {
 			const { agentId, instanceId } = reactRouterDom.useParams<{
 				agentId?: string;
 				instanceId?: string;
 			}>();
 			return (
-				<div>{`workspace:${instanceId ?? "none"}:${agentId ?? "none"}`}</div>
+				<div>
+					<div>{`workspace:${instanceId ?? "none"}:${agentId ?? "none"}`}</div>
+					<div>{`workspace-props:${props.instanceId ?? "none"}:${props.agentId ?? "none"}`}</div>
+				</div>
 			);
 		},
 	};
@@ -115,6 +121,24 @@ describe("SessionPage", () => {
 
 		expect(screen.getByText("Second Instance")).toBeInTheDocument();
 		expect(screen.getByText("workspace:inst-2:main")).toBeInTheDocument();
+	});
+
+	it("passes canonical route context to AgentWorkspace and syncs remembered instance", async () => {
+		window.localStorage.setItem("linpo.currentInstanceId", "inst-1");
+		listInstancesMock.mockResolvedValue([
+			buildInstance("inst-1", "First Instance"),
+			buildInstance("inst-2", "Second Instance"),
+		]);
+
+		renderSessionPage("/session/inst-2/main");
+
+		await waitFor(() => {
+			expect(screen.getByText("workspace-props:inst-2:main")).toBeInTheDocument();
+		});
+
+		await waitFor(() => {
+			expect(window.localStorage.getItem("linpo.currentInstanceId")).toBe("inst-2");
+		});
 	});
 
 	it("highlights the selected instance from canonical route", async () => {
