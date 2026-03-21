@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
 
+from app.api.aggregate import router as aggregate_router
 from app.api.agents import router as agents_router
 from app.api.auth import router as auth_router
 from app.api.instances import router as instances_router
@@ -65,6 +66,7 @@ async def add_http_cors_headers(
     return response
 
 
+app.include_router(aggregate_router)
 app.include_router(agents_router)
 app.include_router(auth_router)
 app.include_router(instances_router)

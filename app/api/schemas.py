@@ -174,3 +174,78 @@ class InstanceValidationErrorResponse(BaseModel):
 
 class InstanceDeleteResponse(BaseModel):
     deleted: bool
+
+
+class FreshnessInfo(BaseModel):
+    status: str
+    checked_at: str | None
+
+
+class AggregateInstanceDiagnostic(BaseModel):
+    instance_id: str
+    instance_name: str
+    status: str
+    code: str | None = None
+    message: str
+    recoverable: bool
+    next_step: str | None = None
+    freshness: FreshnessInfo
+
+
+class AggregateOverviewAgentItem(BaseModel):
+    instance_id: str
+    instance_name: str
+    agent_id: str
+    agent_name: str
+    status: AgentStatus
+    is_active: bool
+    last_active_at: str | None
+    drilldown_path: str
+
+
+class AggregateOverviewResponse(BaseModel):
+    request_id: str
+    freshness: FreshnessInfo
+    partial_failure: bool
+    diagnostics: list[AggregateInstanceDiagnostic]
+    agents: list[AggregateOverviewAgentItem]
+
+
+class AggregateTopologyInstanceItem(BaseModel):
+    node_id: str
+    instance_id: str
+    name: str
+    type: str
+    status: str
+    last_check_at: str | None
+    created_at: str
+
+
+class AggregateTopologyAgentItem(BaseModel):
+    node_id: str
+    instance_id: str
+    instance_name: str
+    agent_id: str
+    agent_name: str
+    status: AgentStatus
+    is_active: bool
+    last_active_at: str | None
+    drilldown_path: str
+
+
+class AggregateTopologyEdgeItem(BaseModel):
+    source: str
+    target: str
+    kind: str
+
+
+class AggregateTopologyResponse(BaseModel):
+    request_id: str
+    freshness: FreshnessInfo
+    partial_failure: bool
+    diagnostics: list[AggregateInstanceDiagnostic]
+    instances: list[AggregateTopologyInstanceItem]
+    agents: list[AggregateTopologyAgentItem]
+    edges: list[AggregateTopologyEdgeItem]
+    skills: list[Any]
+    external_acps: list[Any]
