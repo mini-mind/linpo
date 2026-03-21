@@ -1,12 +1,13 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import '@testing-library/jest-dom';
 import { render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
-import { Layout } from './Layout';
+import type React from 'react';
+import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { AuthProvider } from '../hooks/useAuth';
 import { ToastProvider } from '../hooks/useToast';
-import '@testing-library/jest-dom';
+import { Layout } from './Layout';
 
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
@@ -44,6 +45,7 @@ describe('Layout sidebar account area', () => {
             <AuthProvider>
               <Routes>
                 <Route element={<Layout />}>
+                  <Route path="/overview" element={<div>总览页内容</div>} />
                   <Route path="/topology" element={<div>拓扑页内容</div>} />
                   <Route path="/session" element={<div>会话页内容</div>} />
                   <Route path="/collab" element={<div>协作页内容</div>} />
@@ -306,7 +308,6 @@ describe('Layout sidebar account area', () => {
                 <Route element={<Layout />}>
                   <Route path="/overview" element={<div>总览页内容</div>} />
                   <Route path="/topology" element={<div>拓扑页内容</div>} />
-                  <Route path="/session" element={<div>会话页内容</div>} />
                 </Route>
               </Routes>
             </AuthProvider>
@@ -319,9 +320,10 @@ describe('Layout sidebar account area', () => {
 
     const topologyLink = screen.getAllByRole('link', { name: /拓扑/ })[0];
     expect(topologyLink).toHaveAttribute('href', '/topology');
+    expect(screen.queryByRole('link', { name: /会话/ })).not.toBeInTheDocument();
   });
 
-  it('shows overview as primary navigation entry', async () => {
+  it('shows overview and topology as the only primary navigation entries', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
       status: 200,
@@ -337,7 +339,6 @@ describe('Layout sidebar account area', () => {
                 <Route element={<Layout />}>
                   <Route path="/overview" element={<div>总览页内容</div>} />
                   <Route path="/topology" element={<div>拓扑页内容</div>} />
-                  <Route path="/session" element={<div>会话页内容</div>} />
                 </Route>
               </Routes>
             </AuthProvider>
@@ -349,7 +350,11 @@ describe('Layout sidebar account area', () => {
     await screen.findByText('testuser');
 
     const overviewLink = screen.getAllByRole('link', { name: /总览/ })[0];
+    const topologyLink = screen.getAllByRole('link', { name: /拓扑/ })[0];
+
     expect(overviewLink).toHaveAttribute('href', '/overview');
+    expect(topologyLink).toHaveAttribute('href', '/topology');
+    expect(screen.queryByRole('link', { name: /会话/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /协作/ })).not.toBeInTheDocument();
   });
 });

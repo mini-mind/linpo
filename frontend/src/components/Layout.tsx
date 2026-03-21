@@ -1,9 +1,13 @@
 import type React from 'react';
-import { useState } from 'react';
 import { Navigate, NavLink, Outlet } from 'react-router-dom';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { ToastProvider, useToast } from '../hooks/useToast';
 import { AccountMenu } from './AccountMenu';
+
+const PRIMARY_NAV_ITEMS = [
+  { to: '/overview', label: '总览', icon: '◌' },
+  { to: '/topology', label: '拓扑', icon: '◇' },
+];
 
 function ToastContainer(): JSX.Element {
   const { toasts, removeToast } = useToast();
@@ -29,28 +33,20 @@ function ToastContainer(): JSX.Element {
 
 export function Layout(): JSX.Element {
   const isMobile = useIsMobile();
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-
-  const navItems = [
-    { to: '/overview', label: '总览', icon: '◌' },
-    { to: '/topology', label: '拓扑', icon: '◇' },
-    { to: '/session', label: '会话', icon: '◉' },
-  ];
 
   return (
     <ToastProvider>
-      <>
+      <div style={layoutStyle}>
         <style>{toastAnimationStyle}</style>
-        <div style={layoutStyle}>
-          <ToastContainer />
-          {isMobile ? (
+        <ToastContainer />
+        {isMobile ? (
           // 移动端：底部导航栏
           <>
             <main style={mobileMainStyle}>
               <Outlet />
             </main>
             <nav style={mobileNavStyle}>
-              {navItems.map((item) => (
+              {PRIMARY_NAV_ITEMS.map((item) => (
                 <NavLink
                   key={item.to}
                   to={item.to}
@@ -70,7 +66,7 @@ export function Layout(): JSX.Element {
                 <span style={logoStyle}>灵</span>
               </div>
               <nav style={sidebarNavStyle}>
-                {navItems.map((item) => (
+                {PRIMARY_NAV_ITEMS.map((item) => (
                   <NavLink
                     key={item.to}
                     to={item.to}
@@ -90,7 +86,6 @@ export function Layout(): JSX.Element {
           </>
         )}
       </div>
-      </>
     </ToastProvider>
   );
 }
@@ -278,6 +273,6 @@ const toastAnimationStyle = `
   }
 `;
 
-export function RedirectToTopology(): JSX.Element {
-  return <Navigate to="/topology" replace />;
+export function RedirectToOverview(): JSX.Element {
+  return <Navigate to="/overview" replace />;
 }

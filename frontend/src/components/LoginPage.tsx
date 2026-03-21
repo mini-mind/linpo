@@ -1,6 +1,6 @@
 import type React from 'react';
-import { useState, useCallback } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useCallback, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
 
@@ -17,8 +17,7 @@ export function LoginPage(): JSX.Element {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
-  // Get redirect path from location state or default to /topology
-  const from = (location.state as { from?: { pathname?: string } })?.from?.pathname || '/topology';
+  const from = (location.state as { from?: { pathname?: string } })?.from?.pathname || '/overview';
 
   const handleModeToggle = useCallback(() => {
     setMode((prev) => (prev === 'login' ? 'register' : 'login'));

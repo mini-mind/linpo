@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import SessionPage from "./SessionPage";
+import SessionPage, { buildCanonicalSessionPath } from "./SessionPage";
 
 const listInstancesMock = vi.fn();
 
@@ -82,10 +82,20 @@ function renderSessionPage(initialEntry: string): void {
 	);
 }
 
-describe("SessionPage", () => {
+	describe("SessionPage", () => {
 	beforeEach(() => {
 		listInstancesMock.mockReset();
 		window.localStorage.clear();
+	});
+
+	it("buildCanonicalSessionPath returns the canonical drill-down shape", () => {
+		expect(buildCanonicalSessionPath("instance alpha")).toBe(
+			"/session/instance%20alpha/main",
+		);
+
+		expect(buildCanonicalSessionPath("instance alpha", "agent/beta", "?focus=active")).toBe(
+			"/session/instance%20alpha/agent%2Fbeta?focus=active",
+		);
 	});
 
 	it("upgrades legacy /session/:instanceId to canonical route and preserves query string", async () => {
@@ -98,7 +108,7 @@ describe("SessionPage", () => {
 
 		await waitFor(() => {
 			expect(screen.getByTestId("location-display")).toHaveTextContent(
-				"/session/inst-2/main?focus=active",
+				`${buildCanonicalSessionPath("inst-2")}?focus=active`,
 			);
 		});
 
@@ -175,7 +185,7 @@ describe("SessionPage", () => {
 
 		await waitFor(() => {
 			expect(screen.getByTestId("location-display")).toHaveTextContent(
-				"/session/inst-2/main?focus=active",
+				`${buildCanonicalSessionPath("inst-2")}?focus=active`,
 			);
 		});
 

@@ -2,7 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import CollabPage from "./components/CollabPage";
-import { Layout } from "./components/Layout";
+import { Layout, RedirectToOverview } from "./components/Layout";
 import { LoginPage } from "./components/LoginPage";
 import { OverviewPage } from "./components/OverviewPage";
 import SessionPage from "./components/SessionPage";
@@ -28,7 +28,7 @@ function App(): JSX.Element {
 						</Route>
 						<Route element={<ProtectedRoute />}>
 							<Route path="/" element={<Layout />}>
-								<Route index element={<Navigate to="/overview" replace />} />
+								<Route index element={<RedirectToOverview />} />
 								<Route path="overview" element={<OverviewPage />} />
 								<Route path="topology" element={<TopologyPage />} />
 								<Route path="session" element={<SessionPage />} />

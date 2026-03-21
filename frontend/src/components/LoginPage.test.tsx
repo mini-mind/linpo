@@ -1,15 +1,37 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import '@testing-library/jest-dom';
 import { render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { LoginPage } from './LoginPage';
+import { BrowserRouter, MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { AuthProvider } from '../hooks/useAuth';
 import { ToastProvider } from '../hooks/useToast';
-import { ProtectedRoute } from '../routes';
-import '@testing-library/jest-dom';
+import { ProtectedRoute, PublicRoute } from '../routes';
+import { LoginPage } from './LoginPage';
 
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
+
+function LocationDisplay() {
+  const location = useLocation();
+  return <div data-testid="location-display">{location.pathname}</div>;
+}
+
+function renderLoginPageWithMemoryRouter(initialEntry = '/login') {
+  return render(
+    <MemoryRouter initialEntries={[initialEntry]}>
+      <ToastProvider>
+        <AuthProvider>
+          <LocationDisplay />
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/overview" element={<div>overview-page</div>} />
+          </Routes>
+        </AuthProvider>
+      </ToastProvider>
+    </MemoryRouter>
+  );
+}
 
 describe('LoginPage auth flow', () => {
   beforeEach(() => {
@@ -63,23 +85,21 @@ describe('LoginPage auth flow', () => {
     expect(await screen.findByText('登录到灵盘')).toBeInTheDocument();
   });
 
-  it('calls login API on valid credentials', async () => {
+  it('calls login API and redirects to /overview on valid credentials', async () => {
     window.localStorage.setItem('linpo.currentInstanceId', 'stale-instance');
-    mockFetch.mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ id: 'user-1', username: 'alice' }),
-    });
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ detail: 'Unauthorized' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 'user-1', username: 'alice' }),
+      });
 
-    render(
-      <BrowserRouter>
-        <ToastProvider>
-          <AuthProvider>
-            <LoginPage />
-          </AuthProvider>
-        </ToastProvider>
-      </BrowserRouter>
-    );
+    renderLoginPageWithMemoryRouter();
 
     await screen.findByRole('button', { name: '登录' });
 
@@ -103,24 +123,26 @@ describe('LoginPage auth flow', () => {
     });
 
     expect(window.localStorage.getItem('linpo.currentInstanceId')).toBeNull();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location-display')).toHaveTextContent('/overview');
+    });
   });
 
-  it('calls register API on valid input', async () => {
-    mockFetch.mockResolvedValue({
-      ok: true,
-      status: 201,
-      json: async () => ({ id: 'user-1', username: 'bob' }),
-    });
+  it('calls register API and redirects to /overview on valid input', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ detail: 'Unauthorized' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        json: async () => ({ id: 'user-1', username: 'bob' }),
+      });
 
-    render(
-      <BrowserRouter>
-        <ToastProvider>
-          <AuthProvider>
-            <LoginPage />
-          </AuthProvider>
-        </ToastProvider>
-      </BrowserRouter>
-    );
+    renderLoginPageWithMemoryRouter();
 
     const registerLink = await screen.findByText('注册新账号');
     await userEvent.click(registerLink);
@@ -144,6 +166,10 @@ describe('LoginPage auth flow', () => {
           body: JSON.stringify({ username: 'bob', password: 'password123' }),
         })
       );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location-display')).toHaveTextContent('/overview');
     });
   });
 
@@ -282,5 +308,36 @@ describe('Route guarding', () => {
     render(<App />);
 
     expect(await screen.findByText('欢迎, alice')).toBeInTheDocument();
+  });
+
+  it('redirects authenticated users from /login to /overview by default', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'user-1', username: 'alice' }),
+    });
+
+    function App() {
+      return (
+        <ToastProvider>
+          <AuthProvider>
+            <MemoryRouter initialEntries={['/login']}>
+              <LocationDisplay />
+              <Routes>
+                <Route element={<PublicRoute />}>
+                  <Route path="/login" element={<LoginPage />} />
+                </Route>
+                <Route path="/overview" element={<div>总览页内容</div>} />
+              </Routes>
+            </MemoryRouter>
+          </AuthProvider>
+        </ToastProvider>
+      );
+    }
+
+    render(<App />);
+
+    expect(await screen.findByText('总览页内容')).toBeInTheDocument();
+    expect(screen.getByTestId('location-display')).toHaveTextContent('/overview');
   });
 });

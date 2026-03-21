@@ -1,5 +1,5 @@
 import type React from "react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { listInstances } from "../api/instanceClient";
 import type { InstanceItem } from "../api/types";
@@ -32,6 +32,11 @@ export default function SessionPage(): JSX.Element {
 	const [instancesError, setInstancesError] = useState<string | null>(null);
 	const selectedInstanceId = instanceId ?? null;
 	const selectedAgentId = agentId ?? null;
+	const getCanonicalSessionPath = useCallback(
+		(nextInstanceId: string, nextAgentId = DEFAULT_SESSION_AGENT_ID): string =>
+			buildCanonicalSessionPath(nextInstanceId, nextAgentId, location.search),
+		[location.search],
+	);
 	const hasCanonicalSessionRoute = Boolean(
 		selectedInstanceId && selectedAgentId,
 	);
@@ -56,16 +61,9 @@ export default function SessionPage(): JSX.Element {
 
 	useEffect(() => {
 		if (selectedInstanceId && !selectedAgentId) {
-			navigate(
-				buildCanonicalSessionPath(
-					selectedInstanceId,
-					DEFAULT_SESSION_AGENT_ID,
-					location.search,
-				),
-				{ replace: true },
-			);
+			navigate(getCanonicalSessionPath(selectedInstanceId), { replace: true });
 		}
-	}, [location.search, navigate, selectedAgentId, selectedInstanceId]);
+	}, [getCanonicalSessionPath, navigate, selectedAgentId, selectedInstanceId]);
 
 	useEffect(() => {
 		if (!selectedInstanceId) return;
@@ -74,9 +72,7 @@ export default function SessionPage(): JSX.Element {
 
 	const handleSelectInstance = (id: string): void => {
 		setStoredCurrentInstanceId(id);
-		navigate(
-			buildCanonicalSessionPath(id, DEFAULT_SESSION_AGENT_ID, location.search),
-		);
+		navigate(getCanonicalSessionPath(id));
 	};
 
 	const handleMobileSelect = (
@@ -85,13 +81,7 @@ export default function SessionPage(): JSX.Element {
 		const selectedId = e.target.value;
 		if (selectedId) {
 			setStoredCurrentInstanceId(selectedId);
-			navigate(
-				buildCanonicalSessionPath(
-					selectedId,
-					DEFAULT_SESSION_AGENT_ID,
-					location.search,
-				),
-			);
+			navigate(getCanonicalSessionPath(selectedId));
 		}
 	};
 

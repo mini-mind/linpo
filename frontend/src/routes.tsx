@@ -33,7 +33,7 @@ export function PublicRoute(): JSX.Element {
   }
 
   if (user) {
-    const from = (location.state as { from?: { pathname?: string } })?.from?.pathname || '/topology';
+    const from = (location.state as { from?: { pathname?: string } })?.from?.pathname || '/overview';
     return <Navigate to={from} replace />;
   }
 
