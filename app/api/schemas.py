@@ -181,15 +181,24 @@ class FreshnessInfo(BaseModel):
     checked_at: str | None
 
 
+class ErrorEnvelope(BaseModel):
+    code: str
+    message: str
+    request_id: str
+    recoverable: bool
+    next_step: str | None = None
+
+
+class ErrorResponse(BaseModel):
+    error: ErrorEnvelope
+
+
 class AggregateInstanceDiagnostic(BaseModel):
     instance_id: str
     instance_name: str
     status: str
-    code: str | None = None
-    message: str
-    recoverable: bool
-    next_step: str | None = None
     freshness: FreshnessInfo
+    error: ErrorEnvelope | None = None
 
 
 class AggregateOverviewAgentItem(BaseModel):

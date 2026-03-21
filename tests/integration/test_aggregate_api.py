@@ -140,6 +140,23 @@ class FakeObserverDataSource:
         return list(self._agents)
 
 
+def _assert_error_envelope(
+    payload: dict[str, Any],
+    *,
+    code: str,
+    message: str,
+    recoverable: bool,
+    next_step: str | None,
+) -> str:
+    error = cast(dict[str, Any], payload["error"])
+    assert error["code"] == code
+    assert error["message"] == message
+    assert error["recoverable"] is recoverable
+    assert error["next_step"] == next_step
+    assert isinstance(error["request_id"], str) and error["request_id"]
+    return cast(str, error["request_id"])
+
+
 @pytest.fixture(autouse=True)
 def reset_db_session_caches() -> Iterator[None]:
     db_session.get_engine.cache_clear()
@@ -182,7 +199,14 @@ def test_aggregate_routes_require_authentication(
     status_code, _, body = request("GET", path)
 
     assert status_code == 401
-    assert json.loads(body.decode("utf-8")) == {"detail": "Unauthorized"}
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    _assert_error_envelope(
+        payload,
+        code="unauthorized",
+        message="Unauthorized",
+        recoverable=True,
+        next_step="重新登录后重试",
+    )
 
 
 def test_overview_returns_aggregated_agents_with_request_id_freshness_and_diagnostics(
@@ -258,27 +282,21 @@ def test_overview_returns_aggregated_agents_with_request_id_freshness_and_diagno
             "instance_id": alpha["id"],
             "instance_name": "alpha-instance",
             "status": "ok",
-            "code": None,
-            "message": "ok",
-            "recoverable": False,
-            "next_step": None,
             "freshness": {
                 "status": "fresh",
                 "checked_at": alpha["last_check_at"],
             },
+            "error": None,
         },
         {
             "instance_id": beta["id"],
             "instance_name": "beta-instance",
             "status": "ok",
-            "code": None,
-            "message": "ok",
-            "recoverable": False,
-            "next_step": None,
             "freshness": {
                 "status": "fresh",
                 "checked_at": beta["last_check_at"],
             },
+            "error": None,
         },
     ]
     assert payload["agents"] == [
@@ -384,27 +402,27 @@ def test_overview_exposes_partial_failure_without_fake_empty_success(
             "instance_id": failing["id"],
             "instance_name": "failing-instance",
             "status": "failed",
-            "code": "source_unavailable",
-            "message": "OpenClaw upstream unavailable",
-            "recoverable": True,
-            "next_step": "检查实例连通性或网关 token 后重试",
             "freshness": {
                 "status": "failed",
                 "checked_at": failing["last_check_at"],
+            },
+            "error": {
+                "code": "source_unavailable",
+                "message": "OpenClaw upstream unavailable",
+                "request_id": payload["request_id"],
+                "recoverable": True,
+                "next_step": "检查实例连通性或网关 token 后重试",
             },
         },
         {
             "instance_id": healthy["id"],
             "instance_name": "healthy-instance",
             "status": "ok",
-            "code": None,
-            "message": "ok",
-            "recoverable": False,
-            "next_step": None,
             "freshness": {
                 "status": "fresh",
                 "checked_at": healthy["last_check_at"],
             },
+            "error": None,
         },
     ]
 
@@ -453,26 +471,32 @@ def test_overview_returns_failed_freshness_when_all_instances_fail(
             "instance_id": first["id"],
             "instance_name": "first-instance",
             "status": "failed",
-            "code": "source_unavailable",
-            "message": "First upstream unavailable",
-            "recoverable": True,
-            "next_step": "检查实例连通性或网关 token 后重试",
             "freshness": {
                 "status": "failed",
                 "checked_at": first["last_check_at"],
+            },
+            "error": {
+                "code": "source_unavailable",
+                "message": "First upstream unavailable",
+                "request_id": payload["request_id"],
+                "recoverable": True,
+                "next_step": "检查实例连通性或网关 token 后重试",
             },
         },
         {
             "instance_id": second["id"],
             "instance_name": "second-instance",
             "status": "failed",
-            "code": "source_error",
-            "message": "Second upstream throttled",
-            "recoverable": True,
-            "next_step": "检查实例连通性或网关 token 后重试",
             "freshness": {
                 "status": "failed",
                 "checked_at": second["last_check_at"],
+            },
+            "error": {
+                "code": "source_error",
+                "message": "Second upstream throttled",
+                "request_id": payload["request_id"],
+                "recoverable": True,
+                "next_step": "检查实例连通性或网关 token 后重试",
             },
         },
     ]
@@ -526,14 +550,11 @@ def test_topology_returns_relationships_and_empty_skill_acp_arrays(
             "instance_id": alpha["id"],
             "instance_name": "alpha-instance",
             "status": "ok",
-            "code": None,
-            "message": "ok",
-            "recoverable": False,
-            "next_step": None,
             "freshness": {
                 "status": "fresh",
                 "checked_at": alpha["last_check_at"],
             },
+            "error": None,
         }
     ]
     assert payload["instances"] == [

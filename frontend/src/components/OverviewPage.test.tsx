@@ -32,21 +32,18 @@ const aggregateOverviewFixture = {
 		checked_at: "2026-03-22T12:00:00Z",
 	},
 	partial_failure: false,
-	diagnostics: [
-		{
-			instance_id: "instance-alpha",
-			instance_name: "alpha-instance",
-			status: "ok",
-			code: null,
-			message: "ok",
-			recoverable: false,
-			next_step: null,
-			freshness: {
-				status: "fresh",
-				checked_at: "2026-03-22T12:00:00Z",
+		diagnostics: [
+			{
+				instance_id: "instance-alpha",
+				instance_name: "alpha-instance",
+				status: "ok",
+				freshness: {
+					status: "fresh",
+					checked_at: "2026-03-22T12:00:00Z",
+				},
+				error: null,
 			},
-		},
-	],
+		],
 	agents: [
 		{
 			instance_id: "instance-alpha",
@@ -78,34 +75,34 @@ const degradedOverviewFixture = {
 		checked_at: "2026-03-22T11:55:00Z",
 	},
 	partial_failure: true,
-	diagnostics: [
-		{
-			instance_id: "instance-failing",
-			instance_name: "failing-instance",
-			status: "failed",
-			code: "source_unavailable",
-			message: "OpenClaw upstream unavailable",
-			recoverable: true,
-			next_step: "检查实例连通性或网关 token 后重试",
-			freshness: {
+		diagnostics: [
+			{
+				instance_id: "instance-failing",
+				instance_name: "failing-instance",
 				status: "failed",
-				checked_at: "2026-03-22T11:50:00Z",
+				freshness: {
+					status: "failed",
+					checked_at: "2026-03-22T11:50:00Z",
+				},
+				error: {
+					code: "source_unavailable",
+					message: "OpenClaw upstream unavailable",
+					request_id: "req-overview-2",
+					recoverable: true,
+					next_step: "检查实例连通性或网关 token 后重试",
+				},
 			},
-		},
-		{
-			instance_id: "instance-healthy",
-			instance_name: "healthy-instance",
-			status: "ok",
-			code: null,
-			message: "ok",
-			recoverable: false,
-			next_step: null,
-			freshness: {
-				status: "fresh",
-				checked_at: "2026-03-22T11:55:00Z",
+			{
+				instance_id: "instance-healthy",
+				instance_name: "healthy-instance",
+				status: "ok",
+				freshness: {
+					status: "fresh",
+					checked_at: "2026-03-22T11:55:00Z",
+				},
+				error: null,
 			},
-		},
-	],
+		],
 	agents: [
 		{
 			instance_id: "instance-healthy",
@@ -127,21 +124,18 @@ const zeroAgentOverviewFixture = {
 		checked_at: "2026-03-22T12:05:00Z",
 	},
 	partial_failure: false,
-	diagnostics: [
-		{
-			instance_id: "instance-empty",
-			instance_name: "empty-instance",
-			status: "ok",
-			code: null,
-			message: "ok",
-			recoverable: false,
-			next_step: null,
-			freshness: {
-				status: "fresh",
-				checked_at: "2026-03-22T12:05:00Z",
+		diagnostics: [
+			{
+				instance_id: "instance-empty",
+				instance_name: "empty-instance",
+				status: "ok",
+				freshness: {
+					status: "fresh",
+					checked_at: "2026-03-22T12:05:00Z",
+				},
+				error: null,
 			},
-		},
-	],
+		],
 	agents: [],
 };
 
@@ -193,11 +187,15 @@ describe("OverviewPage", () => {
 		});
 
 		expect(screen.getByText("聚合 freshness")).toBeInTheDocument();
-		expect(screen.getByText("stale")).toBeInTheDocument();
+		expect(screen.getByText("stale · 2026-03-22T11:55:00Z")).toBeInTheDocument();
 		expect(screen.getByText("failing-instance")).toBeInTheDocument();
 		expect(
 			screen.getByText("OpenClaw upstream unavailable"),
 		).toBeInTheDocument();
+		expect(screen.getByText("code · source_unavailable")).toBeInTheDocument();
+		expect(screen.getByText("request_id · req-overview-2")).toBeInTheDocument();
+		expect(screen.getByText("recoverable · true")).toBeInTheDocument();
+		expect(screen.getByText("checked_at · 2026-03-22T11:50:00Z")).toBeInTheDocument();
 		expect(
 			screen.getByText("检查实例连通性或网关 token 后重试"),
 		).toBeInTheDocument();

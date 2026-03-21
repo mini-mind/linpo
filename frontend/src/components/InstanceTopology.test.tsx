@@ -48,34 +48,34 @@ const aggregateTopologyFixture = {
 		checked_at: "2026-03-22T12:05:00Z",
 	},
 	partial_failure: false,
-	diagnostics: [
-		{
-			instance_id: "instance-alpha",
-			instance_name: "alpha-instance",
-			status: "ok",
-			code: null,
-			message: "ok",
-			recoverable: false,
-			next_step: null,
-			freshness: {
-				status: "fresh",
-				checked_at: "2026-03-22T12:05:00Z",
+		diagnostics: [
+			{
+				instance_id: "instance-alpha",
+				instance_name: "alpha-instance",
+				status: "ok",
+				freshness: {
+					status: "fresh",
+					checked_at: "2026-03-22T12:05:00Z",
+				},
+				error: null,
 			},
-		},
-		{
-			instance_id: "instance-empty",
-			instance_name: "empty-instance",
-			status: "ok",
-			code: null,
-			message: "ok",
-			recoverable: false,
-			next_step: null,
-			freshness: {
-				status: "stale",
-				checked_at: "2026-03-22T11:20:00Z",
+			{
+				instance_id: "instance-empty",
+				instance_name: "empty-instance",
+				status: "failed",
+				freshness: {
+					status: "stale",
+					checked_at: "2026-03-22T11:20:00Z",
+				},
+				error: {
+					code: "source_unavailable",
+					message: "OpenClaw upstream unavailable",
+					request_id: "req-topology-1",
+					recoverable: true,
+					next_step: "检查实例连通性或网关 token 后重试",
+				},
 			},
-		},
-	],
+		],
 	instances: [
 		{
 			node_id: "instance:instance-alpha",
@@ -154,6 +154,7 @@ describe("InstanceTopology", () => {
 		expect(
 			screen.getByRole("link", { name: "进入 agent Alpha Agent" }),
 		).toHaveAttribute("href", "/session/instance-alpha/agent-alpha");
+		expect(screen.getByText("fresh · 2026-03-22T12:05:00Z")).toBeInTheDocument();
 	});
 
 	it("shows explicit 未暴露 sections and disables instance enter when no drill-down exists", async () => {
@@ -170,6 +171,11 @@ describe("InstanceTopology", () => {
 		expect(
 			screen.getByRole("button", { name: "进入实例 empty-instance" }),
 		).toBeDisabled();
+		expect(screen.getByText("OpenClaw upstream unavailable")).toBeInTheDocument();
+		expect(screen.getByText("code · source_unavailable")).toBeInTheDocument();
+		expect(screen.getByText("request_id · req-topology-1")).toBeInTheDocument();
+		expect(screen.getByText("recoverable · true")).toBeInTheDocument();
+		expect(screen.getByText("checked_at · 2026-03-22T11:20:00Z")).toBeInTheDocument();
 	});
 
 	it("reuses the instance config modal from topology actions", async () => {

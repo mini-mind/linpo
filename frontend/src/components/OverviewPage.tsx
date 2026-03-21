@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { getAggregateOverview } from "../api/client";
 import type {
+	AggregateInstanceDiagnostic,
 	AggregateOverviewAgentItem,
 	AggregateOverviewResponse,
 } from "../api/types";
@@ -82,7 +83,7 @@ export function OverviewPage(): JSX.Element {
 					<div style={summaryItemStyle}>
 						<span style={summaryLabelStyle}>聚合 freshness</span>
 						<strong style={summaryValueStyle}>
-							{overview.freshness.status}
+							{formatFreshnessSummary(overview.freshness.status, overview.freshness.checked_at)}
 						</strong>
 					</div>
 					<div style={summaryItemStyle}>
@@ -111,13 +112,36 @@ export function OverviewPage(): JSX.Element {
 									<span style={diagnosticNameStyle}>
 										{diagnostic.instance_name}
 									</span>
-									<span style={getDiagnosticBadgeStyle(diagnostic.status)}>
-										{diagnostic.freshness.status}
-									</span>
+									<div style={diagnosticBadgeGroupStyle}>
+										<span style={getDiagnosticBadgeStyle(diagnostic.status)}>
+											{diagnostic.status}
+										</span>
+										<span style={getDiagnosticBadgeStyle(diagnostic.freshness.status)}>
+											{diagnostic.freshness.status}
+										</span>
+									</div>
 								</div>
-								<p style={diagnosticMessageStyle}>{diagnostic.message}</p>
-								{diagnostic.next_step ? (
-									<p style={diagnosticHintStyle}>{diagnostic.next_step}</p>
+								<p style={diagnosticMessageStyle}>{getDiagnosticMessage(diagnostic)}</p>
+								<div style={diagnosticMetaListStyle}>
+									<p style={diagnosticMetaStyle}>
+										checked_at · {diagnostic.freshness.checked_at ?? "未提供"}
+									</p>
+									{diagnostic.error ? (
+										<>
+											<p style={diagnosticMetaStyle}>code · {diagnostic.error.code}</p>
+											<p style={diagnosticMetaStyle}>
+												request_id · {diagnostic.error.request_id}
+											</p>
+											<p style={diagnosticMetaStyle}>
+												recoverable · {String(diagnostic.error.recoverable)}
+											</p>
+										</>
+									) : (
+										<p style={diagnosticMetaStyle}>code · ok</p>
+									)}
+								</div>
+								{diagnostic.error?.next_step ? (
+									<p style={diagnosticHintStyle}>{diagnostic.error.next_step}</p>
 								) : null}
 							</div>
 						))}
@@ -188,6 +212,14 @@ function AgentCard({ agent }: { agent: AggregateOverviewAgentItem }): JSX.Elemen
 
 function isWatchlistAgent(agent: AggregateOverviewAgentItem): boolean {
 	return agent.status === "error" || !agent.is_active;
+}
+
+function formatFreshnessSummary(status: string, checkedAt: string | null): string {
+	return checkedAt ? `${status} · ${checkedAt}` : status;
+}
+
+function getDiagnosticMessage(diagnostic: AggregateInstanceDiagnostic): string {
+	return diagnostic.error?.message ?? "状态稳定";
 }
 
 function getStatusLabel(agent: AggregateOverviewAgentItem): string {
@@ -473,19 +505,29 @@ const diagnosticHeaderStyle: React.CSSProperties = {
 	gap: "0.75rem",
 };
 
+const diagnosticBadgeGroupStyle: React.CSSProperties = {
+	display: "flex",
+	gap: "0.375rem",
+	flexWrap: "wrap",
+	justifyContent: "flex-end",
+};
+
 const diagnosticNameStyle: React.CSSProperties = {
 	fontSize: "0.9rem",
 	fontWeight: 600,
 	color: "#1f2933",
 };
 
-function getDiagnosticBadgeStyle(status: "ok" | "failed"): React.CSSProperties {
+
+function getDiagnosticBadgeStyle(status: string): React.CSSProperties {
+	const isFailed = status === "failed";
+	const isFresh = status === "fresh" || status === "ok";
 	return {
 		fontSize: "0.75rem",
 		padding: "0.125rem 0.5rem",
 		borderRadius: "999px",
-		background: status === "failed" ? "#fef3c7" : "#ecfdf5",
-		color: status === "failed" ? "#92400e" : "#166534",
+		background: isFailed ? "#fef3c7" : isFresh ? "#ecfdf5" : "#eff6ff",
+		color: isFailed ? "#92400e" : isFresh ? "#166534" : "#1d4ed8",
 		fontWeight: 600,
 	};
 }
@@ -494,6 +536,19 @@ const diagnosticMessageStyle: React.CSSProperties = {
 	margin: 0,
 	fontSize: "0.875rem",
 	color: "#1f2933",
+};
+
+const diagnosticMetaListStyle: React.CSSProperties = {
+	display: "flex",
+	flexDirection: "column",
+	gap: "0.25rem",
+};
+
+const diagnosticMetaStyle: React.CSSProperties = {
+	margin: 0,
+	fontSize: "0.75rem",
+	color: "#6b7280",
+	fontFamily: 'ui-monospace, SFMono-Regular, "SFMono-Regular", Consolas, monospace',
 };
 
 const diagnosticHintStyle: React.CSSProperties = {

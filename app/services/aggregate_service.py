@@ -16,6 +16,7 @@ from app.api.schemas import (
     AggregateTopologyEdgeItem,
     AggregateTopologyInstanceItem,
     AggregateTopologyResponse,
+    ErrorEnvelope,
     FreshnessInfo,
 )
 from app.db.models import Instance
@@ -37,11 +38,16 @@ class AggregateService:
         self._instance_service = instance_service or InstanceService()
 
     def get_overview(self, db_session: Session, *, user_id: UUID) -> AggregateOverviewResponse:
-        snapshots = self._collect_instance_snapshots(db_session, user_id=user_id)
+        request_id = str(uuid4())
+        snapshots = self._collect_instance_snapshots(
+            db_session,
+            user_id=user_id,
+            request_id=request_id,
+        )
         diagnostics = [item.diagnostic for item in snapshots]
 
         return AggregateOverviewResponse(
-            request_id=str(uuid4()),
+            request_id=request_id,
             freshness=self._aggregate_freshness(diagnostics),
             partial_failure=any(item.status == "failed" for item in diagnostics),
             diagnostics=diagnostics,
@@ -62,11 +68,16 @@ class AggregateService:
         )
 
     def get_topology(self, db_session: Session, *, user_id: UUID) -> AggregateTopologyResponse:
-        snapshots = self._collect_instance_snapshots(db_session, user_id=user_id)
+        request_id = str(uuid4())
+        snapshots = self._collect_instance_snapshots(
+            db_session,
+            user_id=user_id,
+            request_id=request_id,
+        )
         diagnostics = [item.diagnostic for item in snapshots]
 
         return AggregateTopologyResponse(
-            request_id=str(uuid4()),
+            request_id=request_id,
             freshness=self._aggregate_freshness(diagnostics),
             partial_failure=any(item.status == "failed" for item in diagnostics),
             diagnostics=diagnostics,
@@ -117,6 +128,7 @@ class AggregateService:
         db_session: Session,
         *,
         user_id: UUID,
+        request_id: str,
     ) -> list[InstanceAggregateSnapshot]:
         snapshots: list[InstanceAggregateSnapshot] = []
 
@@ -133,7 +145,7 @@ class AggregateService:
                 diagnostic = self._success_diagnostic(instance)
             except Exception as exc:
                 agents = []
-                diagnostic = self._failure_diagnostic(instance, exc)
+                diagnostic = self._failure_diagnostic(instance, exc, request_id=request_id)
 
             snapshots.append(
                 InstanceAggregateSnapshot(
@@ -175,14 +187,17 @@ class AggregateService:
             instance_id=str(instance.id),
             instance_name=instance.name,
             status="ok",
-            code=None,
-            message="ok",
-            recoverable=False,
-            next_step=None,
             freshness=FreshnessInfo(status=freshness_status, checked_at=checked_at),
+            error=None,
         )
 
-    def _failure_diagnostic(self, instance: Instance, exc: Exception) -> AggregateInstanceDiagnostic:
+    def _failure_diagnostic(
+        self,
+        instance: Instance,
+        exc: Exception,
+        *,
+        request_id: str,
+    ) -> AggregateInstanceDiagnostic:
         message = str(exc)
         code = "internal_error"
 
@@ -191,7 +206,10 @@ class AggregateService:
                 message = exc.detail
             elif exc.detail is not None:
                 message = str(exc.detail)
-            if exc.status_code >= 500:
+            message_lower = message.lower()
+            if "token" in message_lower:
+                code = "auth_failed"
+            elif exc.status_code >= 500:
                 code = "source_unavailable"
             else:
                 code = "source_error"
@@ -200,13 +218,16 @@ class AggregateService:
             instance_id=str(instance.id),
             instance_name=instance.name,
             status="failed",
-            code=code,
-            message=message,
-            recoverable=True,
-            next_step="检查实例连通性或网关 token 后重试",
             freshness=FreshnessInfo(
                 status="failed",
                 checked_at=self._iso_or_none(cast(datetime | None, instance.last_check_at)),
+            ),
+            error=ErrorEnvelope(
+                code=code,
+                message=message,
+                request_id=request_id,
+                recoverable=True,
+                next_step="检查实例连通性或网关 token 后重试",
             ),
         )
 

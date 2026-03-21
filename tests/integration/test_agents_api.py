@@ -7,6 +7,23 @@ from ._asgi import request
 from typing import Any, cast
 
 
+def _assert_error_envelope(
+    payload: dict[str, Any],
+    *,
+    code: str,
+    message: str,
+    recoverable: bool,
+    next_step: str | None,
+) -> str:
+    error = cast(dict[str, Any], payload["error"])
+    assert error["code"] == code
+    assert error["message"] == message
+    assert error["recoverable"] is recoverable
+    assert error["next_step"] == next_step
+    assert isinstance(error["request_id"], str) and error["request_id"]
+    return cast(str, error["request_id"])
+
+
 def test_get_agents_returns_minimal_observer_list() -> None:
     status_code, _, body = request("GET", "/agents")
 
@@ -40,7 +57,13 @@ def test_chat_send_requires_openclaw_data_source() -> None:
 
     assert status_code == 503
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    assert payload == {"detail": "chat.send is only available with the OpenClaw data source"}
+    _assert_error_envelope(
+        payload,
+        code="unsupported_data_source",
+        message="chat.send is only available with the OpenClaw data source",
+        recoverable=True,
+        next_step="切换到 openclaw data_source 后重试",
+    )
 
 
 def test_chat_send_rejects_empty_message() -> None:
@@ -53,7 +76,13 @@ def test_chat_send_rejects_empty_message() -> None:
 
     assert status_code == 400
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    assert payload == {"detail": "Message cannot be empty"}
+    _assert_error_envelope(
+        payload,
+        code="invalid_request",
+        message="Message cannot be empty",
+        recoverable=True,
+        next_step="修正请求参数后重试",
+    )
 
 
 def test_chat_send_requires_session_key() -> None:
@@ -66,7 +95,13 @@ def test_chat_send_requires_session_key() -> None:
 
     assert status_code == 400
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    assert payload == {"detail": "sessionKey is required"}
+    _assert_error_envelope(
+        payload,
+        code="invalid_request",
+        message="sessionKey is required",
+        recoverable=True,
+        next_step="修正请求参数后重试",
+    )
 
 
 def test_chat_send_returns_accepted_status(monkeypatch: Any) -> None:
@@ -167,6 +202,7 @@ def test_chat_send_returns_failed_status_on_error(monkeypatch: Any) -> None:
             message: str,
         ) -> AgentControlResult:
             assert session_key == "agent:main:main"
+            assert message == "test message"
             return AgentControlResult(
                 request_id="send-msg-test-failed",
                 agent_id=agent_id,
@@ -202,7 +238,13 @@ def test_chat_abort_requires_openclaw_data_source() -> None:
 
     assert status_code == 503
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    assert payload == {"detail": "chat.abort is only available with the OpenClaw data source"}
+    _assert_error_envelope(
+        payload,
+        code="unsupported_data_source",
+        message="chat.abort is only available with the OpenClaw data source",
+        recoverable=True,
+        next_step="切换到 openclaw data_source 后重试",
+    )
 
 
 def test_chat_abort_returns_aborted_status(monkeypatch: Any) -> None:
@@ -223,7 +265,7 @@ def test_chat_abort_returns_aborted_status(monkeypatch: Any) -> None:
 
     class FakeDataSource:
         def register_pending_control_request(self, *args: object, **kwargs: object) -> None:
-            pass
+            del args, kwargs
 
     monkeypatch.setattr(agents_api, "get_openclaw_operator_service", lambda: FakeOperatorService())
     monkeypatch.setattr(agents_api, "get_observer_data_source", lambda _: FakeDataSource())
@@ -298,7 +340,13 @@ def test_openclaw_data_source_errors_are_reported_explicitly() -> None:
 
     assert status_code == 503
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    assert payload == {"detail": "OpenClaw data source is not configured"}
+    _assert_error_envelope(
+        payload,
+        code="source_unavailable",
+        message="OpenClaw data source is not configured",
+        recoverable=True,
+        next_step="检查实例连通性或网关 token 后重试",
+    )
 
 
 def test_openclaw_handshake_errors_are_reported_explicitly() -> None:
@@ -327,8 +375,16 @@ def test_openclaw_handshake_errors_are_reported_explicitly() -> None:
 
     assert status_code == 503
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    assert "OpenClaw" in payload["detail"]
-    assert "token" in payload["detail"].lower()
+    request_id = _assert_error_envelope(
+        payload,
+        code="auth_failed",
+        message=cast(str, payload["error"]["message"]),
+        recoverable=True,
+        next_step="检查实例连通性或网关 token 后重试",
+    )
+    assert request_id
+    assert "OpenClaw" in payload["error"]["message"]
+    assert "token" in cast(str, payload["error"]["message"]).lower()
 
 
 def test_openclaw_list_agents_returns_real_snapshot_data() -> None:
@@ -568,7 +624,13 @@ def test_list_sessions_requires_openclaw_data_source() -> None:
     status_code, _, body = request("GET", "/chat/sessions")
     assert status_code == 503
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    assert payload == {"detail": "sessions.list is only available with the OpenClaw data source"}
+    _assert_error_envelope(
+        payload,
+        code="unsupported_data_source",
+        message="sessions.list is only available with the OpenClaw data source",
+        recoverable=True,
+        next_step="切换到 openclaw data_source 后重试",
+    )
 
 
 def test_list_sessions_returns_sessions_list(monkeypatch: Any) -> None:
@@ -576,6 +638,7 @@ def test_list_sessions_returns_sessions_list(monkeypatch: Any) -> None:
 
     class FakeClient:
         def sessions_list(self, **kwargs: Any) -> dict[str, Any]:
+            del kwargs
             return {
                 "ok": True,
                 "payload": {
@@ -619,7 +682,13 @@ def test_preview_sessions_requires_openclaw_data_source() -> None:
     status_code, _, body = request("GET", "/chat/sessions/preview?keys=agent:main:main")
     assert status_code == 503
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    assert payload == {"detail": "sessions.preview is only available with the OpenClaw data source"}
+    _assert_error_envelope(
+        payload,
+        code="unsupported_data_source",
+        message="sessions.preview is only available with the OpenClaw data source",
+        recoverable=True,
+        next_step="切换到 openclaw data_source 后重试",
+    )
 
 
 def test_preview_sessions_returns_message_previews(monkeypatch: Any) -> None:
@@ -693,7 +762,13 @@ def test_list_models_requires_openclaw_data_source() -> None:
     status_code, _, body = request("GET", "/chat/models")
     assert status_code == 503
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    assert payload == {"detail": "models.list is only available with the OpenClaw data source"}
+    _assert_error_envelope(
+        payload,
+        code="unsupported_data_source",
+        message="models.list is only available with the OpenClaw data source",
+        recoverable=True,
+        next_step="切换到 openclaw data_source 后重试",
+    )
 
 
 def test_list_models_returns_available_models(monkeypatch: Any) -> None:
@@ -743,7 +818,13 @@ def test_patch_session_requires_openclaw_data_source() -> None:
     )
     assert status_code == 503
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    assert payload == {"detail": "sessions.patch is only available with the OpenClaw data source"}
+    _assert_error_envelope(
+        payload,
+        code="unsupported_data_source",
+        message="sessions.patch is only available with the OpenClaw data source",
+        recoverable=True,
+        next_step="切换到 openclaw data_source 后重试",
+    )
 
 
 def test_patch_session_updates_session_model(monkeypatch: Any) -> None:
@@ -773,7 +854,13 @@ def test_reset_session_requires_openclaw_data_source() -> None:
     status_code, _, body = request("POST", "/chat/sessions/agent:main:main/reset")
     assert status_code == 503
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    assert payload == {"detail": "sessions.reset is only available with the OpenClaw data source"}
+    _assert_error_envelope(
+        payload,
+        code="unsupported_data_source",
+        message="sessions.reset is only available with the OpenClaw data source",
+        recoverable=True,
+        next_step="切换到 openclaw data_source 后重试",
+    )
 
 
 def test_reset_session_clears_history(monkeypatch: Any) -> None:
@@ -798,7 +885,13 @@ def test_delete_session_requires_openclaw_data_source() -> None:
     status_code, _, body = request("DELETE", "/chat/sessions/agent:main:main")
     assert status_code == 503
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    assert payload == {"detail": "sessions.delete is only available with the OpenClaw data source"}
+    _assert_error_envelope(
+        payload,
+        code="unsupported_data_source",
+        message="sessions.delete is only available with the OpenClaw data source",
+        recoverable=True,
+        next_step="切换到 openclaw data_source 后重试",
+    )
 
 
 def test_delete_session_removes_session(monkeypatch: Any) -> None:

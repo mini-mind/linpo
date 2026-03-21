@@ -50,15 +50,43 @@ export interface FreshnessInfo {
   checked_at: string | null;
 }
 
+export type InstanceValidationErrorCode =
+  | 'invalid_endpoint'
+  | 'unsafe_endpoint'
+  | 'connect_failed'
+  | 'auth_failed'
+  | 'protocol_failed'
+  | 'unsupported_type'
+  | 'instance_limit_exceeded';
+
+export type ErrorCode =
+  | InstanceValidationErrorCode
+  | 'unauthorized'
+  | 'invalid_request'
+  | 'not_found'
+  | 'unsupported_data_source'
+  | 'source_unavailable'
+  | 'source_error'
+  | 'internal_error';
+
+export interface ErrorEnvelope {
+  code: ErrorCode;
+  message: string;
+  request_id: string;
+  recoverable: boolean;
+  next_step: string | null;
+}
+
+export interface ErrorResponse {
+  error: ErrorEnvelope;
+}
+
 export interface AggregateInstanceDiagnostic {
   instance_id: string;
   instance_name: string;
   status: 'ok' | 'failed';
-  code: string | null;
-  message: string;
-  recoverable: boolean;
-  next_step: string | null;
   freshness: FreshnessInfo;
+  error: ErrorEnvelope | null;
 }
 
 export interface AggregateOverviewAgentItem {
@@ -135,14 +163,6 @@ export interface AggregateTopologyResponse {
   skills: AggregateTopologySkillItem[];
   external_acps: AggregateTopologyExternalAcpItem[];
 }
-
-export type InstanceValidationErrorCode =
-  | 'auth_failed'
-  | 'connection_failed'
-  | 'timeout'
-  | 'unsafe_endpoint'
-  | 'instance_limit_exceeded'
-  | 'unknown';
 
 export type AgentStatus = 'idle' | 'running' | 'finished' | 'error';
 

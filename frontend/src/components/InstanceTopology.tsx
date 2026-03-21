@@ -59,6 +59,15 @@ function getFreshnessLabel(freshness: FreshnessInfo): string {
 	return "failed";
 }
 
+function formatFreshnessSummary(freshness: FreshnessInfo): string {
+	const label = getFreshnessLabel(freshness);
+	return freshness.checked_at ? `${label} · ${freshness.checked_at}` : label;
+}
+
+function getDiagnosticMessage(diagnostic: AggregateInstanceDiagnostic): string {
+	return diagnostic.error?.message ?? "状态稳定";
+}
+
 function getAgentStatusLabel(agent: AggregateTopologyAgentItem): string {
 	if (agent.status === "running") {
 		return "运行中";
@@ -274,7 +283,7 @@ export function InstanceTopology(): JSX.Element {
 				<div style={summaryGridStyle}>
 					<SummaryCard
 						label="聚合 freshness"
-						value={aggregate ? getFreshnessLabel(aggregate.freshness) : "未加载"}
+						value={aggregate ? formatFreshnessSummary(aggregate.freshness) : "未加载"}
 					/>
 					<SummaryCard
 						label="request id"
@@ -327,9 +336,26 @@ export function InstanceTopology(): JSX.Element {
 												最后检查 {formatDateTime(instance.last_check_at)}
 											</p>
 											{diagnostic ? (
-												<p style={cardSubTextStyle}>
-													{diagnostic.message}
-												</p>
+												<div style={instanceDiagnosticStyle}>
+													<p style={cardSubTextStyle}>{getDiagnosticMessage(diagnostic)}</p>
+													<p style={diagnosticMetaStyle}>
+														checked_at · {diagnostic.freshness.checked_at ?? "未提供"}
+													</p>
+													{diagnostic.error ? (
+														<>
+															<p style={diagnosticMetaStyle}>code · {diagnostic.error.code}</p>
+															<p style={diagnosticMetaStyle}>
+																request_id · {diagnostic.error.request_id}
+															</p>
+															<p style={diagnosticMetaStyle}>
+																recoverable · {String(diagnostic.error.recoverable)}
+															</p>
+															{diagnostic.error.next_step ? (
+																<p style={cardSubTextStyle}>{diagnostic.error.next_step}</p>
+															) : null}
+														</>
+													) : null}
+												</div>
 											) : null}
 											<div style={actionsRowStyle}>
 												<button
@@ -515,9 +541,21 @@ function renderWorkbenchPanel({
 				{diagnostic ? (
 					<div style={noteBoxStyle}>
 						<strong style={noteTitleStyle}>实例诊断</strong>
-						<p style={noteBodyStyle}>{diagnostic.message}</p>
-						{diagnostic.next_step ? (
-							<p style={noteHintStyle}>{diagnostic.next_step}</p>
+						<p style={noteBodyStyle}>{getDiagnosticMessage(diagnostic)}</p>
+						<p style={noteHintStyle}>
+							checked_at · {diagnostic.freshness.checked_at ?? "未提供"}
+						</p>
+						{diagnostic.error ? (
+							<>
+								<p style={noteHintStyle}>code · {diagnostic.error.code}</p>
+								<p style={noteHintStyle}>request_id · {diagnostic.error.request_id}</p>
+								<p style={noteHintStyle}>
+									recoverable · {String(diagnostic.error.recoverable)}
+								</p>
+							</>
+						) : null}
+						{diagnostic.error?.next_step ? (
+							<p style={noteHintStyle}>{diagnostic.error.next_step}</p>
 						) : null}
 					</div>
 				) : null}
@@ -889,6 +927,19 @@ const cardSubTextStyle: React.CSSProperties = {
 	margin: 0,
 	fontSize: "0.8rem",
 	color: "#6b7280",
+};
+
+const instanceDiagnosticStyle: React.CSSProperties = {
+	display: "flex",
+	flexDirection: "column",
+	gap: "0.2rem",
+};
+
+const diagnosticMetaStyle: React.CSSProperties = {
+	margin: 0,
+	fontSize: "0.75rem",
+	color: "#6b7280",
+	fontFamily: 'ui-monospace, SFMono-Regular, "SFMono-Regular", Consolas, monospace',
 };
 
 const actionsRowStyle: React.CSSProperties = {

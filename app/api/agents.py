@@ -1,7 +1,8 @@
 from dataclasses import dataclass
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -9,6 +10,8 @@ from app.api.schemas import (
     AgentDetailResponse,
     AgentListItem,
     ChatSendRequest,
+    ErrorEnvelope,
+    ErrorResponse,
     EventRecordItem,
     ModelItem,
     ModelsListResponse,
@@ -43,6 +46,77 @@ def get_openclaw_operator_service() -> OpenClawOperatorService:
 
 def get_instance_service() -> InstanceService:
     return InstanceService()
+
+
+def _error_response(
+    status_code: int,
+    *,
+    code: str,
+    message: str,
+    recoverable: bool,
+    next_step: str | None,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content=ErrorResponse(
+            error=ErrorEnvelope(
+                code=code,
+                message=message,
+                request_id=str(uuid4()),
+                recoverable=recoverable,
+                next_step=next_step,
+            )
+        ).model_dump(),
+    )
+
+
+def _http_exception_response(exc: HTTPException) -> JSONResponse:
+    if isinstance(exc.detail, str):
+        message = exc.detail
+    elif exc.detail is not None:
+        message = str(exc.detail)
+    else:
+        message = "Unexpected API error"
+
+    message_lower = message.lower()
+    code = "internal_error"
+    next_step: str | None = None
+    recoverable = exc.status_code != status.HTTP_404_NOT_FOUND
+
+    if exc.status_code == status.HTTP_401_UNAUTHORIZED:
+        code = "unauthorized"
+        next_step = "重新登录后重试"
+        recoverable = True
+    elif exc.status_code == status.HTTP_404_NOT_FOUND:
+        code = "not_found"
+        next_step = "确认目标资源仍存在后重试"
+    elif "only available with the openclaw data source" in message_lower or "unsupported data source" in message_lower:
+        code = "unsupported_data_source"
+        next_step = "切换到 openclaw data_source 后重试"
+        recoverable = True
+    elif exc.status_code == status.HTTP_400_BAD_REQUEST:
+        code = "invalid_request"
+        next_step = "修正请求参数后重试"
+        recoverable = True
+    elif "token" in message_lower:
+        code = "auth_failed"
+        next_step = "检查实例连通性或网关 token 后重试"
+        recoverable = True
+    elif exc.status_code >= status.HTTP_500_INTERNAL_SERVER_ERROR:
+        code = "source_unavailable"
+        next_step = "检查实例连通性或网关 token 后重试"
+        recoverable = True
+    elif exc.status_code >= status.HTTP_400_BAD_REQUEST:
+        code = "source_error"
+        next_step = "检查请求参数与上游状态后重试"
+
+    return _error_response(
+        exc.status_code,
+        code=code,
+        message=message,
+        recoverable=recoverable,
+        next_step=next_step,
+    )
 
 
 @dataclass(frozen=True)
@@ -119,18 +193,21 @@ def _resolve_operator_service(
 def list_agents(
     data_source: str | None = Query(default=None),
     request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
-) -> list[AgentListItem]:
-    data_source_impl = _resolve_observer_data_source(data_source, request_context)
-    return [
-        AgentListItem(
-            id=agent.id,
-            name=agent.name,
-            status=agent.status,
-            is_active=agent.is_active,
-            last_active_at=agent.last_active_at,
-        )
-        for agent in data_source_impl.list_agents()
-    ]
+) -> list[AgentListItem] | JSONResponse:
+    try:
+        data_source_impl = _resolve_observer_data_source(data_source, request_context)
+        return [
+            AgentListItem(
+                id=agent.id,
+                name=agent.name,
+                status=agent.status,
+                is_active=agent.is_active,
+                last_active_at=agent.last_active_at,
+            )
+            for agent in data_source_impl.list_agents()
+        ]
+    except HTTPException as exc:
+        return _http_exception_response(exc)
 
 
 @router.get("/agents/{agent_id}", response_model=AgentDetailResponse)
@@ -138,37 +215,40 @@ def get_agent_detail(
     agent_id: str,
     data_source: str | None = Query(default=None),
     request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
-) -> AgentDetailResponse:
-    data_source_impl = _resolve_observer_data_source(data_source, request_context)
-    agent = data_source_impl.get_agent(agent_id)
-    if agent is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
+) -> AgentDetailResponse | JSONResponse:
+    try:
+        data_source_impl = _resolve_observer_data_source(data_source, request_context)
+        agent = data_source_impl.get_agent(agent_id)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
 
-    nodes = data_source_impl.list_nodes(agent_id)
-    root_node = data_source_impl.get_node(agent_id, agent.root_node_id)
-    root_child_count = 0 if root_node is None else root_node.child_count
+        nodes = data_source_impl.list_nodes(agent_id)
+        root_node = data_source_impl.get_node(agent_id, agent.root_node_id)
+        root_child_count = 0 if root_node is None else root_node.child_count
 
-    return AgentDetailResponse(
-        id=agent.id,
-        name=agent.name,
-        status=agent.status,
-        is_active=agent.is_active,
-        root_node_id=agent.root_node_id,
-        root_child_count=root_child_count,
-        total_node_count=len(nodes),
-        last_active_at=agent.last_active_at,
-        nodes=[
-            TopologyNodeItem(
-                id=node.id,
-                name=node.name,
-                status=node.status,
-                is_active=node.is_active,
-                child_count=node.child_count,
-                parent_id=node.parent_id,
-            )
-            for node in nodes
-        ],
-    )
+        return AgentDetailResponse(
+            id=agent.id,
+            name=agent.name,
+            status=agent.status,
+            is_active=agent.is_active,
+            root_node_id=agent.root_node_id,
+            root_child_count=root_child_count,
+            total_node_count=len(nodes),
+            last_active_at=agent.last_active_at,
+            nodes=[
+                TopologyNodeItem(
+                    id=node.id,
+                    name=node.name,
+                    status=node.status,
+                    is_active=node.is_active,
+                    child_count=node.child_count,
+                    parent_id=node.parent_id,
+                )
+                for node in nodes
+            ],
+        )
+    except HTTPException as exc:
+        return _http_exception_response(exc)
 
 
 @router.get(
@@ -180,33 +260,36 @@ def get_node_detail(
     node_id: str,
     data_source: str | None = Query(default=None),
     request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
-) -> NodeDetailResponse:
-    data_source_impl = _resolve_observer_data_source(data_source, request_context)
-    agent = data_source_impl.get_agent(agent_id)
-    if agent is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
+) -> NodeDetailResponse | JSONResponse:
+    try:
+        data_source_impl = _resolve_observer_data_source(data_source, request_context)
+        agent = data_source_impl.get_agent(agent_id)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
 
-    node = data_source_impl.get_node(agent_id, node_id)
-    if node is None:
-        raise HTTPException(status_code=404, detail="Node not found")
+        node = data_source_impl.get_node(agent_id, node_id)
+        if node is None:
+            raise HTTPException(status_code=404, detail="Node not found")
 
-    return NodeDetailResponse(
-        id=node.id,
-        name=node.name,
-        status=node.status,
-        is_active=node.is_active,
-        last_active_started_at=node.last_active_started_at,
-        events=[
-            EventRecordItem(
-                id=event.id,
-                node_id=event.node_id,
-                type=event.type,
-                timestamp=event.timestamp,
-                description=event.description,
-            )
-            for event in data_source_impl.list_events(agent_id, node.id)
-        ],
-    )
+        return NodeDetailResponse(
+            id=node.id,
+            name=node.name,
+            status=node.status,
+            is_active=node.is_active,
+            last_active_started_at=node.last_active_started_at,
+            events=[
+                EventRecordItem(
+                    id=event.id,
+                    node_id=event.node_id,
+                    type=event.type,
+                    timestamp=event.timestamp,
+                    description=event.description,
+                )
+                for event in data_source_impl.list_events(agent_id, node.id)
+            ],
+        )
+    except HTTPException as exc:
+        return _http_exception_response(exc)
 
 
 # === Chat API (OpenClaw compatible) ===
@@ -234,43 +317,46 @@ def chat_send(
     session_key: str = Query(default="", alias="sessionKey"),
     data_source: str | None = Query(default=None),
     request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
-) -> ChatSendResponse:
+) -> ChatSendResponse | JSONResponse:
     """Send a message to an agent's chat session.
 
     OpenClaw API: chat.send
     """
-    if data_source != "openclaw":
-        raise HTTPException(
-            status_code=503,
-            detail="chat.send is only available with the OpenClaw data source",
+    try:
+        if data_source != "openclaw":
+            raise HTTPException(
+                status_code=503,
+                detail="chat.send is only available with the OpenClaw data source",
+            )
+
+        if not body.message or not body.message.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Message cannot be empty",
+            )
+
+        resolved_session_key = session_key.strip() or body.session_key.strip()
+        if not resolved_session_key:
+            raise HTTPException(
+                status_code=400,
+                detail="sessionKey is required",
+            )
+
+        service = _resolve_operator_service(request_context)
+        result = service.send_message(
+            agent_id=agent_id,
+            session_key=resolved_session_key,
+            message=body.message.strip(),
         )
 
-    if not body.message or not body.message.strip():
-        raise HTTPException(
-            status_code=400,
-            detail="Message cannot be empty",
+        return ChatSendResponse(
+            request_id=result.request_id,
+            agent_id=result.agent_id,
+            status=result.status.value,
+            message=result.message,
         )
-
-    resolved_session_key = session_key.strip() or body.session_key.strip()
-    if not resolved_session_key:
-        raise HTTPException(
-            status_code=400,
-            detail="sessionKey is required",
-        )
-
-    service = _resolve_operator_service(request_context)
-    result = service.send_message(
-        agent_id=agent_id,
-        session_key=resolved_session_key,
-        message=body.message.strip(),
-    )
-
-    return ChatSendResponse(
-        request_id=result.request_id,
-        agent_id=result.agent_id,
-        status=result.status.value,
-        message=result.message,
-    )
+    except HTTPException as exc:
+        return _http_exception_response(exc)
 
 
 @router.post("/chat/abort", response_model=ChatAbortResponse)
@@ -278,38 +364,41 @@ def chat_abort(
     agent_id: str = Query(..., alias="agentId"),
     data_source: str | None = Query(default=None),
     request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
-) -> ChatAbortResponse:
+) -> ChatAbortResponse | JSONResponse:
     """Abort an agent's running chat session.
 
     OpenClaw API: chat.abort
     """
-    if data_source != "openclaw":
-        raise HTTPException(
-            status_code=503,
-            detail="chat.abort is only available with the OpenClaw data source",
-        )
-
-    service = _resolve_operator_service(request_context)
-    result = service.send_action(agent_id=agent_id, action=AgentControlAction.PAUSE)
-
-    if result.status.value == "accepted":
-        data_source_impl = _resolve_observer_data_source(data_source, request_context)
-        register_pending = getattr(data_source_impl, "register_pending_control_request", None)
-        if callable(register_pending):
-            register_pending(
-                request_id=result.request_id,
-                agent_id=result.agent_id,
-                action="pause",
-                correlation_hint=result.correlation_hint,
+    try:
+        if data_source != "openclaw":
+            raise HTTPException(
+                status_code=503,
+                detail="chat.abort is only available with the OpenClaw data source",
             )
 
-    return ChatAbortResponse(
-        request_id=result.request_id,
-        agent_id=result.agent_id,
-        aborted=result.status.value == "accepted",
-        run_ids=[],
-        message=result.message,
-    )
+        service = _resolve_operator_service(request_context)
+        result = service.send_action(agent_id=agent_id, action=AgentControlAction.PAUSE)
+
+        if result.status.value == "accepted":
+            data_source_impl = _resolve_observer_data_source(data_source, request_context)
+            register_pending = getattr(data_source_impl, "register_pending_control_request", None)
+            if callable(register_pending):
+                register_pending(
+                    request_id=result.request_id,
+                    agent_id=result.agent_id,
+                    action="pause",
+                    correlation_hint=result.correlation_hint,
+                )
+
+        return ChatAbortResponse(
+            request_id=result.request_id,
+            agent_id=result.agent_id,
+            aborted=result.status.value == "accepted",
+            run_ids=[],
+            message=result.message,
+        )
+    except HTTPException as exc:
+        return _http_exception_response(exc)
 
 
 # === Models API ===
@@ -319,39 +408,42 @@ def chat_abort(
 def list_models(
     data_source: str | None = Query(default=None),
     request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
-) -> ModelsListResponse:
-    if data_source != "openclaw":
-        raise HTTPException(
-            status_code=503,
-            detail="models.list is only available with the OpenClaw data source",
-        )
-
-    client = _resolve_openclaw_client(request_context)
-    result = client.models_list()
-
-    if not result.get("ok"):
-        error = result.get("error", {})
-        message = error.get("message", "Failed to list models")
-        raise HTTPException(status_code=503, detail=message)
-
-    payload = result.get("payload", {})
-    models_raw = payload.get("models", [])
-
-    models = []
-    for m in models_raw:
-        if not isinstance(m, dict):
-            continue
-        models.append(
-            ModelItem(
-                id=m.get("id", ""),
-                name=m.get("name", ""),
-                provider=m.get("provider", ""),
-                context_window=m.get("contextWindow"),
-                reasoning=m.get("reasoning"),
+) -> ModelsListResponse | JSONResponse:
+    try:
+        if data_source != "openclaw":
+            raise HTTPException(
+                status_code=503,
+                detail="models.list is only available with the OpenClaw data source",
             )
-        )
 
-    return ModelsListResponse(models=models)
+        client = _resolve_openclaw_client(request_context)
+        result = client.models_list()
+
+        if not result.get("ok"):
+            error = result.get("error", {})
+            message = error.get("message", "Failed to list models")
+            raise HTTPException(status_code=503, detail=message)
+
+        payload = result.get("payload", {})
+        models_raw = payload.get("models", [])
+
+        models = []
+        for m in models_raw:
+            if not isinstance(m, dict):
+                continue
+            models.append(
+                ModelItem(
+                    id=m.get("id", ""),
+                    name=m.get("name", ""),
+                    provider=m.get("provider", ""),
+                    context_window=m.get("contextWindow"),
+                    reasoning=m.get("reasoning"),
+                )
+            )
+
+        return ModelsListResponse(models=models)
+    except HTTPException as exc:
+        return _http_exception_response(exc)
 
 
 # === Sessions API ===
@@ -364,47 +456,50 @@ def list_sessions(
     include_last_message: bool = Query(default=True, alias="includeLastMessage"),
     data_source: str | None = Query(default=None),
     request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
-) -> SessionsListResponse:
-    if data_source != "openclaw":
-        raise HTTPException(
-            status_code=503,
-            detail="sessions.list is only available with the OpenClaw data source",
+) -> SessionsListResponse | JSONResponse:
+    try:
+        if data_source != "openclaw":
+            raise HTTPException(
+                status_code=503,
+                detail="sessions.list is only available with the OpenClaw data source",
+            )
+
+        client = _resolve_openclaw_client(request_context)
+        result = client.sessions_list(
+            agent_id=agent_id,
+            include_derived_titles=include_derived_titles,
+            include_last_message=include_last_message,
         )
 
-    client = _resolve_openclaw_client(request_context)
-    result = client.sessions_list(
-        agent_id=agent_id,
-        include_derived_titles=include_derived_titles,
-        include_last_message=include_last_message,
-    )
+        if not result.get("ok"):
+            raise HTTPException(
+                status_code=503,
+                detail=result.get("error", {}).get("message", "sessions.list failed"),
+            )
 
-    if not result.get("ok"):
-        raise HTTPException(
-            status_code=503,
-            detail=result.get("error", {}).get("message", "sessions.list failed"),
+        payload = result.get("payload", {})
+        sessions_raw = payload.get("sessions", [])
+
+        sessions = [
+            SessionListItem(
+                key=s.get("key", ""),
+                kind=s.get("kind", "unknown"),
+                label=s.get("label"),
+                derived_title=s.get("derivedTitle"),
+                last_message_preview=s.get("lastMessagePreview"),
+                updated_at=s.get("updatedAt"),
+            )
+            for s in sessions_raw
+        ]
+
+        return SessionsListResponse(
+            ts=payload.get("ts", 0),
+            count=payload.get("count", len(sessions)),
+            sessions=sessions,
+            defaults=payload.get("defaults"),
         )
-
-    payload = result.get("payload", {})
-    sessions_raw = payload.get("sessions", [])
-
-    sessions = [
-        SessionListItem(
-            key=s.get("key", ""),
-            kind=s.get("kind", "unknown"),
-            label=s.get("label"),
-            derived_title=s.get("derivedTitle"),
-            last_message_preview=s.get("lastMessagePreview"),
-            updated_at=s.get("updatedAt"),
-        )
-        for s in sessions_raw
-    ]
-
-    return SessionsListResponse(
-        ts=payload.get("ts", 0),
-        count=payload.get("count", len(sessions)),
-        sessions=sessions,
-        defaults=payload.get("defaults"),
-    )
+    except HTTPException as exc:
+        return _http_exception_response(exc)
 
 
 class SessionsPreviewResponse(BaseModel):
@@ -419,51 +514,54 @@ def preview_sessions(
     max_chars: int = Query(default=2000, alias="maxChars"),
     data_source: str | None = Query(default=None),
     request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
-) -> SessionsPreviewResponse:
-    if data_source != "openclaw":
-        raise HTTPException(
-            status_code=503,
-            detail="sessions.preview is only available with the OpenClaw data source",
-        )
-
-    client = _resolve_openclaw_client(request_context)
-    result = client.sessions_preview(
-        keys=keys.split(","),
-        limit=limit,
-        max_chars=max_chars,
-    )
-
-    if not result.get("ok"):
-        raise HTTPException(
-            status_code=503,
-            detail=result.get("error", {}).get("message", "sessions.preview failed"),
-        )
-
-    payload = result.get("payload", {})
-    previews_raw = payload.get("previews", [])
-
-    previews = []
-    for p in previews_raw:
-        items_raw = p.get("items", [])
-        items = [
-            SessionPreviewItem(
-                role=item.get("role", "other"),
-                text=item.get("text", ""),
+) -> SessionsPreviewResponse | JSONResponse:
+    try:
+        if data_source != "openclaw":
+            raise HTTPException(
+                status_code=503,
+                detail="sessions.preview is only available with the OpenClaw data source",
             )
-            for item in items_raw
-        ]
-        previews.append(
-            SessionPreview(
-                key=p.get("key", ""),
-                status=p.get("status", "error"),
-                items=items,
-            )
+
+        client = _resolve_openclaw_client(request_context)
+        result = client.sessions_preview(
+            keys=keys.split(","),
+            limit=limit,
+            max_chars=max_chars,
         )
 
-    return SessionsPreviewResponse(
-        ts=payload.get("ts", 0),
-        previews=previews,
-    )
+        if not result.get("ok"):
+            raise HTTPException(
+                status_code=503,
+                detail=result.get("error", {}).get("message", "sessions.preview failed"),
+            )
+
+        payload = result.get("payload", {})
+        previews_raw = payload.get("previews", [])
+
+        previews = []
+        for p in previews_raw:
+            items_raw = p.get("items", [])
+            items = [
+                SessionPreviewItem(
+                    role=item.get("role", "other"),
+                    text=item.get("text", ""),
+                )
+                for item in items_raw
+            ]
+            previews.append(
+                SessionPreview(
+                    key=p.get("key", ""),
+                    status=p.get("status", "error"),
+                    items=items,
+                )
+            )
+
+        return SessionsPreviewResponse(
+            ts=payload.get("ts", 0),
+            previews=previews,
+        )
+    except HTTPException as exc:
+        return _http_exception_response(exc)
 
 
 @router.patch("/chat/sessions/{key}", response_model=SessionPatchResponse)
@@ -472,29 +570,32 @@ def patch_session(
     body: SessionPatchRequest,
     data_source: str | None = Query(default=None),
     request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
-) -> SessionPatchResponse:
-    if data_source != "openclaw":
-        raise HTTPException(
-            status_code=503,
-            detail="sessions.patch is only available with the OpenClaw data source",
+) -> SessionPatchResponse | JSONResponse:
+    try:
+        if data_source != "openclaw":
+            raise HTTPException(
+                status_code=503,
+                detail="sessions.patch is only available with the OpenClaw data source",
+            )
+
+        client = _resolve_openclaw_client(request_context)
+        result = client.sessions_patch(
+            key=key,
+            agent_id=body.agent_id,
+            model=body.model,
+            thinking_level=body.thinking_level,
         )
 
-    client = _resolve_openclaw_client(request_context)
-    result = client.sessions_patch(
-        key=key,
-        agent_id=body.agent_id,
-        model=body.model,
-        thinking_level=body.thinking_level,
-    )
+        if not result.get("ok"):
+            raise HTTPException(
+                status_code=503,
+                detail=result.get("error", {}).get("message", "sessions.patch failed"),
+            )
 
-    if not result.get("ok"):
-        raise HTTPException(
-            status_code=503,
-            detail=result.get("error", {}).get("message", "sessions.patch failed"),
-        )
-
-    payload = result.get("payload", {})
-    return SessionPatchResponse(updated=payload.get("ok", False))
+        payload = result.get("payload", {})
+        return SessionPatchResponse(updated=payload.get("ok", False))
+    except HTTPException as exc:
+        return _http_exception_response(exc)
 
 
 @router.post("/chat/sessions/{key}/reset", response_model=SessionResetResponse)
@@ -502,24 +603,27 @@ def reset_session(
     key: str,
     data_source: str | None = Query(default=None),
     request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
-) -> SessionResetResponse:
-    if data_source != "openclaw":
-        raise HTTPException(
-            status_code=503,
-            detail="sessions.reset is only available with the OpenClaw data source",
-        )
+) -> SessionResetResponse | JSONResponse:
+    try:
+        if data_source != "openclaw":
+            raise HTTPException(
+                status_code=503,
+                detail="sessions.reset is only available with the OpenClaw data source",
+            )
 
-    client = _resolve_openclaw_client(request_context)
-    result = client.sessions_reset(key=key)
+        client = _resolve_openclaw_client(request_context)
+        result = client.sessions_reset(key=key)
 
-    if not result.get("ok"):
-        raise HTTPException(
-            status_code=503,
-            detail=result.get("error", {}).get("message", "sessions.reset failed"),
-        )
+        if not result.get("ok"):
+            raise HTTPException(
+                status_code=503,
+                detail=result.get("error", {}).get("message", "sessions.reset failed"),
+            )
 
-    payload = result.get("payload", {})
-    return SessionResetResponse(reset=payload.get("ok", False))
+        payload = result.get("payload", {})
+        return SessionResetResponse(reset=payload.get("ok", False))
+    except HTTPException as exc:
+        return _http_exception_response(exc)
 
 
 @router.delete("/chat/sessions/{key}", response_model=SessionDeleteResponse)
@@ -527,21 +631,24 @@ def delete_session(
     key: str,
     data_source: str | None = Query(default=None),
     request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
-) -> SessionDeleteResponse:
-    if data_source != "openclaw":
-        raise HTTPException(
-            status_code=503,
-            detail="sessions.delete is only available with the OpenClaw data source",
-        )
+) -> SessionDeleteResponse | JSONResponse:
+    try:
+        if data_source != "openclaw":
+            raise HTTPException(
+                status_code=503,
+                detail="sessions.delete is only available with the OpenClaw data source",
+            )
 
-    client = _resolve_openclaw_client(request_context)
-    result = client.sessions_delete(key=key)
+        client = _resolve_openclaw_client(request_context)
+        result = client.sessions_delete(key=key)
 
-    if not result.get("ok"):
-        raise HTTPException(
-            status_code=503,
-            detail=result.get("error", {}).get("message", "sessions.delete failed"),
-        )
+        if not result.get("ok"):
+            raise HTTPException(
+                status_code=503,
+                detail=result.get("error", {}).get("message", "sessions.delete failed"),
+            )
 
-    payload = result.get("payload", {})
-    return SessionDeleteResponse(deleted=payload.get("deleted", False))
+        payload = result.get("payload", {})
+        return SessionDeleteResponse(deleted=payload.get("deleted", False))
+    except HTTPException as exc:
+        return _http_exception_response(exc)
