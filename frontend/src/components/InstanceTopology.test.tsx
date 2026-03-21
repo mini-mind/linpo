@@ -1,568 +1,214 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as instanceClient from "../api/instanceClient";
 import type { InstanceItem } from "../api/types";
 
-import { InstanceTopology } from "./InstanceTopology";
+const mockGetAggregateTopology = vi.fn();
 
-const mockNavigate = vi.fn();
-vi.mock("react-router-dom", () => ({
-	useNavigate: () => mockNavigate,
-}));
+vi.mock("../api/client", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../api/client")>();
+	return {
+		...actual,
+		getAggregateTopology: (...args: unknown[]) => mockGetAggregateTopology(...args),
+	};
+});
 
 vi.mock("../hooks/useIsMobile", () => ({
 	useIsMobile: () => false,
 }));
 
-const mockInstances: InstanceItem[] = [
+import { InstanceTopology } from "./InstanceTopology";
+
+const instanceRecords: InstanceItem[] = [
 	{
-		id: "instance-1",
-		name: "测试实例1",
+		id: "instance-alpha",
+		name: "alpha-instance",
 		type: "openclaw",
 		endpoint: "http://127.0.0.1:28789",
 		status: "active",
-		last_check_at: "2025-03-18T10:00:00Z",
-		created_at: "2025-03-18T08:00:00Z",
+		last_check_at: "2026-03-22T12:05:00Z",
+		created_at: "2026-03-22T08:00:00Z",
 	},
 	{
-		id: "instance-2",
-		name: "测试实例2",
+		id: "instance-empty",
+		name: "empty-instance",
 		type: "openclaw",
 		endpoint: "http://127.0.0.1:38789",
 		status: "inactive",
-		last_check_at: null,
-		created_at: "2025-03-18T09:00:00Z",
+		last_check_at: "2026-03-22T11:20:00Z",
+		created_at: "2026-03-22T09:10:00Z",
 	},
 ];
+
+const aggregateTopologyFixture = {
+	request_id: "req-topology-1",
+	freshness: {
+		status: "fresh",
+		checked_at: "2026-03-22T12:05:00Z",
+	},
+	partial_failure: false,
+	diagnostics: [
+		{
+			instance_id: "instance-alpha",
+			instance_name: "alpha-instance",
+			status: "ok",
+			code: null,
+			message: "ok",
+			recoverable: false,
+			next_step: null,
+			freshness: {
+				status: "fresh",
+				checked_at: "2026-03-22T12:05:00Z",
+			},
+		},
+		{
+			instance_id: "instance-empty",
+			instance_name: "empty-instance",
+			status: "ok",
+			code: null,
+			message: "ok",
+			recoverable: false,
+			next_step: null,
+			freshness: {
+				status: "stale",
+				checked_at: "2026-03-22T11:20:00Z",
+			},
+		},
+	],
+	instances: [
+		{
+			node_id: "instance:instance-alpha",
+			instance_id: "instance-alpha",
+			name: "alpha-instance",
+			type: "openclaw",
+			status: "active",
+			last_check_at: "2026-03-22T12:05:00Z",
+			created_at: "2026-03-22T08:00:00Z",
+		},
+		{
+			node_id: "instance:instance-empty",
+			instance_id: "instance-empty",
+			name: "empty-instance",
+			type: "openclaw",
+			status: "inactive",
+			last_check_at: "2026-03-22T11:20:00Z",
+			created_at: "2026-03-22T09:10:00Z",
+		},
+	],
+	agents: [
+		{
+			node_id: "agent:instance-alpha:agent-alpha",
+			instance_id: "instance-alpha",
+			instance_name: "alpha-instance",
+			agent_id: "agent-alpha",
+			agent_name: "Alpha Agent",
+			status: "running",
+			is_active: true,
+			last_active_at: "2026-03-22T12:00:00Z",
+			drilldown_path: "/session/instance-alpha/agent-alpha",
+		},
+	],
+	edges: [
+		{
+			source: "instance:instance-alpha",
+			target: "agent:instance-alpha:agent-alpha",
+			kind: "instance_agent",
+		},
+	],
+	skills: [],
+	external_acps: [],
+};
+
+function renderWithRouter(): ReturnType<typeof render> {
+	return render(
+		<MemoryRouter initialEntries={["/topology"]}>
+			<InstanceTopology />
+		</MemoryRouter>,
+	);
+}
 
 describe("InstanceTopology", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		window.localStorage.clear();
+		vi.spyOn(instanceClient, "listInstances").mockResolvedValue(instanceRecords);
 	});
 
-	afterEach(() => {
-		vi.restoreAllMocks();
+	it("uses aggregate topology and exposes fixed relationship actions with canonical drill-down", async () => {
+		mockGetAggregateTopology.mockResolvedValue(aggregateTopologyFixture);
+
+		renderWithRouter();
+
+		await waitFor(() => {
+			expect(mockGetAggregateTopology).toHaveBeenCalledTimes(1);
+		});
+
+		expect(screen.getByText("Alpha Agent")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "查看实例 alpha-instance" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "关系实例 alpha-instance" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "配置实例 alpha-instance" })).toBeInTheDocument();
+		expect(
+			screen.getByRole("link", { name: "进入实例 alpha-instance" }),
+		).toHaveAttribute("href", "/session/instance-alpha/agent-alpha");
+		expect(
+			screen.getByRole("link", { name: "进入 agent Alpha Agent" }),
+		).toHaveAttribute("href", "/session/instance-alpha/agent-alpha");
 	});
 
-	describe("Empty State", () => {
-		it("renders empty state when no instances exist", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue([]);
+	it("shows explicit 未暴露 sections and disables instance enter when no drill-down exists", async () => {
+		mockGetAggregateTopology.mockResolvedValue(aggregateTopologyFixture);
 
-			render(<InstanceTopology />);
+		renderWithRouter();
 
-			await waitFor(() => {
-				expect(screen.getByText("暂无实例")).toBeInTheDocument();
-			});
-
-			expect(
-				screen.getByText("点击右下角按钮添加第一个实例"),
-			).toBeInTheDocument();
+		await waitFor(() => {
+			expect(screen.getByText("技能关系")).toBeInTheDocument();
 		});
 
-		it("shows add button in empty state", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue([]);
-
-			render(<InstanceTopology />);
-
-			await waitFor(() => {
-				expect(
-					screen.getByRole("button", { name: /添加实例/i }),
-				).toBeInTheDocument();
-			});
-		});
+		expect(screen.getByText("未暴露技能数据")).toBeInTheDocument();
+		expect(screen.getByText("未暴露外接 ACP")).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "进入实例 empty-instance" }),
+		).toBeDisabled();
 	});
 
-	describe("Instance Node Rendering", () => {
-		it("renders instance nodes when instances exist", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue(
-				mockInstances,
-			);
+	it("reuses the instance config modal from topology actions", async () => {
+		mockGetAggregateTopology.mockResolvedValue(aggregateTopologyFixture);
 
-			render(<InstanceTopology />);
+		renderWithRouter();
 
-			await waitFor(() => {
-				expect(screen.getByText("测试实例1")).toBeInTheDocument();
-			});
-
-			expect(screen.getByText("测试实例2")).toBeInTheDocument();
+		await waitFor(() => {
+			expect(screen.getByRole("button", { name: "配置实例 alpha-instance" })).toBeInTheDocument();
 		});
 
-		it("displays instance status for each node", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue(
-				mockInstances,
-			);
+		fireEvent.click(screen.getByRole("button", { name: "配置实例 alpha-instance" }));
 
-			render(<InstanceTopology />);
-
-			await waitFor(() => {
-				expect(screen.getByText("活跃")).toBeInTheDocument();
-			});
-
-			expect(screen.getByText("未活跃")).toBeInTheDocument();
+		await waitFor(() => {
+			expect(screen.getByText("编辑实例")).toBeInTheDocument();
 		});
 
-		it("displays instance endpoint", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue(
-				mockInstances,
-			);
-
-			render(<InstanceTopology />);
-
-			await waitFor(() => {
-				expect(screen.getByText("http://127.0.0.1:28789")).toBeInTheDocument();
-			});
-		});
+		expect(screen.getByLabelText("实例名称")).toHaveValue("alpha-instance");
+		expect(screen.getByLabelText("端点地址")).toHaveValue("http://127.0.0.1:28789");
 	});
 
-	describe("Modal Open/Close", () => {
-		it("opens instance details modal when clicking a node", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue(
-				mockInstances,
-			);
+	it("shows loading and error states around aggregate reads", async () => {
+		mockGetAggregateTopology.mockImplementation(() => new Promise(() => {}));
+		vi.spyOn(instanceClient, "listInstances").mockImplementation(
+			() => new Promise(() => {}),
+		);
 
-			render(<InstanceTopology />);
+		renderWithRouter();
 
-			await waitFor(() => {
-				expect(screen.getByText("测试实例1")).toBeInTheDocument();
-			});
-
-			const node = screen.getByRole("button", { name: "实例 测试实例1" });
-			fireEvent.click(node);
-
-			await waitFor(() => {
-				expect(screen.getByRole("dialog")).toBeInTheDocument();
-			});
-
-			expect(screen.getByText("实例详情")).toBeInTheDocument();
-		});
-
-		it("closes modal when clicking close button", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue(
-				mockInstances,
-			);
-
-			render(<InstanceTopology />);
-
-			await waitFor(() => {
-				expect(screen.getByText("测试实例1")).toBeInTheDocument();
-			});
-
-			const node = screen.getByRole("button", { name: "实例 测试实例1" });
-			fireEvent.click(node);
-
-			await waitFor(() => {
-				expect(screen.getByRole("dialog")).toBeInTheDocument();
-			});
-
-			const closeButton = screen.getByRole("button", { name: "关闭详情弹窗" });
-			fireEvent.click(closeButton);
-
-			await waitFor(() => {
-				expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-			});
-		});
-
-		it("closes modal when clicking overlay", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue(
-				mockInstances,
-			);
-
-			render(<InstanceTopology />);
-
-			await waitFor(() => {
-				expect(screen.getByText("测试实例1")).toBeInTheDocument();
-			});
-
-			const node = screen.getByRole("button", { name: "实例 测试实例1" });
-			fireEvent.click(node);
-
-			await waitFor(() => {
-				expect(screen.getByRole("dialog")).toBeInTheDocument();
-			});
-
-			const overlay = screen.getByTestId("detail-modal-overlay");
-			fireEvent.click(overlay);
-
-			await waitFor(() => {
-				expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-			});
-		});
-
-		it("shows readonly hint in detail modal", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue(
-				mockInstances,
-			);
-
-			render(<InstanceTopology />);
-
-			await waitFor(() => {
-				expect(screen.getByText("测试实例1")).toBeInTheDocument();
-			});
-
-			fireEvent.click(screen.getByRole("button", { name: "实例 测试实例1" }));
-
-			await waitFor(() => {
-				expect(screen.getByRole("dialog")).toBeInTheDocument();
-			});
-
-			expect(
-				screen.getByText(/当前阶段仅保留观察与进入能力/i),
-			).toBeInTheDocument();
-		});
+		expect(screen.getByText("加载中...")).toBeInTheDocument();
 	});
 
-	describe("Instance Form Modal", () => {
-		it("opens create instance form when clicking add button", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue([]);
+	it("surfaces aggregate request failures", async () => {
+		mockGetAggregateTopology.mockRejectedValue(new Error("聚合拓扑失败"));
 
-			render(<InstanceTopology />);
+		renderWithRouter();
 
-			await waitFor(() => {
-				expect(
-					screen.getByRole("button", { name: /添加实例/i }),
-				).toBeInTheDocument();
-			});
-
-			const addButton = screen.getByRole("button", { name: /添加实例/i });
-			fireEvent.click(addButton);
-
-			await waitFor(() => {
-				expect(screen.getByRole("dialog")).toBeInTheDocument();
-			});
-
-			expect(screen.getByText("添加实例")).toBeInTheDocument();
-		});
-
-		it("validates form fields before submit", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue([]);
-
-			render(<InstanceTopology />);
-
-			await waitFor(() => {
-				expect(
-					screen.getByRole("button", { name: /添加实例/i }),
-				).toBeInTheDocument();
-			});
-
-			const addButton = screen.getByRole("button", { name: /添加实例/i });
-			fireEvent.click(addButton);
-
-			await waitFor(() => {
-				expect(screen.getByRole("dialog")).toBeInTheDocument();
-			});
-
-			const nameInput = screen.getByLabelText("实例名称");
-			const endpointInput = screen.getByLabelText("端点地址");
-
-			fireEvent.change(nameInput, { target: { value: "" } });
-			fireEvent.change(endpointInput, { target: { value: "" } });
-
-			const saveButton = screen.getByRole("button", { name: /保存/i });
-			fireEvent.click(saveButton);
-
-			await waitFor(() => {
-				expect(screen.getByText("实例名称不能为空")).toBeInTheDocument();
-			});
-		});
-
-		it("calls validate endpoint when testing connection", async () => {
-			const validateMock = vi
-				.spyOn(instanceClient, "validateInstance")
-				.mockResolvedValue({
-					ok: true,
-					status: "active",
-					message: "验证成功",
-				});
-
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue([]);
-
-			render(<InstanceTopology />);
-
-			await waitFor(() => {
-				expect(
-					screen.getByRole("button", { name: /添加实例/i }),
-				).toBeInTheDocument();
-			});
-
-			const addButton = screen.getByRole("button", { name: /添加实例/i });
-			fireEvent.click(addButton);
-
-			await waitFor(() => {
-				expect(screen.getByRole("dialog")).toBeInTheDocument();
-			});
-
-			fireEvent.change(screen.getByLabelText("实例名称"), {
-				target: { value: "新实例" },
-			});
-			fireEvent.change(screen.getByLabelText("端点地址"), {
-				target: { value: "http://127.0.0.1:48789" },
-			});
-			fireEvent.change(screen.getByLabelText("Gateway Token"), {
-				target: { value: "test-token" },
-			});
-
-			const testButton = screen.getByRole("button", { name: /测试连接/i });
-			fireEvent.click(testButton);
-
-			await waitFor(() => {
-				expect(validateMock).toHaveBeenCalledWith({
-					name: "新实例",
-					type: "openclaw",
-					endpoint: "http://127.0.0.1:48789",
-					gatewayToken: "test-token",
-				});
-			});
-		});
-
-		it("shows validation error when test connection fails", async () => {
-			vi.spyOn(instanceClient, "validateInstance").mockResolvedValue({
-				ok: false,
-				status: "failed",
-				message: "gateway token 校验失败",
-				code: "auth_failed",
-			});
-
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue([]);
-
-			render(<InstanceTopology />);
-
-			await waitFor(() => {
-				expect(
-					screen.getByRole("button", { name: /添加实例/i }),
-				).toBeInTheDocument();
-			});
-
-			const addButton = screen.getByRole("button", { name: /添加实例/i });
-			fireEvent.click(addButton);
-
-			await waitFor(() => {
-				expect(screen.getByRole("dialog")).toBeInTheDocument();
-			});
-
-			fireEvent.change(screen.getByLabelText("实例名称"), {
-				target: { value: "新实例" },
-			});
-			fireEvent.change(screen.getByLabelText("端点地址"), {
-				target: { value: "http://127.0.0.1:48789" },
-			});
-			fireEvent.change(screen.getByLabelText("Gateway Token"), {
-				target: { value: "bad-token" },
-			});
-
-			const testButton = screen.getByRole("button", { name: /测试连接/i });
-			fireEvent.click(testButton);
-
-			await waitFor(() => {
-				expect(screen.getByText("gateway token 校验失败")).toBeInTheDocument();
-			});
-		});
-
-		it("shows success message when test connection succeeds", async () => {
-			vi.spyOn(instanceClient, "validateInstance").mockResolvedValue({
-				ok: true,
-				status: "active",
-				message: "连接成功",
-			});
-
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue([]);
-
-			render(<InstanceTopology />);
-
-			await waitFor(() => {
-				expect(
-					screen.getByRole("button", { name: /添加实例/i }),
-				).toBeInTheDocument();
-			});
-
-			const addButton = screen.getByRole("button", { name: /添加实例/i });
-			fireEvent.click(addButton);
-
-			await waitFor(() => {
-				expect(screen.getByRole("dialog")).toBeInTheDocument();
-			});
-
-			fireEvent.change(screen.getByLabelText("实例名称"), {
-				target: { value: "新实例" },
-			});
-			fireEvent.change(screen.getByLabelText("端点地址"), {
-				target: { value: "http://127.0.0.1:48789" },
-			});
-			fireEvent.change(screen.getByLabelText("Gateway Token"), {
-				target: { value: "valid-token" },
-			});
-
-			const testButton = screen.getByRole("button", { name: /测试连接/i });
-			fireEvent.click(testButton);
-
-			await waitFor(() => {
-				expect(screen.getByText("连接成功")).toBeInTheDocument();
-			});
-		});
-	});
-
-	describe("Max-3 UX Enforcement", () => {
-		it("disables add button when user has 3 instances", async () => {
-			const threeInstances = [
-				...mockInstances,
-				{
-					id: "instance-3",
-					name: "测试实例3",
-					type: "openclaw",
-					endpoint: "http://127.0.0.1:58789",
-					status: "active",
-					last_check_at: "2025-03-18T10:00:00Z",
-					created_at: "2025-03-18T08:00:00Z",
-				},
-			];
-
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue(
-				threeInstances,
-			);
-
-			render(<InstanceTopology />);
-
-			await waitFor(() => {
-				expect(screen.getByText("测试实例3")).toBeInTheDocument();
-			});
-
-			const addButton = screen.getByRole("button", {
-				name: /已达到实例数量上限/i,
-			});
-			expect(addButton).toBeDisabled();
-		});
-
-		it("shows tooltip or hint when add button is disabled", async () => {
-			const threeInstances = [
-				...mockInstances,
-				{
-					id: "instance-3",
-					name: "测试实例3",
-					type: "openclaw",
-					endpoint: "http://127.0.0.1:58789",
-					status: "active",
-					last_check_at: "2025-03-18T10:00:00Z",
-					created_at: "2025-03-18T08:00:00Z",
-				},
-			];
-
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue(
-				threeInstances,
-			);
-
-			render(<InstanceTopology />);
-
-			await waitFor(() => {
-				expect(screen.getByText("测试实例3")).toBeInTheDocument();
-			});
-
-			const addButton = screen.getByRole("button", {
-				name: /已达到实例数量上限/i,
-			});
-			expect(addButton).toHaveAttribute("title", "最多可添加3个实例");
-		});
-	});
-
-	describe("Edit Instance", () => {
-		it("opens edit form when clicking edit in details modal", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue(
-				mockInstances,
-			);
-
-			render(<InstanceTopology />);
-
-			await waitFor(() => {
-				expect(screen.getByText("测试实例1")).toBeInTheDocument();
-			});
-
-			const node = screen.getByRole("button", { name: "实例 测试实例1" });
-			fireEvent.click(node);
-
-			await waitFor(() => {
-				expect(screen.getByRole("dialog")).toBeInTheDocument();
-			});
-
-			const editButton = screen.getByRole("button", { name: /配置/i });
-			fireEvent.click(editButton);
-
-			await waitFor(() => {
-				expect(screen.getByText("编辑实例")).toBeInTheDocument();
-			});
-
-			const nameInput = screen.getByLabelText("实例名称") as HTMLInputElement;
-			expect(nameInput.value).toBe("测试实例1");
-		});
-	});
-
-	describe("Readonly Detail Modal", () => {
-		it("does not render 进入会话页 button in the detail modal", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue(
-				mockInstances,
-			);
-
-			render(<InstanceTopology />);
-
-			await waitFor(() => {
-				expect(screen.getByText("测试实例1")).toBeInTheDocument();
-			});
-
-			const node = screen.getByRole("button", { name: "实例 测试实例1" });
-			fireEvent.click(node);
-
-			await waitFor(() => {
-				expect(screen.getByRole("dialog")).toBeInTheDocument();
-			});
-
-			expect(
-				screen.queryByRole("button", { name: /进入会话页/i }),
-			).not.toBeInTheDocument();
-		});
-
-		it("does not render 删除 button in the detail modal", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockResolvedValue(
-				mockInstances,
-			);
-
-			render(<InstanceTopology />);
-
-			await waitFor(() => {
-				expect(screen.getByText("测试实例1")).toBeInTheDocument();
-			});
-
-			const node = screen.getByRole("button", { name: "实例 测试实例1" });
-			fireEvent.click(node);
-
-			await waitFor(() => {
-				expect(screen.getByRole("dialog")).toBeInTheDocument();
-			});
-
-			expect(
-				screen.queryByRole("button", { name: /^删除$/i }),
-			).not.toBeInTheDocument();
-		});
-	});
-
-	describe("Loading and Error States", () => {
-		it("shows loading state while fetching instances", () => {
-			vi.spyOn(instanceClient, "listInstances").mockImplementation(
-				() => new Promise(() => {}),
-			);
-
-			render(<InstanceTopology />);
-
-			expect(screen.getByText("加载中...")).toBeInTheDocument();
-		});
-
-		it("shows error state when fetch fails", async () => {
-			vi.spyOn(instanceClient, "listInstances").mockRejectedValue(
-				new Error("网络错误"),
-			);
-
-			render(<InstanceTopology />);
-
-			await waitFor(() => {
-				expect(screen.getByText(/错误/i)).toBeInTheDocument();
-			});
+		await waitFor(() => {
+			expect(screen.getByText(/错误: 聚合拓扑失败/i)).toBeInTheDocument();
 		});
 	});
 });

@@ -1,5 +1,6 @@
 import type {
   AggregateOverviewResponse,
+  AggregateTopologyResponse,
   AgentDetailResponse,
   AgentListItem,
   ChatSendRequest,
@@ -82,6 +83,12 @@ export async function getAggregateOverview(
   options?: ObserverRequestOptions
 ): Promise<AggregateOverviewResponse> {
   return fetchApi<AggregateOverviewResponse>('/aggregate/overview', undefined, options);
+}
+
+export async function getAggregateTopology(
+  options?: ObserverRequestOptions
+): Promise<AggregateTopologyResponse> {
+  return fetchApi<AggregateTopologyResponse>('/aggregate/topology', undefined, options);
 }
 
 export async function getAgentDetail(

@@ -80,6 +80,62 @@ export interface AggregateOverviewResponse {
   agents: AggregateOverviewAgentItem[];
 }
 
+export interface AggregateTopologyInstanceItem {
+  node_id: string;
+  instance_id: string;
+  name: string;
+  type: string;
+  status: string;
+  last_check_at: string | null;
+  created_at: string;
+}
+
+export interface AggregateTopologyAgentItem {
+  node_id: string;
+  instance_id: string;
+  instance_name: string;
+  agent_id: string;
+  agent_name: string;
+  status: AgentStatus;
+  is_active: boolean;
+  last_active_at: string | null;
+  drilldown_path: string;
+}
+
+export interface AggregateTopologyEdgeItem {
+  source: string;
+  target: string;
+  kind: string;
+}
+
+export interface AggregateTopologySkillItem {
+  id?: string;
+  node_id?: string;
+  name?: string;
+  label?: string;
+  target_ids?: string[];
+}
+
+export interface AggregateTopologyExternalAcpItem {
+  id?: string;
+  node_id?: string;
+  name?: string;
+  label?: string;
+  target_ids?: string[];
+}
+
+export interface AggregateTopologyResponse {
+  request_id: string;
+  freshness: FreshnessInfo;
+  partial_failure: boolean;
+  diagnostics: AggregateInstanceDiagnostic[];
+  instances: AggregateTopologyInstanceItem[];
+  agents: AggregateTopologyAgentItem[];
+  edges: AggregateTopologyEdgeItem[];
+  skills: AggregateTopologySkillItem[];
+  external_acps: AggregateTopologyExternalAcpItem[];
+}
+
 export type InstanceValidationErrorCode =
   | 'auth_failed'
   | 'connection_failed'
