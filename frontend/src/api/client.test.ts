@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { chatSend, listAgents } from './client';
+import { getAggregateOverview, listAgents } from './client';
 
 const fetchMock = vi.fn();
 
@@ -28,23 +28,26 @@ describe('business API client instance context', () => {
     );
   });
 
-  it('injects storage instance context into chat requests', async () => {
+  it('injects storage instance context into aggregate requests', async () => {
     window.localStorage.setItem('linpo.currentInstanceId', 'instance-1');
     fetchMock.mockResolvedValue({
       ok: true,
       status: 200,
       statusText: 'OK',
-      json: async () => ({ request_id: 'req-1', agent_id: 'main', status: 'accepted' }),
+      json: async () => ({
+        request_id: 'req-1',
+        freshness: { status: 'fresh', checked_at: '2026-03-22T12:00:00Z' },
+        partial_failure: false,
+        diagnostics: [],
+        agents: [],
+      }),
     });
 
-    await chatSend('main', 'agent:main:main', 'hello');
+    await getAggregateOverview();
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8000/chat/send?agentId=main&sessionKey=agent%3Amain%3Amain&data_source=openclaw&instanceId=instance-1',
-      expect.objectContaining({
-        method: 'POST',
-        credentials: 'include',
-      }),
+      'http://localhost:8000/aggregate/overview?data_source=openclaw&instanceId=instance-1',
+      expect.objectContaining({ credentials: 'include' }),
     );
   });
 });

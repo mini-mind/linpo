@@ -1,6 +1,6 @@
 import { resolveCurrentInstanceId } from '../hooks/useCurrentInstance';
 import {
-  type ObserverChannel,
+  type RealtimeObserverChannel,
   type ObserverRealtimeMessage,
   type ObserverSubscribeMessage,
   parseObserverRealtimeMessage,
@@ -17,7 +17,7 @@ export interface ObserverRealtimeClientOptions {
   baseUrl?: string;
   dataSource: string;
   instanceId?: string | null;
-  channel: ObserverChannel;
+  channel: RealtimeObserverChannel;
   lastSeq?: number;
   onMessage: (message: ObserverRealtimeMessage) => void;
   onResyncRequired?: (message: ResyncRequiredMessage) => void;
@@ -65,14 +65,14 @@ function toWebSocketUrl(
   return url.toString();
 }
 
-function assertRealtimeDataSource(dataSource: string, channel: ObserverChannel): void {
+function assertRealtimeDataSource(dataSource: string, channel: RealtimeObserverChannel): void {
   if (!dataSource) {
     throw new Error('Realtime dataSource is required');
   }
   void channel;
 }
 
-function subscribePayload(channel: ObserverChannel, lastSeq?: number): ObserverSubscribeMessage {
+function subscribePayload(channel: RealtimeObserverChannel, lastSeq?: number): ObserverSubscribeMessage {
   if (lastSeq === undefined) {
     return { type: 'subscribe', channel };
   }

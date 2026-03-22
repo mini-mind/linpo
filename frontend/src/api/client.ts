@@ -1,10 +1,11 @@
+import { resolveCurrentInstanceId } from '../hooks/useCurrentInstance';
 import type {
-  AggregateOverviewResponse,
-  AggregateTopologyResponse,
   AgentDetailResponse,
   AgentListItem,
-  ChatSendRequest,
-  ChatSendResponse,
+  AggregateOverviewResponse,
+  AggregateTopologyResponse,
+  ErrorEnvelope,
+  ErrorResponse,
   ModelItem,
   NodeDetailResponse,
   SessionPatchRequest,
@@ -12,7 +13,6 @@ import type {
   SessionsListResponse,
   SessionsPreviewResponse,
 } from './types';
-import { resolveCurrentInstanceId } from '../hooks/useCurrentInstance';
 
 const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
 const inferredApiBaseUrl = `${window.location.protocol}//${window.location.hostname}:8000`;
@@ -49,12 +49,38 @@ export function getDefaultObserverDataSource(): string {
 
 export class ApiError extends Error {
   readonly status: number;
+  readonly envelope: ErrorEnvelope | null;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, envelope: ErrorEnvelope | null = null) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.envelope = envelope;
   }
+}
+
+function isErrorEnvelopePayload(payload: unknown): payload is ErrorResponse {
+  if (!payload || typeof payload !== 'object') {
+    return false;
+  }
+
+  const error = (payload as Partial<ErrorResponse>).error;
+  return Boolean(
+    error
+      && typeof error.code === 'string'
+      && typeof error.message === 'string'
+      && typeof error.request_id === 'string'
+      && typeof error.recoverable === 'boolean'
+  );
+}
+
+async function buildApiError(response: Response): Promise<ApiError> {
+  const payload = await response.json().catch(() => null);
+  if (isErrorEnvelopePayload(payload)) {
+    return new ApiError(response.status, payload.error.message, payload.error);
+  }
+
+  return new ApiError(response.status, `API error: ${response.status} ${response.statusText}`);
 }
 
 async function fetchApi<T>(
@@ -70,7 +96,7 @@ async function fetchApi<T>(
     },
   });
   if (!response.ok) {
-    throw new ApiError(response.status, `API error: ${response.status} ${response.statusText}`);
+    throw await buildApiError(response);
   }
   return response.json() as Promise<T>;
 }
@@ -196,93 +222,3 @@ export async function previewSessions(
   };
 }
 
-interface ChatAbortResponse {
-  request_id: string;
-  agent_id: string;
-  aborted: boolean;
-  run_ids: string[];
-  message?: string;
-  error_type?: string;
-}
-
-export async function chatSend(
-  agentId: string,
-  sessionKey: string,
-  message: string,
-  options?: ObserverRequestOptions
-): Promise<ChatSendResponse> {
-  const request: ChatSendRequest = { agentId, sessionKey, message };
-  const query = new URLSearchParams({
-    agentId: request.agentId,
-    sessionKey: request.sessionKey,
-  }).toString();
-  const path = `/chat/send?${query}`;
-  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, options)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message: request.message }),
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || `API error: ${response.status}`);
-  }
-
-  return response.json() as Promise<ChatSendResponse>;
-}
-
-export async function chatAbort(
-  agentId: string,
-  options?: ObserverRequestOptions
-): Promise<ChatAbortResponse> {
-  const path = `/chat/abort?agentId=${agentId}`;
-  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, options)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || `API error: ${response.status}`);
-  }
-
-  return response.json() as Promise<ChatAbortResponse>;
-}
-
-export const sendControlRequest = chatAbort;
-export const sendMessage = chatSend;
-
-export async function resetSession(
-  sessionKey: string,
-  options?: ObserverRequestOptions
-): Promise<void> {
-  const path = `/chat/sessions/${sessionKey}/reset`;
-  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, options)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || `API error: ${response.status}`);
-  }
-}
-
-export async function deleteSession(
-  sessionKey: string,
-  options?: ObserverRequestOptions
-): Promise<void> {
-  const path = `/chat/sessions/${sessionKey}`;
-  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, options)}`, {
-    method: 'DELETE',
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || `API error: ${response.status}`);
-  }
-}
