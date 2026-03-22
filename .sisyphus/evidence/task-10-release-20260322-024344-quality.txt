@@ -1,0 +1,42 @@
+make[1]: Entering directory '/data/projects/linpo'
+.venv/bin/python -m pytest
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.0.2, pluggy-1.6.0
+rootdir: /data/projects/linpo
+configfile: pyproject.toml
+testpaths: tests
+plugins: anyio-4.12.1
+collected 144 items
+
+tests/integration/test_agents_api.py .............ss...............      [ 20%]
+tests/integration/test_aggregate_api.py ......                           [ 25%]
+tests/integration/test_auth_api.py ...............                       [ 35%]
+tests/integration/test_health.py .......                                 [ 40%]
+tests/integration/test_instances_api.py .................                [ 52%]
+tests/integration/test_observer_ws.py ...............                    [ 62%]
+tests/test_control_request_domain.py ..                                  [ 63%]
+tests/test_instance_service.py .                                         [ 64%]
+tests/test_instance_validator.py ...................                     [ 77%]
+tests/test_observer_realtime_state.py ................................   [100%]
+
+======================= 142 passed, 2 skipped in 22.02s ========================
+make[1]: Leaving directory '/data/projects/linpo'
+make[1]: Entering directory '/data/projects/linpo'
+.venv/bin/python -m basedpyright
+0 errors, 0 warnings, 0 notes
+make[1]: Leaving directory '/data/projects/linpo'
+make[1]: Entering directory '/data/projects/linpo'
+npm --prefix frontend run build
+
+> linpo-visible-mvp-frontend@0.1.0 build
+> tsc --noEmit && vite build
+
+vite v5.4.21 building for production...
+transforming...
+✓ 62 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                  0.68 kB │ gzip:  0.45 kB
+dist/assets/index-Dqq8RBky.js  255.39 kB │ gzip: 79.07 kB
+✓ built in 2.48s
+make[1]: Leaving directory '/data/projects/linpo'
