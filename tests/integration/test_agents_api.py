@@ -24,6 +24,22 @@ def _assert_error_envelope(
     return cast(str, error["request_id"])
 
 
+def test_legacy_control_routes_are_not_exposed_in_v0_6() -> None:
+    routes = [
+        ("POST", "/chat/send?agentId=agent-root-observer"),
+        ("POST", "/chat/abort?agentId=agent-root-observer"),
+        ("POST", "/chat/sessions/agent:main:main/reset"),
+        ("DELETE", "/chat/sessions/agent:main:main"),
+    ]
+
+    for method, path in routes:
+        status_code, _, body = request(method, path)
+        assert status_code in {404, 405}
+        payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+        assert payload["detail"] in {"Not Found", "Method Not Allowed"}
+
+
+
 def test_get_agents_returns_minimal_observer_list() -> None:
     status_code, _, body = request("GET", "/agents")
 
@@ -45,245 +61,6 @@ def test_get_agents_returns_minimal_observer_list() -> None:
             "last_active_at": "2026-03-15T21:10:00Z",
         },
     ]
-
-
-def test_chat_send_requires_openclaw_data_source() -> None:
-    status_code, _, body = request(
-        "POST",
-        "/chat/send?agentId=agent-root-observer",
-        body=json.dumps({"message": "test message"}).encode("utf-8"),
-        headers={"content-type": "application/json"},
-    )
-
-    assert status_code == 503
-    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    _assert_error_envelope(
-        payload,
-        code="unsupported_data_source",
-        message="chat.send is only available with the OpenClaw data source",
-        recoverable=True,
-        next_step="切换到 openclaw data_source 后重试",
-    )
-
-
-def test_chat_send_rejects_empty_message() -> None:
-    status_code, _, body = request(
-        "POST",
-        "/chat/send?agentId=agent-root-observer&data_source=openclaw",
-        body=json.dumps({"message": ""}).encode("utf-8"),
-        headers={"content-type": "application/json"},
-    )
-
-    assert status_code == 400
-    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    _assert_error_envelope(
-        payload,
-        code="invalid_request",
-        message="Message cannot be empty",
-        recoverable=True,
-        next_step="修正请求参数后重试",
-    )
-
-
-def test_chat_send_requires_session_key() -> None:
-    status_code, _, body = request(
-        "POST",
-        "/chat/send?agentId=agent-root-observer&data_source=openclaw",
-        body=json.dumps({"message": "test message"}).encode("utf-8"),
-        headers={"content-type": "application/json"},
-    )
-
-    assert status_code == 400
-    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    _assert_error_envelope(
-        payload,
-        code="invalid_request",
-        message="sessionKey is required",
-        recoverable=True,
-        next_step="修正请求参数后重试",
-    )
-
-
-def test_chat_send_returns_accepted_status(monkeypatch: Any) -> None:
-    from app.api import agents as agents_api
-    from app.domain.control_request import AgentControlAction
-    from app.services.openclaw_client import AgentControlResult, AgentControlStatus
-
-    class FakeOperatorService:
-        def send_message(
-            self,
-            *,
-            agent_id: str,
-            session_key: str,
-            message: str,
-        ) -> AgentControlResult:
-            assert agent_id == "agent-root-observer"
-            assert session_key == "agent:main:main"
-            assert message == "test message"
-            return AgentControlResult(
-                request_id="send-msg-test-accepted",
-                agent_id=agent_id,
-                action=AgentControlAction.PAUSE,
-                status=AgentControlStatus.ACCEPTED,
-            )
-
-    monkeypatch.setattr(agents_api, "get_openclaw_operator_service", lambda: FakeOperatorService())
-
-    status_code, _, body = request(
-        "POST",
-        "/chat/send?agentId=agent-root-observer&data_source=openclaw&sessionKey=agent:main:main",
-        body=json.dumps({"message": "test message"}).encode("utf-8"),
-        headers={"content-type": "application/json"},
-    )
-
-    assert status_code == 200
-    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    assert payload == {
-        "request_id": "send-msg-test-accepted",
-        "agent_id": "agent-root-observer",
-        "status": "accepted",
-        "message": None,
-    }
-
-
-def test_chat_send_passes_session_key_to_operator_service(monkeypatch: Any) -> None:
-    from app.api import agents as agents_api
-    from app.domain.control_request import AgentControlAction
-    from app.services.openclaw_client import AgentControlResult, AgentControlStatus
-
-    class FakeOperatorService:
-        def send_message(
-            self,
-            *,
-            agent_id: str,
-            session_key: str,
-            message: str,
-        ) -> AgentControlResult:
-            assert agent_id == "agent-root-observer"
-            assert session_key == "agent:main:main"
-            assert message == "test message"
-            return AgentControlResult(
-                request_id="send-msg-test-session-key",
-                agent_id=agent_id,
-                action=AgentControlAction.PAUSE,
-                status=AgentControlStatus.ACCEPTED,
-            )
-
-    monkeypatch.setattr(agents_api, "get_openclaw_operator_service", lambda: FakeOperatorService())
-
-    status_code, _, body = request(
-        "POST",
-        "/chat/send?agentId=agent-root-observer&data_source=openclaw&sessionKey=agent:main:main",
-        body=json.dumps({"message": "test message"}).encode("utf-8"),
-        headers={"content-type": "application/json"},
-    )
-
-    assert status_code == 200
-    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    assert payload == {
-        "request_id": "send-msg-test-session-key",
-        "agent_id": "agent-root-observer",
-        "status": "accepted",
-        "message": None,
-    }
-
-
-def test_chat_send_returns_failed_status_on_error(monkeypatch: Any) -> None:
-    from app.api import agents as agents_api
-    from app.domain.control_request import AgentControlAction
-    from app.services.openclaw_client import AgentControlResult, AgentControlStatus
-
-    class FakeOperatorService:
-        def send_message(
-            self,
-            *,
-            agent_id: str,
-            session_key: str,
-            message: str,
-        ) -> AgentControlResult:
-            assert session_key == "agent:main:main"
-            assert message == "test message"
-            return AgentControlResult(
-                request_id="send-msg-test-failed",
-                agent_id=agent_id,
-                action=AgentControlAction.PAUSE,
-                status=AgentControlStatus.FAILED,
-                message="Session not found",
-            )
-
-    monkeypatch.setattr(agents_api, "get_openclaw_operator_service", lambda: FakeOperatorService())
-
-    status_code, _, body = request(
-        "POST",
-        "/chat/send?agentId=agent-root-observer&data_source=openclaw&sessionKey=agent:main:main",
-        body=json.dumps({"message": "test message"}).encode("utf-8"),
-        headers={"content-type": "application/json"},
-    )
-
-    assert status_code == 200
-    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    assert payload == {
-        "request_id": "send-msg-test-failed",
-        "agent_id": "agent-root-observer",
-        "status": "failed",
-        "message": "Session not found",
-    }
-
-
-def test_chat_abort_requires_openclaw_data_source() -> None:
-    status_code, _, body = request(
-        "POST",
-        "/chat/abort?agentId=agent-root-observer",
-    )
-
-    assert status_code == 503
-    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    _assert_error_envelope(
-        payload,
-        code="unsupported_data_source",
-        message="chat.abort is only available with the OpenClaw data source",
-        recoverable=True,
-        next_step="切换到 openclaw data_source 后重试",
-    )
-
-
-def test_chat_abort_returns_aborted_status(monkeypatch: Any) -> None:
-    from app.api import agents as agents_api
-    from app.domain.control_request import AgentControlAction
-    from app.services.openclaw_client import AgentControlResult, AgentControlStatus
-
-    class FakeOperatorService:
-        def send_action(self, *, agent_id: str, action: AgentControlAction) -> AgentControlResult:
-            assert agent_id == "agent-root-observer"
-            assert action == AgentControlAction.PAUSE
-            return AgentControlResult(
-                request_id="abort-test-accepted",
-                agent_id=agent_id,
-                action=action,
-                status=AgentControlStatus.ACCEPTED,
-            )
-
-    class FakeDataSource:
-        def register_pending_control_request(self, *args: object, **kwargs: object) -> None:
-            del args, kwargs
-
-    monkeypatch.setattr(agents_api, "get_openclaw_operator_service", lambda: FakeOperatorService())
-    monkeypatch.setattr(agents_api, "get_observer_data_source", lambda _: FakeDataSource())
-
-    status_code, _, body = request(
-        "POST",
-        "/chat/abort?agentId=agent-root-observer&data_source=openclaw",
-    )
-
-    assert status_code == 200
-    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    assert payload == {
-        "request_id": "abort-test-accepted",
-        "agent_id": "agent-root-observer",
-        "aborted": True,
-        "run_ids": [],
-        "message": None,
-    }
 
 
 def test_get_node_detail_returns_event_history() -> None:
@@ -850,63 +627,3 @@ def test_patch_session_updates_session_model(monkeypatch: Any) -> None:
     assert payload == {"updated": True}
 
 
-def test_reset_session_requires_openclaw_data_source() -> None:
-    status_code, _, body = request("POST", "/chat/sessions/agent:main:main/reset")
-    assert status_code == 503
-    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    _assert_error_envelope(
-        payload,
-        code="unsupported_data_source",
-        message="sessions.reset is only available with the OpenClaw data source",
-        recoverable=True,
-        next_step="切换到 openclaw data_source 后重试",
-    )
-
-
-def test_reset_session_clears_history(monkeypatch: Any) -> None:
-    from app.api import agents as agents_api
-
-    class FakeClient:
-        def sessions_reset(self, **kwargs: Any) -> dict[str, Any]:
-            assert kwargs["key"] == "agent:main:main"
-            return {"ok": True, "payload": {"ok": True}}
-
-    monkeypatch.setattr(agents_api, "OpenClawClient", FakeClient)
-
-    status_code, _, body = request(
-        "POST", "/chat/sessions/agent:main:main/reset?data_source=openclaw"
-    )
-    assert status_code == 200
-    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    assert payload == {"reset": True}
-
-
-def test_delete_session_requires_openclaw_data_source() -> None:
-    status_code, _, body = request("DELETE", "/chat/sessions/agent:main:main")
-    assert status_code == 503
-    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    _assert_error_envelope(
-        payload,
-        code="unsupported_data_source",
-        message="sessions.delete is only available with the OpenClaw data source",
-        recoverable=True,
-        next_step="切换到 openclaw data_source 后重试",
-    )
-
-
-def test_delete_session_removes_session(monkeypatch: Any) -> None:
-    from app.api import agents as agents_api
-
-    class FakeClient:
-        def sessions_delete(self, **kwargs: Any) -> dict[str, Any]:
-            assert kwargs["key"] == "agent:main:main"
-            return {"ok": True, "payload": {"deleted": True}}
-
-    monkeypatch.setattr(agents_api, "OpenClawClient", FakeClient)
-
-    status_code, _, body = request(
-        "DELETE", "/chat/sessions/agent:main:main?data_source=openclaw"
-    )
-    assert status_code == 200
-    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    assert payload == {"deleted": True}

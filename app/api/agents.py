@@ -9,25 +9,22 @@ from sqlalchemy.orm import Session
 from app.api.schemas import (
     AgentDetailResponse,
     AgentListItem,
-    ChatSendRequest,
     ErrorEnvelope,
     ErrorResponse,
     EventRecordItem,
     ModelItem,
     ModelsListResponse,
     NodeDetailResponse,
-    SessionDeleteResponse,
     SessionListItem,
     SessionPatchRequest,
     SessionPatchResponse,
     SessionPreview,
     SessionPreviewItem,
-    SessionResetResponse,
     SessionsListResponse,
     TopologyNodeItem,
 )
 from app.db.session import get_session
-from app.domain.control_request import AgentControlAction
+from app.services.openclaw_client import OpenClawClient, OpenClawOperatorService
 from app.services.auth_service import get_authenticated_user
 from app.services.instance_service import (
     InstanceNotFoundError,
@@ -178,14 +175,6 @@ def _resolve_openclaw_client(request_context: RequestOpenClawContext | None) -> 
     return request_context.client if request_context is not None else OpenClawClient()
 
 
-def _resolve_operator_service(
-    request_context: RequestOpenClawContext | None,
-) -> OpenClawOperatorService:
-    if request_context is None:
-        return get_openclaw_operator_service()
-    return OpenClawOperatorService(client=request_context.client)
-
-
 # === Observer API ===
 
 
@@ -287,115 +276,6 @@ def get_node_detail(
                 )
                 for event in data_source_impl.list_events(agent_id, node.id)
             ],
-        )
-    except HTTPException as exc:
-        return _http_exception_response(exc)
-
-
-# === Chat API (OpenClaw compatible) ===
-
-
-class ChatSendResponse(BaseModel):
-    request_id: str
-    agent_id: str
-    status: str
-    message: str | None = None
-
-
-class ChatAbortResponse(BaseModel):
-    request_id: str
-    agent_id: str
-    aborted: bool
-    run_ids: list[str]
-    message: str | None = None
-
-
-@router.post("/chat/send", response_model=ChatSendResponse)
-def chat_send(
-    body: ChatSendRequest,
-    agent_id: str = Query(..., alias="agentId"),
-    session_key: str = Query(default="", alias="sessionKey"),
-    data_source: str | None = Query(default=None),
-    request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
-) -> ChatSendResponse | JSONResponse:
-    """Send a message to an agent's chat session.
-
-    OpenClaw API: chat.send
-    """
-    try:
-        if data_source != "openclaw":
-            raise HTTPException(
-                status_code=503,
-                detail="chat.send is only available with the OpenClaw data source",
-            )
-
-        if not body.message or not body.message.strip():
-            raise HTTPException(
-                status_code=400,
-                detail="Message cannot be empty",
-            )
-
-        resolved_session_key = session_key.strip() or body.session_key.strip()
-        if not resolved_session_key:
-            raise HTTPException(
-                status_code=400,
-                detail="sessionKey is required",
-            )
-
-        service = _resolve_operator_service(request_context)
-        result = service.send_message(
-            agent_id=agent_id,
-            session_key=resolved_session_key,
-            message=body.message.strip(),
-        )
-
-        return ChatSendResponse(
-            request_id=result.request_id,
-            agent_id=result.agent_id,
-            status=result.status.value,
-            message=result.message,
-        )
-    except HTTPException as exc:
-        return _http_exception_response(exc)
-
-
-@router.post("/chat/abort", response_model=ChatAbortResponse)
-def chat_abort(
-    agent_id: str = Query(..., alias="agentId"),
-    data_source: str | None = Query(default=None),
-    request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
-) -> ChatAbortResponse | JSONResponse:
-    """Abort an agent's running chat session.
-
-    OpenClaw API: chat.abort
-    """
-    try:
-        if data_source != "openclaw":
-            raise HTTPException(
-                status_code=503,
-                detail="chat.abort is only available with the OpenClaw data source",
-            )
-
-        service = _resolve_operator_service(request_context)
-        result = service.send_action(agent_id=agent_id, action=AgentControlAction.PAUSE)
-
-        if result.status.value == "accepted":
-            data_source_impl = _resolve_observer_data_source(data_source, request_context)
-            register_pending = getattr(data_source_impl, "register_pending_control_request", None)
-            if callable(register_pending):
-                register_pending(
-                    request_id=result.request_id,
-                    agent_id=result.agent_id,
-                    action="pause",
-                    correlation_hint=result.correlation_hint,
-                )
-
-        return ChatAbortResponse(
-            request_id=result.request_id,
-            agent_id=result.agent_id,
-            aborted=result.status.value == "accepted",
-            run_ids=[],
-            message=result.message,
         )
     except HTTPException as exc:
         return _http_exception_response(exc)
@@ -594,61 +474,5 @@ def patch_session(
 
         payload = result.get("payload", {})
         return SessionPatchResponse(updated=payload.get("ok", False))
-    except HTTPException as exc:
-        return _http_exception_response(exc)
-
-
-@router.post("/chat/sessions/{key}/reset", response_model=SessionResetResponse)
-def reset_session(
-    key: str,
-    data_source: str | None = Query(default=None),
-    request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
-) -> SessionResetResponse | JSONResponse:
-    try:
-        if data_source != "openclaw":
-            raise HTTPException(
-                status_code=503,
-                detail="sessions.reset is only available with the OpenClaw data source",
-            )
-
-        client = _resolve_openclaw_client(request_context)
-        result = client.sessions_reset(key=key)
-
-        if not result.get("ok"):
-            raise HTTPException(
-                status_code=503,
-                detail=result.get("error", {}).get("message", "sessions.reset failed"),
-            )
-
-        payload = result.get("payload", {})
-        return SessionResetResponse(reset=payload.get("ok", False))
-    except HTTPException as exc:
-        return _http_exception_response(exc)
-
-
-@router.delete("/chat/sessions/{key}", response_model=SessionDeleteResponse)
-def delete_session(
-    key: str,
-    data_source: str | None = Query(default=None),
-    request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
-) -> SessionDeleteResponse | JSONResponse:
-    try:
-        if data_source != "openclaw":
-            raise HTTPException(
-                status_code=503,
-                detail="sessions.delete is only available with the OpenClaw data source",
-            )
-
-        client = _resolve_openclaw_client(request_context)
-        result = client.sessions_delete(key=key)
-
-        if not result.get("ok"):
-            raise HTTPException(
-                status_code=503,
-                detail=result.get("error", {}).get("message", "sessions.delete failed"),
-            )
-
-        payload = result.get("payload", {})
-        return SessionDeleteResponse(deleted=payload.get("deleted", False))
     except HTTPException as exc:
         return _http_exception_response(exc)

@@ -862,15 +862,15 @@ def test_chat_request_rejects_other_users_instance_context(
 
     monkeypatch.setattr("app.api.agents.get_openclaw_operator_service", fail_operator_service)
 
-    status_code, _, payload = _request_json(
-        "POST",
+    status_code, _, body = request(
+        "GET",
         (
-            "/chat/send?agentId=main&sessionKey=agent:main:main"
+            "/chat/sessions?agentId=main"
             f"&data_source=openclaw&instanceId={create_payload['id']}"
         ),
-        {"message": "hello"},
-        auth_cookie,
+        headers=_json_headers(auth_cookie),
     )
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
 
     assert status_code == 404
     assert payload == {"detail": "Instance not found"}
