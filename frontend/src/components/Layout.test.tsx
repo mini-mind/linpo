@@ -357,4 +357,34 @@ describe('Layout sidebar account area', () => {
     expect(screen.queryByRole('link', { name: /会话/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /协作/ })).not.toBeInTheDocument();
   });
+
+  it('renders main content area with layout-main-shell testid', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'user-1', username: 'testuser' }),
+    });
+
+    render(
+      <TestWrapper initialPath="/topology">
+        <BrowserRouter>
+          <ToastProvider>
+            <AuthProvider>
+              <Routes>
+                <Route element={<Layout />}>
+                  <Route path="/topology" element={<div>拓扑页内容</div>} />
+                </Route>
+              </Routes>
+            </AuthProvider>
+          </ToastProvider>
+        </BrowserRouter>
+      </TestWrapper>
+    );
+
+    await screen.findByText('testuser');
+
+    const mainShell = screen.getByTestId('layout-main-shell');
+    expect(mainShell).toBeInTheDocument();
+    expect(mainShell).toHaveTextContent('拓扑页内容');
+  });
 });

@@ -43,7 +43,7 @@ export function Layout(): JSX.Element {
         {isMobile ? (
           // 移动端：底部导航栏
           <>
-            <main style={mobileMainStyle}>
+            <main style={mobileMainStyle} data-testid="layout-main-shell">
               <Outlet />
             </main>
             <nav style={mobileNavStyle}>
@@ -81,7 +81,7 @@ export function Layout(): JSX.Element {
               </nav>
               <AccountMenu />
             </aside>
-            <main style={mainStyle}>
+            <main style={mainStyle} data-testid="layout-main-shell">
               <Outlet />
             </main>
           </>
