@@ -6,3 +6,8 @@
 - 2026-03-21: 全部任务完成后，必须逐条核对实现成果与 active plan / PRD / architecture 的一致性；若仍有偏差，继续补齐并重新核对后才可宣告收口。
 - 2026-03-22: v0.6 文档真源统一冻结为 `overview` 展示用户全部 agents 并承担概览 / 巡视，`topology` 展示实例 / agents / skills / ACP 关系并承担配置入口，`kanban` 聚合工作项 / 协作状态 / 关键工作信号，且三页都必须进入 `/session/:instanceId/:agentId`。
 - 2026-03-22: README / PRD / architecture / active plan 必须同时声明范围排除项，不引入模板系统、工作流平台化或控制面扩张，并保留“禁止额外 prompt 注入”与“分阶段 ravin Playwright 验收”的硬约束。
+- 2026-03-22: 后端聚合契约首版冻结为 `GET /aggregate/overview` 与 `GET /aggregate/topology`；overview 返回聚合 agents 列表，topology 返回 `instances / agents / edges / skills / external_acps`，并统一要求登录、返回 `request_id`、freshness 与 per-instance diagnostics。
+- 2026-03-22: Task 3 将实例 fan-out、diagnostics 映射、freshness 合并、topology/overview 读模型组装统一下沉到 `app/services/aggregate_service.py`；`app/api/aggregate.py` 只保留鉴权、依赖注入与 service 调用。
+- 2026-03-22: 聚合 freshness 合并规则维持为：存在 fresh 成功且存在失败 => `stale`；仅 fresh 成功 => `fresh`；无 fresh 但有 stale 成功 => `stale`；全部失败 => `failed`；skills / external_acps 继续固定返回空数组。
+- 2026-03-22: Task 4 将 `session/:instanceId/:agentId` 的 `instanceId` 显式下传到 `AgentWorkspace`，由 workspace 将其继续注入 observer HTTP 读取与 `/ws/observer`；`SessionPage` 只负责把 canonical route 同步到 remembered storage，不允许反过来用 storage 覆盖 URL 真源。
+- 2026-03-22: Task 5 的 overview 前端固定消费 `GET /aggregate/overview`；页面主舞台使用 agent cards 承接 `/session/:instanceId/:agentId` drill-down，同时用轻量 summary strip + diagnostics cards 暴露 `request_id`、freshness 与 partial failure，不扩张为 topology/告警中心。
