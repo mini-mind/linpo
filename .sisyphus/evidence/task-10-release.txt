@@ -1,0 +1,76 @@
+Run context
+- Host: /data/projects/linpo main workspace
+- Target frontend base URL: http://175.178.213.10:5173
+- Target backend health URL: http://175.178.213.10:8000/health
+- Verification command: make quality && curl -i http://175.178.213.10:8000/health && PLAYWRIGHT_BASE_URL=http://175.178.213.10:5173 npm --prefix frontend run e2e -- --grep "v0.6"
+
+Successful rerun evidence
+
+[make quality]
+make[1]: Entering directory '/data/projects/linpo'
+.venv/bin/python -m pytest
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.0.2, pluggy-1.6.0
+rootdir: /data/projects/linpo
+configfile: pyproject.toml
+testpaths: tests
+plugins: anyio-4.12.1
+collected 144 items
+
+tests/integration/test_agents_api.py .............ss...............      [ 20%]
+tests/integration/test_aggregate_api.py ......                           [ 25%]
+tests/integration/test_auth_api.py ...............                       [ 35%]
+tests/integration/test_health.py .......                                 [ 40%]
+tests/integration/test_instances_api.py .................                [ 52%]
+tests/integration/test_observer_ws.py ...............                    [ 62%]
+tests/test_control_request_domain.py ..                                  [ 63%]
+tests/test_instance_service.py .                                         [ 64%]
+tests/test_instance_validator.py ...................                     [ 77%]
+tests/test_observer_realtime_state.py ................................   [100%]
+
+======================= 142 passed, 2 skipped in 22.02s ========================
+make[1]: Leaving directory '/data/projects/linpo'
+make[1]: Entering directory '/data/projects/linpo'
+.venv/bin/python -m basedpyright
+0 errors, 0 warnings, 0 notes
+make[1]: Leaving directory '/data/projects/linpo'
+make[1]: Entering directory '/data/projects/linpo'
+npm --prefix frontend run build
+
+> linpo-visible-mvp-frontend@0.1.0 build
+> tsc --noEmit && vite build
+
+vite v5.4.21 building for production...
+transforming...
+✓ 62 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                  0.68 kB │ gzip:  0.45 kB
+dist/assets/index-Dqq8RBky.js  255.39 kB │ gzip: 79.07 kB
+✓ built in 2.48s
+make[1]: Leaving directory '/data/projects/linpo'
+
+[curl -i http://175.178.213.10:8000/health]
+HTTP/1.1 200 OK
+date: Sat, 21 Mar 2026 18:44:24 GMT
+server: uvicorn
+content-length: 15
+content-type: application/json
+
+{"status":"ok"}
+
+[PLAYWRIGHT_BASE_URL=http://175.178.213.10:5173 npm --prefix frontend run e2e -- --grep "v0.6"]
+> linpo-visible-mvp-frontend@0.1.0 e2e
+> playwright test --grep v0.6
+
+Running 2 tests using 1 worker
+
+  ✓  1 e2e/v0.6-overview-topology-session.spec.ts:110:2 › v0.6 browser acceptance › v0.6 covers register login overview topology and session drill-down on deployed UI (7.1s)
+  ✓  2 e2e/v0.6-overview-topology-session.spec.ts:169:2 › v0.6 browser acceptance › v0.6 keeps degraded overview and topology diagnostics visible (13.8s)
+
+  2 passed (23.3s)
+
+Attached browser evidence for this release gate
+- Screenshot (happy path): .sisyphus/evidence/task-9-playwright.png
+- Screenshot (degraded path): .sisyphus/evidence/task-9-playwright-error.png
+- Playwright config records deployed base URL default at frontend/playwright.config.ts:3-4
