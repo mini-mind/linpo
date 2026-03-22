@@ -6,10 +6,9 @@ import type { InstanceItem } from "../api/types";
 import { setStoredCurrentInstanceId } from "../hooks/useCurrentInstance";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { AgentWorkspace } from "./AgentWorkspace";
-import { InstanceList } from "./InstanceList";
 
-const LEFT_PANEL_WIDTH = 280;
 const DEFAULT_SESSION_AGENT_ID = "main";
+const DESKTOP_MAX_WIDTH = 880;
 
 export function buildCanonicalSessionPath(
 	instanceId: string,
@@ -70,46 +69,27 @@ export default function SessionPage(): JSX.Element {
 		setStoredCurrentInstanceId(selectedInstanceId);
 	}, [selectedInstanceId]);
 
-	const handleSelectInstance = (id: string): void => {
-		setStoredCurrentInstanceId(id);
-		navigate(getCanonicalSessionPath(id));
-	};
-
-	const handleMobileSelect = (
-		e: React.ChangeEvent<HTMLSelectElement>,
-	): void => {
-		const selectedId = e.target.value;
-		if (selectedId) {
-			setStoredCurrentInstanceId(selectedId);
-			navigate(getCanonicalSessionPath(selectedId));
-		}
-	};
-
 	const selectedInstance = instances.find((i) => i.id === selectedInstanceId);
 
+	// Auto-redirect if on /session without instance and we have instances
+	useEffect(() => {
+		if (
+			!selectedInstanceId &&
+			!instancesLoading &&
+			!instancesError &&
+			instances.length > 0
+		) {
+			// Redirect to first instance
+			navigate(getCanonicalSessionPath(instances[0].id), { replace: true });
+		}
+	}, [selectedInstanceId, instancesLoading, instancesError, instances, navigate, getCanonicalSessionPath]);
+
+	// Mobile: compact header with instance selector
 	if (isMobile) {
 		return (
 			<div style={mobileContainerStyle}>
-				<div style={mobileHeaderStyle}>
-					<select
-						value={selectedInstanceId ?? ""}
-						onChange={handleMobileSelect}
-						style={mobileSelectStyle}
-						disabled={instancesLoading}
-					>
-						<option value="">
-							{instancesLoading
-								? "加载中..."
-								: instancesError
-									? "加载失败"
-									: "选择实例"}
-						</option>
-						{instances.map((instance) => (
-							<option key={instance.id} value={instance.id}>
-								{instance.name}
-							</option>
-						))}
-					</select>
+				<header style={mobileHeaderStyle}>
+					<h1 style={mobileTitleStyle}>会话</h1>
 					{selectedInstance && (
 						<span style={mobileStatusStyle}>
 							{selectedInstance.status === "connected"
@@ -117,54 +97,79 @@ export default function SessionPage(): JSX.Element {
 								: `○ ${selectedInstance.status}`}
 						</span>
 					)}
-				</div>
+				</header>
 				{hasCanonicalSessionRoute ? (
 					<AgentWorkspace
 						key={`${selectedInstanceId}:${selectedAgentId}`}
 						instanceId={selectedInstanceId ?? undefined}
 						agentId={selectedAgentId ?? undefined}
 					/>
-				) : (
-					<div style={mobilePlaceholderStyle}>
-						<span style={mobilePlaceholderTextStyle}>
-							请选择一个实例开始对话
-						</span>
+				) : instancesLoading ? (
+					<div style={centeredMessageStyle}>
+						<span style={textSecondaryStyle}>加载中...</span>
 					</div>
-				)}
+				) : instancesError ? (
+					<div style={centeredMessageStyle}>
+						<span style={textErrorStyle}>错误: {instancesError}</span>
+					</div>
+				) : instances.length === 0 ? (
+					<div style={centeredMessageStyle}>
+						<span style={textSecondaryStyle}>暂无实例</span>
+					</div>
+				) : null}
 			</div>
 		);
 	}
 
+	// Desktop: minimal three-zone shell with max-width centering
 	return (
-		<div style={getContainerStyle()}>
-			<div style={getLayoutStyle()}>
-				<div style={getLeftPanelStyle()}>
-					<InstanceList
-						instances={instances}
-						loading={instancesLoading}
-						error={instancesError}
-						selectedInstanceId={selectedInstanceId}
-						onSelectInstance={handleSelectInstance}
-					/>
+		<div style={desktopContainerStyle}>
+			<header style={desktopHeaderStyle}>
+				<div style={getDesktopHeaderInnerStyle(isMobile)}>
+					<h1 style={desktopTitleStyle}>
+						{selectedInstance?.name ?? "会话"}
+					</h1>
+					{selectedInstance && (
+						<span style={desktopStatusStyle}>
+							{selectedInstance.status === "connected"
+								? "● 已连接"
+								: `○ ${selectedInstance.status}`}
+						</span>
+					)}
 				</div>
-				<div style={getRightPanelStyle()}>
+			</header>
+			<main style={desktopMainStyle}>
+				<div style={desktopCenterWrapperStyle}>
 					{hasCanonicalSessionRoute ? (
 						<AgentWorkspace
 							key={`${selectedInstanceId}:${selectedAgentId}`}
 							instanceId={selectedInstanceId ?? undefined}
 							agentId={selectedAgentId ?? undefined}
 						/>
+					) : instancesLoading ? (
+						<div style={centeredMessageStyle}>
+							<span style={textSecondaryStyle}>加载中...</span>
+						</div>
+					) : instancesError ? (
+						<div style={centeredMessageStyle}>
+							<span style={textErrorStyle}>错误: {instancesError}</span>
+						</div>
+					) : instances.length === 0 ? (
+						<div style={centeredMessageStyle}>
+							<span style={textSecondaryStyle}>暂无实例</span>
+						</div>
 					) : (
-						<div style={placeholderStyle}>
-							<span style={placeholderTextStyle}>选择一个实例开始对话</span>
+						<div style={centeredMessageStyle}>
+							<span style={textSecondaryStyle}>选择实例开始对话</span>
 						</div>
 					)}
 				</div>
-			</div>
+			</main>
 		</div>
 	);
 }
 
+// === Mobile Styles ===
 const mobileContainerStyle: React.CSSProperties = {
 	height: "100%",
 	display: "flex",
@@ -175,21 +180,19 @@ const mobileContainerStyle: React.CSSProperties = {
 const mobileHeaderStyle: React.CSSProperties = {
 	display: "flex",
 	alignItems: "center",
+	justifyContent: "space-between",
 	gap: "0.75rem",
-	padding: "0.5rem 0.75rem",
+	padding: "0.625rem 0.875rem",
 	background: "#fff",
 	borderBottom: "1px solid #e5e7eb",
+	flexShrink: 0,
 };
 
-const mobileSelectStyle: React.CSSProperties = {
-	flex: 1,
-	padding: "0.5rem 0.75rem",
-	fontSize: "0.9375rem",
-	fontWeight: 500,
-	borderRadius: "0.375rem",
-	border: "1px solid #d1d5db",
-	background: "#fff",
-	color: "#1f2933",
+const mobileTitleStyle: React.CSSProperties = {
+	fontSize: "1.125rem",
+	fontWeight: 600,
+	color: "#111827",
+	margin: 0,
 };
 
 const mobileStatusStyle: React.CSSProperties = {
@@ -197,73 +200,82 @@ const mobileStatusStyle: React.CSSProperties = {
 	color: "#6b7280",
 };
 
-const mobilePlaceholderStyle: React.CSSProperties = {
+// === Desktop Styles ===
+const desktopContainerStyle: React.CSSProperties = {
+	height: "100%",
+	display: "flex",
+	flexDirection: "column",
+	background: "#f8fafc",
+	color: "#1f2933",
+	fontFamily:
+		'system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif',
+};
+
+const desktopHeaderStyle: React.CSSProperties = {
+	display: "flex",
+	justifyContent: "center",
+	background: "#fff",
+	borderBottom: "1px solid #e5e7eb",
+	flexShrink: 0,
+};
+
+const desktopTitleStyle: React.CSSProperties = {
+	fontSize: "1.25rem",
+	fontWeight: 600,
+	color: "#111827",
+	margin: 0,
+};
+
+const desktopStatusStyle: React.CSSProperties = {
+	fontSize: "0.8125rem",
+	color: "#6b7280",
+};
+
+const desktopMainStyle: React.CSSProperties = {
+	flex: 1,
+	display: "flex",
+	justifyContent: "center",
+	overflow: "hidden",
+	minHeight: 0,
+};
+
+const desktopCenterWrapperStyle: React.CSSProperties = {
+	width: "100%",
+	maxWidth: `${DESKTOP_MAX_WIDTH}px`,
+	height: "100%",
+	display: "flex",
+	flexDirection: "column",
+};
+
+function getDesktopHeaderInnerStyle(_isMobile: boolean): React.CSSProperties {
+	return {
+		width: "100%",
+		maxWidth: `${DESKTOP_MAX_WIDTH}px`,
+		display: "flex",
+		alignItems: "center",
+		justifyContent: "space-between",
+		gap: "0.75rem",
+		padding: "0.75rem 1rem",
+	};
+}
+
+// === Shared Styles ===
+const centeredMessageStyle: React.CSSProperties = {
 	flex: 1,
 	display: "flex",
 	alignItems: "center",
 	justifyContent: "center",
-	background: "#f9fafb",
+	padding: "2rem",
 };
 
-const mobilePlaceholderTextStyle: React.CSSProperties = {
-	fontSize: "1rem",
+const textSecondaryStyle: React.CSSProperties = {
+	fontSize: "0.9375rem",
 	fontWeight: 500,
 	color: "#9ca3af",
 };
 
-const placeholderStyle: React.CSSProperties = {
-	display: "flex",
-	alignItems: "center",
-	justifyContent: "center",
-	height: "100%",
-	width: "100%",
-	background: "#f9fafb",
-};
-
-const placeholderTextStyle: React.CSSProperties = {
-	fontSize: "1.125rem",
+const textErrorStyle: React.CSSProperties = {
+	fontSize: "0.9375rem",
 	fontWeight: 500,
-	color: "#9ca3af",
+	color: "#dc2626",
 };
-
-function getContainerStyle(): React.CSSProperties {
-	return {
-		height: "100%",
-		display: "flex",
-		flexDirection: "column",
-		background: "#f4f1ea",
-		color: "#1f2933",
-		fontFamily:
-			'system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif',
-	};
-}
-
-function getLayoutStyle(): React.CSSProperties {
-	return {
-		display: "flex",
-		flexDirection: "row",
-		flex: 1,
-		overflow: "hidden",
-	};
-}
-
-function getLeftPanelStyle(): React.CSSProperties {
-	return {
-		width: `${LEFT_PANEL_WIDTH}px`,
-		minWidth: `${LEFT_PANEL_WIDTH}px`,
-		borderRight: "1px solid #e5e7eb",
-		background: "#f9fafb",
-		flexShrink: 0,
-		overflow: "hidden",
-	};
-}
-
-function getRightPanelStyle(): React.CSSProperties {
-	return {
-		flex: 1,
-		height: "100%",
-		overflow: "hidden",
-		display: "flex",
-		flexDirection: "column",
-	};
-}

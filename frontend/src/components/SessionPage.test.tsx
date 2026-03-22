@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -36,9 +36,10 @@ vi.mock("./AgentWorkspace", async () => {
 				instanceId?: string;
 			}>();
 			return (
-				<div>
+				<div data-testid="session-stream-shell">
 					<div>{`workspace:${instanceId ?? "none"}:${agentId ?? "none"}`}</div>
 					<div>{`workspace-props:${props.instanceId ?? "none"}:${props.agentId ?? "none"}`}</div>
+					<div data-testid="session-input-shell">observer-only placeholder</div>
 				</div>
 			);
 		},
@@ -82,7 +83,7 @@ function renderSessionPage(initialEntry: string): void {
 	);
 }
 
-	describe("SessionPage", () => {
+describe("SessionPage", () => {
 	beforeEach(() => {
 		listInstancesMock.mockReset();
 		window.localStorage.clear();
@@ -117,7 +118,7 @@ function renderSessionPage(initialEntry: string): void {
 		});
 	});
 
-	it("renders instance list and workspace on canonical session route", async () => {
+	it("renders workspace on canonical session route with instance name in header", async () => {
 		listInstancesMock.mockResolvedValue([
 			buildInstance("inst-1", "First Instance"),
 			buildInstance("inst-2", "Second Instance"),
@@ -126,10 +127,9 @@ function renderSessionPage(initialEntry: string): void {
 		renderSessionPage("/session/inst-2/main");
 
 		await waitFor(() => {
-			expect(screen.getByText("First Instance")).toBeInTheDocument();
+			expect(screen.getByRole("heading", { name: "Second Instance" })).toBeInTheDocument();
 		});
 
-		expect(screen.getByText("Second Instance")).toBeInTheDocument();
 		expect(screen.getByText("workspace:inst-2:main")).toBeInTheDocument();
 	});
 
@@ -151,61 +151,17 @@ function renderSessionPage(initialEntry: string): void {
 		});
 	});
 
-	it("highlights the selected instance from canonical route", async () => {
+	it("shows connection status in header", async () => {
 		listInstancesMock.mockResolvedValue([
 			buildInstance("inst-1", "First Instance"),
-			buildInstance("inst-2", "Second Instance"),
+			buildInstance("inst-2", "Second Instance", "disconnected"),
 		]);
 
 		renderSessionPage("/session/inst-2/main");
 
 		await waitFor(() => {
-			expect(screen.getByText("First Instance")).toBeInTheDocument();
+			expect(screen.getByText(/disconnected/i)).toBeInTheDocument();
 		});
-
-		const selectedButton = screen.getByRole("button", {
-			name: /Second Instance/,
-		});
-		expect(selectedButton).toHaveStyle({ background: "#eff6ff" });
-	});
-
-	it("navigates to canonical /session/:instanceId/main when selecting another instance", async () => {
-		listInstancesMock.mockResolvedValue([
-			buildInstance("inst-1", "First Instance"),
-			buildInstance("inst-2", "Second Instance"),
-		]);
-
-		renderSessionPage("/session/inst-1/main?focus=active");
-
-		await waitFor(() => {
-			expect(screen.getByText("First Instance")).toBeInTheDocument();
-		});
-
-		fireEvent.click(screen.getByRole("button", { name: /Second Instance/ }));
-
-		await waitFor(() => {
-			expect(screen.getByTestId("location-display")).toHaveTextContent(
-				`${buildCanonicalSessionPath("inst-2")}?focus=active`,
-			);
-		});
-
-		await waitFor(() => {
-			expect(screen.getByText("workspace:inst-2:main")).toBeInTheDocument();
-		});
-	});
-
-	it("shows placeholder when no instance is selected", async () => {
-		listInstancesMock.mockResolvedValue([
-			buildInstance("inst-1", "Only Instance"),
-		]);
-
-		renderSessionPage("/session");
-
-		await waitFor(() => {
-			expect(screen.getByText("Only Instance")).toBeInTheDocument();
-		});
-
-		expect(screen.getByText("选择一个实例开始对话")).toBeInTheDocument();
 	});
 
 	it("shows empty state when no instances exist", async () => {
@@ -218,13 +174,93 @@ function renderSessionPage(initialEntry: string): void {
 		});
 	});
 
-	it("shows error message from API when instance list fetch fails", async () => {
+	it("shows error message when instance list fetch fails and no valid session route", async () => {
 		listInstancesMock.mockRejectedValue(new Error("无法连接到服务器"));
 
-		renderSessionPage("/session/inst-1/main");
+		renderSessionPage("/session");
 
 		await waitFor(() => {
-			expect(screen.getByText("无法连接到服务器")).toBeInTheDocument();
+			expect(screen.getByText(/无法连接到服务器/i)).toBeInTheDocument();
+		});
+	});
+
+	it("auto-redirects to first instance when on /session without instance", async () => {
+		listInstancesMock.mockResolvedValue([
+			buildInstance("inst-1", "First Instance"),
+			buildInstance("inst-2", "Second Instance"),
+		]);
+
+		renderSessionPage("/session");
+
+		await waitFor(() => {
+			expect(screen.getByTestId("location-display")).toHaveTextContent(
+				buildCanonicalSessionPath("inst-1"),
+			);
+		});
+	});
+
+	describe("page shell testid contracts", () => {
+		it("exposes session-stream-shell testid on the main content area", async () => {
+			listInstancesMock.mockResolvedValue([
+				buildInstance("inst-1", "First Instance"),
+			]);
+
+			renderSessionPage("/session/inst-1/main");
+
+			await waitFor(() => {
+				expect(screen.getByText("workspace:inst-1:main")).toBeInTheDocument();
+			});
+
+			const streamShell = screen.getByTestId("session-stream-shell");
+			expect(streamShell).toBeInTheDocument();
+		});
+
+		it("exposes session-input-shell testid on the input area", async () => {
+			listInstancesMock.mockResolvedValue([
+				buildInstance("inst-1", "First Instance"),
+			]);
+
+			renderSessionPage("/session/inst-1/main");
+
+			await waitFor(() => {
+				expect(screen.getByText("workspace:inst-1:main")).toBeInTheDocument();
+			});
+
+			const inputShell = screen.getByTestId("session-input-shell");
+			expect(inputShell).toBeInTheDocument();
+		});
+	});
+
+	describe("minimal three-zone layout", () => {
+		it("does not render instance list sidebar", async () => {
+			listInstancesMock.mockResolvedValue([
+				buildInstance("inst-1", "First Instance"),
+				buildInstance("inst-2", "Second Instance"),
+			]);
+
+			renderSessionPage("/session/inst-1/main");
+
+			await waitFor(() => {
+				expect(screen.getByText("workspace:inst-1:main")).toBeInTheDocument();
+			});
+
+			expect(screen.queryByRole("button", { name: /First Instance/ })).not.toBeInTheDocument();
+			expect(screen.queryByRole("button", { name: /Second Instance/ })).not.toBeInTheDocument();
+		});
+
+		it("shows only instance name header, message stream, and input area", async () => {
+			listInstancesMock.mockResolvedValue([
+				buildInstance("inst-1", "Test Instance"),
+			]);
+
+			renderSessionPage("/session/inst-1/main");
+
+			await waitFor(() => {
+				expect(screen.getByRole("heading", { name: "Test Instance" })).toBeInTheDocument();
+			});
+
+			expect(screen.getByTestId("session-stream-shell")).toBeInTheDocument();
+			expect(screen.getByTestId("session-input-shell")).toBeInTheDocument();
 		});
 	});
 });

@@ -9,7 +9,6 @@ const mockRealtimeClient = {
 };
 
 vi.mock("../api/client", () => ({
-	deleteSession: vi.fn(),
 	getAgentDetail: vi.fn().mockResolvedValue({
 		id: "main",
 		status: "running",
@@ -42,9 +41,6 @@ vi.mock("../api/client", () => ({
 		ts: 1,
 		previews: [{ key: "session-1", status: "ok", items: [] }],
 	}),
-	resetSession: vi.fn(),
-	sendControlRequest: vi.fn(),
-	sendMessage: vi.fn(),
 }));
 
 vi.mock("../api/realtimeClient", () => ({
@@ -78,14 +74,15 @@ describe("AgentWorkspace readonly mode", () => {
 		vi.restoreAllMocks();
 	});
 
-	it("shows readonly hint and hides destructive session controls", async () => {
+	it("shows collapsed disclosure and hides destructive session controls", async () => {
 		render(<AgentWorkspace />);
 
 		await waitFor(() => {
-			expect(
-				screen.getByText(/当前阶段仅保留观察与进入能力/i),
-			).toBeInTheDocument();
+			expect(screen.getByTestId("session-input-shell")).toBeInTheDocument();
 		});
+
+		expect(screen.getByText(/observer-only/i)).toBeInTheDocument();
+		expect(screen.getByText(/点击查看详情/i)).toBeInTheDocument();
 
 		expect(
 			screen.queryByRole("button", { name: /暂停/i }),
@@ -100,5 +97,28 @@ describe("AgentWorkspace readonly mode", () => {
 			screen.queryByRole("button", { name: /^发送$/i }),
 		).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("消息输入")).not.toBeInTheDocument();
+	});
+
+	it("does not render tabs for status/logs/files", async () => {
+		render(<AgentWorkspace />);
+
+		await waitFor(() => {
+			expect(screen.getByTestId("session-stream-shell")).toBeInTheDocument();
+		});
+
+		expect(screen.queryByRole("button", { name: /消息/i })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /状态/i })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /日志/i })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /文件/i })).not.toBeInTheDocument();
+	});
+
+	it("does not render session list panel", async () => {
+		render(<AgentWorkspace />);
+
+		await waitFor(() => {
+			expect(screen.getByTestId("session-stream-shell")).toBeInTheDocument();
+		});
+
+		expect(screen.queryByText(/会话列表/i)).not.toBeInTheDocument();
 	});
 });

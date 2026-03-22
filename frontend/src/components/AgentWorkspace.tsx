@@ -4,7 +4,6 @@ import { useParams } from "react-router-dom";
 import {
 	getAgentDetail,
 	getDefaultObserverDataSource,
-	getNodeDetail,
 	listSessions,
 	previewSessions,
 } from "../api/client";
@@ -17,24 +16,12 @@ import {
 	type AgentDetailResponse,
 	buildAgentDetailChannel,
 	buildSessionMessagesChannel,
-	type EventRecord,
-	type NodeDetailResponse,
 	type SessionListItem,
 	type SessionPreviewItem,
 	type SessionsPreviewResponse,
 	type TopologyNode,
 } from "../api/types";
 import { useIsMobile } from "../hooks/useIsMobile";
-import { SessionActions } from "./SessionActions";
-import { SessionList } from "./SessionList";
-
-type RealtimeStatus =
-	| "realtime"
-	| "reconnecting"
-	| "resyncing"
-	| "disconnected"
-	| "error";
-type WorkspaceTab = "session" | "status" | "logs" | "files";
 
 interface AgentWorkspaceProps {
 	agentId?: string;
@@ -42,7 +29,7 @@ interface AgentWorkspaceProps {
 }
 
 interface RealtimeState {
-	status: RealtimeStatus;
+	status: "realtime" | "reconnecting" | "resyncing" | "disconnected" | "error";
 	message: string | null;
 }
 
@@ -312,25 +299,6 @@ export async function startAgentDetailRealtime(
 	}
 }
 
-const STATUS_BADGE_CN: Record<string, string> = {
-	idle: "空闲",
-	running: "运行中",
-	finished: "已完成",
-	error: "错误",
-};
-
-const EVENT_TYPE_CN: Record<string, string> = {
-	agent_created: "代理创建",
-	subagent_created: "子代理创建",
-	activity_started: "活动开始",
-	activity_stopped: "活动停止",
-	status_changed: "状态变更",
-	node_finished: "节点完成",
-	task_started: "任务开始",
-	task_finished: "任务完成",
-	task_interrupted: "任务中断",
-};
-
 export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 	const { agentId: paramAgentId, instanceId: paramInstanceId } = useParams<{
 		agentId: string;
@@ -342,15 +310,11 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 	const [agent, setAgent] = useState<AgentDetailResponse | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
-	const [activeTab, setActiveTab] = useState<WorkspaceTab>("session");
-	const [nodeDetail, setNodeDetail] = useState<NodeDetailResponse | null>(null);
-	const [nodeDetailLoading, setNodeDetailLoading] = useState(false);
-	const [selectedSessionKey, setSelectedSessionKey] = useState<string | null>(
-		null,
-	);
+	const [selectedSessionKey, setSelectedSessionKey] = useState<string | null>(null);
 	const [previewItems, setPreviewItems] = useState<SessionPreviewItem[]>([]);
 	const [previewLoading, setPreviewLoading] = useState(false);
 	const [sessions, setSessions] = useState<SessionListItem[]>([]);
+	const [showDisclosure, setShowDisclosure] = useState(false);
 
 	const messagesAreaRef = useRef<HTMLDivElement | null>(null);
 	const sessionRealtimeRef = useRef<ObserverRealtimeClient | null>(null);
@@ -373,7 +337,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 	}, [agentId]);
 
 	useEffect(() => {
-		if (activeTab !== "session" || !agentId) return;
+		if (!agentId) return;
 		let cancelled = false;
 		async function fetchSessionState(): Promise<void> {
 			try {
@@ -405,7 +369,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		return () => {
 			cancelled = true;
 		};
-	}, [activeTab, agentId, instanceId]);
+	}, [agentId, instanceId]);
 
 	const scrollToBottom = useCallback(() => {
 		setTimeout(() => {
@@ -417,7 +381,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 	}, []);
 
 	useEffect(() => {
-		if (activeTab !== "session" || !selectedSessionKey) return;
+		if (!selectedSessionKey) return;
 		const sessionKey = selectedSessionKey;
 
 		if (prevSessionKeyRef.current === sessionKey) return;
@@ -454,7 +418,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		return () => {
 			cancelled = true;
 		};
-	}, [activeTab, instanceId, selectedSessionKey, scrollToBottom]);
+	}, [instanceId, selectedSessionKey, scrollToBottom]);
 
 	const refreshPreview = useCallback(
 		async (sessionKey: string | null = selectedSessionKey): Promise<void> => {
@@ -487,7 +451,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 	);
 
 	useEffect(() => {
-		if (activeTab !== "session" || !selectedSessionKey) {
+		if (!selectedSessionKey) {
 			sessionRealtimeRef.current?.close();
 			sessionRealtimeRef.current = null;
 			return;
@@ -546,17 +510,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 			sessionRealtimeRef.current?.close();
 			sessionRealtimeRef.current = null;
 		};
-	}, [activeTab, instanceId, selectedSessionKey, refreshPreview, scrollToBottom]);
-
-	const handleSessionSelect = useCallback(
-		(sessionKey: string): void => {
-			if (sessionKey === selectedSessionKey) return;
-			setSelectedSessionKey(sessionKey);
-			setPreviewItems([]);
-			setPreviewLoading(true);
-		},
-		[selectedSessionKey],
-	);
+	}, [instanceId, selectedSessionKey, refreshPreview, scrollToBottom]);
 
 	useEffect(() => {
 		if (!agentId) {
@@ -606,315 +560,130 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		};
 	}, [agentId, instanceId]);
 
-	useEffect(() => {
-		if (!agentId || !agent) return;
-		const rootNodeId = agent.root_node_id || agent.nodes[0]?.id;
-		if (!rootNodeId) return;
-		const currentAgentId = agentId;
-		let cancelled = false;
-
-		async function fetchNodeDetail(nodeId: string): Promise<void> {
-			setNodeDetailLoading(true);
-			try {
-				const detail = await getNodeDetail(currentAgentId, nodeId, {
-					instanceId,
-				});
-				if (!cancelled) setNodeDetail(detail);
-			} catch {
-			} finally {
-				if (!cancelled) setNodeDetailLoading(false);
-			}
-		}
-
-		void fetchNodeDetail(rootNodeId);
-		return () => {
-			cancelled = true;
-		};
-	}, [agentId, agent, instanceId]);
-
 	if (loading) {
 		return (
-			<div style={getContainerStyle(isMobile)}>
-				<p style={textStyle}>加载中...</p>
+			<div style={getContainerStyle(isMobile)} data-testid="session-stream-shell">
+				<div style={loadingContainerStyle}>
+					<span style={loadingTextStyle}>加载中...</span>
+				</div>
 			</div>
 		);
 	}
 
 	if (error) {
 		return (
-			<div style={getContainerStyle(isMobile)}>
-				<p style={errorStyle}>错误: {error}</p>
+			<div style={getContainerStyle(isMobile)} data-testid="session-stream-shell">
+				<div style={loadingContainerStyle}>
+					<span style={errorTextStyle}>错误: {error}</span>
+				</div>
 			</div>
 		);
 	}
 
 	if (!agent) {
 		return (
-			<div style={getContainerStyle(isMobile)}>
-				<p style={textStyle}>未找到实例</p>
+			<div style={getContainerStyle(isMobile)} data-testid="session-stream-shell">
+				<div style={loadingContainerStyle}>
+					<span style={loadingTextStyle}>未找到实例</span>
+				</div>
 			</div>
 		);
 	}
 
 	const emptySessionText = selectedSessionKey ? "暂无消息" : "暂无可用会话";
-	const emptySessionHint = selectedSessionKey
-		? "当前阶段仅保留观察与进入能力"
-		: "请选择其他会话或等待新消息进入";
 
 	return (
-		<div style={getContainerStyle(isMobile)}>
-			<div style={getTabsStyle(isMobile)}>
-				<button
-					type="button"
-					style={
-						activeTab === "session"
-							? getActiveTabStyle(isMobile)
-							: getTabStyle(isMobile)
-					}
-					onClick={() => setActiveTab("session")}
-				>
-					消息
-				</button>
-				<button
-					type="button"
-					style={
-						activeTab === "status"
-							? getActiveTabStyle(isMobile)
-							: getTabStyle(isMobile)
-					}
-					onClick={() => setActiveTab("status")}
-				>
-					状态
-				</button>
-				<button
-					type="button"
-					style={
-						activeTab === "logs"
-							? getActiveTabStyle(isMobile)
-							: getTabStyle(isMobile)
-					}
-					onClick={() => setActiveTab("logs")}
-				>
-					日志
-				</button>
-				<button
-					type="button"
-					style={
-						activeTab === "files"
-							? getActiveTabStyle(isMobile)
-							: getTabStyle(isMobile)
-					}
-					onClick={() => setActiveTab("files")}
-					disabled
-				>
-					文件<span style={tabTagStyle}>v0.8</span>
-				</button>
-			</div>
+		<div style={getContainerStyle(isMobile)} data-testid="session-stream-shell">
+			<div style={getStreamLayoutStyle(isMobile)}>
+				{sessions.length > 1 && (
+					<div style={sessionSwitcherStyle}>
+						<select
+							value={selectedSessionKey ?? ""}
+							onChange={(e) => {
+								const key = e.target.value;
+								if (key) {
+									setSelectedSessionKey(key);
+									setPreviewItems([]);
+									setPreviewLoading(true);
+								}
+							}}
+							style={sessionSelectStyle}
+						>
+							{sessions.map((session) => (
+								<option key={session.key} value={session.key}>
+									{session.derived_title || session.label || session.key}
+								</option>
+							))}
+						</select>
+					</div>
+				)}
 
-			<div style={getContentStyle(isMobile)}>
-				{activeTab === "session" && (
-					<div style={getSessionLayoutStyle(isMobile)}>
-						<section style={getSessionListPanelStyle(isMobile)}>
-							<div style={sessionPanelHeaderStyle}>
-								<div>
-									<h2 style={sessionPanelTitleStyle}>会话列表</h2>
-									<p style={sessionPanelHintStyle}>
-										切换会话会同步更新预览与实时频道
-									</p>
-								</div>
-								<span style={sessionCountBadgeStyle}>{sessions.length} 个</span>
+				<div style={getMessagesContainerStyle(isMobile)}>
+					<div ref={messagesAreaRef} style={messagesAreaStyle}>
+						{previewLoading ? (
+							<div style={messagesEmptyStyle}>
+								<span style={messagesEmptyTextStyle}>加载消息...</span>
 							</div>
-							<div style={sessionListWrapperStyle}>
-								<SessionList
-									sessions={sessions}
-									selectedKey={selectedSessionKey}
-									onSelect={handleSessionSelect}
-								/>
+						) : previewItems.length === 0 ? (
+							<div style={messagesEmptyStyle}>
+								<span style={messagesEmptyTextStyle}>{emptySessionText}</span>
 							</div>
-						</section>
-						<div style={chatMainPaneStyle}>
-							<div style={getSessionToolbarStyle(isMobile)}>
-								<div style={sessionToolbarInfoStyle}>
-									<span style={sessionToolbarLabelStyle}>当前会话</span>
-									<span style={sessionToolbarKeyStyle}>
-										{selectedSessionKey ?? "暂无可选会话"}
-									</span>
-								</div>
-								{selectedSessionKey && (
-									<SessionActions sessionKey={selectedSessionKey} />
-								)}
-							</div>
-							<div style={getChatboxContainerStyle()}>
-								<div style={getChatMessagesAreaStyle(isMobile)}>
-									<div ref={messagesAreaRef} style={messagesAreaStyle}>
-										{previewLoading ? (
-											<div style={messagesEmptyStyle}>
-												<span style={messagesEmptyTextStyle}>加载消息...</span>
-											</div>
-										) : previewItems.length === 0 ? (
-											<div style={messagesEmptyStyle}>
-												<span style={messagesEmptyTextStyle}>
-													{emptySessionText}
-												</span>
-												<span style={messagesEmptyHintStyle}>
-													{emptySessionHint}
-												</span>
-											</div>
-										) : (
-											<div style={previewListStyle}>
-												{previewItems.map((item, index) => (
-													<div
-														key={`msg-${index}-${item.role}`}
-														style={getPreviewItemStyle(item.role)}
-													>
-														<span style={previewRoleStyle}>
-															{getRoleLabel(item.role)}
-														</span>
-														<p style={previewTextStyle}>{item.text}</p>
-													</div>
-												))}
-											</div>
-										)}
+						) : (
+							<div style={previewListStyle}>
+								{previewItems.map((item, index) => (
+									<div
+										key={`msg-${index}-${item.role}`}
+										style={getPreviewItemStyle(item.role)}
+									>
+										<span style={previewRoleStyle}>
+											{getRoleLabel(item.role)}
+										</span>
+										<p style={previewTextStyle}>{item.text}</p>
 									</div>
-								</div>
+								))}
 							</div>
+						)}
+					</div>
+				</div>
+
+				<div data-testid="session-input-shell" style={getInputShellStyle(isMobile)}>
+					{!showDisclosure && (
+						<button
+							type="button"
+							onClick={() => setShowDisclosure(true)}
+							style={disclosureTriggerStyle}
+						>
+							<span style={disclosureHintStyle}>observer-only · 点击查看详情</span>
+						</button>
+					)}
+					{showDisclosure && (
+						<div style={disclosureContentStyle}>
+							<span style={disclosureTitleStyle}>只读观察模式</span>
+							<span style={disclosureTextStyle}>当前阶段仅保留观察与进入能力</span>
+							<button
+								type="button"
+								onClick={() => setShowDisclosure(false)}
+								style={disclosureCloseStyle}
+							>
+								收起
+							</button>
 						</div>
-					</div>
-				)}
-
-				{activeTab === "status" && (
-					<div style={detailTabStyle}>
-						<div style={getTopRowStyle(isMobile)}>
-							<section style={getSectionStyle(isMobile)}>
-								<h2 style={getSectionTitleStyle(isMobile)}>当前状态</h2>
-								<div style={getStatusGridStyle(isMobile)}>
-									<div style={statusItemStyle}>
-										<span style={statusLabelStyle}>节点 ID</span>
-										<span style={statusValueStyle}>
-											{agent.nodes[0]?.id || agent.id}
-										</span>
-									</div>
-									<div style={statusItemStyle}>
-										<span style={statusLabelStyle}>运行状态</span>
-										<span style={getStatusBadgeStyle(agent.status)}>
-											{STATUS_BADGE_CN[agent.status] || agent.status}
-										</span>
-									</div>
-									<div style={statusItemStyle}>
-										<span style={statusLabelStyle}>活跃状态</span>
-										<span
-											style={
-												agent.is_active ? activeTextStyle : inactiveTextStyle
-											}
-										>
-											{agent.is_active ? "● 活跃" : "○ 不活跃"}
-										</span>
-									</div>
-									<div style={statusItemStyle}>
-										<span style={statusLabelStyle}>子节点</span>
-										<span style={statusValueStyle}>
-											{agent.root_child_count} 个
-										</span>
-									</div>
-									<div style={statusItemStyle}>
-										<span style={statusLabelStyle}>总节点</span>
-										<span style={statusValueStyle}>
-											{agent.total_node_count} 个
-										</span>
-									</div>
-									{nodeDetail?.last_active_started_at && (
-										<div style={statusItemStyle}>
-											<span style={statusLabelStyle}>最近活跃</span>
-											<span style={statusValueStyle}>
-												{formatTime(nodeDetail.last_active_started_at)}
-											</span>
-										</div>
-									)}
-								</div>
-							</section>
-							<section style={getSectionStyle(isMobile)}>
-								<h2 style={getSectionTitleStyle(isMobile)}>资源占用</h2>
-								<div style={placeholderSectionStyle}>
-									<span style={placeholderTextStyle}>暂不支持</span>
-									<span style={placeholderHintStyle}>
-										需要 OpenClaw 提供资源监控接口
-									</span>
-								</div>
-							</section>
-						</div>
-					</div>
-				)}
-
-				{activeTab === "logs" && (
-					<div style={detailTabStyle}>
-						<section style={getSectionStyle(isMobile)}>
-							<h2 style={getSectionTitleStyle(isMobile)}>历史事件</h2>
-							{nodeDetailLoading ? (
-								<div style={emptyEventsStyle}>
-									<p style={emptyEventsTextStyle}>加载中...</p>
-								</div>
-							) : nodeDetail?.events && nodeDetail.events.length > 0 ? (
-								<ul style={eventListStyle}>
-									{nodeDetail.events.map((event: EventRecord) => (
-										<li key={event.id} style={eventItemStyle}>
-											<div style={eventHeaderStyle}>
-												<span style={eventTypeStyle}>
-													{EVENT_TYPE_CN[event.type] || event.type}
-												</span>
-												<span style={eventTimeStyle}>
-													{formatTime(event.timestamp)}
-												</span>
-											</div>
-											<p style={eventDescStyle}>{event.description}</p>
-										</li>
-									))}
-								</ul>
-							) : (
-								<div style={emptyEventsStyle}>
-									<p style={emptyEventsTextStyle}>暂无历史事件</p>
-								</div>
-							)}
-						</section>
-					</div>
-				)}
-
-				{activeTab === "files" && (
-					<div style={placeholderContentStyle}>
-						<div style={getPlaceholderBoxStyle(isMobile)}>
-							<h3 style={placeholderTitleStyle}>文件系统</h3>
-							<p style={placeholderTextStyle}>此功能将在 v0.8 版本中提供。</p>
-							<p style={placeholderHintStyle}>
-								将支持浏览和编辑实例的工作目录文件。
-							</p>
-						</div>
-					</div>
-				)}
+					)}
+				</div>
 			</div>
 		</div>
 	);
 }
 
-function formatTime(timestamp: string): string {
-	return new Date(timestamp).toLocaleString("zh-CN");
-}
-
-function getStatusBadgeStyle(status: string): React.CSSProperties {
-	const colors: Record<string, { bg: string; text: string }> = {
-		running: { bg: "#dcfce7", text: "#166534" },
-		idle: { bg: "#f3f4f6", text: "#6b7280" },
-		finished: { bg: "#dbeafe", text: "#1e40af" },
-		error: { bg: "#fee2e2", text: "#dc2626" },
+function getRoleLabel(role: string): string {
+	const labels: Record<string, string> = {
+		user: "用户",
+		assistant: "助手",
+		tool: "工具",
+		system: "系统",
+		other: "其他",
 	};
-	const c = colors[status] || colors.idle;
-	return {
-		display: "inline-block",
-		padding: "0.25rem 0.75rem",
-		borderRadius: "9999px",
-		fontSize: "0.75rem",
-		fontWeight: 500,
-		background: c.bg,
-		color: c.text,
-	};
+	return labels[role] || role;
 }
 
 function getContainerStyle(_isMobile: boolean): React.CSSProperties {
@@ -930,404 +699,148 @@ function getContainerStyle(_isMobile: boolean): React.CSSProperties {
 	};
 }
 
-function getTabsStyle(isMobile: boolean): React.CSSProperties {
-	return {
-		display: "flex",
-		alignItems: "center",
-		gap: "0",
-		padding: isMobile ? "0 0.75rem" : "0 1rem",
-		background: "#fff",
-		borderBottom: "1px solid #e5e7eb",
-		overflowX: "auto",
-		WebkitOverflowScrolling: "touch",
-	};
-}
-
-function getTabStyle(isMobile: boolean): React.CSSProperties {
-	return {
-		display: "inline-flex",
-		alignItems: "center",
-		gap: "0.25rem",
-		padding: isMobile ? "0.625rem 0.75rem" : "0.75rem 1rem",
-		fontSize: isMobile ? "0.875rem" : "0.9375rem",
-		fontWeight: 500,
-		border: "none",
-		borderBottom: "2px solid transparent",
-		background: "transparent",
-		color: "#6b7280",
-		cursor: "pointer",
-		whiteSpace: "nowrap",
-		flexShrink: 0,
-		transition: "color 0.15s, border-color 0.15s",
-	};
-}
-
-function getActiveTabStyle(isMobile: boolean): React.CSSProperties {
-	return {
-		...getTabStyle(isMobile),
-		borderBottom: "2px solid #3b82f6",
-		color: "#1f2933",
-	};
-}
-
-function getContentStyle(_isMobile: boolean): React.CSSProperties {
-	return {
-		flex: 1,
-		display: "flex",
-		flexDirection: "column",
-		overflow: "hidden",
-		minHeight: 0,
-	};
-}
-
-function getSessionLayoutStyle(isMobile: boolean): React.CSSProperties {
-	return {
-		flex: 1,
-		display: "flex",
-		flexDirection: isMobile ? "column" : "row",
-		gap: isMobile ? "0.75rem" : "1rem",
-		padding: isMobile ? "0.75rem" : "1rem",
-		background: "#f8fafc",
-		minHeight: 0,
-	};
-}
-
-function getSessionListPanelStyle(isMobile: boolean): React.CSSProperties {
-	return {
-		display: "flex",
-		flexDirection: "column",
-		width: isMobile ? "100%" : "18rem",
-		flexShrink: 0,
-		minHeight: isMobile ? "11rem" : 0,
-		maxHeight: isMobile ? "15rem" : "100%",
-		background: "#fff",
-		border: "1px solid #e5e7eb",
-		borderRadius: "0.75rem",
-		overflow: "hidden",
-	};
-}
-
-const sessionPanelHeaderStyle: React.CSSProperties = {
+const loadingContainerStyle: React.CSSProperties = {
+	flex: 1,
 	display: "flex",
-	justifyContent: "space-between",
-	alignItems: "flex-start",
-	gap: "0.75rem",
-	padding: "0.875rem 1rem",
-	borderBottom: "1px solid #e5e7eb",
-	background: "#f8fafc",
-};
-
-const sessionPanelTitleStyle: React.CSSProperties = {
-	margin: 0,
-	fontSize: "0.9375rem",
-	fontWeight: 600,
-	color: "#111827",
-};
-
-const sessionPanelHintStyle: React.CSSProperties = {
-	margin: "0.25rem 0 0 0",
-	fontSize: "0.75rem",
-	color: "#6b7280",
-	lineHeight: 1.5,
-};
-
-const sessionCountBadgeStyle: React.CSSProperties = {
-	display: "inline-flex",
 	alignItems: "center",
 	justifyContent: "center",
-	padding: "0.25rem 0.5rem",
-	borderRadius: "9999px",
-	background: "#dbeafe",
-	color: "#1d4ed8",
-	fontSize: "0.75rem",
-	fontWeight: 600,
-	whiteSpace: "nowrap",
 };
 
-const sessionListWrapperStyle: React.CSSProperties = {
-	flex: 1,
-	minHeight: 0,
-	overflow: "hidden",
-};
-
-const chatMainPaneStyle: React.CSSProperties = {
-	flex: 1,
-	display: "flex",
-	flexDirection: "column",
-	minWidth: 0,
-	minHeight: 0,
-	gap: "0.75rem",
-};
-
-function getSessionToolbarStyle(isMobile: boolean): React.CSSProperties {
-	return {
-		display: "flex",
-		flexDirection: isMobile ? "column" : "row",
-		justifyContent: "space-between",
-		alignItems: isMobile ? "stretch" : "center",
-		gap: "0.75rem",
-		padding: isMobile ? "0.875rem" : "1rem",
-		background: "#fff",
-		border: "1px solid #e5e7eb",
-		borderRadius: "0.75rem",
-	};
-}
-
-const sessionToolbarInfoStyle: React.CSSProperties = {
-	display: "flex",
-	flexDirection: "column",
-	gap: "0.25rem",
-	minWidth: 0,
-};
-
-const sessionToolbarLabelStyle: React.CSSProperties = {
-	fontSize: "0.75rem",
-	fontWeight: 500,
+const loadingTextStyle: React.CSSProperties = {
+	fontSize: "0.9375rem",
 	color: "#6b7280",
 };
 
-const sessionToolbarKeyStyle: React.CSSProperties = {
+const errorTextStyle: React.CSSProperties = {
+	fontSize: "0.9375rem",
+	color: "#dc2626",
+};
+
+function getStreamLayoutStyle(isMobile: boolean): React.CSSProperties {
+	return {
+		flex: 1,
+		display: "flex",
+		flexDirection: "column",
+		minHeight: 0,
+		padding: isMobile ? "0.75rem" : "1rem",
+		gap: isMobile ? "0.5rem" : "0.75rem",
+	};
+}
+
+const sessionSwitcherStyle: React.CSSProperties = {
+	flexShrink: 0,
+};
+
+const sessionSelectStyle: React.CSSProperties = {
+	width: "100%",
+	padding: "0.5rem 0.75rem",
 	fontSize: "0.875rem",
-	fontWeight: 600,
-	color: "#111827",
-	overflow: "hidden",
-	textOverflow: "ellipsis",
-	whiteSpace: "nowrap",
+	fontWeight: 500,
+	borderRadius: "0.5rem",
+	border: "1px solid #e5e7eb",
+	background: "#f8fafc",
+	color: "#1f2933",
 };
 
-function getChatboxContainerStyle(): React.CSSProperties {
+function getMessagesContainerStyle(isMobile: boolean): React.CSSProperties {
 	return {
+		flex: 1,
 		display: "flex",
 		flexDirection: "column",
-		flex: 1,
 		minHeight: 0,
-		background: "#fff",
+		background: "#f8fafc",
 		border: "1px solid #e5e7eb",
 		borderRadius: "0.75rem",
 		overflow: "hidden",
-		position: "relative",
+		padding: isMobile ? "0.5rem" : "0.75rem",
 	};
 }
-
-function getChatMessagesAreaStyle(isMobile: boolean): React.CSSProperties {
-	return {
-		flex: 1,
-		display: "flex",
-		flexDirection: "column",
-		minWidth: 0,
-		minHeight: 0,
-		overflow: "hidden",
-		paddingBottom: isMobile ? "1rem" : "1.25rem",
-	};
-}
-
-function getSectionStyle(isMobile: boolean): React.CSSProperties {
-	return {
-		background: "#fffdf8",
-		border: "1px solid #d6cfc2",
-		borderRadius: "0.5rem",
-		padding: isMobile ? "1rem" : "1.5rem",
-	};
-}
-
-function getSectionTitleStyle(isMobile: boolean): React.CSSProperties {
-	return {
-		fontSize: isMobile ? "0.875rem" : "1rem",
-		fontWeight: 600,
-		margin: "0 0 0.5rem 0",
-		color: "#1f2933",
-	};
-}
-
-function getTopRowStyle(isMobile: boolean): React.CSSProperties {
-	return {
-		display: "grid",
-		gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
-		gap: isMobile ? "0.75rem" : "1.5rem",
-	};
-}
-
-function getStatusGridStyle(isMobile: boolean): React.CSSProperties {
-	return {
-		display: "grid",
-		gridTemplateColumns: isMobile ? "1fr" : "repeat(2, 1fr)",
-		gap: "0.5rem",
-	};
-}
-
-function getPlaceholderBoxStyle(isMobile: boolean): React.CSSProperties {
-	return {
-		background: "#fffdf8",
-		border: "1px dashed #d6cfc2",
-		borderRadius: "0.5rem",
-		padding: isMobile ? "1.5rem" : "3rem",
-		textAlign: "center",
-		maxWidth: "30rem",
-	};
-}
-
-const tabTagStyle: React.CSSProperties = {
-	fontSize: "0.625rem",
-	padding: "0.125rem 0.25rem",
-	background: "#f3f4f6",
-	color: "#6b7280",
-	borderRadius: "0.25rem",
-};
 
 const messagesAreaStyle: React.CSSProperties = {
 	flex: 1,
 	overflow: "auto",
-	padding: "0.5rem",
 };
+
 const messagesEmptyStyle: React.CSSProperties = {
 	height: "100%",
 	display: "flex",
-	flexDirection: "column",
 	alignItems: "center",
 	justifyContent: "center",
 };
+
 const messagesEmptyTextStyle: React.CSSProperties = {
-	fontSize: "1rem",
-	color: "#6b7280",
-	marginBottom: "0.25rem",
-};
-const messagesEmptyHintStyle: React.CSSProperties = {
 	fontSize: "0.875rem",
 	color: "#9ca3af",
 };
 
-const detailTabStyle: React.CSSProperties = {
-	display: "flex",
-	flexDirection: "column",
-	gap: "1rem",
-};
-const statusItemStyle: React.CSSProperties = {
-	display: "flex",
-	flexDirection: "column",
-	gap: "0.25rem",
-};
-const statusLabelStyle: React.CSSProperties = {
-	fontSize: "0.75rem",
-	color: "#6b7280",
-};
-const statusValueStyle: React.CSSProperties = {
-	fontSize: "0.875rem",
-	color: "#1f2933",
-};
-const activeTextStyle: React.CSSProperties = {
-	fontSize: "0.875rem",
-	color: "#10b981",
-};
-const inactiveTextStyle: React.CSSProperties = {
-	fontSize: "0.875rem",
-	color: "#9ca3af",
-};
-const placeholderSectionStyle: React.CSSProperties = {
-	padding: "1rem",
-	background: "#f9fafb",
-	borderRadius: "0.375rem",
-	border: "1px dashed #d1d5db",
-	textAlign: "center",
-};
-const placeholderTextStyle: React.CSSProperties = {
-	display: "block",
-	fontSize: "0.875rem",
-	color: "#6b7280",
-	marginBottom: "0.25rem",
-};
-const placeholderHintStyle: React.CSSProperties = {
-	display: "block",
-	fontSize: "0.75rem",
-	color: "#9ca3af",
-};
-const eventListStyle: React.CSSProperties = {
-	listStyle: "none",
-	margin: 0,
-	padding: 0,
-	display: "flex",
-	flexDirection: "column",
-	gap: "0.5rem",
-};
-const eventItemStyle: React.CSSProperties = {
-	padding: "0.75rem",
-	background: "#f9fafb",
-	borderRadius: "0.375rem",
-	border: "1px solid #e5e7eb",
-};
-const eventHeaderStyle: React.CSSProperties = {
-	display: "flex",
-	justifyContent: "space-between",
-	alignItems: "center",
-	marginBottom: "0.25rem",
-};
-const eventTypeStyle: React.CSSProperties = {
-	fontSize: "0.75rem",
-	fontWeight: 500,
-	color: "#7c5e3c",
-};
-const eventTimeStyle: React.CSSProperties = {
-	fontSize: "0.75rem",
-	color: "#9ca3af",
-};
-const eventDescStyle: React.CSSProperties = {
-	fontSize: "0.875rem",
-	color: "#4b5563",
-	margin: 0,
-	lineHeight: 1.5,
-};
-const emptyEventsStyle: React.CSSProperties = {
-	padding: "1.5rem",
-	textAlign: "center",
-};
-const emptyEventsTextStyle: React.CSSProperties = {
-	color: "#9ca3af",
-	fontSize: "0.875rem",
-};
-
-const placeholderContentStyle: React.CSSProperties = {
-	display: "flex",
-	justifyContent: "center",
-	alignItems: "center",
-	minHeight: "20rem",
-};
-const placeholderTitleStyle: React.CSSProperties = {
-	fontSize: "1rem",
-	fontWeight: 600,
-	color: "#1f2933",
-	margin: "0 0 0.75rem 0",
-};
-
-const textStyle: React.CSSProperties = {
-	color: "#6b7280",
-	textAlign: "center",
-	padding: "2rem",
-};
-const errorStyle: React.CSSProperties = {
-	color: "#dc2626",
-	textAlign: "center",
-	padding: "2rem",
-};
-
-function getRoleLabel(role: string): string {
-	const labels: Record<string, string> = {
-		user: "用户",
-		assistant: "助手",
-		tool: "工具",
-		system: "系统",
-		other: "其他",
+function getInputShellStyle(isMobile: boolean): React.CSSProperties {
+	return {
+		flexShrink: 0,
+		padding: isMobile ? "0.625rem 0.75rem" : "0.75rem 1rem",
+		background: "#f8fafc",
+		border: "1px solid #e5e7eb",
+		borderRadius: "0.75rem",
+		textAlign: "center",
 	};
-	return labels[role] || role;
 }
+
+const disclosureTriggerStyle: React.CSSProperties = {
+	display: "inline-flex",
+	alignItems: "center",
+	gap: "0.25rem",
+	padding: "0.375rem 0.75rem",
+	border: "none",
+	background: "transparent",
+	color: "#9ca3af",
+	fontSize: "0.75rem",
+	cursor: "pointer",
+	borderRadius: "0.375rem",
+	transition: "color 0.15s, background 0.15s",
+};
+
+const disclosureHintStyle: React.CSSProperties = {
+	fontSize: "0.75rem",
+};
+
+const disclosureContentStyle: React.CSSProperties = {
+	display: "flex",
+	flexDirection: "column",
+	alignItems: "center",
+	gap: "0.375rem",
+};
+
+const disclosureTitleStyle: React.CSSProperties = {
+	fontSize: "0.75rem",
+	fontWeight: 600,
+	color: "#475569",
+};
+
+const disclosureTextStyle: React.CSSProperties = {
+	fontSize: "0.75rem",
+	color: "#6b7280",
+};
+
+const disclosureCloseStyle: React.CSSProperties = {
+	marginTop: "0.25rem",
+	padding: "0.25rem 0.5rem",
+	fontSize: "0.6875rem",
+	color: "#6b7280",
+	background: "#fff",
+	border: "1px solid #e5e7eb",
+	borderRadius: "0.25rem",
+	cursor: "pointer",
+};
 
 function getPreviewItemStyle(role: string): React.CSSProperties {
 	const isUser = role === "user";
 	return {
-		padding: "0.75rem 1rem",
+		padding: "0.625rem 0.875rem",
 		borderRadius: "0.5rem",
-		background: isUser ? "#eff6ff" : "#f9fafb",
+		background: isUser ? "#eff6ff" : "#fff",
 		marginBottom: "0.5rem",
 		maxWidth: "85%",
 		alignSelf: isUser ? "flex-end" : "flex-start",
+		border: "1px solid #e5e7eb",
 	};
 }
 
@@ -1343,6 +856,7 @@ const previewRoleStyle: React.CSSProperties = {
 	color: "#6b7280",
 	textTransform: "uppercase",
 	marginBottom: "0.25rem",
+	display: "block",
 };
 
 const previewTextStyle: React.CSSProperties = {
