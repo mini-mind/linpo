@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import type { InstanceItem, InstanceValidationResponse } from '../api/types';
 import { validateInstance, createInstance, updateInstance } from '../api/instanceClient';
 
@@ -118,18 +118,18 @@ export function InstanceFormModal({ instance, onClose, onSuccess }: InstanceForm
     }
   }, [name, endpoint, gatewayToken, isEditing, instance, onSuccess, validateForm]);
 
-  const handleOverlayClick = useCallback((e: React.MouseEvent): void => {
-    if (e.target === e.currentTarget) {
-      onClose();
-    }
+  const handleBackdropClick = useCallback((): void => {
+    onClose();
   }, [onClose]);
 
   return (
-    <div
-      style={modalOverlayStyle}
-      onClick={handleOverlayClick}
-      role="presentation"
-    >
+    <div style={modalOverlayStyle}>
+      <button
+        type="button"
+        style={modalBackdropStyle}
+        onClick={handleBackdropClick}
+        aria-label="关闭实例表单弹窗"
+      />
       <div
         style={modalStyle}
         role="dialog"
@@ -256,14 +256,24 @@ const modalOverlayStyle: React.CSSProperties = {
   left: 0,
   right: 0,
   bottom: 0,
-  background: 'rgba(0, 0, 0, 0.5)',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
   zIndex: 200,
 };
 
+const modalBackdropStyle: React.CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  border: 'none',
+  padding: 0,
+  margin: 0,
+  background: 'rgba(0, 0, 0, 0.5)',
+  cursor: 'pointer',
+};
+
 const modalStyle: React.CSSProperties = {
+  position: 'relative',
   background: '#fff',
   borderRadius: '0.75rem',
   width: '90%',
