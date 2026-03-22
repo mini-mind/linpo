@@ -17,18 +17,23 @@ Linpo 当前采用四层入口语义：
 | 层级 | 路由 | 职责 |
 |------|------|------|
 | **总览层** | `/overview` | 默认 landing，全局脉搏主舞台，展示用户全部 agents，回答“谁在干活、哪里值得巡视” |
-| **工作台层** | `/topology` | `workbench`，承接结构/配置工作台，展示实例、agent、skill、外接 ACP 等关系并提供配置入口 |
-| **看板层** | `/kanban` | 聚合工作项、协作状态与关键工作信号，不扩张成完整审批/项目管理平台 |
-| **接管层** | `/session/:instanceId/:agentId` | `drill-down`，进入单 agent 上下文 |
+| **拓扑层** | `/topology` | `graph-only` 关系画布，展示实例、agent、skill、外接 ACP 等关系；只保留极简画布控件，不承接配置入口或详情面板 |
+| **看板层** | `/kanban` | `Mission Control` 风格只读板，聚合工作项、协作状态与关键工作信号，不扩张成完整审批/项目管理平台 |
+| **接管层** | `/session/:instanceId/:agentId` | `drill-down`，以极简标题 + 消息流 + 输入区进入单 agent 上下文 |
 
 **关键约束：**
 - `overview` 以用户全部 agents 为默认概览对象，承担概览/巡视入口
 - 首页汇报感禁止额外 prompt 注入，只能基于已有状态/事件/活跃度生成
+- 聚合读接口与页面展示必须显式贯通 `request_id`、`freshness`、`partial_failure` / `diagnostics` 与错误包络；错误包络至少包含 `code`、`message`、`request_id`、`recoverable`、`next_step`
+- `freshness` 至少表达状态与时间戳，状态词汇冻结为 `fresh` / `stale` / `failed`，不允许把降级态伪装成实时成功
+- overview / topology / kanban 在部分成功、失败、未授权场景都必须继续显示明确的诊断/错误摘要，而不是空成功
 - 工具调用消息不直接展示原始 JSON，而要折叠为摘要说明气泡
 - 会话消息历史支持 Markdown 渲染
 - `overview`、`topology`、`kanban` 三页都必须提供进入 agent 对话的入口，并统一落到 `/session/:instanceId/:agentId`
 - `/session/:instanceId/:agentId` 以 URL 参数为唯一真源；`/session` 与 `/session/:instanceId` 仅作为兼容重定向入口，不承载长期状态
 - topology 首期交互固定为 `查看 / 进入 / 配置 / 关系` 四类动作；不暴露 pause/reset/send/delete 等 destructive/runtime controls
+- `topology` 主舞台固定为 `graph-only` canvas + auto layout，只允许极简画布控件；不包含详情侧栏、配置面板、统计卡与任何写操作
+- `kanban` 保持 `Mission Control` 风格只读板，不引入拖拽写回、列内编辑、审批流或批量操作
 - 不引入模板系统、工作流平台化或控制面扩张
 - 每个 major feature 完成后都要完成部署，并由 ravin 发起 Playwright 集成验证，覆盖改动功能与强相关链路
 - 后端新增/修改的核心逻辑必须有完整单元测试覆盖
@@ -81,8 +86,8 @@ v0.5+ 运行需要以下环境配置：
 
 - **当前目标版本**：v0.6 多实例聚合视图与 IA 收敛
 - **当前稳定基线**：v0.6A 多实例聚合数据模型与筛选/健康接口（已完成）
-- **当前推进策略**：将 Linpo 收敛为 `overview / topology / kanban / session drill-down` 结构；首页固定为 `/overview` 默认 landing，`overview` 负责用户全部 agents 的概览/巡视，`/topology` 负责关系/配置工作台，`/kanban` 负责聚合工作信号，`/session/:instanceId/:agentId` 负责显式单 agent 接管
-- **当前产品语义**：overview 承担全局脉搏主舞台并展示用户全部 agents，topology 承担结构/配置工作台，kanban 承担聚合工作项/协作状态，session 页承担显式 `instanceId + agentId` drill-down
+- **当前推进策略**：将 Linpo 收敛为 `overview / topology / kanban / session drill-down` 结构；首页固定为 `/overview` 默认 landing，`overview` 负责用户全部 agents 的概览/巡视，`/topology` 固定为 `graph-only` 关系画布，`/kanban` 固定为 `Mission Control` 风格只读板，`/session/:instanceId/:agentId` 负责显式单 agent 接管
+- **当前产品语义**：overview 承担 `agents-first watchlist` 主舞台，topology 承担 `graph-only` canvas + auto layout，kanban 承担 `Mission Control` 风格只读板，session 页固定为极简 title / stream / input drill-down
 - **公网访问**：前端 `http://175.178.213.10:5173`，后端 `http://175.178.213.10:8000`
 
 ## 版本路线
@@ -100,13 +105,19 @@ v0.7 ─ 跨实例消息传递
 
 **v0.6B 关键交付：**
 - `/overview` 默认 landing，全局脉搏主舞台
-- `/topology` workbench，结构/配置工作台，固定动作词 `查看 / 进入 / 配置 / 关系`
-- `/kanban` 聚合工作项、协作状态与关键信号
+- `/topology` = `graph-only` canvas + auto layout，固定动作词 `查看 / 进入 / 配置 / 关系`
+- `/kanban` = `Mission Control` 风格只读板，聚合工作项、协作状态与关键信号
 - `overview / topology / kanban` 三页都可进入 agent 对话，并统一落到 `/session/:instanceId/:agentId`
 - `/session/:instanceId/:agentId` drill-down，URL 真源
 - 首页汇报感禁止额外 prompt 注入
 - 消息历史支持 Markdown，tool-call 展示为摘要气泡而非 raw JSON
 - 不引入模板系统、工作流平台化或控制面扩张
+
+**v0.6B UI 角色冻结：**
+- `overview` = `agents-first watchlist`。主舞台只服务于 agent 巡视与优先级判断，summary 只保留极小辅助区，不得反客为主；禁止把首页重写成大摘要首页、报告页或新的控制面，继续保持 `observer-only`。
+- `topology` = `graph-only` canvas + auto layout。主舞台固定为关系图画布，次要区域只保留极简画布控件；禁止详情侧栏、`配置面板`、统计卡、节点清单挤占主舞台与任何拖拽写回式编辑，继续保持 `observer-only`。
+- `kanban` = `Mission Control` 风格只读板。主舞台是聚合卡片流，次要区域只保留轻量筛选与统计；禁止拖拽写回、列内编辑、审批流、批量操作或项目管理扩张，继续保持 `observer-only`。
+- `/session/:instanceId/:agentId` = 极简标题 + 消息流 + 输入区。桌面内容区 `max-width 880px`，主舞台固定为单列会话流；禁止 `tabs`、`sidebar`、`status panel` 与多栏控制台结构。
 
 ## 文档入口
 

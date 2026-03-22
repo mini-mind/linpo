@@ -42,21 +42,24 @@ Linpo v0.1 只承担一件事：
 
 Linpo 当前采用 **overview → topology / kanban → session** 的产品结构：
 
-冻结术语：**overview = 总览层主舞台，topology = workbench，kanban = 聚合工作信号视图，session = drill-down**。
+冻结术语：**overview = `agents-first watchlist`，topology = `graph-only` 关系画布，kanban = `Mission Control` 风格只读板，session = 极简 drill-down**。
 
 | 层级 | 路由 | 职责 |
 |------|------|------|
 | **总览层** | `/overview` | 默认 landing，全局脉搏主舞台，展示用户全部 agents |
-| **工作台层** | `/topology` | `workbench`，承接结构/配置工作台与固定动作环，展示实例 / agents / skills / ACP 关系并提供配置入口 |
-| **看板层** | `/kanban` | 聚合工作项、协作状态与关键工作信号 |
-| **接管层** | `/session/:instanceId/:agentId` | drill-down 页，显式身份参数 |
+| **拓扑层** | `/topology` | `graph-only` 关系画布，展示实例 / agents / skills / ACP 关系；固定动作环存在，但只保留极简画布控件 |
+| **看板层** | `/kanban` | `Mission Control` 风格只读板，聚合工作项、协作状态与关键工作信号 |
+| **接管层** | `/session/:instanceId/:agentId` | 极简 drill-down 页，显式身份参数 |
 
 **关键约束：**
 
 - **首页汇报感硬红线**：首页汇报感禁止额外 prompt 注入，仅基于现有状态/事件/活跃度归纳生成，禁止向 agent 静默发送额外 prompt
 - **overview 对象**：`overview` 以用户全部 agents 为默认概览对象，承担概览 / 巡视入口
+- **聚合契约字段冻结**：overview / topology / kanban 共享的聚合语义必须显式包含 `request_id`、`freshness`、`partial_failure` / `diagnostics`；错误包络至少包含 `code`、`message`、`request_id`、`recoverable`、`next_step`
+- **freshness 语义冻结**：`freshness` 至少表达状态与时间戳，状态词汇固定为 `fresh` / `stale` / `failed`；部分成功与失败必须在页面上保持可读，不得伪装成空成功
 - **动作环首期范围**：仅承载 `查看 / 进入 / 配置 / 关系`，同屏仅单开；不支持 drill-down 的节点禁用“进入”
 - **禁止 destructive/runtime controls**：首期 topology 与 session 主路径不暴露 pause/reset/send/delete 等 destructive/runtime controls
+- **topology guardrail**：`topology` 主舞台固定为 `graph-only` canvas + auto layout，只允许极简画布控件；不包含详情侧栏、配置面板、统计卡或任何写操作
 - **路由真源**：`/session/:instanceId/:agentId` 的 URL 参数为唯一真源；`/session` 与 `/session/:instanceId` 仅作为兼容重定向入口，不承载长期状态
 - **消息历史展示**：普通消息支持 Markdown 渲染；工具调用统一折叠为摘要说明气泡，不直接暴露原始 JSON
 - **统一对话入口**：`overview`、`topology`、`kanban` 三页都必须提供进入 agent 对话的入口，并统一跳转到 `/session/:instanceId/:agentId`
@@ -70,7 +73,7 @@ Linpo 当前采用 **overview → topology / kanban → session** 的产品结�
 
 - 当前产品切入口已从单 agent 列表提升到多实例聚合观察
 - `overview` 负责跨实例的聚合观察入口，并展示用户全部 agents
-- `topology` 负责实例 / agents / skills / ACP 关系与配置工作台
+- `topology` 负责实例 / agents / skills / ACP 关系的 `graph-only` 呈现，而不是配置工作台
 - `kanban` 负责聚合工作信号，而不是单纯任务系统
 - `session` 是 drill-down 承接页，不是首页主对象
 
@@ -79,9 +82,16 @@ Linpo 当前采用 **overview → topology / kanban → session** 的产品结�
 | 页面 | 路由 | 职责 |
 |------|------|------|
 | 总览页 | `/overview` | 全局脉搏主舞台，展示用户全部 agents，回答“谁在干活、哪里值得巡视”；首页汇报感禁止额外 prompt 注入 |
-| 拓扑工作台 | `/topology` | `workbench`，展示实例 / agents / skills / ACP 关系，提供固定动作环与配置入口 |
-| 看板页 | `/kanban` | 聚合工作项、协作状态与关键工作信号，不扩张成审批/治理平台 |
-| 会话接管页 | `/session/:instanceId/:agentId` | `drill-down` 页，从 overview / topology / kanban 的进入动作跳转；URL 参数为真源 |
+| 拓扑页 | `/topology` | `graph-only` 关系画布，展示实例 / agents / skills / ACP 关系，并保留固定动作环 |
+| 看板页 | `/kanban` | `Mission Control` 风格只读板，聚合工作项、协作状态与关键工作信号，不扩张成审批/治理平台 |
+| 会话接管页 | `/session/:instanceId/:agentId` | 极简 `drill-down` 页，从 overview / topology / kanban 的进入动作跳转；URL 参数为真源 |
+
+**四页 UI guardrails：**
+
+- **overview**：主舞台固定为 `agents-first watchlist`，按 agent 巡视优先级组织信号；次要区域只保留极小 summary 辅助区；禁止把 summary 扩成首页主体、报告页或任何非 `observer-only` 控制面。
+- **topology**：主舞台固定为 `graph-only` canvas，关系图通过 auto layout 保持稳定；次要区域只允许极简画布控件；禁止详情侧栏、右侧 `配置面板`、统计卡、节点清单主导布局、拖拽写回与其他写操作。
+- **kanban**：主舞台固定为 `Mission Control` 风格只读板，且保持 `observer-only`；次要区域只允许轻量筛选、统计和 freshness 提示；禁止拖拽写回、列内编辑、批量改状态或审批工作流。
+- **session**：主舞台固定为极简标题 + 消息流 + 输入区，并继续使用 canonical 路径 `/session/:instanceId/:agentId`；次要区域只允许最小身份信息；禁止 `tabs`、`sidebar`、`status panel` 或多栏控制台，桌面 `max-width 880px`。
 
 ### 3.4 验收与收口约束
 
@@ -139,9 +149,9 @@ v0.1 采用 **完整拓扑默认展示**。
 - 最近事件
 - 运行时配置
 
-### 5.2 详情后置原则
+### 5.2 细节后送原则
 
-节点本体只承担结构识别与最小状态表达。更多细节由点击节点后的详情面板承接。
+节点本体只承担结构识别与最小状态表达。`topology` 不通过详情侧栏或配置面板承接更多细节，用户如需进入单 agent 上下文，应走 canonical `/session/:instanceId/:agentId` drill-down。
 
 这一原则可概括为：
 
@@ -149,46 +159,39 @@ v0.1 采用 **完整拓扑默认展示**。
 
 ---
 
-## 6. 节点详情面板
+## 6. 拓扑禁止项
 
-点击任一节点后，系统应展示一个侧边详情面板。
+为保持 `graph-only` 冻结边界，`topology` 当前版本明确不承接以下内容：
 
-v0.1 中该面板仅展示最少必要状态信息：
+- 详情侧栏
+- `配置面板`
+- 独立统计卡或 summary strip
+- 拖拽写回
+- 列内编辑、批量操作或其他写操作
 
-- 最近开始活跃的时间点
-- 当前是否活跃
-- 历史事件记录
-
-当前版本明确不加入：
-
-- 任务详情卡片
-- 资源面板
-- 控制按钮
-- 决策摘要
-- 异常分类与告警面板
-
-详情面板的职责是帮助用户理解状态，而不是承担完整控制台职责。
+拓扑页的职责是帮助用户看清结构关系，而不是扩展成配置工作台或控制台。
 
 ---
 
-## 7. 首页列表页
+## 7. 首页 watchlist
 
-Agents 列表页采用 **纯列表** 形式。
+`/overview` 采用 `agents-first watchlist` 语义，而不是旧的纯列表页。
 
-每个 agent 一行，仅展示：
+主舞台应优先呈现：
 
-- 名称
-- 当前状态
-- 是否活跃
-- 最近活跃时间
+- 需要立刻巡视的 agents
+- 当前正在运行的 agents
+- 最近活跃但可能需要回看的 agents
 
-当前版本不使用：
+次要区域只保留极小 summary 辅助信息，用于补充总数、异常数与筛选状态。
 
-- 卡片网格作为默认布局
-- 复杂仪表盘
-- 基于异常的显式优先分组
+当前版本明确不使用：
 
-列表页只作为“发现与进入”的入口，不承担更高阶监控语义。
+- 大摘要首页
+- 报告式仪表盘
+- 突破 `observer-only` 的控制面
+
+`overview` 的职责是帮助用户快速判断巡视优先级，而不是承接新的平台首页语义。
 
 ---
 
@@ -201,7 +204,7 @@ Agents 列表页采用 **纯列表** 形式。
 - `is_active`：当前是否活跃
 - `child_count`：子节点数
 
-补充字段用于详情面板或列表页：
+补充字段用于列表页、轻量提示或 session 承接信息：
 
 - `last_active_started_at`：最近一次开始活跃时间点
 - `event_history`：历史事件记录
@@ -212,7 +215,7 @@ Agents 列表页采用 **纯列表** 形式。
 
 ## 9. 最小事件模型
 
-v0.1 需要一套支持节点详情面板的最小事件模型。
+v0.1 需要一套支持拓扑状态理解与 session 承接的最小事件模型。
 
 ### 9.1 结构 / 状态事件
 
