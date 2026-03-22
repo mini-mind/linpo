@@ -1,6 +1,3 @@
-import { mkdir } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { expect, type Page, type Route, test } from "@playwright/test";
 
 const DEFAULT_BASE_URL =
@@ -9,16 +6,27 @@ const DEFAULT_PASSWORD = "secret-123";
 const HEALTHY_OPENCLAW_ENDPOINT = "http://175.178.213.10:18789";
 const HEALTHY_OPENCLAW_GATEWAY_TOKEN =
 	"lhdWYU1MGLCWNwbHaQsIjlPkiSt5LKhEh9PjAtElrlE";
-const currentFilePath = fileURLToPath(import.meta.url);
+const OVERVIEW_BANNED_SELECTORS = [
+	'[data-testid="overview-stats-grid"]',
+	'[data-testid="dashboard-stats-grid"]',
+];
 
-function evidencePath(fileName: string): string {
-	return path.resolve(path.dirname(currentFilePath), "../../.sisyphus/evidence", fileName);
-}
+const TOPOLOGY_BANNED_SELECTORS = [
+	'[data-testid="topology-sidebar"]',
+	'[data-testid="topology-detail-panel"]',
+	'[data-testid="topology-config-panel"]',
+];
 
-async function captureEvidence(page: Page, fileName: string): Promise<void> {
-	await mkdir(path.dirname(evidencePath(fileName)), { recursive: true });
-	await page.screenshot({ path: evidencePath(fileName), fullPage: true });
-}
+const KANBAN_BANNED_SELECTORS = [
+	'[data-testid="kanban-signal-grid"]',
+	'[data-testid="signal-grid"]',
+];
+
+const SESSION_BANNED_SELECTORS = [
+	'[data-testid="session-sidebar"]',
+	'[data-testid="session-tabs"]',
+	'[data-testid="session-status-panel"]',
+];
 
 function buildApiBaseUrl(): string {
 	const url = new URL(DEFAULT_BASE_URL);
@@ -119,8 +127,14 @@ async function fulfillJson(route: Route, payload: unknown): Promise<void> {
 	});
 }
 
+async function expectNoBannedStructures(page: Page, selectors: string[]): Promise<void> {
+	for (const selector of selectors) {
+		await expect(page.locator(selector)).toHaveCount(0);
+	}
+}
+
 test.describe("v0.6 browser acceptance", () => {
-	test("v0.6 covers register login overview topology and session drill-down on deployed UI", async ({
+	test("v0.6 ui-realignment covers register login overview topology kanban and session drill-down on deployed UI", async ({
 		page,
 	}) => {
 		const credentials = buildUniqueCredentials("v06-real");
@@ -135,63 +149,67 @@ test.describe("v0.6 browser acceptance", () => {
 		});
 
 		await page.goto("/overview");
-		await expect(page.getByText("全部 agents", { exact: true })).toBeVisible();
-		await expect(page.getByText("活跃中")).toBeVisible();
-		await expect(page.getByText("值得巡视")).toBeVisible();
-		await expect(page.getByText("聚合 freshness")).toBeVisible();
-		await expect(page.getByText("request id")).toBeVisible();
+		await expect(page.getByTestId("overview-summary-strip")).toBeVisible();
+		await expect(page.getByTestId("overview-agents-grid")).toBeVisible();
+		await expectNoBannedStructures(page, OVERVIEW_BANNED_SELECTORS);
+		await expect(page.getByText("全部 agents", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("活跃中", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("值得巡视", { exact: true })).toHaveCount(0);
 		await expect(page.getByText(instanceName).first()).toBeVisible();
-		await expect(
-			page.getByRole("link", { name: "进入会话 - main" }),
-		).toHaveAttribute("href", new RegExp(`/session/${instance.id}/main$`));
+		const overviewMainDrilldownLink = page
+			.locator(`a[href$="/session/${instance.id}/main"]`)
+			.first();
+		await expect(overviewMainDrilldownLink).toBeVisible();
 
 		await logout(page);
 		await login(page, credentials.username, credentials.password);
 
-		await page.getByRole("link", { name: "进入会话 - main" }).click();
+		await page.locator(`a[href$="/session/${instance.id}/main"]`).first().click();
 		await expect(page).toHaveURL(new RegExp(`/session/${instance.id}/main$`));
-		await expect(
-			page.getByRole("button", { name: new RegExp(instanceName) }),
-		).toBeVisible();
+		await expect(page.getByTestId("session-stream-shell")).toBeVisible();
+		await expect(page.getByTestId("session-input-shell")).toBeVisible();
+		await expectNoBannedStructures(page, SESSION_BANNED_SELECTORS);
 
 		await page.goto("/topology");
-		await expect(page.locator('section[aria-label="topology-page"]')).toBeVisible();
-		await expect(page.getByText("聚合 freshness")).toBeVisible();
-		await expect(
-			page.getByRole("heading", { name: "技能关系" }),
-		).toBeVisible();
-		await expect(
-			page.getByRole("heading", { name: "外接 ACP" }),
-		).toBeVisible();
+		await expect(page.getByTestId("topology-graph-canvas")).toBeVisible();
+		await expectNoBannedStructures(page, TOPOLOGY_BANNED_SELECTORS);
+		await expect(page.getByRole("heading", { name: "技能关系" })).toHaveCount(0);
+		await expect(page.getByRole("heading", { name: "外接 ACP" })).toHaveCount(0);
 		await expect(
 			page.getByRole("button", { name: `配置实例 ${instanceName}` }),
+		).toHaveCount(0);
+		await expect(
+			page
+				.locator(`[data-testid^="drilldown-link-"][href$="/session/${instance.id}/main"]`)
+				.first(),
 		).toBeVisible();
-
-		await page.getByRole("button", { name: `配置实例 ${instanceName}` }).click();
-		await expect(page.getByRole("dialog")).toBeVisible();
-		await expect(page.getByText("编辑实例")).toBeVisible();
-		await expect(page.getByLabel("实例名称")).toHaveValue(instanceName);
-		await expect(page.getByLabel("端点地址")).toHaveValue(HEALTHY_OPENCLAW_ENDPOINT);
-		await page.getByRole("button", { name: "取消" }).click();
-		await expect(page.getByRole("dialog")).toBeHidden();
-
-		await page.getByRole("link", { name: `进入实例 ${instanceName}` }).first().click();
+		const topologyDrilldownPath = await page
+			.locator(`[data-testid^="drilldown-link-"][href$="/session/${instance.id}/main"]`)
+			.first()
+			.getAttribute("href");
+		expect(topologyDrilldownPath).toBe(`/session/${instance.id}/main`);
+		await page.goto(topologyDrilldownPath ?? "/session");
 		await expect(page).toHaveURL(new RegExp(`/session/${instance.id}/main$`));
+		await expect(page.getByTestId("session-stream-shell")).toBeVisible();
+		await expect(page.getByTestId("session-input-shell")).toBeVisible();
+		await expectNoBannedStructures(page, SESSION_BANNED_SELECTORS);
 
 		await page.goto("/kanban");
 		await expect(page.locator('section[aria-label="kanban-page"]')).toBeVisible();
+		await expect(page.getByTestId("kanban-board")).toBeVisible();
+		await expectNoBannedStructures(page, KANBAN_BANNED_SELECTORS);
 		await expect(page.getByRole("heading", { name: "看板" })).toBeVisible();
 		await expect(page.getByText("聚合工作项、协作状态与关键工作信号")).toBeVisible();
 		await expect(page.getByText(instanceName).first()).toBeVisible();
-		await expect(
-			page.getByRole("link", { name: "进入会话 - main" }),
-		).toHaveAttribute("href", new RegExp(`/session/${instance.id}/main$`));
-		await captureEvidence(page, "task-9-playwright.png");
-		await page.getByRole("link", { name: "进入会话 - main" }).click();
+		await expect(page.locator(`a[href$="/session/${instance.id}/main"]`).first()).toBeVisible();
+		await page.locator(`a[href$="/session/${instance.id}/main"]`).first().click();
 		await expect(page).toHaveURL(new RegExp(`/session/${instance.id}/main$`));
+		await expect(page.getByTestId("session-stream-shell")).toBeVisible();
+		await expect(page.getByTestId("session-input-shell")).toBeVisible();
+		await expectNoBannedStructures(page, SESSION_BANNED_SELECTORS);
 	});
 
-	test("v0.6 keeps degraded overview and topology diagnostics visible", async ({
+	test("v0.6 ui-realignment keeps degraded overview and topology diagnostics visible", async ({
 		page,
 	}) => {
 		const credentials = buildUniqueCredentials("v06-degraded");
@@ -342,40 +360,72 @@ test.describe("v0.6 browser acceptance", () => {
 		});
 
 		await page.goto("/overview");
-		await expect(page.getByText("部分降级")).toBeVisible();
-		await expect(page.getByText("OpenClaw upstream unavailable")).toBeVisible();
-		await expect(page.getByText("code · source_unavailable")).toBeVisible();
+		await expect(page.getByTestId("overview-summary-strip")).toBeVisible();
+		await expect(page.getByTestId("overview-agents-grid")).toBeVisible();
+		await expectNoBannedStructures(page, OVERVIEW_BANNED_SELECTORS);
+		await expect(page.getByText("部分降级")).toHaveCount(0);
+		await expect(page.getByText("异常实例")).toBeVisible();
+		await expect(page.getByText("OpenClaw upstream unavailable")).toHaveCount(0);
 		await expect(
-			page.getByText("request_id · req-v06-overview-degraded"),
-		).toBeVisible();
-		await expect(page.getByText("recoverable · true")).toBeVisible();
-		await expect(
-			page.getByRole("link", { name: "进入会话 - Healthy Agent" }),
+			page.locator('a[href="/session/instance-healthy/agent-healthy"]'),
 		).toHaveAttribute("href", "/session/instance-healthy/agent-healthy");
 
 		await page.goto("/topology");
-		await expect(page.locator('section[aria-label="topology-page"]')).toBeVisible();
-		await expect(page.getByText("OpenClaw upstream unavailable")).toBeVisible();
+		await expect(page.getByTestId("topology-graph-canvas")).toBeVisible();
+		await expectNoBannedStructures(page, TOPOLOGY_BANNED_SELECTORS);
+		await expect(page.getByTestId("topology-node-instance-instance-healthy")).toBeVisible();
+		await expect(page.getByTestId("topology-node-instance-instance-failing")).toBeVisible();
 		await expect(
-			page.getByText("request_id · req-v06-topology-degraded"),
-		).toBeVisible();
-		await expect(page.getByText("recoverable · true")).toBeVisible();
-		await expect(
-			page.getByRole("link", { name: "进入 agent Healthy Agent" }),
+			page.getByTestId("drilldown-link-agent-healthy"),
 		).toHaveAttribute("href", "/session/instance-healthy/agent-healthy");
+		await expect(page.getByText("OpenClaw upstream unavailable")).toHaveCount(0);
 
 		await page.goto("/kanban");
 		await expect(page.locator('section[aria-label="kanban-page"]')).toBeVisible();
+		await expect(page.getByTestId("kanban-board")).toBeVisible();
+		await expectNoBannedStructures(page, KANBAN_BANNED_SELECTORS);
 		await expect(page.getByRole("heading", { name: "看板" })).toBeVisible();
 		await expect(page.getByText("部分降级")).toBeVisible();
-		await expect(page.getByText("OpenClaw upstream unavailable")).toBeVisible();
+		await expect(page.getByText("OpenClaw upstream unavailable")).toHaveCount(0);
+		await expect(page.getByText("request_id · req-v06-overview-degraded")).toHaveCount(0);
+		await expect(page.getByText("recoverable · true")).toHaveCount(0);
 		await expect(
-			page.getByText("request_id · req-v06-overview-degraded"),
-		).toBeVisible();
-		await expect(page.getByText("recoverable · true")).toBeVisible();
-		await expect(
-			page.getByRole("link", { name: "进入会话 - Healthy Agent" }),
+			page.locator('a[href="/session/instance-healthy/agent-healthy"]'),
 		).toHaveAttribute("href", "/session/instance-healthy/agent-healthy");
-		await captureEvidence(page, "task-9-playwright-error.png");
+	});
+
+	test("v0.6 ui-realignment keeps overview single-column and session minimal shell on mobile", async ({
+		page,
+	}) => {
+		const credentials = buildUniqueCredentials("v06-mobile");
+		const instanceName = `claw1-mobile-${credentials.username.slice(-6)}`;
+
+		await register(page, credentials.username, credentials.password);
+
+		const instance = await createInstance(page, {
+			name: instanceName,
+			endpoint: HEALTHY_OPENCLAW_ENDPOINT,
+			gatewayToken: HEALTHY_OPENCLAW_GATEWAY_TOKEN,
+		});
+
+		await page.setViewportSize({ width: 390, height: 844 });
+
+		await page.goto("/overview");
+		await expect(page.getByTestId("overview-summary-strip")).toBeVisible();
+		const overviewAgentsGrid = page.getByTestId("overview-agents-grid");
+		await expect(overviewAgentsGrid).toBeVisible();
+		await expectNoBannedStructures(page, OVERVIEW_BANNED_SELECTORS);
+		const gridTemplateColumns = await overviewAgentsGrid.evaluate(
+			(element) => window.getComputedStyle(element).gridTemplateColumns,
+		);
+		expect(gridTemplateColumns.trim().split(/\s+/)).toHaveLength(1);
+		await expect(page.getByText(instanceName).first()).toBeVisible();
+
+		await page.goto(`/session/${instance.id}/main`);
+		await expect(page).toHaveURL(new RegExp(`/session/${instance.id}/main$`));
+		await expect(page.getByRole("heading", { name: "会话" })).toBeVisible();
+		await expect(page.getByTestId("session-stream-shell")).toBeVisible();
+		await expect(page.getByTestId("session-input-shell")).toBeVisible();
+		await expectNoBannedStructures(page, SESSION_BANNED_SELECTORS);
 	});
 });
