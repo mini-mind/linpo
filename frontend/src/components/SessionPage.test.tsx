@@ -2,7 +2,11 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import SessionPage, { buildCanonicalSessionPath } from "./SessionPage";
+import SessionPage, {
+	buildCanonicalSessionPath,
+	buildSessionEntryPath,
+	resolveSessionPageInstanceId,
+} from "./SessionPage";
 
 const listInstancesMock = vi.fn();
 
@@ -30,15 +34,21 @@ vi.mock("./AgentWorkspace", async () => {
 		AgentWorkspace: (props: {
 			agentId?: string;
 			instanceId?: string;
+			preferredSessionKey?: string | null;
 		}) => {
-			const { agentId, instanceId } = reactRouterDom.useParams<{
+			const { agentId, channelKey, sessionKey } = reactRouterDom.useParams<{
 				agentId?: string;
-				instanceId?: string;
+				channelKey?: string;
+				sessionKey?: string;
 			}>();
 			return (
 				<div data-testid="session-stream-shell">
-					<div>{`workspace:${instanceId ?? "none"}:${agentId ?? "none"}`}</div>
-					<div>{`workspace-props:${props.instanceId ?? "none"}:${props.agentId ?? "none"}`}</div>
+					<div>
+						{`workspace-route:${agentId ?? "none"}:${channelKey ?? "none"}:${sessionKey ?? "none"}`}
+					</div>
+					<div>
+						{`workspace-props:${props.instanceId ?? "none"}:${props.agentId ?? "none"}:${props.preferredSessionKey ?? "none"}`}
+					</div>
 					<div data-testid="session-input-shell">observer-only placeholder</div>
 				</div>
 			);
@@ -77,6 +87,10 @@ function renderSessionPage(initialEntry: string): void {
 				<Route path="/session" element={<SessionPage />} />
 				<Route path="/session/:instanceId" element={<SessionPage />} />
 				<Route path="/session/:instanceId/:agentId" element={<SessionPage />} />
+				<Route
+					path="/session/:agentId/:channelKey/:sessionKey"
+					element={<SessionPage />}
+				/>
 				<Route path="/overview" element={<div>overview-page</div>} />
 			</Routes>
 		</MemoryRouter>,
@@ -89,17 +103,65 @@ describe("SessionPage", () => {
 		window.localStorage.clear();
 	});
 
-	it("buildCanonicalSessionPath returns the canonical drill-down shape", () => {
-		expect(buildCanonicalSessionPath("instance alpha")).toBe(
-			"/session/instance%20alpha/main",
+	it("buildCanonicalSessionPath returns the canonical agent/channel/session shape", () => {
+		expect(buildCanonicalSessionPath("agent alpha")).toBe(
+			"/session/agent%20alpha/__none__/__new__",
 		);
 
-		expect(buildCanonicalSessionPath("instance alpha", "agent/beta", "?focus=active")).toBe(
-			"/session/instance%20alpha/agent%2Fbeta?focus=active",
+		expect(
+			buildCanonicalSessionPath(
+				"agent alpha",
+				"channel/beta",
+				"session:key",
+				"?focus=active",
+			),
+		).toBe("/session/agent%20alpha/channel%2Fbeta/session%3Akey?focus=active");
+	});
+
+	it("buildSessionEntryPath upgrades truthful session context into the new canonical shape", () => {
+		expect(
+			buildSessionEntryPath({
+				instanceId: "instance alpha",
+				agentId: "agent/beta",
+				preferredSessionKey: "agent:agent/beta:main",
+				search: "?focus=active",
+			}),
+		).toBe(
+			"/session/agent%2Fbeta/agent/agent%3Aagent%2Fbeta%3Amain?focus=active&instanceId=instance+alpha",
+		);
+
+		expect(
+			buildSessionEntryPath({
+				instanceId: "instance alpha",
+				agentId: "agent/beta",
+				search: "?focus=active",
+			}),
+		).toBe(
+			"/session/agent%2Fbeta/__none__/__new__?focus=active&instanceId=instance+alpha",
 		);
 	});
 
-	it("upgrades legacy /session/:instanceId to canonical route and preserves query string", async () => {
+	it("resolveSessionPageInstanceId keeps explicit URL instance ahead of stored memory", () => {
+		expect(
+			resolveSessionPageInstanceId({
+				search: "?instanceId=inst-2",
+				legacyInstanceId: "inst-legacy",
+				storedInstanceId: "inst-1",
+			}),
+		).toBe("inst-2");
+	});
+
+	it("resolveSessionPageInstanceId falls back to stored memory only when URL has no instance context", () => {
+		expect(
+			resolveSessionPageInstanceId({
+				search: "",
+				legacyInstanceId: null,
+				storedInstanceId: "inst-1",
+			}),
+		).toBe("inst-1");
+	});
+
+	it("upgrades legacy /session/:instanceId to empty workspace canonical route and preserves query string", async () => {
 		listInstancesMock.mockResolvedValue([
 			buildInstance("inst-1", "First Instance"),
 			buildInstance("inst-2", "Second Instance"),
@@ -109,12 +171,50 @@ describe("SessionPage", () => {
 
 		await waitFor(() => {
 			expect(screen.getByTestId("location-display")).toHaveTextContent(
-				`${buildCanonicalSessionPath("inst-2")}?focus=active`,
+				buildSessionEntryPath({
+					instanceId: "inst-2",
+					search: "?focus=active",
+				}),
 			);
 		});
 
 		await waitFor(() => {
-			expect(screen.getByText("workspace:inst-2:main")).toBeInTheDocument();
+			expect(
+				screen.getByText("workspace-route:main:__none__:__new__"),
+			).toBeInTheDocument();
+			expect(
+				screen.getByText("workspace-props:inst-2:main:none"),
+			).toBeInTheDocument();
+		});
+	});
+
+	it("upgrades legacy /session/:instanceId/:agentId into the new canonical route", async () => {
+		listInstancesMock.mockResolvedValue([
+			buildInstance("inst-1", "First Instance"),
+			buildInstance("inst-2", "Second Instance"),
+		]);
+
+		renderSessionPage(
+			"/session/inst-2/main?focus=active&session=agent%3Aagent-alpha%3Amain",
+		);
+
+		await waitFor(() => {
+			expect(screen.getByTestId("location-display")).toHaveTextContent(
+				buildSessionEntryPath({
+					instanceId: "inst-2",
+					agentId: "main",
+					preferredSessionKey: "agent:agent-alpha:main",
+					search: "?focus=active",
+				}),
+			);
+		});
+
+		await waitFor(() => {
+			expect(
+				screen.getByText(
+					"workspace-route:main:agent:agent:agent-alpha:main",
+				),
+			).toBeInTheDocument();
 		});
 	});
 
@@ -124,13 +224,15 @@ describe("SessionPage", () => {
 			buildInstance("inst-2", "Second Instance"),
 		]);
 
-		renderSessionPage("/session/inst-2/main");
+		renderSessionPage("/session/main/__none__/__new__?instanceId=inst-2");
 
 		await waitFor(() => {
 			expect(screen.getByRole("heading", { name: "Second Instance" })).toBeInTheDocument();
 		});
 
-		expect(screen.getByText("workspace:inst-2:main")).toBeInTheDocument();
+		expect(
+			screen.getByText("workspace-route:main:__none__:__new__"),
+		).toBeInTheDocument();
 	});
 
 	it("passes canonical route context to AgentWorkspace and syncs remembered instance", async () => {
@@ -140,14 +242,48 @@ describe("SessionPage", () => {
 			buildInstance("inst-2", "Second Instance"),
 		]);
 
-		renderSessionPage("/session/inst-2/main");
+		renderSessionPage("/session/main/__none__/__new__?instanceId=inst-2");
 
 		await waitFor(() => {
-			expect(screen.getByText("workspace-props:inst-2:main")).toBeInTheDocument();
+			expect(screen.getByText("workspace-props:inst-2:main:none")).toBeInTheDocument();
 		});
 
 		await waitFor(() => {
 			expect(window.localStorage.getItem("linpo.currentInstanceId")).toBe("inst-2");
+		});
+	});
+
+	it("passes preferred session key from canonical params to AgentWorkspace", async () => {
+		window.localStorage.setItem("linpo.currentInstanceId", "inst-1");
+		listInstancesMock.mockResolvedValue([
+			buildInstance("inst-1", "First Instance"),
+			buildInstance("inst-2", "Second Instance"),
+		]);
+
+		renderSessionPage(
+			"/session/main/agent/agent%3Aagent-alpha%3Amain?instanceId=inst-2",
+		);
+
+		await waitFor(() => {
+			expect(
+				screen.getByText(
+					"workspace-props:inst-2:main:agent:agent-alpha:main",
+				),
+			).toBeInTheDocument();
+		});
+	});
+
+	it("uses stored instance memory only when canonical URL does not provide one", async () => {
+		window.localStorage.setItem("linpo.currentInstanceId", "inst-2");
+		listInstancesMock.mockResolvedValue([
+			buildInstance("inst-1", "First Instance"),
+			buildInstance("inst-2", "Second Instance"),
+		]);
+
+		renderSessionPage("/session/main/__none__/__new__");
+
+		await waitFor(() => {
+			expect(screen.getByText("workspace-props:inst-2:main:none")).toBeInTheDocument();
 		});
 	});
 
@@ -157,7 +293,7 @@ describe("SessionPage", () => {
 			buildInstance("inst-2", "Second Instance", "disconnected"),
 		]);
 
-		renderSessionPage("/session/inst-2/main");
+		renderSessionPage("/session/main/__none__/__new__?instanceId=inst-2");
 
 		await waitFor(() => {
 			expect(screen.getByText(/disconnected/i)).toBeInTheDocument();
@@ -194,21 +330,25 @@ describe("SessionPage", () => {
 
 		await waitFor(() => {
 			expect(screen.getByTestId("location-display")).toHaveTextContent(
-				buildCanonicalSessionPath("inst-1"),
+				buildSessionEntryPath({
+					instanceId: "inst-1",
+				}),
 			);
 		});
 	});
 
-	describe("page shell testid contracts", () => {
+		describe("page shell testid contracts", () => {
 		it("exposes session-stream-shell testid on the main content area", async () => {
 			listInstancesMock.mockResolvedValue([
 				buildInstance("inst-1", "First Instance"),
 			]);
 
-			renderSessionPage("/session/inst-1/main");
+			renderSessionPage("/session/main/__none__/__new__?instanceId=inst-1");
 
 			await waitFor(() => {
-				expect(screen.getByText("workspace:inst-1:main")).toBeInTheDocument();
+				expect(
+					screen.getByText("workspace-props:inst-1:main:none"),
+				).toBeInTheDocument();
 			});
 
 			const streamShell = screen.getByTestId("session-stream-shell");
@@ -220,10 +360,12 @@ describe("SessionPage", () => {
 				buildInstance("inst-1", "First Instance"),
 			]);
 
-			renderSessionPage("/session/inst-1/main");
+			renderSessionPage("/session/main/__none__/__new__?instanceId=inst-1");
 
 			await waitFor(() => {
-				expect(screen.getByText("workspace:inst-1:main")).toBeInTheDocument();
+				expect(
+					screen.getByText("workspace-props:inst-1:main:none"),
+				).toBeInTheDocument();
 			});
 
 			const inputShell = screen.getByTestId("session-input-shell");
@@ -231,17 +373,19 @@ describe("SessionPage", () => {
 		});
 	});
 
-	describe("minimal three-zone layout", () => {
+		describe("minimal three-zone layout", () => {
 		it("does not render instance list sidebar", async () => {
 			listInstancesMock.mockResolvedValue([
 				buildInstance("inst-1", "First Instance"),
 				buildInstance("inst-2", "Second Instance"),
 			]);
 
-			renderSessionPage("/session/inst-1/main");
+			renderSessionPage("/session/main/__none__/__new__?instanceId=inst-1");
 
 			await waitFor(() => {
-				expect(screen.getByText("workspace:inst-1:main")).toBeInTheDocument();
+				expect(
+					screen.getByText("workspace-props:inst-1:main:none"),
+				).toBeInTheDocument();
 			});
 
 			expect(screen.queryByRole("button", { name: /First Instance/ })).not.toBeInTheDocument();
@@ -253,7 +397,7 @@ describe("SessionPage", () => {
 				buildInstance("inst-1", "Test Instance"),
 			]);
 
-			renderSessionPage("/session/inst-1/main");
+			renderSessionPage("/session/main/__none__/__new__?instanceId=inst-1");
 
 			await waitFor(() => {
 				expect(screen.getByRole("heading", { name: "Test Instance" })).toBeInTheDocument();

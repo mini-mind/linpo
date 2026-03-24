@@ -3,25 +3,139 @@ import { useCallback, useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { listInstances } from "../api/instanceClient";
 import type { InstanceItem } from "../api/types";
-import { setStoredCurrentInstanceId } from "../hooks/useCurrentInstance";
+import {
+	getStoredCurrentInstanceId,
+	setStoredCurrentInstanceId,
+} from "../hooks/useCurrentInstance";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { AgentWorkspace } from "./AgentWorkspace";
 
 const DEFAULT_SESSION_AGENT_ID = "main";
 const DESKTOP_MAX_WIDTH = 880;
+const RESERVED_NONE_CHANNEL_KEY = "__none__";
+const RESERVED_NEW_SESSION_KEY = "__new__";
+const INSTANCE_ID_QUERY_KEY = "instanceId";
+const PREFERRED_SESSION_QUERY_KEY = "session";
 
-export function buildCanonicalSessionPath(
-	instanceId: string,
+function normalizeSearch(search: string): string {
+	if (!search) return "";
+	return search.startsWith("?") ? search.slice(1) : search;
+}
+
+export function getPreferredSessionKeyFromSearch(search: string): string | null {
+	const params = new URLSearchParams(normalizeSearch(search));
+	return params.get(PREFERRED_SESSION_QUERY_KEY);
+}
+
+function getInstanceIdFromSearch(search: string): string | null {
+	const params = new URLSearchParams(normalizeSearch(search));
+	return params.get(INSTANCE_ID_QUERY_KEY);
+}
+
+export function resolveSessionPageInstanceId({
+	search,
+	legacyInstanceId,
+	storedInstanceId,
+}: {
+	search: string;
+	legacyInstanceId?: string | null;
+	storedInstanceId?: string | null;
+}): string | null {
+	return (
+		normalizeNonEmpty(getInstanceIdFromSearch(search)) ??
+		normalizeNonEmpty(legacyInstanceId) ??
+		normalizeNonEmpty(storedInstanceId)
+	);
+}
+
+function normalizeNonEmpty(value: string | null | undefined): string | null {
+	if (typeof value !== "string") return null;
+	const normalizedValue = value.trim();
+	return normalizedValue.length > 0 ? normalizedValue : null;
+}
+
+function deriveChannelKeyFromSessionKey(sessionKey: string | null): string | null {
+	const normalizedSessionKey = normalizeNonEmpty(sessionKey);
+	if (!normalizedSessionKey) return null;
+	const delimiterIndex = normalizedSessionKey.indexOf(":");
+	if (delimiterIndex <= 0) return null;
+	return normalizedSessionKey.slice(0, delimiterIndex);
+}
+
+export function buildSessionEntryPath({
+	instanceId,
 	agentId = DEFAULT_SESSION_AGENT_ID,
 	search = "",
+	preferredSessionKey = null,
+	channelKey = null,
+}: {
+	instanceId?: string | null;
+	agentId?: string;
+	search?: string;
+	preferredSessionKey?: string | null;
+	channelKey?: string | null;
+}): string {
+	const params = new URLSearchParams(normalizeSearch(search));
+	const normalizedInstanceId = normalizeNonEmpty(instanceId);
+	if (normalizedInstanceId) {
+		params.set(INSTANCE_ID_QUERY_KEY, normalizedInstanceId);
+	} else {
+		params.delete(INSTANCE_ID_QUERY_KEY);
+	}
+
+	const normalizedPreferredSessionKey = normalizeNonEmpty(preferredSessionKey);
+	const resolvedChannelKey =
+		deriveChannelKeyFromSessionKey(normalizedPreferredSessionKey) ??
+		normalizeNonEmpty(channelKey);
+
+	if (normalizedPreferredSessionKey && !resolvedChannelKey) {
+		params.set(PREFERRED_SESSION_QUERY_KEY, normalizedPreferredSessionKey);
+	} else {
+		params.delete(PREFERRED_SESSION_QUERY_KEY);
+	}
+
+	const nextSearch = params.toString();
+	if (normalizedPreferredSessionKey && resolvedChannelKey) {
+		return buildCanonicalSessionPath(
+			agentId,
+			resolvedChannelKey,
+			normalizedPreferredSessionKey,
+			nextSearch ? `?${nextSearch}` : "",
+		);
+	}
+
+	if (resolvedChannelKey) {
+		return buildCanonicalSessionPath(
+			agentId,
+			resolvedChannelKey,
+			RESERVED_NEW_SESSION_KEY,
+			nextSearch ? `?${nextSearch}` : "",
+		);
+	}
+
+	return buildCanonicalSessionPath(
+		agentId,
+		RESERVED_NONE_CHANNEL_KEY,
+		RESERVED_NEW_SESSION_KEY,
+		nextSearch ? `?${nextSearch}` : "",
+	);
+}
+
+export function buildCanonicalSessionPath(
+	agentId = DEFAULT_SESSION_AGENT_ID,
+	channelKey = RESERVED_NONE_CHANNEL_KEY,
+	sessionKey = RESERVED_NEW_SESSION_KEY,
+	search = "",
 ): string {
-	return `/session/${encodeURIComponent(instanceId)}/${encodeURIComponent(agentId)}${search}`;
+	return `/session/${encodeURIComponent(agentId)}/${encodeURIComponent(channelKey)}/${encodeURIComponent(sessionKey)}${search}`;
 }
 
 export default function SessionPage(): JSX.Element {
-	const { instanceId, agentId } = useParams<{
+	const { instanceId, agentId, channelKey, sessionKey } = useParams<{
 		instanceId?: string;
 		agentId?: string;
+		channelKey?: string;
+		sessionKey?: string;
 	}>();
 	const location = useLocation();
 	const navigate = useNavigate();
@@ -29,15 +143,33 @@ export default function SessionPage(): JSX.Element {
 	const [instances, setInstances] = useState<InstanceItem[]>([]);
 	const [instancesLoading, setInstancesLoading] = useState(false);
 	const [instancesError, setInstancesError] = useState<string | null>(null);
-	const selectedInstanceId = instanceId ?? null;
+	const isCanonicalSessionRoute = Boolean(agentId && channelKey && sessionKey);
+	const legacyInstanceId = isCanonicalSessionRoute ? null : instanceId ?? null;
+	const storedInstanceId = getStoredCurrentInstanceId();
+	const selectedInstanceId = resolveSessionPageInstanceId({
+		search: location.search,
+		legacyInstanceId,
+		storedInstanceId,
+	});
 	const selectedAgentId = agentId ?? null;
+	const selectedChannelKey = channelKey ?? null;
+	const selectedSessionKey = sessionKey ?? null;
+	const preferredSessionKeyFromSearch = getPreferredSessionKeyFromSearch(location.search);
+	const preferredSessionKey =
+		selectedSessionKey && selectedSessionKey !== RESERVED_NEW_SESSION_KEY
+			? selectedSessionKey
+			: preferredSessionKeyFromSearch;
 	const getCanonicalSessionPath = useCallback(
 		(nextInstanceId: string, nextAgentId = DEFAULT_SESSION_AGENT_ID): string =>
-			buildCanonicalSessionPath(nextInstanceId, nextAgentId, location.search),
+			buildSessionEntryPath({
+				instanceId: nextInstanceId,
+				agentId: nextAgentId,
+				search: location.search,
+			}),
 		[location.search],
 	);
 	const hasCanonicalSessionRoute = Boolean(
-		selectedInstanceId && selectedAgentId,
+		selectedAgentId && selectedChannelKey && selectedSessionKey,
 	);
 
 	useEffect(() => {
@@ -59,10 +191,37 @@ export default function SessionPage(): JSX.Element {
 	}, []);
 
 	useEffect(() => {
-		if (selectedInstanceId && !selectedAgentId) {
-			navigate(getCanonicalSessionPath(selectedInstanceId), { replace: true });
+		if (legacyInstanceId && selectedAgentId && !selectedChannelKey && !selectedSessionKey) {
+			navigate(
+				buildSessionEntryPath({
+					instanceId: legacyInstanceId,
+					agentId: selectedAgentId,
+					preferredSessionKey,
+					search: location.search,
+				}),
+				{ replace: true },
+			);
+			return;
 		}
-	}, [getCanonicalSessionPath, navigate, selectedAgentId, selectedInstanceId]);
+
+		if (legacyInstanceId && !selectedAgentId) {
+			navigate(
+				buildSessionEntryPath({
+					instanceId: legacyInstanceId,
+					search: location.search,
+				}),
+				{ replace: true },
+			);
+		}
+	}, [
+		legacyInstanceId,
+		location.search,
+		navigate,
+		preferredSessionKey,
+		selectedAgentId,
+		selectedChannelKey,
+		selectedSessionKey,
+	]);
 
 	useEffect(() => {
 		if (!selectedInstanceId) return;
@@ -103,6 +262,7 @@ export default function SessionPage(): JSX.Element {
 						key={`${selectedInstanceId}:${selectedAgentId}`}
 						instanceId={selectedInstanceId ?? undefined}
 						agentId={selectedAgentId ?? undefined}
+						preferredSessionKey={preferredSessionKey}
 					/>
 				) : instancesLoading ? (
 					<div style={centeredMessageStyle}>
@@ -145,6 +305,7 @@ export default function SessionPage(): JSX.Element {
 							key={`${selectedInstanceId}:${selectedAgentId}`}
 							instanceId={selectedInstanceId ?? undefined}
 							agentId={selectedAgentId ?? undefined}
+							preferredSessionKey={preferredSessionKey}
 						/>
 					) : instancesLoading ? (
 						<div style={centeredMessageStyle}>
