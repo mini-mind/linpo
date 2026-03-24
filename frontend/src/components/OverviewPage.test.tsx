@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../api/client";
@@ -26,7 +26,7 @@ vi.mock("../hooks/useIsMobile", () => ({
 
 const listInstancesSpy = vi.spyOn(instanceClient, "listInstances");
 
-const aggregateOverviewFixture = {
+const overviewFixture = {
 	request_id: "req-overview-1",
 	freshness: {
 		status: "fresh",
@@ -43,6 +43,22 @@ const aggregateOverviewFixture = {
 				checked_at: "2026-03-22T12:00:00Z",
 			},
 			error: null,
+		},
+		{
+			instance_id: "instance-beta",
+			instance_name: "beta-instance",
+			status: "failed",
+			freshness: {
+				status: "failed",
+				checked_at: "2026-03-22T11:45:00Z",
+			},
+			error: {
+				code: "source_unavailable",
+				message: "OpenClaw upstream unavailable",
+				request_id: "req-overview-1",
+				recoverable: true,
+				next_step: "检查实例连通性或网关 token 后重试",
+			},
 		},
 	],
 	agents: [
@@ -67,78 +83,67 @@ const aggregateOverviewFixture = {
 			drilldown_path: "/session/instance-beta/agent-beta",
 		},
 	],
-};
-
-const degradedOverviewFixture = {
-	request_id: "req-overview-2",
-	freshness: {
-		status: "stale",
-		checked_at: "2026-03-22T11:55:00Z",
+	stats: {
+		instance_count: 2,
+		agent_count: 2,
+		active_agent_count: 1,
+		attention_instance_count: 1,
+		total_tokens: 330,
 	},
-	partial_failure: true,
-	diagnostics: [
+	token_groups: [
 		{
-			instance_id: "instance-failing",
-			instance_name: "failing-instance",
-			status: "failed",
-			freshness: {
-				status: "failed",
-				checked_at: "2026-03-22T11:50:00Z",
-			},
-			error: {
-				code: "source_unavailable",
-				message: "OpenClaw upstream unavailable",
-				request_id: "req-overview-2",
-				recoverable: true,
-				next_step: "检查实例连通性或网关 token 后重试",
-			},
+			instance_id: "instance-alpha",
+			instance_name: "alpha-instance",
+			total_tokens: 330,
+			samples: [
+				{ label: "08:00", input_tokens: 80, output_tokens: 40, total_tokens: 120 },
+				{ label: "12:00", input_tokens: 140, output_tokens: 70, total_tokens: 210 },
+			],
 		},
 		{
-			instance_id: "instance-healthy",
-			instance_name: "healthy-instance",
-			status: "ok",
-			freshness: {
-				status: "fresh",
-				checked_at: "2026-03-22T11:55:00Z",
-			},
-			error: null,
+			instance_id: "instance-beta",
+			instance_name: "beta-instance",
+			total_tokens: null,
+			samples: [],
 		},
 	],
-	agents: [
+	global_events: [
 		{
-			instance_id: "instance-healthy",
-			instance_name: "healthy-instance",
-			agent_id: "agent-healthy",
-			agent_name: "Healthy Agent",
-			status: "running",
-			is_active: true,
-			last_active_at: "2026-03-22T11:54:00Z",
-			drilldown_path: "/session/instance-healthy/agent-healthy",
+			id: "event-alpha-1",
+			instance_id: "instance-alpha",
+			instance_name: "alpha-instance",
+			agent_id: "agent-alpha",
+			agent_name: "Alpha Agent",
+			type: "status_changed",
+			timestamp: "2026-03-22T11:59:00Z",
+			description: "Alpha Agent completed a token-heavy planning burst.",
+		},
+		{
+			id: "event-beta-1",
+			instance_id: "instance-beta",
+			instance_name: "beta-instance",
+			agent_id: null,
+			agent_name: null,
+			type: "activity_stopped",
+			timestamp: "2026-03-22T11:47:00Z",
+			description: "beta-instance is waiting for upstream recovery.",
 		},
 	],
 };
 
-const zeroAgentOverviewFixture = {
-	request_id: "req-overview-3",
-	freshness: {
-		status: "fresh",
-		checked_at: "2026-03-22T12:05:00Z",
-	},
-	partial_failure: false,
-	diagnostics: [
-		{
-			instance_id: "instance-empty",
-			instance_name: "empty-instance",
-			status: "ok",
-			freshness: {
-				status: "fresh",
-				checked_at: "2026-03-22T12:05:00Z",
-			},
-			error: null,
-		},
-	],
-	agents: [],
-};
+function createDeferredPromise<T>(): {
+	promise: Promise<T>;
+	resolve: (value: T | PromiseLike<T>) => void;
+	reject: (reason?: unknown) => void;
+} {
+	let resolve!: (value: T | PromiseLike<T>) => void;
+	let reject!: (reason?: unknown) => void;
+	const promise = new Promise<T>((res, rej) => {
+		resolve = res;
+		reject = rej;
+	});
+	return { promise, resolve, reject };
+}
 
 function renderWithRouter(): ReturnType<typeof render> {
 	return render(
@@ -157,178 +162,304 @@ describe("OverviewPage", () => {
 		);
 	});
 
-	describe("agents-first hierarchy", () => {
-		it("places agents grid as the main visual content, not summary strip", async () => {
-			mockGetAggregateOverview.mockResolvedValue(aggregateOverviewFixture);
+	it("renders overview as stats topbar, token stage, and global event rail instead of agents grid", async () => {
+		mockGetAggregateOverview.mockResolvedValue(overviewFixture);
 
-			renderWithRouter();
+		renderWithRouter();
 
-			await waitFor(() => {
-				expect(screen.getByText("Alpha Agent")).toBeInTheDocument();
-			});
-
-			// Agents grid must exist and contain agent cards
-			const agentsGrid = screen.getByTestId("overview-agents-grid");
-			expect(agentsGrid).toBeInTheDocument();
-			expect(agentsGrid).toHaveTextContent("Alpha Agent");
-			expect(agentsGrid).toHaveTextContent("Beta Agent");
-
-			// Summary strip should be compact (exist but not dominate)
-			const summaryStrip = screen.getByTestId("overview-summary-strip");
-			expect(summaryStrip).toBeInTheDocument();
+		await waitFor(() => {
+			expect(screen.getByTestId("overview-stats-panel")).toBeInTheDocument();
 		});
 
-		it("does not render large stats grid above agents", async () => {
-			mockGetAggregateOverview.mockResolvedValue(aggregateOverviewFixture);
+		expect(listInstancesSpy).not.toHaveBeenCalled();
 
-			renderWithRouter();
+		const statsPanel = screen.getByTestId("overview-stats-panel");
+		expect(statsPanel).toHaveTextContent("实例总数");
+		expect(statsPanel).toHaveTextContent("活跃 agents");
+		expect(statsPanel).toHaveTextContent("关注实例");
+		expect(statsPanel).toHaveTextContent("Token 总量");
+		expect(statsPanel).toHaveTextContent("330");
 
-			await waitFor(() => {
-				expect(screen.getByText("Alpha Agent")).toBeInTheDocument();
-			});
+		const tokenStage = screen.getByTestId("overview-token-stage");
+		expect(tokenStage).toHaveTextContent("实例 token 趋势");
+		expect(tokenStage).toHaveTextContent("alpha-instance");
+		expect(tokenStage).toHaveTextContent("beta-instance");
+		expect(tokenStage).toHaveTextContent("暂无 token 数据");
 
-			// Should NOT have a dedicated stats section with big numbers
-			// The old stats grid had items like "全部 agents", "活跃中", "值得巡视"
-			expect(screen.queryByText("全部 agents")).not.toBeInTheDocument();
-			expect(screen.queryByText("活跃中")).not.toBeInTheDocument();
-		});
+		const eventsRail = screen.getByTestId("overview-global-events");
+		expect(eventsRail).toHaveTextContent("全局事件");
+		expect(eventsRail).toHaveTextContent(
+			"Alpha Agent completed a token-heavy planning burst.",
+		);
+		expect(eventsRail).toHaveTextContent(
+			"beta-instance is waiting for upstream recovery.",
+		);
 
-		it("does not render full-width diagnostics section", async () => {
-			mockGetAggregateOverview.mockResolvedValue(degradedOverviewFixture);
-
-			renderWithRouter();
-
-			await waitFor(() => {
-				expect(screen.getByText("Healthy Agent")).toBeInTheDocument();
-			});
-
-			// Should NOT have a "实例诊断" section header (old full-width diagnostics)
-			expect(screen.queryByText("实例诊断")).not.toBeInTheDocument();
-		});
+		expect(screen.queryByTestId("overview-agents-grid")).not.toBeInTheDocument();
 	});
 
-	describe("canonical drill-down", () => {
-		it("renders each agent card with link to canonical session drill-down", async () => {
-			mockGetAggregateOverview.mockResolvedValue(aggregateOverviewFixture);
+	it("shows request clues for reconciliation in the successful overview state", async () => {
+		mockGetAggregateOverview.mockResolvedValue(overviewFixture);
 
-			renderWithRouter();
+		renderWithRouter();
 
-			await waitFor(() => {
-				expect(mockGetAggregateOverview).toHaveBeenCalledTimes(1);
-			});
-
-			expect(listInstancesSpy).not.toHaveBeenCalled();
-			expect(screen.getByText("Alpha Agent")).toBeInTheDocument();
-			expect(screen.getByText("Beta Agent")).toBeInTheDocument();
-
-			expect(
-				screen.getByRole("link", { name: /进入会话 - Alpha Agent/i }),
-			).toHaveAttribute("href", "/session/instance-alpha/agent-alpha");
-			expect(
-				screen.getByRole("link", { name: /进入会话 - Beta Agent/i }),
-			).toHaveAttribute("href", "/session/instance-beta/agent-beta");
+		await waitFor(() => {
+			expect(screen.getByText("request_id · req-overview-1")).toBeInTheDocument();
 		});
+
+		expect(screen.getByText("freshness · 数据新鲜")).toBeInTheDocument();
+		expect(
+			screen.getByText("checked_at · 2026-03-22T12:00:00Z"),
+		).toBeInTheDocument();
+		expect(screen.getByText("diagnostics · 2 total / 1 failed")).toBeInTheDocument();
 	});
 
-	describe("summary strip", () => {
-		it("shows compact freshness and key counts, not large dashboard cards", async () => {
-			mockGetAggregateOverview.mockResolvedValue(aggregateOverviewFixture);
-
-			renderWithRouter();
-
-			await waitFor(() => {
-				expect(screen.getByText("Alpha Agent")).toBeInTheDocument();
+	it("re-reads aggregate overview when refresh is triggered from the successful state", async () => {
+		mockGetAggregateOverview
+			.mockResolvedValueOnce(overviewFixture)
+			.mockResolvedValueOnce({
+				...overviewFixture,
+				request_id: "req-overview-2",
+				freshness: {
+					status: "stale",
+					checked_at: "2026-03-22T12:05:00Z",
+				},
 			});
 
-			const summaryStrip = screen.getByTestId("overview-summary-strip");
-			expect(summaryStrip).toHaveTextContent("freshness");
-			expect(summaryStrip).toHaveTextContent("agents");
-			expect(summaryStrip).toHaveTextContent("2");
+		renderWithRouter();
+
+		await waitFor(() => {
+			expect(screen.getByText("request_id · req-overview-1")).toBeInTheDocument();
 		});
 
-		it("surfaces partial-failure status in summary strip, not full diagnostics panel", async () => {
-			mockGetAggregateOverview.mockResolvedValue(degradedOverviewFixture);
+		fireEvent.click(screen.getByRole("button", { name: "刷新" }));
 
-			renderWithRouter();
-
-			await waitFor(() => {
-				expect(screen.getByText("Healthy Agent")).toBeInTheDocument();
-			});
-
-			const summaryStrip = screen.getByTestId("overview-summary-strip");
-			// Degraded status should appear in summary strip
-			expect(summaryStrip).toHaveTextContent("stale");
+		await waitFor(() => {
+			expect(screen.getByText("request_id · req-overview-2")).toBeInTheDocument();
 		});
+
+		expect(mockGetAggregateOverview).toHaveBeenCalledTimes(2);
+		expect(screen.getByText("freshness · 数据滞后")).toBeInTheDocument();
 	});
 
-	describe("empty state", () => {
-		it("guides users to topology when no agents exist", async () => {
-			mockGetAggregateOverview.mockResolvedValue(zeroAgentOverviewFixture);
+	it("keeps the overview shell visible while aggregate overview is loading", () => {
+		const deferred = createDeferredPromise<typeof overviewFixture>();
+		mockGetAggregateOverview.mockReturnValue(deferred.promise);
 
-			renderWithRouter();
+		renderWithRouter();
 
-			await waitFor(() => {
-				expect(screen.getByText("当前没有可下钻的 agent")).toBeInTheDocument();
-			});
-
-			expect(
-				screen.getByRole("link", { name: /前往拓扑/i }),
-			).toHaveAttribute("href", "/topology");
-		});
+		expect(screen.getByRole("heading", { name: "总览" })).toBeInTheDocument();
+		expect(screen.getByTestId("overview-stats-panel")).toHaveTextContent(
+			"总览数据加载中",
+		);
+		expect(screen.getByTestId("overview-token-stage")).toHaveTextContent(
+			"正在加载实例 token 趋势",
+		);
+		expect(screen.getByTestId("overview-global-events")).toHaveTextContent(
+			"正在加载全局事件",
+		);
 	});
 
-	describe("error handling", () => {
-		it("surfaces normalized envelope fields when aggregate request returns non-2xx", async () => {
-			mockGetAggregateOverview.mockRejectedValue(
-				new ApiError(401, "Unauthorized", {
-					code: "unauthorized",
-					message: "Unauthorized",
-					request_id: "req-overview-401",
+	it("keeps the overview skeleton when token groups and global events are empty", async () => {
+		mockGetAggregateOverview.mockResolvedValue({
+			...overviewFixture,
+			diagnostics: [],
+			stats: {
+				...overviewFixture.stats,
+				instance_count: 0,
+				agent_count: 0,
+				active_agent_count: 0,
+				attention_instance_count: 0,
+				total_tokens: null,
+			},
+			token_groups: [],
+			global_events: [],
+		});
+
+		renderWithRouter();
+
+		await waitFor(() => {
+			expect(screen.getByTestId("overview-stats-panel")).toBeInTheDocument();
+		});
+
+		expect(screen.getByRole("heading", { name: "总览" })).toBeInTheDocument();
+		expect(screen.getByTestId("overview-token-stage")).toHaveTextContent(
+			"当前没有可展示的实例 token 数据",
+		);
+		expect(screen.getByTestId("overview-global-events")).toHaveTextContent(
+			"当前没有可展示的全局事件",
+		);
+	});
+
+	it("keeps the event rail rendered even when there are no global events yet", async () => {
+		mockGetAggregateOverview.mockResolvedValue({
+			...overviewFixture,
+			global_events: [],
+		});
+
+		renderWithRouter();
+
+		await waitFor(() => {
+			expect(screen.getByTestId("overview-global-events")).toBeInTheDocument();
+		});
+
+		const eventsRail = screen.getByTestId("overview-global-events");
+		expect(within(eventsRail).getByText("全局事件")).toBeInTheDocument();
+		expect(within(eventsRail).getByText("当前没有可展示的全局事件")).toBeInTheDocument();
+	});
+
+	it("keeps successful overview content while surfacing a partial failure notice from diagnostics", async () => {
+		mockGetAggregateOverview.mockResolvedValue({
+			...overviewFixture,
+			partial_failure: false,
+		});
+
+		renderWithRouter();
+
+		await waitFor(() => {
+			expect(screen.getByText("部分数据不可用")).toBeInTheDocument();
+		});
+
+		expect(screen.getByTestId("overview-token-stage")).toHaveTextContent(
+			"alpha-instance",
+		);
+		expect(screen.getByTestId("overview-global-events")).toHaveTextContent(
+			"beta-instance is waiting for upstream recovery.",
+		);
+	});
+
+	it("shows a partial failure notice when the payload is explicitly marked partial_failure", async () => {
+		mockGetAggregateOverview.mockResolvedValue({
+			...overviewFixture,
+			partial_failure: true,
+			diagnostics: [overviewFixture.diagnostics[0]],
+		});
+
+		renderWithRouter();
+
+		await waitFor(() => {
+			expect(screen.getByText("部分数据不可用")).toBeInTheDocument();
+		});
+
+		expect(screen.getByTestId("overview-token-stage")).toHaveTextContent(
+			"alpha-instance",
+		);
+	});
+
+	it("surfaces normalized envelope fields when aggregate request returns non-2xx", async () => {
+		mockGetAggregateOverview.mockRejectedValue(
+			new ApiError(401, "Unauthorized", {
+				code: "unauthorized",
+				message: "Unauthorized",
+				request_id: "req-overview-401",
+				recoverable: true,
+				next_step: "重新登录后重试",
+			}),
+		);
+
+		renderWithRouter();
+
+		await waitFor(() => {
+			expect(screen.getByText("code · unauthorized")).toBeInTheDocument();
+		});
+
+		expect(screen.getByText("Unauthorized")).toBeInTheDocument();
+		expect(screen.getByText("request_id · req-overview-401")).toBeInTheDocument();
+		expect(screen.getByText("recoverable · true")).toBeInTheDocument();
+		expect(screen.getByText("重新登录后重试")).toBeInTheDocument();
+	});
+
+	it("shows an explicit unauthorized state instead of a generic failure state", async () => {
+		mockGetAggregateOverview.mockRejectedValue(
+			new ApiError(401, "Unauthorized", {
+				code: "unauthorized",
+				message: "Unauthorized",
+				request_id: "req-overview-401",
+				recoverable: true,
+				next_step: "重新登录后重试",
+			}),
+		);
+
+		renderWithRouter();
+
+		await waitFor(() => {
+			expect(screen.getByText("当前无权查看总览")).toBeInTheDocument();
+		});
+
+		expect(screen.queryByText("总览暂时不可用")).not.toBeInTheDocument();
+		expect(screen.getByText("request_id · req-overview-401")).toBeInTheDocument();
+	});
+
+	it("shows a readable failed state with request evidence when overview loading fails", async () => {
+		mockGetAggregateOverview.mockRejectedValue(
+			new ApiError(503, "OpenClaw upstream unavailable", {
+				code: "source_unavailable",
+				message: "OpenClaw upstream unavailable",
+				request_id: "req-overview-503",
+				recoverable: true,
+				next_step: "检查实例连通性后重试",
+			}),
+		);
+
+		renderWithRouter();
+
+		await waitFor(() => {
+			expect(screen.getByText("总览暂时不可用")).toBeInTheDocument();
+		});
+
+		expect(screen.getByText("request_id · req-overview-503")).toBeInTheDocument();
+		expect(screen.getByText("code · source_unavailable")).toBeInTheDocument();
+	});
+
+	it("re-reads aggregate overview when retry is triggered from the failed state", async () => {
+		mockGetAggregateOverview
+			.mockRejectedValueOnce(
+				new ApiError(503, "OpenClaw upstream unavailable", {
+					code: "source_unavailable",
+					message: "OpenClaw upstream unavailable",
+					request_id: "req-overview-503",
 					recoverable: true,
-					next_step: "重新登录后重试",
+					next_step: "检查实例连通性后重试",
 				}),
-			);
-
-			renderWithRouter();
-
-			await waitFor(() => {
-				expect(screen.getByText("code · unauthorized")).toBeInTheDocument();
+			)
+			.mockResolvedValueOnce({
+				...overviewFixture,
+				request_id: "req-overview-recovered",
 			});
 
-			expect(screen.getByText("错误: Unauthorized")).toBeInTheDocument();
-			expect(screen.getByText("request_id · req-overview-401")).toBeInTheDocument();
-			expect(screen.getByText("recoverable · true")).toBeInTheDocument();
-			expect(screen.getByText("重新登录后重试")).toBeInTheDocument();
+		renderWithRouter();
+
+		await waitFor(() => {
+			expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
 		});
+
+		fireEvent.click(screen.getByRole("button", { name: "重试" }));
+
+		await waitFor(() => {
+			expect(screen.getByText("request_id · req-overview-recovered")).toBeInTheDocument();
+		});
+
+		expect(mockGetAggregateOverview).toHaveBeenCalledTimes(2);
 	});
 
-	describe("page shell testid contracts", () => {
-		it("exposes overview-summary-strip testid on the summary panel", async () => {
-			mockGetAggregateOverview.mockResolvedValue(aggregateOverviewFixture);
-
-			renderWithRouter();
-
-			await waitFor(() => {
-				expect(screen.getByText("Alpha Agent")).toBeInTheDocument();
-			});
-
-			const summaryStrip = screen.getByTestId("overview-summary-strip");
-			expect(summaryStrip).toBeInTheDocument();
+	it("shows an explicit stale notice while keeping overview content visible", async () => {
+		mockGetAggregateOverview.mockResolvedValue({
+			...overviewFixture,
+			freshness: {
+				status: "stale",
+				checked_at: "2026-03-22T11:40:00Z",
+			},
 		});
 
-		it("exposes overview-agents-grid testid on the agents grid", async () => {
-			mockGetAggregateOverview.mockResolvedValue(aggregateOverviewFixture);
+		renderWithRouter();
 
-			renderWithRouter();
-
-			await waitFor(() => {
-				expect(screen.getByText("Alpha Agent")).toBeInTheDocument();
-			});
-
-			const agentsGrid = screen.getByTestId("overview-agents-grid");
-			expect(agentsGrid).toBeInTheDocument();
-			expect(agentsGrid).toHaveTextContent("Alpha Agent");
-			expect(agentsGrid).toHaveTextContent("Beta Agent");
+		await waitFor(() => {
+			expect(screen.getByText("当前展示的是滞后数据")).toBeInTheDocument();
 		});
+
+		expect(screen.getByTestId("overview-stats-panel")).toHaveTextContent("330");
+		expect(screen.getByTestId("overview-token-stage")).toHaveTextContent(
+			"alpha-instance",
+		);
 	});
 });
