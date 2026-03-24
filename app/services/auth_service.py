@@ -1,9 +1,8 @@
 import os
-from collections.abc import MutableMapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from secrets import token_urlsafe
-from threading import Lock
+from typing import Literal, cast
 from uuid import UUID
 
 import bcrypt
@@ -12,10 +11,14 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db.models import User
+from app.db.models import AuthSession, User
+from app.db.session import get_database_url, get_engine
 
 SESSION_COOKIE_NAME = "linpo_session"
 _SESSION_TTL = timedelta(days=7)
+_DEFAULT_SESSION_COOKIE_SAMESITE = "lax"
+_ALLOWED_SESSION_COOKIE_SAMESITE = {"lax", "strict", "none"}
+CookieSameSite = Literal["lax", "strict", "none"]
 
 
 def _utc_now() -> datetime:
@@ -26,17 +29,37 @@ def _cookie_secure() -> bool:
     return os.getenv("LINPO_SESSION_COOKIE_SECURE", "false").lower() in {"1", "true", "yes", "on"}
 
 
+def _cookie_samesite() -> CookieSameSite:
+    configured = os.getenv(
+        "LINPO_SESSION_COOKIE_SAMESITE",
+        _DEFAULT_SESSION_COOKIE_SAMESITE,
+    ).strip().lower()
+    if configured not in _ALLOWED_SESSION_COOKIE_SAMESITE:
+        allowed_values = ", ".join(sorted(_ALLOWED_SESSION_COOKIE_SAMESITE))
+        raise ValueError(
+            f"LINPO_SESSION_COOKIE_SAMESITE must be one of: {allowed_values}. "
+            f"Got: {configured!r}"
+        )
+    return cast(CookieSameSite, configured)
+
+
+def _session_cookie_policy() -> tuple[bool, CookieSameSite]:
+    secure = _cookie_secure()
+    samesite = _cookie_samesite()
+    if samesite == "none" and not secure:
+        raise ValueError(
+            "LINPO_SESSION_COOKIE_SECURE must be true when "
+            "LINPO_SESSION_COOKIE_SAMESITE is 'none'"
+        )
+    return secure, samesite
+
+
 @dataclass(frozen=True, slots=True)
 class SessionState:
     session_id: str
     user_id: UUID
     created_at: datetime
     expires_at: datetime
-
-
-_SESSION_STORE: MutableMapping[str, SessionState] = {}
-_SESSION_STORE_LOCK = Lock()
-
 
 class DuplicateUsernameError(Exception):
     pass
@@ -63,25 +86,42 @@ def create_session(user_id: UUID, now: datetime | None = None) -> SessionState:
     )
 
 
+def _coerce_utc_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _to_session_state(auth_session: AuthSession) -> SessionState:
+    return SessionState(
+        session_id=auth_session.session_id,
+        user_id=auth_session.user_id,
+        created_at=_coerce_utc_datetime(auth_session.created_at),
+        expires_at=_coerce_utc_datetime(auth_session.expires_at),
+    )
+
+
 def set_session_cookie(response: Response, session_state: SessionState) -> None:
+    secure, samesite = _session_cookie_policy()
     max_age = int((session_state.expires_at - session_state.created_at).total_seconds())
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=session_state.session_id,
         max_age=max_age,
         httponly=True,
-        samesite="lax",
-        secure=_cookie_secure(),
+        samesite=samesite,
+        secure=secure,
         path="/",
     )
 
 
 def clear_session_cookie(response: Response) -> None:
+    secure, samesite = _session_cookie_policy()
     response.delete_cookie(
         key=SESSION_COOKIE_NAME,
         httponly=True,
-        samesite="lax",
-        secure=_cookie_secure(),
+        samesite=samesite,
+        secure=secure,
         path="/",
     )
 
@@ -113,25 +153,42 @@ def authenticate_user(db_session: Session, username: str, password: str) -> User
 
 
 def store_session(session_state: SessionState) -> None:
-    with _SESSION_STORE_LOCK:
-        _SESSION_STORE[session_state.session_id] = session_state
+    with Session(get_engine(get_database_url())) as db_session:
+        db_session.merge(
+            AuthSession(
+                session_id=session_state.session_id,
+                user_id=session_state.user_id,
+                created_at=session_state.created_at,
+                expires_at=session_state.expires_at,
+            )
+        )
+        db_session.commit()
 
 
 def load_session(session_id: str) -> SessionState | None:
-    with _SESSION_STORE_LOCK:
-        session_state = _SESSION_STORE.get(session_id)
+    with Session(get_engine(get_database_url())) as db_session:
+        auth_session = db_session.get(AuthSession, session_id)
 
-    if session_state is None:
-        return None
-    if session_state.expires_at <= _utc_now():
-        delete_session(session_id)
-        return None
-    return session_state
+        if auth_session is None:
+            return None
+
+        session_state = _to_session_state(auth_session)
+        if session_state.expires_at <= _utc_now():
+            db_session.delete(auth_session)
+            db_session.commit()
+            return None
+
+        return session_state
 
 
 def delete_session(session_id: str) -> None:
-    with _SESSION_STORE_LOCK:
-        _SESSION_STORE.pop(session_id, None)
+    with Session(get_engine(get_database_url())) as db_session:
+        auth_session = db_session.get(AuthSession, session_id)
+        if auth_session is None:
+            return
+
+        db_session.delete(auth_session)
+        db_session.commit()
 
 
 def get_authenticated_user(db_session: Session, request: Request) -> User | None:

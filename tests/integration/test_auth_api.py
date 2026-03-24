@@ -1,3 +1,4 @@
+import importlib
 import json
 from http.cookies import SimpleCookie
 from collections.abc import Iterator
@@ -12,9 +13,9 @@ from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import Session
 
 from ._asgi import request
-from app.db.models import User
+from app.db.models import AuthSession, User
 from app.db import session as db_session
-from app.main import app
+from app.main import _get_cors_allow_origins, app
 
 
 def _json_headers(
@@ -50,6 +51,31 @@ def _cookie_header_from_set_cookie(set_cookie: str) -> str:
     cookies.load(set_cookie)
     morsel = cookies["linpo_session"]
     return f"{morsel.key}={morsel.value}"
+
+
+def _reload_auth_service_bindings():
+    from app.api import aggregate, agents, auth, instances, realtime
+    from app.services import auth_service
+
+    reloaded_auth_service = importlib.reload(auth_service)
+
+    auth.DuplicateUsernameError = reloaded_auth_service.DuplicateUsernameError
+    auth.authenticate_user = reloaded_auth_service.authenticate_user
+    auth.clear_session_cookie = reloaded_auth_service.clear_session_cookie
+    auth.create_session = reloaded_auth_service.create_session
+    auth.create_user = reloaded_auth_service.create_user
+    auth.delete_session = reloaded_auth_service.delete_session
+    auth.get_authenticated_user = reloaded_auth_service.get_authenticated_user
+    auth.get_session_id = reloaded_auth_service.get_session_id
+    auth.set_session_cookie = reloaded_auth_service.set_session_cookie
+    auth.store_session = reloaded_auth_service.store_session
+
+    aggregate.get_authenticated_user = reloaded_auth_service.get_authenticated_user
+    agents.get_authenticated_user = reloaded_auth_service.get_authenticated_user
+    instances.get_authenticated_user = reloaded_auth_service.get_authenticated_user
+    realtime.get_authenticated_user = reloaded_auth_service.get_authenticated_user
+
+    return reloaded_auth_service
 
 
 @pytest.fixture(autouse=True)
@@ -94,7 +120,7 @@ def test_auth_me_route_can_boot_with_explicit_db_bootstrap(
     assert payload == {"detail": "Unauthorized"}
 
     inspector = inspect(create_engine(database_url))
-    assert sorted(inspector.get_table_names()) == ["instances", "users"]
+    assert sorted(inspector.get_table_names()) == ["auth_sessions", "instances", "users"]
 
 
 def test_auth_db_bootstrap_uses_isolated_database_path(
@@ -109,7 +135,7 @@ def test_auth_db_bootstrap_uses_isolated_database_path(
 
     assert test_db_path.exists()
     inspector = inspect(create_engine(database_url))
-    assert sorted(inspector.get_table_names()) == ["instances", "users"]
+    assert sorted(inspector.get_table_names()) == ["auth_sessions", "instances", "users"]
 
 
 def test_password_hash_is_persisted_without_plaintext(db_handle: Session) -> None:
@@ -131,6 +157,22 @@ def test_verify_password_returns_false_for_malformed_hash() -> None:
     from app.services.auth_service import verify_password
 
     assert verify_password("secret-123", "not-a-valid-bcrypt-hash") is False
+
+
+def test_cors_allow_origins_parses_trimmed_deduplicated_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "LINPO_CORS_ALLOW_ORIGINS",
+        " http://175.178.213.10:5173, https://linpo.duckdns.org, , https://linpo.duckdns.org ",
+    )
+
+    origins = _get_cors_allow_origins()
+
+    assert "http://127.0.0.1:5173" in origins
+    assert origins.count("http://175.178.213.10:5173") == 1
+    assert origins.count("https://linpo.duckdns.org") == 1
+    assert "" not in origins
 
 
 def test_encrypt_secret_round_trips_without_plaintext_leak(
@@ -188,6 +230,83 @@ def test_create_session_writes_httponly_cookie() -> None:
     cleared_cookie = response.headers.getlist("set-cookie")[-1]
     assert cleared_cookie.startswith(f"{SESSION_COOKIE_NAME}=")
     assert "Max-Age=0" in cleared_cookie
+
+
+def test_stored_session_survives_auth_service_reload(isolated_database_url: str) -> None:
+    del isolated_database_url
+
+    from app.services import auth_service
+
+    session_state = auth_service.create_session(uuid4(), now=datetime(2026, 3, 18, tzinfo=timezone.utc))
+    auth_service.store_session(session_state)
+
+    reloaded_auth_service = _reload_auth_service_bindings()
+    loaded_session = reloaded_auth_service.load_session(session_state.session_id)
+
+    assert loaded_session is not None
+    assert loaded_session.session_id == session_state.session_id
+    assert loaded_session.user_id == session_state.user_id
+    assert loaded_session.expires_at == session_state.expires_at
+
+
+def test_expired_session_is_removed_when_loaded(db_handle: Session) -> None:
+    from app.services import auth_service
+
+    user = User(username="expired-user", password_hash="hash")
+    db_handle.add(user)
+    db_handle.commit()
+    db_handle.refresh(user)
+
+    expired_session = auth_service.create_session(
+        user.id,
+        now=datetime(2026, 3, 1, tzinfo=timezone.utc) - timedelta(days=8),
+    )
+    auth_service.store_session(expired_session)
+
+    loaded_session = auth_service.load_session(expired_session.session_id)
+
+    assert loaded_session is None
+    assert db_handle.get(AuthSession, expired_session.session_id) is None
+
+
+def test_session_cookie_uses_configured_samesite(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services.auth_service import create_session, set_session_cookie
+
+    monkeypatch.setenv("LINPO_SESSION_COOKIE_SAMESITE", "strict")
+    monkeypatch.setenv("LINPO_SESSION_COOKIE_SECURE", "false")
+
+    response = Response()
+    session_state = create_session(uuid4(), now=datetime(2026, 3, 18, tzinfo=timezone.utc))
+
+    set_session_cookie(response, session_state)
+
+    assert "SameSite=strict" in response.headers["set-cookie"]
+
+
+def test_session_cookie_rejects_invalid_samesite(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services.auth_service import create_session, set_session_cookie
+
+    monkeypatch.setenv("LINPO_SESSION_COOKIE_SAMESITE", "invalid")
+
+    response = Response()
+    session_state = create_session(uuid4(), now=datetime(2026, 3, 18, tzinfo=timezone.utc))
+
+    with pytest.raises(ValueError, match="LINPO_SESSION_COOKIE_SAMESITE"):
+        set_session_cookie(response, session_state)
+
+
+def test_session_cookie_rejects_samesite_none_without_secure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.auth_service import clear_session_cookie
+
+    monkeypatch.setenv("LINPO_SESSION_COOKIE_SAMESITE", "none")
+    monkeypatch.setenv("LINPO_SESSION_COOKIE_SECURE", "false")
+
+    response = Response()
+
+    with pytest.raises(ValueError, match="LINPO_SESSION_COOKIE_SECURE"):
+        clear_session_cookie(response)
 
 
 def test_register_returns_minimal_user_payload(isolated_database_url: str) -> None:
@@ -322,6 +441,28 @@ def test_login_sets_session_cookie_and_me_returns_current_user(isolated_database
     assert "set-cookie" in login_headers
     assert login_headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
     assert login_headers["access-control-allow-credentials"] == "true"
+
+    me_status, _, me_body = request(
+        "GET",
+        "/auth/me",
+        headers={"cookie": _cookie_header_from_set_cookie(login_headers["set-cookie"])},
+    )
+
+    assert me_status == 200
+    assert cast(dict[str, Any], json.loads(me_body.decode("utf-8"))) == login_payload
+
+
+def test_login_session_survives_auth_service_reload_for_me_route(isolated_database_url: str) -> None:
+    del isolated_database_url
+
+    login_status, login_headers, login_payload = _request_json(
+        "POST",
+        "/auth/register",
+        {"username": "alice", "password": "secret-123"},
+    )
+    assert login_status == 201
+
+    _reload_auth_service_bindings()
 
     me_status, _, me_body = request(
         "GET",

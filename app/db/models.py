@@ -34,3 +34,12 @@ class Instance(Base):
     status: Mapped[str] = mapped_column(String(32), default="inactive")
     last_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now)
+
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+
+    session_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

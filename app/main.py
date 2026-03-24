@@ -23,7 +23,16 @@ _DEFAULT_CORS_ORIGINS = [
 def _get_cors_allow_origins() -> list[str]:
     configured = os.getenv("LINPO_CORS_ALLOW_ORIGINS", "")
     extras = [origin.strip() for origin in configured.split(",") if origin.strip()]
-    return [*_DEFAULT_CORS_ORIGINS, *extras]
+
+    merged_origins: list[str] = []
+    seen_origins: set[str] = set()
+    for origin in [*_DEFAULT_CORS_ORIGINS, *extras]:
+        if origin in seen_origins:
+            continue
+        seen_origins.add(origin)
+        merged_origins.append(origin)
+
+    return merged_origins
 
 
 @asynccontextmanager

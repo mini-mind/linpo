@@ -129,3 +129,11 @@ Session 还没有 aggregate-style contract 时，状态矩阵要直接锚在 `ge
 ## [2026-03-24T05:53:27+08:00] Task 8
 
 统一放行记录要把 local 质量门、deployed 健康检查和未登录浏览器门禁现象拆开写。代码级验证全绿，不等于已拿到 authenticated 五页浏览器验收证据。
+
+## [2026-03-24T18:30:00+08:00] Task auth-config-guardrails-cors-cookie
+
+登录基础设施配置层可先做“显式 guardrail”而不触碰 session 存储：CORS allowlist 解析需要在默认值 + env 追加值上统一做 `trim + 去空 + 去重`；cookie 策略则把 `SameSite` 从硬编码改为环境变量（默认 `lax`），并在 `SameSite=none` 且 `Secure=false` 时直接 fail fast，避免跨站 cookie 被静默配置成浏览器拒收态。
+
+## [2026-03-24T10:16:14+08:00] Task auth-session-db-persistence
+
+把服务端 auth session 从进程内 dict 迁到数据库时，最小闭环是新增 `auth_sessions` 表并只替换 `store_session/load_session/delete_session` 的持久化路径，cookie 名称、cookie value 格式和 `/auth/login`、`/auth/me`、`/auth/logout` 的外部行为都可保持不变；同时，若测试用 `importlib.reload(auth_service)` 模拟重启，还需要同步重绑 `app.api.auth` 及其它依赖模块里的导入符号，否则会因为旧模块绑定与新异常类/函数对象不一致而制造假回归。
