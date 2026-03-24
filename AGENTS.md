@@ -25,8 +25,8 @@
 ## 查阅入口
 
 | 文档总入口 | `README.md` | 仓库导航与当前文档索引 |
-| 产品需求 | `docs/prd/2026-03-15-linpo-v0.1-observer-prd.md` | 当前有效的产品边界与当前阶段范围 |
-| 当前架构 | `docs/architecture/2026-03-15-observer-architecture.md` | 当前有效架构边界与 v0.6 IA/验收约束入口 |
+| 产品需求 | `docs/prd/2026-03-24-linpo-v0.6-observer-prd.md` | 当前有效的产品边界与当前阶段范围 |
+| 当前架构 | `docs/architecture/2026-03-24-observer-architecture.md` | 当前有效架构边界与 v0.6 IA/验收约束入口 |
 | 当前唯一计划 | `.sisyphus/plans/ui-design-realignment-work-plan.md` | 当前阶段唯一 active plan，用于定义与承载 v0.6 对齐 `../` 参考仓库的目标、范围、验证与收口 |
 
 

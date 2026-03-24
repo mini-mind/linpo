@@ -69,8 +69,8 @@ Linpo 当前采用 **5 页 IA**：
 | 名称 | 端口 | Token |
 |------|------|-------|
 | claw1 | 18789 | `lhdWYU1MGLCWNwbHaQsIjlPkiSt5LKhEh9PjAtElrlE` |
-| claw2 | 28789 | `ZUE 6oLmaH2DEuC3A3mJYe_l-q3yLOqVSLiLsAGfmJQ` |
-| claw3 | 38789 | (查看容器环境变量) |
+| claw2 | 28789 | `ZUEg6oLmaH2DEuC3A3mJYe_l-q3yLOqVSLiLsAGfmJQ` |
+| claw3 | 38789 | `OuWJnOh9wo_8wLkIQv262NPc0tgnjo1G4yCMh9v-RAg` |
 
 ## 运行时前置条件
 
@@ -117,8 +117,8 @@ v0.5+ 运行需要以下环境配置：
 
 | 文档 | 路径 | 说明 |
 |------|------|------|
-| 产品需求（当前范围） | `docs/prd/2026-03-15-linpo-v0.1-observer-prd.md` | 当前有效产品边界；当前阶段只以 v0.6 对齐 `../` 参考仓库为执行目标 |
-| 架构边界（当前范围） | `docs/architecture/2026-03-15-observer-architecture.md` | 当前有效架构边界与 v0.6 IA/约束入口 |
+| 产品需求（当前范围） | `docs/prd/2026-03-24-linpo-v0.6-observer-prd.md` | 当前有效产品边界；当前阶段只以 v0.6 对齐 `../` 参考仓库为执行目标 |
+| 架构边界（当前范围） | `docs/architecture/2026-03-24-observer-architecture.md` | 当前有效架构边界与 v0.6 IA/约束入口 |
 | 当前唯一计划 | `.sisyphus/plans/ui-design-realignment-work-plan.md` | 当前阶段唯一 active plan：定义并承载 v0.6 对齐 `../` 参考仓库的目标、实现范围、验证与收口要求 |
 | 长远规划 | `docs/plans/` | 非当前阶段版本设计与长期规划入口；`v0.6+` 未来版本不再作为当前执行入口 |
 | OpenClaw API 参考 | `OPENCLAW_API.md` | OpenClaw WebSocket API 参考 |

@@ -1,12 +1,12 @@
-# Linpo v0.1 IA Architecture
+# Linpo v0.6 IA Architecture
 
 > **状态**：当前有效架构边界文档
 > 
-> **前置产品约束**：`docs/prd/2026-03-15-linpo-v0.1-observer-prd.md`
+> **前置产品约束**：`docs/prd/2026-03-24-linpo-v0.6-observer-prd.md`
 
 ## 1. 文档目的
 
-本文件用于冻结 Linpo v0.1 的当前架构边界，明确新 5 页 IA 的页面职责、视图边界，以及支撑产品成立所需的最小状态 / 事件模型。
+本文件用于冻结 Linpo v0.6 的当前架构边界，明确新 5 页 IA 的页面职责、视图边界，以及支撑产品成立所需的最小状态 / 事件模型。
 
 本文档不冻结具体技术栈实现细节，也不提前引入 v0.2+ 的扩张能力。
 
@@ -170,7 +170,7 @@ Linpo 当前采用 **overview → topology / kanban / team → session** 的产�
 
 ## 8. 最小状态模型
 
-在 v0.1 中，每个可观测节点至少具备以下稳定字段：
+在 v0.6 中，每个可观测节点至少具备以下稳定字段：
 
 - `name`：节点名称
 - `status`：当前状态
@@ -188,7 +188,7 @@ Linpo 当前采用 **overview → topology / kanban / team → session** 的产�
 
 ## 9. 最小事件模型
 
-v0.1 需要一套支持拓扑状态理解与 session 承接的最小事件模型。
+v0.6 需要一套支持拓扑状态理解与 session 承接的最小事件模型。
 
 ### 9.1 结构 / 状态事件
 
@@ -214,29 +214,99 @@ v0.1 需要一套支持拓扑状态理解与 session 承接的最小事件模型
 
 ---
 
-## 10. 文档与实现约束
+## 10. 后端分层架构（当前冻结）
 
-当前架构冻结的是边界与最小模型，不冻结以下内容：
+在不改变当前 5 页 IA、聚合字段契约与 session canonical 路由的前提下，后端采用以下分层：
 
-- 接入协议
-- 持久化实现细节
-- 前端框架细节
-- 后端技术栈细节
-- 部署拓扑细节
+1. **API Layer**
+   - 职责：HTTP 路由、鉴权入口、请求校验、响应封装
+   - 不承接：供应商协议细节、跨 provider 业务编排
 
-这些内容应在后续实施计划中按阶段逐步冻结，但不得突破本文档定义的新 5 页 IA 边界。
+2. **Application Layer**
+   - 职责：用例编排（聚合读链路、会话控制链路、任务板与团队入口相关用例）
+   - 输出：统一调用 Domain Contract，不直接拼接 provider 特有报文
+
+3. **Domain Contract Layer**
+   - 职责：系统唯一 canonical 契约（请求/响应/错误/能力）
+   - 强约束：`request_id`、`freshness`、`partial_failure`、`diagnostics` 为强制语义字段；`freshness` 词汇冻结为 `fresh` / `stale` / `failed`
+
+4. **Provider Adapter Layer**
+   - 职责：OpenClaw、其他 Claw 与未来工具生态的协议适配
+   - 规则：所有外部协议差异只能在 Adapter 层处理，不向上泄漏
+
+5. **Infra Layer**
+   - 职责：WS/HTTP 客户端、重试、超时、限流、熔断、配置、观测
+   - 规则：基础设施策略可替换，但不得改变 Domain Contract 语义
+
+6. **Persistence Layer**
+   - 职责：实例配置、会话状态、映射关系、审计留痕持久化
+   - 规则：持久化实现可演进，但对上暴露稳定仓储接口
+
+该分层用于支撑“多 provider + 多工具”扩展，不作为新增页面或产品边界扩张依据。
 
 ---
 
-## 11. 附录：长远规划
+## 11. Breakly 迁移策略（当前冻结）
+
+本阶段后端迁移采用 **breakly（一次性切换）** 策略：
+
+- 不保留新旧协议并行运行路径
+- 不保留兼容分支、兼容开关、兼容补丁胶水
+- 不允许遗留死代码、废弃分支、不可达调用链
+
+### 11.1 切换原则
+
+- 先冻结 canonical 契约，再切换 provider adapter 实现
+- 切换后调用链必须唯一：`API -> Application -> Domain Contract -> Provider Adapter -> Infra/Persistence`
+- 旧调用入口在同一迁移窗口内删除，不做长期双写/双读
+
+### 11.2 清理原则
+
+迁移完成后必须完成以下清理：
+
+- 删除旧版 OpenClaw 直连 client 的上层直接依赖
+- 删除旧协议字段分支与历史兜底逻辑
+- 删除无法被现网调用的函数、类型、配置与测试桩
+- 删除“临时过渡”注释与 TODO（若不再有执行价值）
+
+### 11.3 风险控制
+
+breakly 不等于无门禁。必须通过以下门禁后方可收口：
+
+- 关键链路测试通过（聚合读链路 + session 控制链路）
+- 已部署环境联调通过（按当前 plan 的 Playwright 验收口径）
+- 与 PRD/architecture/active plan 的契约一致性核对通过
+
+---
+
+## 12. 文档与实现约束
+
+当前架构冻结的是边界与最小模型，并在本版本额外冻结后端分层与 breakly 迁移纪律。
+
+即便内部重构，以下契约不得破坏：
+
+- 5 页 IA 页面职责与 guardrails
+- session canonical 路由与空态 canonical 变体
+- 聚合字段语义：`request_id`、`freshness`、`partial_failure` / `diagnostics`
+- `freshness` 词汇：`fresh` / `stale` / `failed`
+
+允许演进项：
+
+- provider 实现数量与类型（不止 OpenClaw）
+- infra 与 persistence 的具体实现细节
+- 在不破坏 canonical 契约前提下的内部模块重组
+
+---
+
+## 13. 附录：长远规划
 
 > `v0.6` 之后的长期架构方向统一收纳在 `docs/plans/`，不在当前架构文档中展开，也不参与当前阶段执行选路。
 
 ---
 
-## 12. 与其他文档的关系
+## 14. 与其他文档的关系
 
-- 产品目标、范围与不做项：见 `docs/prd/2026-03-15-linpo-v0.1-observer-prd.md`
+- 产品目标、范围与不做项：见 `docs/prd/2026-03-24-linpo-v0.6-observer-prd.md`
 - 当前阶段唯一计划：见 `.sisyphus/plans/ui-design-realignment-work-plan.md`
 - `docs/plans/` 仅存放长远规划，不作为当前阶段 active 执行入口
 
