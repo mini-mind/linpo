@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.db import session as db_session
 from app.domain.agent import Agent, AgentStatus
+from app.domain.event import EventRecord, EventType
 from app.main import app
 from app.services.instance_validator import InstanceValidationResult
 from tests.integration._asgi import request
@@ -133,11 +134,25 @@ def _install_aggregate_data_source(
 
 
 class FakeObserverDataSource:
-    def __init__(self, agents: list[Agent]) -> None:
+    def __init__(
+        self,
+        agents: list[Agent],
+        *,
+        events_by_node: dict[tuple[str, str], list[EventRecord]] | None = None,
+        topology_snapshot: dict[str, Any] | None = None,
+    ) -> None:
         self._agents = agents
+        self._events_by_node = events_by_node or {}
+        self._topology_snapshot = topology_snapshot
 
     def list_agents(self) -> list[Agent]:
         return list(self._agents)
+
+    def list_events(self, agent_id: str, node_id: str) -> list[EventRecord]:
+        return list(self._events_by_node.get((agent_id, node_id), []))
+
+    def get_topology_snapshot(self) -> dict[str, Any] | None:
+        return self._topology_snapshot
 
 
 def _assert_error_envelope(
@@ -251,7 +266,33 @@ def test_overview_returns_aggregated_agents_with_request_id_freshness_and_diagno
                         last_active_at="2026-03-22T09:00:00Z",
                         root_node_id="node-alpha",
                     ),
-                ]
+                ],
+                events_by_node={
+                    (
+                        "agent-alpha",
+                        "node-alpha",
+                    ): [
+                        EventRecord(
+                            id="event-alpha-1",
+                            node_id="node-alpha",
+                            type=EventType.STATUS_CHANGED,
+                            timestamp="2026-03-22T09:30:00Z",
+                            description="Alpha Agent completed a planning step.",
+                        )
+                    ],
+                    (
+                        "agent-zeta",
+                        "node-zeta",
+                    ): [
+                        EventRecord(
+                            id="event-zeta-1",
+                            node_id="node-zeta",
+                            type=EventType.ACTIVITY_STOPPED,
+                            timestamp="2026-03-22T08:30:00Z",
+                            description="Zeta Agent paused for review.",
+                        )
+                    ],
+                },
             ),
             "token-beta": FakeObserverDataSource(
                 [
@@ -276,6 +317,49 @@ def test_overview_returns_aggregated_agents_with_request_id_freshness_and_diagno
     assert isinstance(payload["request_id"], str) and payload["request_id"]
     assert payload["freshness"]["status"] == "fresh"
     assert isinstance(payload["freshness"]["checked_at"], str) and payload["freshness"]["checked_at"]
+    assert payload["stats"] == {
+        "instance_count": 2,
+        "agent_count": 3,
+        "active_agent_count": 1,
+        "attention_instance_count": 0,
+        "total_tokens": None,
+    }
+    assert payload["token_groups"] == [
+        {
+            "instance_id": alpha["id"],
+            "instance_name": "alpha-instance",
+            "total_tokens": None,
+            "samples": [],
+        },
+        {
+            "instance_id": beta["id"],
+            "instance_name": "beta-instance",
+            "total_tokens": None,
+            "samples": [],
+        },
+    ]
+    assert payload["global_events"] == [
+        {
+            "id": "event-alpha-1",
+            "instance_id": alpha["id"],
+            "instance_name": "alpha-instance",
+            "agent_id": "agent-alpha",
+            "agent_name": "Alpha Agent",
+            "type": "status_changed",
+            "timestamp": "2026-03-22T09:30:00Z",
+            "description": "Alpha Agent completed a planning step.",
+        },
+        {
+            "id": "event-zeta-1",
+            "instance_id": alpha["id"],
+            "instance_name": "alpha-instance",
+            "agent_id": "agent-zeta",
+            "agent_name": "Zeta Agent",
+            "type": "activity_stopped",
+            "timestamp": "2026-03-22T08:30:00Z",
+            "description": "Zeta Agent paused for review.",
+        },
+    ]
     assert [item["instance_name"] for item in payload["diagnostics"]] == ["alpha-instance", "beta-instance"]
     assert payload["diagnostics"] == [
         {
@@ -308,7 +392,7 @@ def test_overview_returns_aggregated_agents_with_request_id_freshness_and_diagno
             "status": "running",
             "is_active": True,
             "last_active_at": "2026-03-22T09:00:00Z",
-            "drilldown_path": f"/session/{alpha['id']}/agent-alpha",
+            "drilldown_path": f"/session/agent-alpha/__none__/__new__?instanceId={alpha['id']}",
         },
         {
             "instance_id": alpha["id"],
@@ -318,7 +402,7 @@ def test_overview_returns_aggregated_agents_with_request_id_freshness_and_diagno
             "status": "idle",
             "is_active": False,
             "last_active_at": "2026-03-22T08:00:00Z",
-            "drilldown_path": f"/session/{alpha['id']}/agent-zeta",
+            "drilldown_path": f"/session/agent-zeta/__none__/__new__?instanceId={alpha['id']}",
         },
         {
             "instance_id": beta["id"],
@@ -328,7 +412,7 @@ def test_overview_returns_aggregated_agents_with_request_id_freshness_and_diagno
             "status": "error",
             "is_active": False,
             "last_active_at": "2026-03-21T19:30:00Z",
-            "drilldown_path": f"/session/{beta['id']}/agent-beta",
+            "drilldown_path": f"/session/agent-beta/__none__/__new__?instanceId={beta['id']}",
         },
     ]
 
@@ -394,7 +478,7 @@ def test_overview_exposes_partial_failure_without_fake_empty_success(
             "status": "running",
             "is_active": True,
             "last_active_at": "2026-03-22T11:00:00Z",
-            "drilldown_path": f"/session/{healthy['id']}/agent-healthy",
+            "drilldown_path": f"/session/agent-healthy/__none__/__new__?instanceId={healthy['id']}",
         }
     ]
     assert payload["diagnostics"] == [
@@ -502,7 +586,7 @@ def test_overview_returns_failed_freshness_when_all_instances_fail(
     ]
 
 
-def test_topology_returns_relationships_and_empty_skill_acp_arrays(
+def test_topology_returns_four_lane_relationships_with_sessions_and_tools(
     isolated_database_url: str,
     auth_cookie: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -530,7 +614,28 @@ def test_topology_returns_relationships_and_empty_skill_acp_arrays(
                         last_active_at="2026-03-22T10:45:00Z",
                         root_node_id="node-alpha",
                     )
-                ]
+                ],
+                topology_snapshot={
+                    "health": {
+                        "agents": [
+                            {
+                                "agentId": "agent-alpha",
+                                "displayName": "Alpha Agent",
+                                "sessions": {
+                                    "recent": [
+                                        {
+                                            "key": "agent:agent-alpha:main",
+                                            "updatedAt": 1774176600000,
+                                        }
+                                    ]
+                                },
+                                "bindings": {
+                                    "tools": ["read"]
+                                },
+                            }
+                        ]
+                    }
+                },
             )
         },
     )
@@ -578,7 +683,30 @@ def test_topology_returns_relationships_and_empty_skill_acp_arrays(
             "status": "running",
             "is_active": True,
             "last_active_at": "2026-03-22T10:45:00Z",
-            "drilldown_path": f"/session/{alpha['id']}/agent-alpha",
+            "drilldown_path": f"/session/agent-alpha/__none__/__new__?instanceId={alpha['id']}",
+        }
+    ]
+    assert payload["sessions"] == [
+        {
+            "node_id": f"session:{alpha['id']}:agent-alpha:agent:agent-alpha:main",
+            "instance_id": alpha["id"],
+            "instance_name": "alpha-instance",
+            "agent_id": "agent-alpha",
+            "agent_name": "Alpha Agent",
+            "session_key": "agent:agent-alpha:main",
+            "label": "agent:agent-alpha:main",
+            "updated_at": "2026-03-22T10:50:00Z",
+        }
+    ]
+    assert payload["tools"] == [
+        {
+            "node_id": f"tool:{alpha['id']}:agent-alpha:read",
+            "instance_id": alpha["id"],
+            "instance_name": "alpha-instance",
+            "agent_id": "agent-alpha",
+            "agent_name": "Alpha Agent",
+            "tool_id": "read",
+            "name": "read",
         }
     ]
     assert payload["edges"] == [
@@ -586,7 +714,15 @@ def test_topology_returns_relationships_and_empty_skill_acp_arrays(
             "source": f"instance:{alpha['id']}",
             "target": f"agent:{alpha['id']}:agent-alpha",
             "kind": "instance_agent",
+        },
+        {
+            "source": f"agent:{alpha['id']}:agent-alpha",
+            "target": f"session:{alpha['id']}:agent-alpha:agent:agent-alpha:main",
+            "kind": "agent_session",
+        },
+        {
+            "source": f"agent:{alpha['id']}:agent-alpha",
+            "target": f"tool:{alpha['id']}:agent-alpha:read",
+            "kind": "agent_tool",
         }
     ]
-    assert payload["skills"] == []
-    assert payload["external_acps"] == []

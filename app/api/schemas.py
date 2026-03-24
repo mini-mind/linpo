@@ -212,12 +212,48 @@ class AggregateOverviewAgentItem(BaseModel):
     drilldown_path: str
 
 
+class AggregateOverviewStats(BaseModel):
+    instance_count: int
+    agent_count: int
+    active_agent_count: int
+    attention_instance_count: int
+    total_tokens: int | None = None
+
+
+class AggregateOverviewTokenSample(BaseModel):
+    label: str
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+
+
+class AggregateOverviewTokenGroup(BaseModel):
+    instance_id: str
+    instance_name: str
+    total_tokens: int | None = None
+    samples: list[AggregateOverviewTokenSample]
+
+
+class AggregateOverviewGlobalEvent(BaseModel):
+    id: str
+    instance_id: str
+    instance_name: str
+    agent_id: str | None = None
+    agent_name: str | None = None
+    type: EventType
+    timestamp: str
+    description: str
+
+
 class AggregateOverviewResponse(BaseModel):
     request_id: str
     freshness: FreshnessInfo
     partial_failure: bool
     diagnostics: list[AggregateInstanceDiagnostic]
     agents: list[AggregateOverviewAgentItem]
+    stats: AggregateOverviewStats
+    token_groups: list[AggregateOverviewTokenGroup]
+    global_events: list[AggregateOverviewGlobalEvent]
 
 
 class AggregateTopologyInstanceItem(BaseModel):
@@ -242,6 +278,27 @@ class AggregateTopologyAgentItem(BaseModel):
     drilldown_path: str
 
 
+class AggregateTopologySessionItem(BaseModel):
+    node_id: str
+    instance_id: str
+    instance_name: str
+    agent_id: str
+    agent_name: str
+    session_key: str
+    label: str
+    updated_at: str | None
+
+
+class AggregateTopologyToolItem(BaseModel):
+    node_id: str
+    instance_id: str
+    instance_name: str
+    agent_id: str
+    agent_name: str
+    tool_id: str
+    name: str
+
+
 class AggregateTopologyEdgeItem(BaseModel):
     source: str
     target: str
@@ -255,6 +312,6 @@ class AggregateTopologyResponse(BaseModel):
     diagnostics: list[AggregateInstanceDiagnostic]
     instances: list[AggregateTopologyInstanceItem]
     agents: list[AggregateTopologyAgentItem]
+    sessions: list[AggregateTopologySessionItem]
+    tools: list[AggregateTopologyToolItem]
     edges: list[AggregateTopologyEdgeItem]
-    skills: list[Any]
-    external_acps: list[Any]
