@@ -17,6 +17,7 @@ const DEGRADED_EVIDENCE_PATH = fileURLToPath(
 	),
 );
 const OVERVIEW_BANNED_SELECTORS = [
+	'[data-testid="overview-agents-grid"]',
 	'[data-testid="overview-stats-grid"]',
 	'[data-testid="dashboard-stats-grid"]',
 ];
@@ -179,7 +180,8 @@ async function mockDegradedAggregateResponses(page: Page): Promise<void> {
 				status: "running",
 				is_active: true,
 				last_active_at: "2026-03-22T11:54:00Z",
-				drilldown_path: "/session/instance-healthy/agent-healthy",
+				drilldown_path:
+					"/session/agent-healthy/__none__/__new__?instanceId=instance-healthy",
 			},
 			{
 				instance_id: "instance-failing",
@@ -189,7 +191,48 @@ async function mockDegradedAggregateResponses(page: Page): Promise<void> {
 				status: "error",
 				is_active: false,
 				last_active_at: null,
-				drilldown_path: "/session/instance-failing/agent-failing",
+				drilldown_path:
+					"/session/agent-failing/__none__/__new__?instanceId=instance-failing",
+			},
+		],
+		stats: {
+			instance_count: 2,
+			agent_count: 2,
+			active_agent_count: 1,
+			attention_instance_count: 1,
+			total_tokens: 120,
+		},
+		token_groups: [
+			{
+				instance_id: "instance-healthy",
+				instance_name: "healthy-instance",
+				total_tokens: 120,
+				samples: [
+					{
+						label: "11:00",
+						input_tokens: 80,
+						output_tokens: 40,
+						total_tokens: 120,
+					},
+				],
+			},
+			{
+				instance_id: "instance-failing",
+				instance_name: "failing-instance",
+				total_tokens: null,
+				samples: [],
+			},
+		],
+		global_events: [
+			{
+				id: "event-degraded-1",
+				instance_id: "instance-failing",
+				instance_name: "failing-instance",
+				agent_id: null,
+				agent_name: null,
+				type: "activity_stopped",
+				timestamp: "2026-03-22T11:50:00Z",
+				description: "OpenClaw upstream unavailable",
 			},
 		],
 	};
@@ -249,18 +292,35 @@ async function mockDegradedAggregateResponses(page: Page): Promise<void> {
 				status: "running",
 				is_active: true,
 				last_active_at: "2026-03-22T11:54:00Z",
-				drilldown_path: "/session/instance-healthy/agent-healthy",
+				drilldown_path:
+					"/session/agent-healthy/__none__/__new__?instanceId=instance-healthy",
 			},
 		],
+		sessions: [
+			{
+				node_id: "session:instance-healthy:agent-healthy:agent:agent-healthy:main",
+				instance_id: "instance-healthy",
+				instance_name: "healthy-instance",
+				agent_id: "agent-healthy",
+				agent_name: "Healthy Agent",
+				session_key: "agent:agent-healthy:main",
+				label: "agent:agent-healthy:main",
+				updated_at: "2026-03-22T11:55:00Z",
+			},
+		],
+		tools: [],
 		edges: [
 			{
 				source: "instance:instance-healthy",
 				target: "agent:instance-healthy:agent-healthy",
 				kind: "instance_agent",
 			},
+			{
+				source: "agent:instance-healthy:agent-healthy",
+				target: "session:instance-healthy:agent-healthy:agent:agent-healthy:main",
+				kind: "agent_session",
+			},
 		],
-		skills: [],
-		external_acps: [],
 	};
 
 	await page.route(/\/aggregate\/overview(\?.*)?$/, async (route) => {
@@ -293,23 +353,22 @@ test.describe("v0.6 browser acceptance", () => {
 		});
 
 		await page.goto("/overview");
-		await expect(page.getByTestId("overview-summary-strip")).toBeVisible();
-		await expect(page.getByTestId("overview-agents-grid")).toBeVisible();
+		await expect(page.getByTestId("overview-stats-panel")).toBeVisible();
+		await expect(page.getByTestId("overview-token-stage")).toBeVisible();
+		await expect(page.getByTestId("overview-global-events")).toBeVisible();
 		await expectNoBannedStructures(page, OVERVIEW_BANNED_SELECTORS);
 		await expect(page.getByText("全部 agents", { exact: true })).toHaveCount(0);
 		await expect(page.getByText("活跃中", { exact: true })).toHaveCount(0);
 		await expect(page.getByText("值得巡视", { exact: true })).toHaveCount(0);
 		await expect(page.getByText(instanceName).first()).toBeVisible();
-		const overviewMainDrilldownLink = page
-			.locator(`a[href$="/session/${instance.id}/main"]`)
-			.first();
-		await expect(overviewMainDrilldownLink).toBeVisible();
 
 		await logout(page);
 		await login(page, credentials.username, credentials.password);
 
-		await page.locator(`a[href$="/session/${instance.id}/main"]`).first().click();
-		await expect(page).toHaveURL(new RegExp(`/session/${instance.id}/main$`));
+		await page.goto(`/session/${instance.id}/main`);
+		await expect(page).toHaveURL(
+			new RegExp(`/session/main/__none__/__new__\\?instanceId=${instance.id}$`),
+		);
 		await expect(page.getByTestId("session-stream-shell")).toBeVisible();
 		await expect(page.getByTestId("session-input-shell")).toBeVisible();
 		await expectNoBannedStructures(page, SESSION_BANNED_SELECTORS);
@@ -324,16 +383,24 @@ test.describe("v0.6 browser acceptance", () => {
 		).toHaveCount(0);
 		await expect(
 			page
-				.locator(`[data-testid^="drilldown-link-"][href$="/session/${instance.id}/main"]`)
+				.locator(
+					`[data-testid^="drilldown-link-"][href="/session/main/__none__/__new__?instanceId=${instance.id}"]`,
+				)
 				.first(),
 		).toBeVisible();
 		const topologyDrilldownPath = await page
-			.locator(`[data-testid^="drilldown-link-"][href$="/session/${instance.id}/main"]`)
+			.locator(
+				`[data-testid^="drilldown-link-"][href="/session/main/__none__/__new__?instanceId=${instance.id}"]`,
+			)
 			.first()
 			.getAttribute("href");
-		expect(topologyDrilldownPath).toBe(`/session/${instance.id}/main`);
+		expect(topologyDrilldownPath).toBe(
+			`/session/main/__none__/__new__?instanceId=${instance.id}`,
+		);
 		await page.goto(topologyDrilldownPath ?? "/session");
-		await expect(page).toHaveURL(new RegExp(`/session/${instance.id}/main$`));
+		await expect(page).toHaveURL(
+			new RegExp(`/session/main/__none__/__new__\\?instanceId=${instance.id}$`),
+		);
 		await expect(page.getByTestId("session-stream-shell")).toBeVisible();
 		await expect(page.getByTestId("session-input-shell")).toBeVisible();
 		await expectNoBannedStructures(page, SESSION_BANNED_SELECTORS);
@@ -343,11 +410,20 @@ test.describe("v0.6 browser acceptance", () => {
 		await expect(page.getByTestId("kanban-board")).toBeVisible();
 		await expectNoBannedStructures(page, KANBAN_BANNED_SELECTORS);
 		await expect(page.getByRole("heading", { name: "看板" })).toBeVisible();
-		await expect(page.getByText("聚合工作项、协作状态与关键工作信号")).toBeVisible();
+		await expect(page.getByText("从聚合读链路派生的任务板")).toBeVisible();
 		await expect(page.getByText(instanceName).first()).toBeVisible();
-		await expect(page.locator(`a[href$="/session/${instance.id}/main"]`).first()).toBeVisible();
-		await page.locator(`a[href$="/session/${instance.id}/main"]`).first().click();
-		await expect(page).toHaveURL(new RegExp(`/session/${instance.id}/main$`));
+		await expect(
+			page
+				.locator(`a[href="/session/main/__none__/__new__?instanceId=${instance.id}"]`)
+				.first(),
+		).toBeVisible();
+		await page
+			.locator(`a[href="/session/main/__none__/__new__?instanceId=${instance.id}"]`)
+			.first()
+			.click();
+		await expect(page).toHaveURL(
+			new RegExp(`/session/main/__none__/__new__\\?instanceId=${instance.id}$`),
+		);
 		await expect(page.getByTestId("session-stream-shell")).toBeVisible();
 		await expect(page.getByTestId("session-input-shell")).toBeVisible();
 		await expectNoBannedStructures(page, SESSION_BANNED_SELECTORS);
@@ -363,14 +439,12 @@ test.describe("v0.6 browser acceptance", () => {
 		await mockDegradedAggregateResponses(page);
 
 		await page.goto("/overview");
-		await expect(page.getByTestId("overview-summary-strip")).toBeVisible();
-		await expect(page.getByTestId("overview-agents-grid")).toBeVisible();
+		await expect(page.getByTestId("overview-stats-panel")).toBeVisible();
+		await expect(page.getByTestId("overview-token-stage")).toBeVisible();
+		await expect(page.getByTestId("overview-global-events")).toBeVisible();
 		await expectNoBannedStructures(page, OVERVIEW_BANNED_SELECTORS);
-		await expect(page.getByText("异常实例")).toBeVisible();
+		await expect(page.getByText("数据滞后")).toBeVisible();
 		await expect(page.getByText("OpenClaw upstream unavailable")).toBeVisible();
-		await expect(
-			page.getByRole("link", { name: "进入会话 - Healthy Agent" }),
-		).toHaveAttribute("href", "/session/instance-healthy/agent-healthy");
 
 		await page.goto("/topology");
 		await expect(page.getByTestId("topology-graph-canvas")).toBeVisible();
@@ -379,7 +453,10 @@ test.describe("v0.6 browser acceptance", () => {
 		await expect(page.getByTestId("topology-node-instance-instance-failing")).toBeVisible();
 		await expect(
 			page.getByTestId("drilldown-link-agent-healthy"),
-		).toHaveAttribute("href", "/session/instance-healthy/agent-healthy");
+		).toHaveAttribute(
+			"href",
+			"/session/agent-healthy/__none__/__new__?instanceId=instance-healthy",
+		);
 
 		await page.goto("/kanban");
 		await expect(page.locator('section[aria-label="kanban-page"]')).toBeVisible();
@@ -389,8 +466,11 @@ test.describe("v0.6 browser acceptance", () => {
 		await expect(page.getByText("部分降级")).toBeVisible();
 		await expect(page.getByText("OpenClaw upstream unavailable")).toBeVisible();
 		await expect(
-			page.getByRole("link", { name: "进入会话 - Healthy Agent" }),
-		).toHaveAttribute("href", "/session/instance-healthy/agent-healthy");
+			page.getByRole("link", { name: "打开任务上下文" }),
+		).toHaveAttribute(
+			"href",
+			"/session/agent-healthy/__none__/__new__?instanceId=instance-healthy",
+		);
 		await captureEvidence(page, DEGRADED_EVIDENCE_PATH);
 	});
 
@@ -411,18 +491,16 @@ test.describe("v0.6 browser acceptance", () => {
 		await page.setViewportSize({ width: 390, height: 844 });
 
 		await page.goto("/overview");
-		await expect(page.getByTestId("overview-summary-strip")).toBeVisible();
-		const overviewAgentsGrid = page.getByTestId("overview-agents-grid");
-		await expect(overviewAgentsGrid).toBeVisible();
+		await expect(page.getByTestId("overview-stats-panel")).toBeVisible();
+		await expect(page.getByTestId("overview-token-stage")).toBeVisible();
+		await expect(page.getByTestId("overview-global-events")).toBeVisible();
 		await expectNoBannedStructures(page, OVERVIEW_BANNED_SELECTORS);
-		const gridTemplateColumns = await overviewAgentsGrid.evaluate(
-			(element) => window.getComputedStyle(element).gridTemplateColumns,
-		);
-		expect(gridTemplateColumns.trim().split(/\s+/)).toHaveLength(1);
 		await expect(page.getByText(instanceName).first()).toBeVisible();
 
 		await page.goto(`/session/${instance.id}/main`);
-		await expect(page).toHaveURL(new RegExp(`/session/${instance.id}/main$`));
+		await expect(page).toHaveURL(
+			new RegExp(`/session/main/__none__/__new__\\?instanceId=${instance.id}$`),
+		);
 		await expect(page.getByRole("heading", { name: "会话" })).toBeVisible();
 		await expect(page.getByTestId("session-stream-shell")).toBeVisible();
 		await expect(page.getByTestId("session-input-shell")).toBeVisible();
