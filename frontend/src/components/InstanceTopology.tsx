@@ -1,5 +1,4 @@
 import "@xyflow/react/dist/style.css";
-import dagre from "@dagrejs/dagre";
 import {
 	Background,
 	Controls,
@@ -19,133 +18,264 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, getAggregateTopology } from "../api/client";
 import type { AggregateTopologyResponse, ErrorEnvelope } from "../api/types";
-import { buildCanonicalSessionPath } from "./SessionPage";
+import { buildSessionEntryPath } from "./SessionPage";
+
+type TopologyLane = "instance" | "agent" | "session" | "tool";
 
 type TopologyNodeData = {
 	label: string;
-	type: "instance" | "agent" | "skill" | "external_acp";
+	type: TopologyLane;
 	status?: string;
 	instanceId?: string;
 	agentId?: string;
+	sessionKey?: string;
+	toolId?: string;
 	drilldownPath?: string;
 	isActive?: boolean;
+	updatedAt?: string | null;
+	parentNodeId?: string;
+	action: TopologyNodeAction;
 };
 
-const NODE_WIDTH = 220;
-const NODE_HEIGHT = 80;
+type TopologyNodeAction = {
+	kind: "enter" | "fallback" | "disabled";
+	statusLabel: string;
+	detail: string;
+	actionLabel?: string;
+	href?: string;
+};
+
+const TOPOLOGY_LANES: ReadonlyArray<{ key: TopologyLane; label: string }> = [
+	{ key: "instance", label: "实例" },
+	{ key: "agent", label: "智能体" },
+	{ key: "session", label: "会话" },
+	{ key: "tool", label: "工具" },
+];
+
+const NODE_SIZE = 156;
+const LANE_START_X = 80;
+const LANE_GAP_X = 260;
+const ROW_GAP_Y = 220;
+const CHILD_GAP_Y = 180;
 
 function getLayoutedElements(
 	nodes: Node<TopologyNodeData>[],
 	edges: Edge[],
-	direction: "TB" | "LR" = "TB",
 ): { nodes: Node<TopologyNodeData>[]; edges: Edge[] } {
-	const dagreGraph = new dagre.graphlib.Graph();
-	dagreGraph.setDefaultEdgeLabel(() => ({}));
-	dagreGraph.setGraph({ rankdir: direction, nodesep: 120, ranksep: 80 });
+	const laneIndex = new Map(TOPOLOGY_LANES.map((lane, index) => [lane.key, index]));
+	const laneNextY: Record<TopologyLane, number> = {
+		instance: 40,
+		agent: 40,
+		session: 40,
+		tool: 40,
+	};
+	const parentY = new Map<string, number>();
+	const childIndexByLaneParent = new Map<string, number>();
 
-	nodes.forEach((node) => {
-		dagreGraph.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
+	const sortedNodes = [...nodes].sort((left, right) => {
+		const laneDelta =
+			(laneIndex.get(left.data.type) ?? 0) - (laneIndex.get(right.data.type) ?? 0);
+		if (laneDelta !== 0) return laneDelta;
+		const parentDelta = (left.data.parentNodeId ?? "").localeCompare(
+			right.data.parentNodeId ?? "",
+		);
+		if (parentDelta !== 0) return parentDelta;
+		return left.data.label.localeCompare(right.data.label);
 	});
 
-	edges.forEach((edge) => {
-		dagreGraph.setEdge(edge.source, edge.target);
-	});
+	const layoutedNodes = sortedNodes.map((node) => {
+		const x = LANE_START_X + (laneIndex.get(node.data.type) ?? 0) * LANE_GAP_X;
+		let y = laneNextY[node.data.type];
 
-	dagre.layout(dagreGraph);
+		if (node.data.parentNodeId && parentY.has(node.data.parentNodeId)) {
+			const laneParentKey = `${node.data.type}:${node.data.parentNodeId}`;
+			const childIndex = childIndexByLaneParent.get(laneParentKey) ?? 0;
+			const parentAnchorY = parentY.get(node.data.parentNodeId) ?? 40;
+			y = Math.max(y, parentAnchorY + childIndex * CHILD_GAP_Y);
+			childIndexByLaneParent.set(laneParentKey, childIndex + 1);
+		}
 
-	const layoutedNodes = nodes.map((node) => {
-		const nodeWithPosition = dagreGraph.node(node.id);
+		laneNextY[node.data.type] = y + ROW_GAP_Y;
+		parentY.set(node.id, y);
+
 		return {
 			...node,
-			position: {
-				x: nodeWithPosition.x - NODE_WIDTH / 2,
-				y: nodeWithPosition.y - NODE_HEIGHT / 2,
-			},
+			position: { x, y },
 		};
 	});
 
 	return { nodes: layoutedNodes, edges };
 }
 
+function CircleNodeFrame({
+	data,
+	typeLabel,
+	badge,
+	accent,
+	children,
+	testId,
+}: {
+	data: TopologyNodeData;
+	typeLabel: string;
+	badge?: string;
+	accent: string;
+	children?: React.ReactNode;
+	testId: string;
+}): JSX.Element {
+	return (
+		<div style={getCircleNodeStyle(accent)} data-testid={testId}>
+			<Handle type="target" position={Position.Left} style={handleStyle} />
+			<div style={circleTypeLabelStyle}>{typeLabel}</div>
+			<div style={circleTitleStyle}>{data.label}</div>
+			{badge ? <div style={circleBadgeStyle}>{badge}</div> : null}
+			{data.updatedAt ? <div style={circleMetaStyle}>{data.updatedAt}</div> : null}
+			<NodeActionAffordance action={data.action} />
+			{children}
+			<Handle type="source" position={Position.Right} style={handleStyle} />
+		</div>
+	);
+}
+
 function InstanceNode({ data }: { data: TopologyNodeData }): JSX.Element {
 	const isActive = data.status === "active";
 	return (
-		<div
-			style={getInstanceNodeStyle(isActive)}
-			data-testid={`topology-node-instance-${data.instanceId}`}
-		>
-			<Handle type="target" position={Position.Top} style={handleStyle} />
-			<div style={nodeHeaderStyle}>
-				<span style={nodeTypeLabelStyle}>INSTANCE</span>
-				<span style={nodeStatusBadgeStyle(isActive)}>
-					{isActive ? "活跃" : "未活跃"}
-				</span>
-			</div>
-			<div style={nodeTitleStyle}>{data.label}</div>
-			<Handle type="source" position={Position.Bottom} style={handleStyle} />
-		</div>
+		<CircleNodeFrame
+			data={data}
+			typeLabel="INSTANCE"
+			badge={isActive ? "活跃" : "未活跃"}
+			accent={isActive ? "#c9984c" : "#d7d2c8"}
+			testId={`topology-node-instance-${data.instanceId}`}
+		/>
 	);
 }
 
 function AgentNode({ data }: { data: TopologyNodeData }): JSX.Element {
 	const isHealthy = data.status !== "error";
 	return (
-		<div
-			style={getAgentNodeStyle(isHealthy)}
-			data-testid={`topology-node-agent-${data.agentId}`}
-		>
-			<Handle type="target" position={Position.Top} style={handleStyle} />
-			<div style={nodeHeaderStyle}>
-				<span style={nodeTypeLabelStyle}>AGENT</span>
-				<span style={nodeStatusBadgeStyle(isHealthy)}>
-					{getAgentStatusLabel(data.status, data.isActive)}
-				</span>
-			</div>
-			<div style={nodeTitleStyle}>{data.label}</div>
-			{data.drilldownPath ? (
-				<Link
-					to={data.drilldownPath}
-					style={drilldownLinkStyle}
-					data-testid={`drilldown-link-${data.agentId}`}
-				>
-					进入会话
+		<CircleNodeFrame
+			data={data}
+			typeLabel="AGENT"
+			badge={getAgentStatusLabel(data.status, data.isActive)}
+			accent={isHealthy ? "#10b981" : "#f59e0b"}
+			testId={`topology-node-agent-${data.agentId}`}
+		/>
+	);
+}
+
+function SessionNode({ data }: { data: TopologyNodeData }): JSX.Element {
+	return (
+		<CircleNodeFrame
+			data={data}
+			typeLabel="SESSION"
+			badge={data.sessionKey ?? "会话"}
+			accent="#5b8def"
+			testId={`topology-node-session-${data.sessionKey}`}
+		/>
+	);
+}
+
+function ToolNode({ data }: { data: TopologyNodeData }): JSX.Element {
+	return (
+		<CircleNodeFrame
+			data={data}
+			typeLabel="TOOL"
+			badge={data.toolId ?? "tool"}
+			accent="#ef8f4c"
+			testId={`topology-node-tool-${data.label}`}
+		/>
+	);
+}
+
+function NodeActionAffordance({ action }: { action: TopologyNodeAction }): JSX.Element {
+	return (
+		<div style={nodeActionContainerStyle}>
+			<span style={getNodeActionBadgeStyle(action.kind)}>{action.statusLabel}</span>
+			<div style={nodeActionDetailStyle}>{action.detail}</div>
+			{action.href && action.actionLabel ? (
+				<Link to={action.href} style={nodeActionLinkStyle}>
+					{action.actionLabel}
 				</Link>
 			) : null}
-			<Handle type="source" position={Position.Bottom} style={handleStyle} />
 		</div>
 	);
 }
 
-function SkillNode({ data }: { data: TopologyNodeData }): JSX.Element {
-	return (
-		<div
-			style={skillNodeStyle}
-			data-testid={`topology-node-skill-${data.label}`}
-		>
-			<Handle type="target" position={Position.Top} style={handleStyle} />
-			<div style={nodeHeaderStyle}>
-				<span style={nodeTypeLabelStyle}>SKILL</span>
-			</div>
-			<div style={nodeTitleStyle}>{data.label}</div>
-			<Handle type="source" position={Position.Bottom} style={handleStyle} />
-		</div>
-	);
-}
+function buildNodeSessionAction(data: {
+	type: TopologyLane;
+	instanceId?: string;
+	agentId?: string;
+	sessionKey?: string;
+}): TopologyNodeAction {
+	if (data.type === "instance") {
+		return {
+			kind: "disabled",
+			statusLabel: "已禁用",
+			detail: "实例节点不提供会话入口",
+		};
+	}
 
-function ExternalAcpNode({ data }: { data: TopologyNodeData }): JSX.Element {
-	return (
-		<div
-			style={externalAcpNodeStyle}
-			data-testid={`topology-node-acp-${data.label}`}
-		>
-			<Handle type="target" position={Position.Top} style={handleStyle} />
-			<div style={nodeHeaderStyle}>
-				<span style={nodeTypeLabelStyle}>ACP</span>
-			</div>
-			<div style={nodeTitleStyle}>{data.label}</div>
-			<Handle type="source" position={Position.Bottom} style={handleStyle} />
-		</div>
-	);
+	if (data.type === "agent") {
+		if (data.instanceId && data.agentId) {
+			return {
+				kind: "enter",
+				statusLabel: "可进入",
+				detail: "默认会话",
+				actionLabel: "进入默认会话",
+				href: buildSessionEntryPath({
+					instanceId: data.instanceId,
+					agentId: data.agentId,
+				}),
+			};
+		}
+
+		return {
+			kind: "disabled",
+			statusLabel: "已禁用",
+			detail: "缺少进入上下文",
+		};
+	}
+
+	if (data.type === "session") {
+		if (data.instanceId && data.agentId && data.sessionKey) {
+			return {
+				kind: "enter",
+				statusLabel: "可进入",
+				detail: "精确会话",
+				actionLabel: "进入对应会话",
+				href: buildSessionEntryPath({
+					instanceId: data.instanceId,
+					agentId: data.agentId,
+					preferredSessionKey: data.sessionKey,
+				}),
+			};
+		}
+
+		return {
+			kind: "disabled",
+			statusLabel: "已禁用",
+			detail: "缺少 session key",
+		};
+	}
+
+	if (data.instanceId && data.agentId) {
+		return {
+			kind: "fallback",
+			statusLabel: "回退入口",
+			detail: "回退到所属智能体",
+			actionLabel: "回退到所属智能体",
+			href: buildSessionEntryPath({
+				instanceId: data.instanceId,
+				agentId: data.agentId,
+				preferredSessionKey: data.sessionKey,
+			}),
+		};
+	}
+
+	return {
+		kind: "disabled",
+		statusLabel: "已禁用",
+		detail: "缺少可回退上下文",
+	};
 }
 
 function getAgentStatusLabel(status?: string, isActive?: boolean): string {
@@ -158,21 +288,17 @@ function getAgentStatusLabel(status?: string, isActive?: boolean): string {
 const nodeTypes: NodeTypes = {
 	instance: InstanceNode,
 	agent: AgentNode,
-	skill: SkillNode,
-	external_acp: ExternalAcpNode,
+	session: SessionNode,
+	tool: ToolNode,
 };
 
 function TopologyCanvas(): JSX.Element {
-	const [topology, setTopology] = useState<AggregateTopologyResponse | null>(
-		null,
-	);
+	const [topology, setTopology] = useState<AggregateTopologyResponse | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<Error | null>(null);
 	const { fitView } = useReactFlow();
 
-	const [nodes, setNodes, onNodesChange] = useNodesState<
-		Node<TopologyNodeData>
-	>([]);
+	const [nodes, setNodes, onNodesChange] = useNodesState<Node<TopologyNodeData>>([]);
 	const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
 	const loadTopology = useCallback(async (): Promise<void> => {
@@ -205,11 +331,17 @@ function TopologyCanvas(): JSX.Element {
 				id: instance.node_id,
 				type: "instance",
 				position: { x: 0, y: 0 },
+				initialWidth: NODE_SIZE,
+				initialHeight: NODE_SIZE,
 				data: {
 					label: instance.name,
 					type: "instance",
 					status: instance.status,
 					instanceId: instance.instance_id,
+					action: buildNodeSessionAction({
+						type: "instance",
+						instanceId: instance.instance_id,
+					}),
 				},
 			});
 		}
@@ -219,17 +351,69 @@ function TopologyCanvas(): JSX.Element {
 				id: agent.node_id,
 				type: "agent",
 				position: { x: 0, y: 0 },
+				initialWidth: NODE_SIZE,
+				initialHeight: NODE_SIZE,
 				data: {
 					label: agent.agent_name,
 					type: "agent",
 					status: agent.status,
 					instanceId: agent.instance_id,
 					agentId: agent.agent_id,
-					drilldownPath: buildCanonicalSessionPath(
-						agent.instance_id,
-						agent.agent_id,
-					),
 					isActive: agent.is_active,
+					parentNodeId: `instance:${agent.instance_id}`,
+					action: buildNodeSessionAction({
+						type: "agent",
+						instanceId: agent.instance_id,
+						agentId: agent.agent_id,
+					}),
+				},
+			});
+		}
+
+		for (const session of topology.sessions) {
+			newNodes.push({
+				id: session.node_id,
+				type: "session",
+				position: { x: 0, y: 0 },
+				initialWidth: NODE_SIZE,
+				initialHeight: NODE_SIZE,
+				data: {
+					label: session.label,
+					type: "session",
+					instanceId: session.instance_id,
+					agentId: session.agent_id,
+					sessionKey: session.session_key,
+					updatedAt: session.updated_at,
+					parentNodeId: `agent:${session.instance_id}:${session.agent_id}`,
+					action: buildNodeSessionAction({
+						type: "session",
+						instanceId: session.instance_id,
+						agentId: session.agent_id,
+						sessionKey: session.session_key,
+					}),
+				},
+			});
+		}
+
+		for (const tool of topology.tools) {
+			newNodes.push({
+				id: tool.node_id,
+				type: "tool",
+				position: { x: 0, y: 0 },
+				initialWidth: NODE_SIZE,
+				initialHeight: NODE_SIZE,
+				data: {
+					label: tool.name,
+					type: "tool",
+					instanceId: tool.instance_id,
+					agentId: tool.agent_id,
+					toolId: tool.tool_id,
+					parentNodeId: `agent:${tool.instance_id}:${tool.agent_id}`,
+					action: buildNodeSessionAction({
+						type: "tool",
+						instanceId: tool.instance_id,
+						agentId: tool.agent_id,
+					}),
 				},
 			});
 		}
@@ -239,49 +423,18 @@ function TopologyCanvas(): JSX.Element {
 				id: `edge-${edge.source}-${edge.target}`,
 				source: edge.source,
 				target: edge.target,
-				style: { stroke: "#c9984c" },
+				style: { stroke: "#c9984c", strokeWidth: 1.6 },
+				animated: edge.kind !== "instance_agent",
 			});
 		}
 
-		for (const skill of topology.skills) {
-			const nodeId = skill.node_id ?? skill.id ?? `skill-${newNodes.length}`;
-			newNodes.push({
-				id: nodeId,
-				type: "skill",
-				position: { x: 0, y: 0 },
-				data: {
-					label: skill.name ?? skill.label ?? skill.id ?? "Skill",
-					type: "skill",
-				},
-			});
-		}
-
-		for (const acp of topology.external_acps) {
-			const nodeId = acp.node_id ?? acp.id ?? `acp-${newNodes.length}`;
-			newNodes.push({
-				id: nodeId,
-				type: "external_acp",
-				position: { x: 0, y: 0 },
-				data: {
-					label: acp.name ?? acp.label ?? acp.id ?? "ACP",
-					type: "external_acp",
-				},
-			});
-		}
-
-		const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
-			newNodes,
-			newEdges,
-		);
-
+		const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(newNodes, newEdges);
 		return { convertedNodes: layoutedNodes, convertedEdges: layoutedEdges };
 	}, [topology]);
 
 	useEffect(() => {
-		if (convertedNodes.length > 0) {
-			setNodes(convertedNodes);
-			setEdges(convertedEdges);
-		}
+		setNodes(convertedNodes);
+		setEdges(convertedEdges);
 	}, [convertedNodes, convertedEdges, setNodes, setEdges]);
 
 	const handleFitView = useCallback(() => {
@@ -292,71 +445,135 @@ function TopologyCanvas(): JSX.Element {
 		void loadTopology();
 	}, [loadTopology]);
 
-	if (loading) {
-		return (
-			<div style={loadingContainerStyle}>
-				<p style={loadingTextStyle}>加载拓扑数据...</p>
-			</div>
-		);
-	}
+	const envelope = error instanceof ApiError ? error.envelope : null;
+	const unauthorized = envelope?.code === "unauthorized";
+	const failedDiagnostics = topology?.diagnostics.filter((item) => item.status === "failed") ?? [];
+	const showPartialFailure = Boolean(
+		topology &&
+			(topology.partial_failure ||
+				(failedDiagnostics.length > 0 &&
+					failedDiagnostics.length < topology.diagnostics.length)),
+	);
+	const partialFailureDetail = failedDiagnostics.length
+		? `受影响实例：${failedDiagnostics.map((item) => item.instance_name).join("、")}`
+		: "部分实例聚合结果暂不可用，请结合 diagnostics 对账。";
+	const isEmptyTopology = Boolean(
+		topology && convertedNodes.length === 0 && convertedEdges.length === 0,
+	);
 
-	if (error) {
-		const envelope = error instanceof ApiError ? error.envelope : null;
-		return (
-			<div style={errorContainerStyle}>
-				<div style={errorPanelStyle}>
-					<p style={errorTextStyle}>错误: {error.message}</p>
-					{envelope ? <EnvelopeErrorSummary envelope={envelope} /> : null}
-					<button type="button" style={retryButtonStyle} onClick={handleReset}>
-						重试
-					</button>
-				</div>
-			</div>
-		);
-	}
+	const requestClues = useMemo(
+		() => [
+			`request_id · ${topology?.request_id ?? envelope?.request_id ?? "--"}`,
+			`freshness · ${topology?.freshness.status ?? "unknown"}`,
+			`checked_at · ${topology?.freshness.checked_at ?? "--"}`,
+			`diagnostics · ${topology?.diagnostics.length ?? 0} sources`,
+		],
+		[topology, envelope],
+	);
 
 	return (
-		<div style={canvasContainerStyle} data-testid="topology-graph-canvas">
-			<div style={canvasHeaderStyle}>
-				<h1 style={canvasTitleStyle}>拓扑关系图</h1>
-				<div style={canvasControlsStyle}>
-					<button
-						type="button"
-						style={controlButtonStyle}
-						onClick={handleFitView}
-						aria-label="适配画布"
-					>
-						适配
-					</button>
-					<button
-						type="button"
-						style={controlButtonStyle}
-						onClick={handleReset}
-						aria-label="刷新拓扑"
-					>
-						刷新
-					</button>
+		<div style={canvasContainerStyle} data-testid="topology-routing-stage">
+			<div style={canvasStageShellStyle}>
+				<div style={canvasHeaderStyle}>
+					<div style={canvasTitleBlockStyle}>
+						<span style={canvasEyebrowStyle}>TOPOLOGY / ROUTING GRAPH</span>
+						<h1 style={canvasTitleStyle}>Routing Graph 主舞台</h1>
+						<p style={canvasDescriptionStyle}>
+							保持单一满屏画布，沿真实聚合读链路查看当前路由关系。
+						</p>
+					</div>
+					<div style={canvasControlsColumnStyle}>
+						<div style={canvasControlsStyle}>
+							<button type="button" style={controlButtonStyle} onClick={handleFitView} aria-label="适配画布">
+								适配
+							</button>
+							<button type="button" style={controlButtonStyle} onClick={handleReset} aria-label="刷新拓扑">
+								刷新
+							</button>
+						</div>
+						<p style={canvasControlHintStyle}>聚合链路继续使用 getAggregateTopology，不引入旁路面板。</p>
+					</div>
 				</div>
-			</div>
-			<div style={graphWrapperStyle}>
-				<ReactFlow
-					nodes={nodes}
-					edges={edges}
-					onNodesChange={onNodesChange}
-					onEdgesChange={onEdgesChange}
-					nodeTypes={nodeTypes}
-					nodesDraggable={false}
-					nodesConnectable={false}
-					elementsSelectable={false}
-					fitView
-					fitViewOptions={{ padding: 0.2 }}
-					minZoom={0.1}
-					maxZoom={2}
-					attributionPosition="bottom-left"
-				>
-					<Background color="#d7d2c8" gap={24} />
-					<Controls showInteractive={false} />
-				</ReactFlow>
+				<div style={requestCluesPanelStyle}>
+					<span style={requestCluesLabelStyle}>请求线索</span>
+					<div style={requestCluesListStyle}>
+						{requestClues.map((clue) => (
+							<span key={clue} style={requestClueBadgeStyle}>
+								{clue}
+							</span>
+						))}
+					</div>
+				</div>
+				{showPartialFailure ? (
+					<TopologyStatusNotice
+						tone="warning"
+						title="部分数据不可用"
+						detail={partialFailureDetail}
+					/>
+				) : null}
+				{topology?.freshness.status === "stale" ? (
+					<TopologyStatusNotice
+						tone="info"
+						title="当前展示的是滞后拓扑"
+						detail="展示内容仍可用于确认路由关系，但可能落后于实例最新状态。"
+					/>
+				) : null}
+				<div style={laneHeaderRowStyle}>
+					{TOPOLOGY_LANES.map((lane) => (
+						<span key={lane.key} style={laneHeaderBadgeStyle}>
+							{lane.label}
+						</span>
+					))}
+				</div>
+				<div style={graphWrapperStyle} data-testid="topology-graph-canvas">
+					{loading ? (
+						<div style={stateContainerStyle}>
+							<div style={emptyPanelStyle}>
+								<p style={stateTitleStyle}>加载拓扑数据...</p>
+								<p style={stateDetailStyle}>正在通过 getAggregateTopology 同步当前路由关系。</p>
+							</div>
+						</div>
+					) : error ? (
+						<div style={stateContainerStyle}>
+							<div style={errorPanelStyle}>
+								<h2 style={errorTitleStyle}>
+									{unauthorized ? "当前无权查看拓扑" : "拓扑暂时不可用"}
+								</h2>
+								<p style={errorTextStyle}>错误: {error.message}</p>
+								{envelope ? <EnvelopeErrorSummary envelope={envelope} /> : null}
+								<button type="button" style={retryButtonStyle} onClick={handleReset}>
+									重试
+								</button>
+							</div>
+						</div>
+					) : isEmptyTopology ? (
+						<div style={stateContainerStyle}>
+							<div style={emptyPanelStyle}>
+								<p style={stateTitleStyle}>当前没有可展示的拓扑关系</p>
+								<p style={stateDetailStyle}>聚合读取成功，但暂未返回实例、智能体、会话或工具节点。</p>
+							</div>
+						</div>
+					) : (
+						<ReactFlow
+							nodes={nodes}
+							edges={edges}
+							onNodesChange={onNodesChange}
+							onEdgesChange={onEdgesChange}
+							nodeTypes={nodeTypes}
+							nodesDraggable={false}
+							nodesConnectable={false}
+							elementsSelectable={false}
+							fitView
+							fitViewOptions={{ padding: 0.2 }}
+							minZoom={0.1}
+							maxZoom={2}
+							attributionPosition="bottom-left"
+						>
+							<Background color="#d7d2c8" gap={24} />
+							<Controls showInteractive={false} />
+						</ReactFlow>
+					)}
+				</div>
 			</div>
 		</div>
 	);
@@ -370,19 +587,30 @@ export function InstanceTopology(): JSX.Element {
 	);
 }
 
-function EnvelopeErrorSummary({
-	envelope,
-}: {
-	envelope: ErrorEnvelope;
-}): JSX.Element {
+function EnvelopeErrorSummary({ envelope }: { envelope: ErrorEnvelope }): JSX.Element {
 	return (
 		<div style={errorMetaListStyle}>
 			<p style={errorMetaStyle}>code · {envelope.code}</p>
 			<p style={errorMetaStyle}>request_id · {envelope.request_id}</p>
 			<p style={errorMetaStyle}>recoverable · {String(envelope.recoverable)}</p>
-			{envelope.next_step ? (
-				<p style={errorHintStyle}>{envelope.next_step}</p>
-			) : null}
+			{envelope.next_step ? <p style={errorHintStyle}>{envelope.next_step}</p> : null}
+		</div>
+	);
+}
+
+function TopologyStatusNotice({
+	tone,
+	title,
+	detail,
+}: {
+	tone: "info" | "warning";
+	title: string;
+	detail: string;
+}): JSX.Element {
+	return (
+		<div style={getStatusNoticeStyle(tone)}>
+			<strong style={statusNoticeTitleStyle}>{title}</strong>
+			<p style={statusNoticeDetailStyle}>{detail}</p>
 		</div>
 	);
 }
@@ -390,7 +618,7 @@ function EnvelopeErrorSummary({
 const canvasContainerStyle: React.CSSProperties = {
 	height: "100%",
 	display: "flex",
-	flexDirection: "column",
+	padding: "1rem",
 	background:
 		"radial-gradient(circle at top left, rgba(210, 179, 120, 0.18), transparent 32%), #f4f1ea",
 	color: "#1f2933",
@@ -398,70 +626,245 @@ const canvasContainerStyle: React.CSSProperties = {
 		'system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif',
 };
 
+const canvasStageShellStyle: React.CSSProperties = {
+	flex: 1,
+	minHeight: 0,
+	display: "flex",
+	flexDirection: "column",
+	gap: "0.875rem",
+	padding: "1rem",
+	borderRadius: "1.5rem",
+	border: "1px solid rgba(201, 152, 76, 0.24)",
+	background:
+		"linear-gradient(180deg, rgba(255, 255, 255, 0.9) 0%, rgba(249, 245, 236, 0.96) 100%)",
+	boxShadow: "0 18px 40px rgba(31, 41, 51, 0.08)",
+	overflow: "hidden",
+};
+
 const canvasHeaderStyle: React.CSSProperties = {
 	display: "flex",
 	justifyContent: "space-between",
-	alignItems: "center",
-	padding: "1rem 1.5rem",
-	borderBottom: "1px solid #d7d2c8",
-	background: "rgba(255, 255, 255, 0.72)",
+	alignItems: "flex-start",
+	gap: "1rem",
+	padding: "0.25rem 0.25rem 0 0.25rem",
 	flexShrink: 0,
+};
+
+const canvasTitleBlockStyle: React.CSSProperties = {
+	display: "flex",
+	flexDirection: "column",
+	gap: "0.35rem",
+	maxWidth: "42rem",
+};
+
+const canvasEyebrowStyle: React.CSSProperties = {
+	fontSize: "0.72rem",
+	fontWeight: 700,
+	letterSpacing: "0.16em",
+	color: "#9a6c29",
+	textTransform: "uppercase",
 };
 
 const canvasTitleStyle: React.CSSProperties = {
 	margin: 0,
-	fontSize: "1.25rem",
+	fontSize: "1.7rem",
 	fontWeight: 700,
 	color: "#1f2933",
+};
+
+const canvasDescriptionStyle: React.CSSProperties = {
+	margin: 0,
+	fontSize: "0.95rem",
+	lineHeight: 1.6,
+	color: "#52606d",
+};
+
+const canvasControlsColumnStyle: React.CSSProperties = {
+	display: "flex",
+	flexDirection: "column",
+	alignItems: "flex-end",
+	gap: "0.6rem",
 };
 
 const canvasControlsStyle: React.CSSProperties = {
 	display: "flex",
 	gap: "0.5rem",
+	flexWrap: "wrap",
+};
+
+const canvasControlHintStyle: React.CSSProperties = {
+	margin: 0,
+	fontSize: "0.75rem",
+	lineHeight: 1.5,
+	color: "#6b7280",
+	textAlign: "right",
+	maxWidth: "18rem",
 };
 
 const controlButtonStyle: React.CSSProperties = {
 	display: "inline-flex",
 	alignItems: "center",
 	justifyContent: "center",
-	padding: "0.4rem 0.8rem",
+	padding: "0.48rem 0.9rem",
 	borderRadius: "0.5rem",
 	fontSize: "0.8rem",
 	fontWeight: 600,
 	textDecoration: "none",
-	border: "1px solid #d7d2c8",
+	border: "1px solid rgba(201, 152, 76, 0.28)",
 	cursor: "pointer",
-	background: "#fff",
+	background: "rgba(255, 255, 255, 0.9)",
 	color: "#1f2933",
+	boxShadow: "0 6px 14px rgba(31, 41, 51, 0.06)",
+};
+
+const requestCluesPanelStyle: React.CSSProperties = {
+	display: "flex",
+	alignItems: "flex-start",
+	gap: "0.9rem",
+	padding: "0.9rem 1rem",
+	borderRadius: "1rem",
+	border: "1px solid rgba(201, 152, 76, 0.18)",
+	background: "rgba(255, 251, 245, 0.92)",
+	flexShrink: 0,
+};
+
+const requestCluesLabelStyle: React.CSSProperties = {
+	fontSize: "0.8rem",
+	fontWeight: 700,
+	letterSpacing: "0.08em",
+	textTransform: "uppercase",
+	color: "#9a6c29",
+	paddingTop: "0.25rem",
+	whiteSpace: "nowrap",
+};
+
+const requestCluesListStyle: React.CSSProperties = {
+	display: "flex",
+	flexWrap: "wrap",
+	gap: "0.5rem",
+};
+
+const requestClueBadgeStyle: React.CSSProperties = {
+	display: "inline-flex",
+	alignItems: "center",
+	padding: "0.4rem 0.65rem",
+	borderRadius: "999px",
+	background: "rgba(255, 255, 255, 0.9)",
+	border: "1px solid rgba(215, 210, 200, 0.9)",
+	fontSize: "0.75rem",
+	fontWeight: 600,
+	color: "#52606d",
+};
+
+const statusNoticeTitleStyle: React.CSSProperties = {
+	fontSize: "0.84rem",
+	fontWeight: 700,
+	color: "inherit",
+};
+
+const statusNoticeDetailStyle: React.CSSProperties = {
+	margin: 0,
+	fontSize: "0.8rem",
+	lineHeight: 1.55,
+	color: "inherit",
+};
+
+function getStatusNoticeStyle(tone: "info" | "warning"): React.CSSProperties {
+	if (tone === "warning") {
+		return {
+			display: "flex",
+			flexDirection: "column",
+			gap: "0.35rem",
+			padding: "0.85rem 1rem",
+			borderRadius: "1rem",
+			border: "1px solid rgba(245, 158, 11, 0.26)",
+			background: "rgba(255, 247, 237, 0.96)",
+			color: "#9a6c29",
+			flexShrink: 0,
+		};
+	}
+
+	return {
+		display: "flex",
+		flexDirection: "column",
+		gap: "0.35rem",
+		padding: "0.85rem 1rem",
+		borderRadius: "1rem",
+		border: "1px solid rgba(91, 141, 239, 0.24)",
+		background: "rgba(239, 245, 255, 0.96)",
+		color: "#355f9e",
+		flexShrink: 0,
+	};
+}
+
+const laneHeaderRowStyle: React.CSSProperties = {
+	display: "grid",
+	gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+	gap: "0.75rem",
+	flexShrink: 0,
+};
+
+const laneHeaderBadgeStyle: React.CSSProperties = {
+	display: "inline-flex",
+	alignItems: "center",
+	justifyContent: "center",
+	padding: "0.6rem 0.9rem",
+	borderRadius: "999px",
+	border: "1px solid rgba(201, 152, 76, 0.22)",
+	background: "rgba(255, 255, 255, 0.82)",
+	fontSize: "0.82rem",
+	fontWeight: 700,
+	letterSpacing: "0.06em",
+	color: "#6b4d1f",
 };
 
 const graphWrapperStyle: React.CSSProperties = {
 	flex: 1,
 	minHeight: 0,
+	borderRadius: "1.25rem",
+	overflow: "hidden",
+	border: "1px solid rgba(215, 210, 200, 0.92)",
+	background: "rgba(255, 255, 255, 0.72)",
+	boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.5)",
 };
 
-const loadingContainerStyle: React.CSSProperties = {
-	height: "100%",
-	display: "flex",
-	alignItems: "center",
-	justifyContent: "center",
-	background:
-		"radial-gradient(circle at top left, rgba(210, 179, 120, 0.18), transparent 32%), #f4f1ea",
-};
-
-const loadingTextStyle: React.CSSProperties = {
-	fontSize: "1rem",
-	color: "#6b7280",
-};
-
-const errorContainerStyle: React.CSSProperties = {
+const stateContainerStyle: React.CSSProperties = {
 	height: "100%",
 	display: "flex",
 	alignItems: "center",
 	justifyContent: "center",
 	padding: "2rem",
 	background:
-		"radial-gradient(circle at top left, rgba(210, 179, 120, 0.18), transparent 32%), #f4f1ea",
+		"radial-gradient(circle at top left, rgba(210, 179, 120, 0.12), transparent 28%), rgba(255, 255, 255, 0.52)",
+};
+
+const emptyPanelStyle: React.CSSProperties = {
+	display: "flex",
+	flexDirection: "column",
+	alignItems: "center",
+	gap: "0.5rem",
+	padding: "2rem",
+	maxWidth: "30rem",
+	textAlign: "center",
+	background: "rgba(255, 255, 255, 0.92)",
+	border: "1px solid rgba(215, 210, 200, 0.92)",
+	borderRadius: "1rem",
+	boxShadow: "0 10px 24px rgba(31, 41, 51, 0.08)",
+};
+
+const stateTitleStyle: React.CSSProperties = {
+	margin: 0,
+	fontSize: "1rem",
+	fontWeight: 700,
+	color: "#1f2933",
+};
+
+const stateDetailStyle: React.CSSProperties = {
+	margin: 0,
+	fontSize: "0.85rem",
+	lineHeight: 1.6,
+	color: "#6b7280",
+	textAlign: "center",
 };
 
 const errorPanelStyle: React.CSSProperties = {
@@ -474,6 +877,14 @@ const errorPanelStyle: React.CSSProperties = {
 	border: "1px solid #d7d2c8",
 	borderRadius: "1rem",
 	maxWidth: "400px",
+};
+
+const errorTitleStyle: React.CSSProperties = {
+	margin: 0,
+	fontSize: "1.1rem",
+	fontWeight: 700,
+	color: "#1f2933",
+	textAlign: "center",
 };
 
 const errorTextStyle: React.CSSProperties = {
@@ -508,8 +919,7 @@ const errorMetaStyle: React.CSSProperties = {
 	margin: 0,
 	fontSize: "0.75rem",
 	color: "#6b7280",
-	fontFamily:
-		'ui-monospace, SFMono-Regular, "SFMono-Regular", Consolas, monospace',
+	fontFamily: 'ui-monospace, SFMono-Regular, "SFMono-Regular", Consolas, monospace',
 };
 
 const errorHintStyle: React.CSSProperties = {
@@ -526,85 +936,124 @@ const handleStyle: React.CSSProperties = {
 	border: "2px solid #fff",
 };
 
-const nodeHeaderStyle: React.CSSProperties = {
-	display: "flex",
-	justifyContent: "space-between",
-	alignItems: "center",
-	marginBottom: "0.25rem",
-};
-
-const nodeTypeLabelStyle: React.CSSProperties = {
-	fontSize: "0.65rem",
+const circleTypeLabelStyle: React.CSSProperties = {
+	fontSize: "0.64rem",
 	fontWeight: 700,
-	letterSpacing: "0.08em",
+	letterSpacing: "0.12em",
 	textTransform: "uppercase",
 	color: "#6b7280",
+	textAlign: "center",
 };
 
-const nodeStatusBadgeStyle = (isHealthy: boolean): React.CSSProperties => ({
-	fontSize: "0.65rem",
-	padding: "0.15rem 0.4rem",
-	borderRadius: "999px",
-	background: isHealthy ? "#ecfdf5" : "#fff7ed",
-	color: isHealthy ? "#166534" : "#9a3412",
+const circleTitleStyle: React.CSSProperties = {
+	fontSize: "0.92rem",
 	fontWeight: 700,
-});
-
-const nodeTitleStyle: React.CSSProperties = {
-	fontSize: "0.95rem",
-	fontWeight: 700,
+	lineHeight: 1.35,
 	color: "#1f2933",
+	textAlign: "center",
+	wordBreak: "break-word",
+	display: "-webkit-box",
+	WebkitLineClamp: 3,
+	WebkitBoxOrient: "vertical",
+	overflow: "hidden",
+};
+
+const circleBadgeStyle: React.CSSProperties = {
+	fontSize: "0.68rem",
+	lineHeight: 1.3,
+	padding: "0.18rem 0.45rem",
+	borderRadius: "999px",
+	background: "rgba(255, 255, 255, 0.92)",
+	color: "#6b4d1f",
+	maxWidth: "100%",
 	overflow: "hidden",
 	textOverflow: "ellipsis",
 	whiteSpace: "nowrap",
 };
 
-const drilldownLinkStyle: React.CSSProperties = {
-	display: "inline-block",
-	marginTop: "0.4rem",
-	padding: "0.25rem 0.5rem",
-	fontSize: "0.75rem",
-	fontWeight: 600,
+const circleMetaStyle: React.CSSProperties = {
+	fontSize: "0.64rem",
+	lineHeight: 1.25,
+	color: "#7a8895",
+	textAlign: "center",
+};
+
+const nodeActionContainerStyle: React.CSSProperties = {
+	display: "flex",
+	flexDirection: "column",
+	alignItems: "center",
+	gap: "0.18rem",
+	maxWidth: "100%",
+};
+
+const nodeActionDetailStyle: React.CSSProperties = {
+	fontSize: "0.62rem",
+	lineHeight: 1.3,
+	color: "#52606d",
+	textAlign: "center",
+};
+
+const nodeActionLinkStyle: React.CSSProperties = {
+	display: "inline-flex",
+	alignItems: "center",
+	justifyContent: "center",
+	padding: "0.16rem 0.45rem",
+	fontSize: "0.62rem",
+	fontWeight: 700,
 	color: "#fff",
 	background: "#1f2933",
-	borderRadius: "0.375rem",
+	borderRadius: "999px",
 	textDecoration: "none",
 };
 
-const baseNodeStyle: React.CSSProperties = {
-	padding: "0.75rem 1rem",
-	borderRadius: "0.75rem",
-	minWidth: NODE_WIDTH,
-	minHeight: NODE_HEIGHT,
-	boxShadow: "0 4px 12px rgba(0, 0, 0, 0.08)",
-	fontFamily:
-		'system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif',
-};
+function getNodeActionBadgeStyle(kind: TopologyNodeAction["kind"]): React.CSSProperties {
+	const palette =
+		kind === "enter"
+			? {
+				background: "rgba(16, 185, 129, 0.14)",
+				color: "#0f766e",
+			  }
+			: kind === "fallback"
+				? {
+					background: "rgba(245, 158, 11, 0.16)",
+					color: "#9a6c29",
+				  }
+				: {
+					background: "rgba(148, 163, 184, 0.16)",
+					color: "#64748b",
+				  };
 
-function getInstanceNodeStyle(isActive: boolean): React.CSSProperties {
 	return {
-		...baseNodeStyle,
-		background: "rgba(255, 255, 255, 0.96)",
-		border: `2px solid ${isActive ? "#c9984c" : "#d7d2c8"}`,
+		display: "inline-flex",
+		alignItems: "center",
+		justifyContent: "center",
+		padding: "0.12rem 0.42rem",
+		borderRadius: "999px",
+		fontSize: "0.58rem",
+		fontWeight: 700,
+		letterSpacing: "0.04em",
+		background: palette.background,
+		color: palette.color,
 	};
 }
 
-function getAgentNodeStyle(isHealthy: boolean): React.CSSProperties {
+function getCircleNodeStyle(accent: string): React.CSSProperties {
 	return {
-		...baseNodeStyle,
-		background: "rgba(255, 255, 255, 0.96)",
-		border: `2px solid ${isHealthy ? "#10b981" : "#f59e0b"}`,
+		width: `${NODE_SIZE}px`,
+		height: `${NODE_SIZE}px`,
+		borderRadius: "999px",
+		padding: "1rem 0.95rem",
+		display: "flex",
+		flexDirection: "column",
+		alignItems: "center",
+		justifyContent: "center",
+		gap: "0.38rem",
+		textAlign: "center",
+		background:
+			"radial-gradient(circle at top, rgba(255, 255, 255, 0.98) 0%, rgba(246, 241, 232, 0.96) 100%)",
+		border: `2px solid ${accent}`,
+		boxShadow: "0 10px 24px rgba(31, 41, 51, 0.12)",
+		fontFamily:
+			'system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif',
 	};
 }
-
-const skillNodeStyle: React.CSSProperties = {
-	...baseNodeStyle,
-	background: "rgba(239, 246, 255, 0.96)",
-	border: "2px solid #93c5fd",
-};
-
-const externalAcpNodeStyle: React.CSSProperties = {
-	...baseNodeStyle,
-	background: "rgba(254, 243, 199, 0.96)",
-	border: "2px solid #fcd34d",
-};

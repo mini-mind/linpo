@@ -1,7 +1,8 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../api/client";
+import { buildSessionEntryPath } from "./SessionPage";
 
 const mockGetAggregateTopology = vi.fn();
 
@@ -74,9 +75,9 @@ const aggregateTopologyFixture = {
 			created_at: "2026-03-22T09:10:00Z",
 		},
 	],
-	agents: [
-		{
-			node_id: "agent:instance-alpha:agent-alpha",
+		agents: [
+			{
+				node_id: "agent:instance-alpha:agent-alpha",
 			instance_id: "instance-alpha",
 			instance_name: "alpha-instance",
 			agent_id: "agent-alpha",
@@ -84,34 +85,57 @@ const aggregateTopologyFixture = {
 			status: "running",
 			is_active: true,
 			last_active_at: "2026-03-22T12:00:00Z",
-			drilldown_path: "/session/instance-alpha/agent-alpha",
+				drilldown_path:
+					"/session/agent-alpha/__none__/__new__?instanceId=instance-alpha",
+			},
+		],
+	sessions: [
+		{
+			node_id: "session:instance-alpha:agent-alpha:agent:agent-alpha:main",
+			instance_id: "instance-alpha",
+			instance_name: "alpha-instance",
+			agent_id: "agent-alpha",
+			agent_name: "Alpha Agent",
+			session_key: "agent:agent-alpha:main",
+			label: "agent:agent-alpha:main",
+			updated_at: "2026-03-22T12:02:00Z",
 		},
 	],
+	tools: [],
 	edges: [
 		{
 			source: "instance:instance-alpha",
 			target: "agent:instance-alpha:agent-alpha",
 			kind: "instance_agent",
 		},
+		{
+			source: "agent:instance-alpha:agent-alpha",
+			target: "session:instance-alpha:agent-alpha:agent:agent-alpha:main",
+			kind: "agent_session",
+		},
 	],
-	skills: [],
-	external_acps: [],
 };
 
-const topologyWithSkillsAndAcps = {
+const topologyWithTools = {
 	...aggregateTopologyFixture,
-	skills: [
+	tools: [
 		{
-			node_id: "skill:skill-1",
-			id: "skill-1",
-			name: "Code Analysis",
+			node_id: "tool:instance-alpha:agent-alpha:read",
+			instance_id: "instance-alpha",
+			instance_name: "alpha-instance",
+			agent_id: "agent-alpha",
+			agent_name: "Alpha Agent",
+			tool_id: "read",
+			name: "read",
 		},
-	],
-	external_acps: [
 		{
-			node_id: "acp:acp-1",
-			id: "acp-1",
-			name: "External API",
+			node_id: "tool:instance-empty::orphan",
+			instance_id: "instance-empty",
+			instance_name: "empty-instance",
+			agent_id: "",
+			agent_name: "",
+			tool_id: "orphan",
+			name: "orphan",
 		},
 	],
 	edges: [
@@ -122,13 +146,44 @@ const topologyWithSkillsAndAcps = {
 		},
 		{
 			source: "agent:instance-alpha:agent-alpha",
-			target: "skill:skill-1",
-			kind: "agent_skill",
+			target: "session:instance-alpha:agent-alpha:agent:agent-alpha:main",
+			kind: "agent_session",
 		},
 		{
 			source: "agent:instance-alpha:agent-alpha",
-			target: "acp:acp-1",
-			kind: "agent_external_acp",
+			target: "tool:instance-alpha:agent-alpha:read",
+			kind: "agent_tool",
+		},
+	],
+};
+
+const topologyWithUnavailableNodeContext = {
+	...aggregateTopologyFixture,
+	agents: [
+		...aggregateTopologyFixture.agents,
+		{
+			node_id: "agent:instance-empty:",
+			instance_id: "instance-empty",
+			instance_name: "empty-instance",
+			agent_id: "",
+			agent_name: "Detached Agent",
+			status: "idle",
+			is_active: false,
+			last_active_at: null,
+			drilldown_path: "",
+		},
+	],
+	sessions: [
+		...aggregateTopologyFixture.sessions,
+		{
+			node_id: "session:instance-alpha:agent-alpha:missing",
+			instance_id: "instance-alpha",
+			instance_name: "alpha-instance",
+			agent_id: "agent-alpha",
+			agent_name: "Alpha Agent",
+			session_key: "",
+			label: "missing-session-key",
+			updated_at: "2026-03-22T12:03:00Z",
 		},
 	],
 };
@@ -141,6 +196,20 @@ function renderWithRouter(): ReturnType<typeof render> {
 	);
 }
 
+function createDeferredPromise<T>(): {
+	promise: Promise<T>;
+	resolve: (value: T | PromiseLike<T>) => void;
+	reject: (reason?: unknown) => void;
+} {
+	let resolve!: (value: T | PromiseLike<T>) => void;
+	let reject!: (reason?: unknown) => void;
+	const promise = new Promise<T>((res, rej) => {
+		resolve = res;
+		reject = rej;
+	});
+	return { promise, resolve, reject };
+}
+
 describe("InstanceTopology", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -148,17 +217,18 @@ describe("InstanceTopology", () => {
 	});
 
 	describe("graph canvas structure", () => {
-		it("exposes topology-graph-canvas testid on the main canvas", async () => {
+		it("exposes a full-stage routing graph shell around the main canvas", async () => {
 			mockGetAggregateTopology.mockResolvedValue(aggregateTopologyFixture);
 
 			renderWithRouter();
 
 			await waitFor(() => {
+				expect(screen.getByTestId("topology-routing-stage")).toBeInTheDocument();
 				expect(screen.getByTestId("topology-graph-canvas")).toBeInTheDocument();
 			});
 		});
 
-		it("renders graph-only canvas without sidebar or detail panels", async () => {
+		it("keeps topology as a single routing stage without sidebar or detail panels", async () => {
 			mockGetAggregateTopology.mockResolvedValue(aggregateTopologyFixture);
 
 			renderWithRouter();
@@ -172,15 +242,29 @@ describe("InstanceTopology", () => {
 			expect(screen.queryByTestId("topology-config-panel")).not.toBeInTheDocument();
 		});
 
-		it("renders minimal title and canvas controls", async () => {
+		it("renders routing-graph framing, request clues, and canvas controls", async () => {
 			mockGetAggregateTopology.mockResolvedValue(aggregateTopologyFixture);
 
 			renderWithRouter();
 
 			await waitFor(() => {
-				expect(screen.getByRole("heading", { name: "拓扑关系图" })).toBeInTheDocument();
+				expect(
+					screen.getByRole("heading", { name: "Routing Graph 主舞台" }),
+				).toBeInTheDocument();
 			});
 
+			expect(
+				screen.getByText("保持单一满屏画布，沿真实聚合读链路查看当前路由关系。"),
+			).toBeInTheDocument();
+			expect(screen.getByText("请求线索")).toBeInTheDocument();
+			expect(screen.getByText("request_id · req-topology-1")).toBeInTheDocument();
+			expect(screen.getByText("freshness · fresh")).toBeInTheDocument();
+			expect(screen.getByText("checked_at · 2026-03-22T12:05:00Z")).toBeInTheDocument();
+			expect(screen.getByText("diagnostics · 2 sources")).toBeInTheDocument();
+			expect(screen.getByText("实例")).toBeInTheDocument();
+			expect(screen.getByText("智能体")).toBeInTheDocument();
+			expect(screen.getByText("会话")).toBeInTheDocument();
+			expect(screen.getByText("工具")).toBeInTheDocument();
 			expect(screen.getByRole("button", { name: "适配画布" })).toBeInTheDocument();
 			expect(screen.getByRole("button", { name: "刷新拓扑" })).toBeInTheDocument();
 		});
@@ -204,7 +288,7 @@ describe("InstanceTopology", () => {
 			).toBeInTheDocument();
 		});
 
-		it("renders agent nodes with canonical drill-down link", async () => {
+		it("shows explicit session entry rules for agent and session nodes", async () => {
 			mockGetAggregateTopology.mockResolvedValue(aggregateTopologyFixture);
 
 			renderWithRouter();
@@ -216,37 +300,103 @@ describe("InstanceTopology", () => {
 			});
 
 			expect(screen.getByText("Alpha Agent")).toBeInTheDocument();
+			const agentNode = screen.getByTestId("topology-node-agent-agent-alpha");
+			const sessionNode = screen.getByTestId(
+				"topology-node-session-agent:agent-alpha:main",
+			);
 
-			const drilldownLink = screen.getByTestId("drilldown-link-agent-alpha");
-			expect(drilldownLink).toBeInTheDocument();
-			expect(drilldownLink).toHaveAttribute("href", "/session/instance-alpha/agent-alpha");
+			const agentEntryLink = screen.getByRole("link", { name: "进入默认会话" });
+			expect(agentEntryLink).toHaveAttribute(
+				"href",
+				buildSessionEntryPath({
+					instanceId: "instance-alpha",
+					agentId: "agent-alpha",
+				}),
+			);
+			expect(within(agentNode).getByText("可进入")).toBeInTheDocument();
+
+			const sessionEntryLink = screen.getByRole("link", { name: "进入对应会话" });
+			expect(sessionEntryLink).toHaveAttribute(
+				"href",
+				buildSessionEntryPath({
+					instanceId: "instance-alpha",
+					agentId: "agent-alpha",
+					preferredSessionKey: "agent:agent-alpha:main",
+				}),
+			);
+			expect(within(sessionNode).getByText("精确会话")).toBeInTheDocument();
 		});
 
-		it("renders skill nodes when skills exist", async () => {
-			mockGetAggregateTopology.mockResolvedValue(topologyWithSkillsAndAcps);
+		it("renders session nodes when sessions exist", async () => {
+			mockGetAggregateTopology.mockResolvedValue(aggregateTopologyFixture);
 
 			renderWithRouter();
 
 			await waitFor(() => {
-				expect(screen.getByText("Code Analysis")).toBeInTheDocument();
+				expect(
+					screen.getByTestId("topology-node-session-agent:agent-alpha:main"),
+				).toBeInTheDocument();
 			});
 
-			expect(screen.getByTestId("topology-node-skill-Code Analysis")).toBeInTheDocument();
+			expect(
+				screen.getByTestId("topology-node-session-agent:agent-alpha:main"),
+			).toBeInTheDocument();
 		});
 
-		it("renders external ACP nodes when ACPs exist", async () => {
-			mockGetAggregateTopology.mockResolvedValue(topologyWithSkillsAndAcps);
+		it("shows fallback and disabled rules for tool and instance nodes", async () => {
+			mockGetAggregateTopology.mockResolvedValue(topologyWithTools);
 
 			renderWithRouter();
 
 			await waitFor(() => {
-				expect(screen.getByText("External API")).toBeInTheDocument();
+				expect(screen.getByTestId("topology-node-tool-read")).toBeInTheDocument();
 			});
+			const toolNode = screen.getByTestId("topology-node-tool-read");
+			const orphanToolNode = screen.getByTestId("topology-node-tool-orphan");
+			const instanceNode = screen.getByTestId("topology-node-instance-instance-alpha");
 
-			expect(screen.getByTestId("topology-node-acp-External API")).toBeInTheDocument();
+			const toolFallbackLink = screen.getByRole("link", {
+				name: "回退到所属智能体",
+			});
+			expect(toolFallbackLink).toHaveAttribute(
+				"href",
+				buildSessionEntryPath({
+					instanceId: "instance-alpha",
+					agentId: "agent-alpha",
+				}),
+			);
+			expect(within(toolNode).getByText("回退入口")).toBeInTheDocument();
+			expect(
+				within(instanceNode).getByText("实例节点不提供会话入口"),
+			).toBeInTheDocument();
+			expect(
+				within(orphanToolNode).getByText("缺少可回退上下文"),
+			).toBeInTheDocument();
+			expect(
+				screen.queryByRole("link", { name: "进入实例会话" }),
+			).not.toBeInTheDocument();
 		});
 
-		it("handles empty skills and ACPs without fallback blocks", async () => {
+		it("disables agent and session nodes when required context is missing", async () => {
+			mockGetAggregateTopology.mockResolvedValue(topologyWithUnavailableNodeContext);
+
+			renderWithRouter();
+
+			await waitFor(() => {
+				expect(screen.getByText("Detached Agent")).toBeInTheDocument();
+			});
+			const detachedAgentNode = screen.getByTestId("topology-node-agent-");
+			const missingSessionNode = screen.getByTestId("topology-node-session-");
+
+			expect(
+				within(detachedAgentNode).getByText("缺少进入上下文"),
+			).toBeInTheDocument();
+			expect(
+				within(missingSessionNode).getByText("缺少 session key"),
+			).toBeInTheDocument();
+		});
+
+		it("does not render legacy skill or ACP nodes", async () => {
 			mockGetAggregateTopology.mockResolvedValue(aggregateTopologyFixture);
 
 			renderWithRouter();
@@ -255,18 +405,70 @@ describe("InstanceTopology", () => {
 				expect(screen.getByTestId("topology-graph-canvas")).toBeInTheDocument();
 			});
 
-			expect(screen.queryByText("未暴露技能数据")).not.toBeInTheDocument();
-			expect(screen.queryByText("未暴露外接 ACP")).not.toBeInTheDocument();
+			expect(screen.queryByText("SKILL")).not.toBeInTheDocument();
+			expect(screen.queryByText("ACP")).not.toBeInTheDocument();
+			expect(screen.queryByTestId("topology-node-skill-Code Analysis")).not.toBeInTheDocument();
+			expect(screen.queryByTestId("topology-node-acp-External API")).not.toBeInTheDocument();
 		});
 	});
 
 	describe("loading and error states", () => {
-		it("shows loading state", async () => {
-			mockGetAggregateTopology.mockImplementation(() => new Promise(() => {}));
+		it("keeps the routing-stage shell visible while aggregate topology is loading", () => {
+			const deferred = createDeferredPromise<typeof aggregateTopologyFixture>();
+			mockGetAggregateTopology.mockReturnValue(deferred.promise);
 
 			renderWithRouter();
 
+			expect(
+				screen.getByRole("heading", { name: "Routing Graph 主舞台" }),
+			).toBeInTheDocument();
+			expect(screen.getByTestId("topology-routing-stage")).toBeInTheDocument();
 			expect(screen.getByText("加载拓扑数据...")).toBeInTheDocument();
+		});
+
+		it("keeps the topology shell and shows an explicit empty state when the aggregate payload has no graph data", async () => {
+			mockGetAggregateTopology.mockResolvedValue({
+				...aggregateTopologyFixture,
+				request_id: "req-topology-empty",
+				diagnostics: [],
+				instances: [],
+				agents: [],
+				sessions: [],
+				tools: [],
+				edges: [],
+			});
+
+			renderWithRouter();
+
+			await waitFor(() => {
+				expect(screen.getByTestId("topology-routing-stage")).toBeInTheDocument();
+			});
+
+			expect(screen.getByText("request_id · req-topology-empty")).toBeInTheDocument();
+			expect(screen.getByTestId("topology-graph-canvas")).toHaveTextContent(
+				"当前没有可展示的拓扑关系",
+			);
+		});
+
+		it("keeps successful topology content visible while surfacing partial failure diagnostics", async () => {
+			mockGetAggregateTopology.mockResolvedValue({
+				...aggregateTopologyFixture,
+				partial_failure: false,
+			});
+
+			renderWithRouter();
+
+			await waitFor(() => {
+				expect(screen.getByText("部分数据不可用")).toBeInTheDocument();
+			});
+
+			await waitFor(() => {
+				expect(
+					screen.getByTestId("topology-node-instance-instance-alpha"),
+				).toBeInTheDocument();
+			});
+			expect(screen.getByText("受影响实例：empty-instance")).toBeInTheDocument();
+			expect(screen.getByText("diagnostics · 2 sources")).toBeInTheDocument();
 		});
 
 		it("surfaces aggregate request failures with error envelope", async () => {
@@ -286,10 +488,12 @@ describe("InstanceTopology", () => {
 				expect(screen.getByText("code · source_unavailable")).toBeInTheDocument();
 			});
 
+			const graphCanvas = screen.getByTestId("topology-graph-canvas");
+			expect(screen.getByText("拓扑暂时不可用")).toBeInTheDocument();
 			expect(
 				screen.getByText(/错误: OpenClaw upstream unavailable/i),
 			).toBeInTheDocument();
-			expect(screen.getByText("request_id · req-topology-503")).toBeInTheDocument();
+			expect(within(graphCanvas).getByText("request_id · req-topology-503")).toBeInTheDocument();
 			expect(screen.getByText("recoverable · true")).toBeInTheDocument();
 			expect(
 				screen.getByText("检查实例连通性或网关 token 后重试"),
@@ -313,10 +517,114 @@ describe("InstanceTopology", () => {
 				expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
 			});
 		});
+
+		it("shows an explicit unauthorized state instead of a generic failed state", async () => {
+			mockGetAggregateTopology.mockRejectedValue(
+				new ApiError(401, "Unauthorized", {
+					code: "unauthorized",
+					message: "Unauthorized",
+					request_id: "req-topology-401",
+					recoverable: true,
+					next_step: "重新登录后重试",
+				}),
+			);
+
+			renderWithRouter();
+
+			await waitFor(() => {
+				expect(screen.getByText("当前无权查看拓扑")).toBeInTheDocument();
+			});
+
+			const graphCanvas = screen.getByTestId("topology-graph-canvas");
+			expect(screen.queryByText("拓扑暂时不可用")).not.toBeInTheDocument();
+			expect(within(graphCanvas).getByText("request_id · req-topology-401")).toBeInTheDocument();
+			expect(screen.getByText("重新登录后重试")).toBeInTheDocument();
+		});
+
+		it("shows an explicit stale notice while keeping topology content visible", async () => {
+			mockGetAggregateTopology.mockResolvedValue({
+				...aggregateTopologyFixture,
+				freshness: {
+					status: "stale",
+					checked_at: "2026-03-22T11:20:00Z",
+				},
+			});
+
+			renderWithRouter();
+
+			await waitFor(() => {
+				expect(screen.getByText("当前展示的是滞后拓扑")).toBeInTheDocument();
+			});
+
+			await waitFor(() => {
+				expect(
+					screen.getByTestId("topology-node-instance-instance-alpha"),
+				).toBeInTheDocument();
+			});
+			expect(screen.getByText("freshness · stale")).toBeInTheDocument();
+		});
+
+		it("re-reads aggregate topology when refresh is triggered from the successful state", async () => {
+			mockGetAggregateTopology
+				.mockResolvedValueOnce(aggregateTopologyFixture)
+				.mockResolvedValueOnce({
+					...aggregateTopologyFixture,
+					request_id: "req-topology-2",
+					freshness: {
+						status: "stale",
+						checked_at: "2026-03-22T12:10:00Z",
+					},
+				});
+
+			renderWithRouter();
+
+			await waitFor(() => {
+				expect(screen.getByText("request_id · req-topology-1")).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByRole("button", { name: "刷新拓扑" }));
+
+			await waitFor(() => {
+				expect(screen.getByText("request_id · req-topology-2")).toBeInTheDocument();
+			});
+
+			expect(mockGetAggregateTopology).toHaveBeenCalledTimes(2);
+		});
+
+		it("re-reads aggregate topology when retry is triggered from the failed state", async () => {
+			mockGetAggregateTopology
+				.mockRejectedValueOnce(
+					new ApiError(503, "OpenClaw upstream unavailable", {
+						code: "source_unavailable",
+						message: "OpenClaw upstream unavailable",
+						request_id: "req-topology-503",
+						recoverable: true,
+						next_step: "检查实例连通性后重试",
+					}),
+				)
+				.mockResolvedValueOnce({
+					...aggregateTopologyFixture,
+					request_id: "req-topology-recovered",
+				});
+
+			renderWithRouter();
+
+			await waitFor(() => {
+				expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByRole("button", { name: "重试" }));
+
+			await waitFor(() => {
+				expect(screen.getByText("request_id · req-topology-recovered")).toBeInTheDocument();
+			});
+
+			expect(mockGetAggregateTopology).toHaveBeenCalledTimes(2);
+		});
 	});
 
-	describe("graph-only compliance", () => {
-		it("does not render footer summary (graph-only constraint)", async () => {
+	describe("routing stage compliance", () => {
+		it("surfaces read-chain clues instead of observer-only footer framing", async () => {
 			mockGetAggregateTopology.mockResolvedValue(aggregateTopologyFixture);
 
 			renderWithRouter();
@@ -325,35 +633,39 @@ describe("InstanceTopology", () => {
 				expect(screen.getByTestId("topology-graph-canvas")).toBeInTheDocument();
 			});
 
-			// Footer summary violates graph-only constraint
-			expect(screen.queryByText(/实例/)).not.toBeInTheDocument();
-			expect(screen.queryByText(/agents/)).not.toBeInTheDocument();
-			expect(screen.queryByText(/skills/)).not.toBeInTheDocument();
-			expect(screen.queryByText(/ACPs/)).not.toBeInTheDocument();
+			expect(screen.getByText("请求线索")).toBeInTheDocument();
+			expect(
+				screen.getByText("聚合链路继续使用 getAggregateTopology，不引入旁路面板。"),
+			).toBeInTheDocument();
+			expect(screen.queryByTestId("topology-footer-summary")).not.toBeInTheDocument();
 		});
 
-		it("renders skill nodes connected via edges from backend", async () => {
-			mockGetAggregateTopology.mockResolvedValue(topologyWithSkillsAndAcps);
+		it("renders session nodes connected via edges from backend", async () => {
+			mockGetAggregateTopology.mockResolvedValue(aggregateTopologyFixture);
 
 			renderWithRouter();
 
 			await waitFor(() => {
-				expect(screen.getByText("Code Analysis")).toBeInTheDocument();
+				expect(
+					screen.getByTestId("topology-node-session-agent:agent-alpha:main"),
+				).toBeInTheDocument();
 			});
 
-			expect(screen.getByTestId("topology-node-skill-Code Analysis")).toBeInTheDocument();
+			expect(
+				screen.getByTestId("topology-node-session-agent:agent-alpha:main"),
+			).toBeInTheDocument();
 		});
 
-		it("renders external ACP nodes connected via edges from backend", async () => {
-			mockGetAggregateTopology.mockResolvedValue(topologyWithSkillsAndAcps);
+		it("renders tool nodes connected via edges from backend", async () => {
+			mockGetAggregateTopology.mockResolvedValue(topologyWithTools);
 
 			renderWithRouter();
 
 			await waitFor(() => {
-				expect(screen.getByText("External API")).toBeInTheDocument();
+				expect(screen.getByTestId("topology-node-tool-read")).toBeInTheDocument();
 			});
 
-			expect(screen.getByTestId("topology-node-acp-External API")).toBeInTheDocument();
+			expect(screen.getByTestId("topology-node-tool-read")).toBeInTheDocument();
 		});
 	});
 });
