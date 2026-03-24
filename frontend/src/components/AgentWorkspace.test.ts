@@ -65,6 +65,24 @@ describe("AgentWorkspace session selection helpers", () => {
 			"session-3",
 		);
 	});
+
+	it("keeps explicit preferred session ahead of the current valid server-backed selection", () => {
+		const { resolveSelectedSessionKey } = agentWorkspaceModule;
+		const sessions = [{ key: "session-1" }, { key: "session-2" }] as const;
+
+		expect(resolveSelectedSessionKey(sessions, "session-1", "session-2")).toBe(
+			"session-2",
+		);
+	});
+
+	it("falls back to the first current valid server session when no explicit session exists", () => {
+		const { resolveSelectedSessionKey } = agentWorkspaceModule;
+		const sessions = [{ key: "session-1" }, { key: "session-2" }] as const;
+
+		expect(resolveSelectedSessionKey(sessions, "missing-session", null)).toBe(
+			"session-1",
+		);
+	});
 });
 
 describe("AgentWorkspace preview helpers", () => {

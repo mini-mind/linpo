@@ -2,6 +2,7 @@ import type React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import {
+	ApiError,
 	getAgentDetail,
 	getDefaultObserverDataSource,
 	listSessions,
@@ -16,6 +17,7 @@ import {
 	type AgentDetailResponse,
 	buildAgentDetailChannel,
 	buildSessionMessagesChannel,
+	type ErrorEnvelope,
 	type SessionListItem,
 	type SessionPreviewItem,
 	type SessionsPreviewResponse,
@@ -26,6 +28,7 @@ import { useIsMobile } from "../hooks/useIsMobile";
 interface AgentWorkspaceProps {
 	agentId?: string;
 	instanceId?: string;
+	preferredSessionKey?: string | null;
 }
 
 interface RealtimeState {
@@ -49,9 +52,72 @@ interface StartAgentDetailRealtimeOptions {
 }
 
 const AGENT_DETAIL_REALTIME_DATA_SOURCE = getDefaultObserverDataSource();
+const SESSION_STALE_THRESHOLD_MS = 5 * 60 * 1000;
+const SESSION_READ_CHAIN_CLUE =
+	"getAgentDetail -> listSessions -> previewSessions (+ realtime after selection)";
 
 function withErrorMessage(error: unknown, fallback: string): string {
 	return error instanceof Error ? error.message : fallback;
+}
+
+function ensureError(error: unknown, fallback: string): Error {
+	return error instanceof Error ? error : new Error(fallback);
+}
+
+function getErrorEnvelope(error: Error | null): ErrorEnvelope | null {
+	return error instanceof ApiError ? error.envelope : null;
+}
+
+function describeReadStep(args: {
+	step: "getAgentDetail" | "listSessions" | "previewSessions";
+	error: Error | null;
+	loaded?: boolean;
+	count?: number;
+	emptyLabel?: string;
+	skipped?: boolean;
+}): string {
+	if (args.skipped) return `${args.step} skipped`;
+	const envelope = getErrorEnvelope(args.error);
+	if (envelope?.code === "unauthorized") {
+		return `${args.step} unauthorized`;
+	}
+	if (args.error) return `${args.step} failed`;
+	if (typeof args.count === "number") {
+		if (args.count === 0 && args.emptyLabel) {
+			return `${args.step} ${args.emptyLabel}(0)`;
+		}
+		return `${args.step} ok(${args.count})`;
+	}
+	if (args.loaded) return `${args.step} ok`;
+	return `${args.step} loading`;
+}
+
+function getRequestIdClue(errors: Array<Error | null>): string {
+	for (const error of errors) {
+		const requestId = getErrorEnvelope(error)?.request_id;
+		if (requestId) return requestId;
+	}
+	return "当前真实读链路未返回 aggregate request_id";
+}
+
+function getFreshnessClue(
+	sessionListTs: number | null,
+	previewTs: number | null,
+): { label: string; stale: boolean } {
+	const ts = previewTs ?? sessionListTs;
+	if (ts === null) {
+		return {
+			label: "当前 endpoints 未返回 freshness；仅在 list/preview ts 可用时做推断",
+			stale: false,
+		};
+	}
+
+	const source = previewTs !== null ? "previewSessions.ts" : "listSessions.ts";
+	const stale = Date.now() - ts > SESSION_STALE_THRESHOLD_MS;
+	return {
+		label: `${stale ? "inferred stale" : "inferred fresh"} from ${source}`,
+		stale,
+	};
 }
 
 function findRootNode(
@@ -90,16 +156,17 @@ export function resolveSelectedSessionKey(
 	currentKey: string | null,
 	preferredKey: string | null = null,
 ): string | null {
-	if (
-		preferredKey &&
-		sessions.some((session) => session.key === preferredKey)
-	) {
-		return preferredKey;
-	}
+	const explicitPreferredSessionKey =
+		preferredKey && sessions.some((session) => session.key === preferredKey)
+			? preferredKey
+			: null;
+	if (explicitPreferredSessionKey) return explicitPreferredSessionKey;
 
-	if (currentKey && sessions.some((session) => session.key === currentKey)) {
-		return currentKey;
-	}
+	const currentValidSessionKey =
+		currentKey && sessions.some((session) => session.key === currentKey)
+			? currentKey
+			: null;
+	if (currentValidSessionKey) return currentValidSessionKey;
 
 	return sessions[0]?.key ?? null;
 }
@@ -309,11 +376,16 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 	const isMobile = useIsMobile();
 	const [agent, setAgent] = useState<AgentDetailResponse | null>(null);
 	const [loading, setLoading] = useState(true);
-	const [error, setError] = useState<string | null>(null);
+	const [agentError, setAgentError] = useState<Error | null>(null);
 	const [selectedSessionKey, setSelectedSessionKey] = useState<string | null>(null);
 	const [previewItems, setPreviewItems] = useState<SessionPreviewItem[]>([]);
 	const [previewLoading, setPreviewLoading] = useState(false);
+	const [previewError, setPreviewError] = useState<Error | null>(null);
+	const [previewTs, setPreviewTs] = useState<number | null>(null);
 	const [sessions, setSessions] = useState<SessionListItem[]>([]);
+	const [sessionsError, setSessionsError] = useState<Error | null>(null);
+	const [sessionListLoaded, setSessionListLoaded] = useState(false);
+	const [sessionListTs, setSessionListTs] = useState<number | null>(null);
 	const [showDisclosure, setShowDisclosure] = useState(false);
 
 	const messagesAreaRef = useRef<HTMLDivElement | null>(null);
@@ -325,14 +397,24 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 			setSelectedSessionKey(null);
 			setPreviewItems([]);
 			setPreviewLoading(false);
+			setPreviewError(null);
+			setPreviewTs(null);
 			setSessions([]);
+			setSessionsError(null);
+			setSessionListLoaded(false);
+			setSessionListTs(null);
 			prevSessionKeyRef.current = null;
 			return;
 		}
 		setSelectedSessionKey(null);
 		setPreviewItems([]);
 		setPreviewLoading(false);
+		setPreviewError(null);
+		setPreviewTs(null);
 		setSessions([]);
+		setSessionsError(null);
+		setSessionListLoaded(false);
+		setSessionListTs(null);
 		prevSessionKeyRef.current = null;
 	}, [agentId]);
 
@@ -340,27 +422,45 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		if (!agentId) return;
 		let cancelled = false;
 		async function fetchSessionState(): Promise<void> {
+			setSessionsError(null);
+			setSessionListLoaded(false);
+			setSessionListTs(null);
 			try {
-				const { sessions: nextSessions } = await listSessions(agentId, {
+				const response = await listSessions(agentId, {
 					instanceId,
 				});
+				const nextSessions = response.sessions;
 				if (!cancelled) {
+					setSessionsError(null);
+					setSessionListLoaded(true);
+					setSessionListTs(response.ts);
 					setSessions(nextSessions);
 					setSelectedSessionKey((currentKey) =>
-						resolveSelectedSessionKey(nextSessions, currentKey),
+						resolveSelectedSessionKey(
+							nextSessions,
+							currentKey,
+							props.preferredSessionKey ?? null,
+						),
 					);
 					if (nextSessions.length === 0) {
 						setPreviewItems([]);
 						setPreviewLoading(false);
+						setPreviewError(null);
+						setPreviewTs(null);
 						prevSessionKeyRef.current = null;
 					}
 				}
-			} catch {
+			} catch (error) {
 				if (!cancelled) {
+					setSessionsError(ensureError(error, "读取会话列表失败"));
+					setSessionListLoaded(true);
+					setSessionListTs(null);
 					setSessions([]);
 					setSelectedSessionKey(null);
 					setPreviewItems([]);
 					setPreviewLoading(false);
+					setPreviewError(null);
+					setPreviewTs(null);
 					prevSessionKeyRef.current = null;
 				}
 			}
@@ -369,7 +469,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		return () => {
 			cancelled = true;
 		};
-	}, [agentId, instanceId]);
+	}, [agentId, instanceId, props.preferredSessionKey]);
 
 	const scrollToBottom = useCallback(() => {
 		setTimeout(() => {
@@ -391,9 +491,12 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 
 		async function fetchPreview(): Promise<void> {
 			setPreviewLoading(true);
+			setPreviewError(null);
 			try {
 				const response = await previewSessions([sessionKey], { instanceId });
 				if (!cancelled) {
+					setPreviewTs(response.ts);
+					setPreviewError(null);
 					const nextItems = getPreviewItemsForSession(response, sessionKey);
 					setPreviewItems((previousItems) =>
 						arePreviewItemsEqual(previousItems, nextItems)
@@ -404,8 +507,10 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 						scrollToBottom();
 					}
 				}
-			} catch {
+			} catch (error) {
 				if (!cancelled) {
+					setPreviewError(ensureError(error, "读取会话预览失败"));
+					setPreviewTs(null);
 					setPreviewItems((previousItems) =>
 						previousItems.length === 0 ? previousItems : [],
 					);
@@ -425,11 +530,16 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 			if (!sessionKey) {
 				setPreviewItems([]);
 				setPreviewLoading(false);
+				setPreviewError(null);
+				setPreviewTs(null);
 				return;
 			}
 			setPreviewLoading(true);
+			setPreviewError(null);
 			try {
 				const response = await previewSessions([sessionKey], { instanceId });
+				setPreviewTs(response.ts);
+				setPreviewError(null);
 				const nextItems = getPreviewItemsForSession(response, sessionKey);
 				setPreviewItems((previousItems) =>
 					arePreviewItemsEqual(previousItems, nextItems)
@@ -439,7 +549,9 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 				if (nextItems.length > 0) {
 					scrollToBottom();
 				}
-			} catch {
+			} catch (error) {
+				setPreviewError(ensureError(error, "读取会话预览失败"));
+				setPreviewTs(null);
 				setPreviewItems((previousItems) =>
 					previousItems.length === 0 ? previousItems : [],
 				);
@@ -514,12 +626,12 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 
 	useEffect(() => {
 		if (!agentId) {
-			setError("未提供实例 ID");
+			setAgentError(new Error("未提供实例 ID"));
 			setLoading(false);
 			return;
 		}
 		setLoading(true);
-		setError(null);
+		setAgentError(null);
 		setAgent(null);
 
 		let cancelled = false;
@@ -546,8 +658,9 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 					handle?.close();
 				}
 			} catch (err) {
-				if (!cancelled)
-					setError(err instanceof Error ? err.message : "获取实例失败");
+				if (!cancelled) {
+					setAgentError(ensureError(err, "获取实例失败"));
+				}
 			} finally {
 				if (!cancelled) setLoading(false);
 			}
@@ -570,17 +683,74 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		);
 	}
 
-	if (error) {
+	const agentEnvelope = getErrorEnvelope(agentError);
+	const sessionsEnvelope = getErrorEnvelope(sessionsError);
+	const previewEnvelope = getErrorEnvelope(previewError);
+	const unauthorizedEnvelope =
+		agentEnvelope?.code === "unauthorized"
+			? agentEnvelope
+			: sessionsEnvelope?.code === "unauthorized"
+				? sessionsEnvelope
+				: previewEnvelope?.code === "unauthorized"
+					? previewEnvelope
+					: null;
+	const freshness = getFreshnessClue(sessionListTs, previewTs);
+	const diagnosticsClue = [
+		describeReadStep({
+			step: "getAgentDetail",
+			error: agentError,
+			loaded: Boolean(agent),
+		}),
+		describeReadStep({
+			step: "listSessions",
+			error: sessionsError,
+			loaded: sessionListLoaded,
+			count: sessionListLoaded && !sessionsError ? sessions.length : undefined,
+			emptyLabel: "empty",
+		}),
+		describeReadStep({
+			step: "previewSessions",
+			error: previewError,
+			loaded: previewTs !== null,
+			count:
+				selectedSessionKey && previewTs !== null && !previewError
+					? previewItems.length
+					: undefined,
+			skipped: !selectedSessionKey,
+		}),
+	].join(" · ");
+	const requestIdClue = getRequestIdClue([
+		agentError,
+		sessionsError,
+		previewError,
+	]);
+	const showPartialFailure =
+		!unauthorizedEnvelope && Boolean(agent) && Boolean(sessionsError || previewError);
+	const shellTitle = agent?.id ?? agentId ?? "unknown-agent";
+	const shellStatus = unauthorizedEnvelope
+		? "○ 读取受限"
+		: agent?.is_active
+			? "● 运行中"
+			: "○ 已停止";
+	const emptySessionText = selectedSessionKey ? "暂无消息" : "当前工作区暂无可用会话";
+
+	if (agentError && !unauthorizedEnvelope) {
 		return (
 			<div style={getContainerStyle(isMobile)} data-testid="session-stream-shell">
 				<div style={loadingContainerStyle}>
-					<span style={errorTextStyle}>错误: {error}</span>
+					<div style={statusCardStyle}>
+						<strong style={statusCardTitleStyle}>会话工作区暂时不可用</strong>
+						<p style={statusCardDetailStyle}>
+							getAgentDetail 失败：{agentError.message}
+						</p>
+						<p style={requestClueTextStyle}>诊断状态 · failed</p>
+					</div>
 				</div>
 			</div>
 		);
 	}
 
-	if (!agent) {
+	if (!agent && !unauthorizedEnvelope) {
 		return (
 			<div style={getContainerStyle(isMobile)} data-testid="session-stream-shell">
 				<div style={loadingContainerStyle}>
@@ -590,85 +760,175 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		);
 	}
 
-	const emptySessionText = selectedSessionKey ? "暂无消息" : "暂无可用会话";
-
 	return (
 		<div style={getContainerStyle(isMobile)} data-testid="session-stream-shell">
-			<div style={getStreamLayoutStyle(isMobile)}>
-				{sessions.length > 1 && (
-					<div style={sessionSwitcherStyle}>
-						<select
-							value={selectedSessionKey ?? ""}
-							onChange={(e) => {
-								const key = e.target.value;
-								if (key) {
-									setSelectedSessionKey(key);
-									setPreviewItems([]);
-									setPreviewLoading(true);
-								}
-							}}
-							style={sessionSelectStyle}
-						>
-							{sessions.map((session) => (
-								<option key={session.key} value={session.key}>
-									{session.derived_title || session.label || session.key}
-								</option>
-							))}
-						</select>
-					</div>
-				)}
+			<div data-testid="agent-header" style={agentHeaderStyle}>
+				<span style={agentHeaderTitleStyle}>{shellTitle}</span>
+				<span style={agentHeaderStatusStyle}>{shellStatus}</span>
+			</div>
 
-				<div style={getMessagesContainerStyle(isMobile)}>
-					<div ref={messagesAreaRef} style={messagesAreaStyle}>
-						{previewLoading ? (
-							<div style={messagesEmptyStyle}>
-								<span style={messagesEmptyTextStyle}>加载消息...</span>
-							</div>
-						) : previewItems.length === 0 ? (
-							<div style={messagesEmptyStyle}>
-								<span style={messagesEmptyTextStyle}>{emptySessionText}</span>
-							</div>
+			<div style={getWorkspaceLayoutStyle(isMobile)}>
+				<div data-testid="session-left-sidebar" style={getLeftSidebarStyle(isMobile)}>
+					<div data-testid="session-channel-area" style={channelAreaStyle}>
+						<span style={sectionLabelStyle}>渠道</span>
+						<span style={placeholderTextStyle}>当前阶段暂无渠道数据</span>
+					</div>
+
+					<div data-testid="session-list-area" style={sessionListAreaStyle}>
+						<span style={sectionLabelStyle}>会话</span>
+						{sessionsError ? (
+							<span style={sidebarErrorTextStyle}>
+								会话列表读取失败：{sessionsError.message}
+							</span>
+						) : sessions.length === 0 ? (
+							<span style={placeholderTextStyle}>暂无会话</span>
 						) : (
-							<div style={previewListStyle}>
-								{previewItems.map((item, index) => (
-									<div
-										key={`msg-${index}-${item.role}`}
-										style={getPreviewItemStyle(item.role)}
+							<div style={sessionListStyle}>
+								{sessions.map((session) => (
+									<button
+										key={session.key}
+										type="button"
+										onClick={() => {
+											setSelectedSessionKey(session.key);
+											setPreviewItems([]);
+											setPreviewLoading(true);
+										}}
+										style={getSessionItemStyle(session.key === selectedSessionKey)}
 									>
-										<span style={previewRoleStyle}>
-											{getRoleLabel(item.role)}
-										</span>
-										<p style={previewTextStyle}>{item.text}</p>
-									</div>
+										{session.derived_title || session.label || session.key}
+									</button>
 								))}
 							</div>
 						)}
 					</div>
 				</div>
 
-				<div data-testid="session-input-shell" style={getInputShellStyle(isMobile)}>
-					{!showDisclosure && (
-						<button
-							type="button"
-							onClick={() => setShowDisclosure(true)}
-							style={disclosureTriggerStyle}
-						>
-							<span style={disclosureHintStyle}>observer-only · 点击查看详情</span>
-						</button>
-					)}
-					{showDisclosure && (
-						<div style={disclosureContentStyle}>
-							<span style={disclosureTitleStyle}>只读观察模式</span>
-							<span style={disclosureTextStyle}>当前阶段仅保留观察与进入能力</span>
+				<div style={getMainContentStyle(isMobile)}>
+					<div style={requestCluesWrapStyle}>
+						<span style={sectionLabelStyle}>请求线索</span>
+						<div style={requestCluesBoxStyle}>
+							<p style={requestClueTextStyle}>request_id · {requestIdClue}</p>
+							<p style={requestClueTextStyle}>freshness · {freshness.label}</p>
+							<p style={requestClueTextStyle}>diagnostics · {diagnosticsClue}</p>
+							<p style={requestClueTextStyle}>read chain · {SESSION_READ_CHAIN_CLUE}</p>
+							{unauthorizedEnvelope ? (
+								<p style={requestClueTextStyle}>
+									diagnostic_reason · {unauthorizedEnvelope.message}
+								</p>
+							) : null}
+						</div>
+					</div>
+
+					{showPartialFailure ? (
+						<div style={warningNoticeStyle}>
+							<strong style={statusCardTitleStyle}>会话下游读取失败</strong>
+							<p style={statusCardDetailStyle}>
+								{sessionsError
+									? `会话列表读取失败：${sessionsError.message}`
+									: `previewSessions 失败：${previewError?.message ?? "unknown error"}`}
+							</p>
+						</div>
+					) : null}
+
+					{unauthorizedEnvelope ? (
+						<div style={warningNoticeStyle}>
+							<strong style={statusCardTitleStyle}>当前无权查看该会话工作区</strong>
+							<p style={statusCardDetailStyle}>{unauthorizedEnvelope.message}</p>
+							{unauthorizedEnvelope.next_step ? (
+								<p style={statusCardDetailStyle}>{unauthorizedEnvelope.next_step}</p>
+							) : null}
+						</div>
+					) : null}
+
+					{!showPartialFailure && !unauthorizedEnvelope && freshness.stale ? (
+						<div style={infoNoticeStyle}>
+							<strong style={statusCardTitleStyle}>当前展示的是推断滞后数据</strong>
+							<p style={statusCardDetailStyle}>
+								当前 session 没有 aggregate freshness；此处仅根据最近一次 list/preview ts 推断。
+							</p>
+						</div>
+					) : null}
+
+					<div data-testid="session-conversation-area" style={getMessagesContainerStyle(isMobile)}>
+						<div ref={messagesAreaRef} style={messagesAreaStyle}>
+							{unauthorizedEnvelope ? (
+								<div style={messagesEmptyStyle}>
+									<span style={messagesEmptyTextStyle}>当前无权读取会话内容</span>
+								</div>
+							) : previewLoading ? (
+								<div style={messagesEmptyStyle}>
+									<span style={messagesEmptyTextStyle}>加载消息...</span>
+								</div>
+							) : sessionsError ? (
+								<div style={statusCardStyle}>
+									<strong style={statusCardTitleStyle}>当前会话列表不可用</strong>
+									<p style={statusCardDetailStyle}>
+										会话列表读取失败：{sessionsError.message}
+									</p>
+								</div>
+							) : previewError ? (
+								<div style={statusCardStyle}>
+									<strong style={statusCardTitleStyle}>当前会话预览不可用</strong>
+									<p style={statusCardDetailStyle}>
+										previewSessions 失败：{previewError.message}
+									</p>
+								</div>
+							) : previewItems.length === 0 ? (
+								<div style={messagesEmptyStyle}>
+									<span style={messagesEmptyTextStyle}>{emptySessionText}</span>
+								</div>
+							) : (
+								<div style={previewListStyle}>
+									{previewItems.map((item, index) => (
+										<div
+											key={`msg-${index}-${item.role}`}
+											style={getPreviewItemStyle(item.role)}
+										>
+											<span style={previewRoleStyle}>
+												{getRoleLabel(item.role)}
+											</span>
+											<p style={previewTextStyle}>{item.text}</p>
+										</div>
+									))}
+								</div>
+							)}
+						</div>
+					</div>
+
+					<div
+						data-testid="session-input-shell"
+						style={getInputShellStyle(isMobile)}
+						aria-disabled={unauthorizedEnvelope ? true : undefined}
+					>
+						{unauthorizedEnvelope ? (
+							<div style={disclosureContentStyle}>
+								<span style={disclosureTitleStyle}>只读观察模式</span>
+								<span style={disclosureTextStyle}>
+									输入区保持只读：{unauthorizedEnvelope.message}
+								</span>
+							</div>
+						) : !showDisclosure ? (
 							<button
 								type="button"
-								onClick={() => setShowDisclosure(false)}
-								style={disclosureCloseStyle}
+								onClick={() => setShowDisclosure(true)}
+								style={disclosureTriggerStyle}
 							>
-								收起
+								<span style={disclosureHintStyle}>observer-only · 点击查看详情</span>
 							</button>
-						</div>
-					)}
+						) : (
+							<div style={disclosureContentStyle}>
+								<span style={disclosureTitleStyle}>只读观察模式</span>
+								<span style={disclosureTextStyle}>当前阶段仅保留观察与进入能力</span>
+								<button
+									type="button"
+									onClick={() => setShowDisclosure(false)}
+									style={disclosureCloseStyle}
+								>
+									收起
+								</button>
+							</div>
+						)}
+					</div>
 				</div>
 			</div>
 		</div>
@@ -699,6 +959,186 @@ function getContainerStyle(_isMobile: boolean): React.CSSProperties {
 	};
 }
 
+const agentHeaderStyle: React.CSSProperties = {
+	display: "flex",
+	alignItems: "center",
+	justifyContent: "space-between",
+	padding: "0.75rem 1rem",
+	background: "#fff",
+	borderBottom: "1px solid #e5e7eb",
+	flexShrink: 0,
+};
+
+const agentHeaderTitleStyle: React.CSSProperties = {
+	fontSize: "1rem",
+	fontWeight: 600,
+	color: "#111827",
+};
+
+const agentHeaderStatusStyle: React.CSSProperties = {
+	fontSize: "0.75rem",
+	color: "#6b7280",
+};
+
+function getWorkspaceLayoutStyle(isMobile: boolean): React.CSSProperties {
+	return {
+		flex: 1,
+		display: "flex",
+		flexDirection: isMobile ? "column" : "row",
+		minHeight: 0,
+		overflow: "hidden",
+	};
+}
+
+function getLeftSidebarStyle(isMobile: boolean): React.CSSProperties {
+	return {
+		width: isMobile ? "100%" : "220px",
+		flexShrink: 0,
+		display: "flex",
+		flexDirection: "column",
+		background: "#f8fafc",
+		borderRight: isMobile ? "none" : "1px solid #e5e7eb",
+		borderBottom: isMobile ? "1px solid #e5e7eb" : "none",
+		overflow: "hidden",
+	};
+}
+
+const channelAreaStyle: React.CSSProperties = {
+	padding: "0.75rem",
+	borderBottom: "1px solid #e5e7eb",
+	flexShrink: 0,
+};
+
+const sessionListAreaStyle: React.CSSProperties = {
+	flex: 1,
+	padding: "0.75rem",
+	overflow: "auto",
+	minHeight: 0,
+};
+
+const sectionLabelStyle: React.CSSProperties = {
+	fontSize: "0.6875rem",
+	fontWeight: 600,
+	color: "#9ca3af",
+	textTransform: "uppercase",
+	letterSpacing: "0.05em",
+	display: "block",
+	marginBottom: "0.5rem",
+};
+
+const requestCluesWrapStyle: React.CSSProperties = {
+	display: "flex",
+	flexDirection: "column",
+	gap: "0.4rem",
+};
+
+const requestCluesBoxStyle: React.CSSProperties = {
+	display: "flex",
+	flexWrap: "wrap",
+	gap: "0.5rem",
+	padding: "0.75rem 0.875rem",
+	borderRadius: "0.75rem",
+	border: "1px solid #e5e7eb",
+	background: "#f8fafc",
+};
+
+const requestClueTextStyle: React.CSSProperties = {
+	margin: 0,
+	fontSize: "0.75rem",
+	color: "#6b7280",
+	fontFamily: 'ui-monospace, SFMono-Regular, "SFMono-Regular", Consolas, monospace',
+};
+
+const placeholderTextStyle: React.CSSProperties = {
+	fontSize: "0.75rem",
+	color: "#9ca3af",
+};
+
+const sidebarErrorTextStyle: React.CSSProperties = {
+	fontSize: "0.75rem",
+	color: "#b45309",
+	lineHeight: 1.5,
+};
+
+const warningNoticeStyle: React.CSSProperties = {
+	padding: "0.875rem 1rem",
+	borderRadius: "0.75rem",
+	border: "1px solid #e6c589",
+	background: "rgba(255, 248, 230, 0.9)",
+	display: "flex",
+	flexDirection: "column",
+	gap: "0.35rem",
+};
+
+const infoNoticeStyle: React.CSSProperties = {
+	padding: "0.875rem 1rem",
+	borderRadius: "0.75rem",
+	border: "1px solid #b8d4de",
+	background: "rgba(237, 247, 250, 0.92)",
+	display: "flex",
+	flexDirection: "column",
+	gap: "0.35rem",
+};
+
+const statusCardStyle: React.CSSProperties = {
+	display: "flex",
+	flexDirection: "column",
+	gap: "0.35rem",
+	padding: "1rem",
+	borderRadius: "0.75rem",
+	background: "#fff",
+	border: "1px solid #e5e7eb",
+	maxWidth: "480px",
+	margin: "0 auto",
+};
+
+const statusCardTitleStyle: React.CSSProperties = {
+	fontSize: "0.875rem",
+	color: "#1f2933",
+};
+
+const statusCardDetailStyle: React.CSSProperties = {
+	margin: 0,
+	fontSize: "0.75rem",
+	color: "#6b7280",
+	lineHeight: 1.5,
+};
+
+const sessionListStyle: React.CSSProperties = {
+	display: "flex",
+	flexDirection: "column",
+	gap: "0.25rem",
+};
+
+function getSessionItemStyle(isSelected: boolean): React.CSSProperties {
+	return {
+		padding: "0.5rem 0.625rem",
+		fontSize: "0.8125rem",
+		textAlign: "left",
+		border: "none",
+		borderRadius: "0.375rem",
+		background: isSelected ? "#e0e7ff" : "transparent",
+		color: isSelected ? "#3730a3" : "#1f2933",
+		cursor: "pointer",
+		transition: "background 0.15s",
+		whiteSpace: "nowrap",
+		overflow: "hidden",
+		textOverflow: "ellipsis",
+	};
+}
+
+function getMainContentStyle(isMobile: boolean): React.CSSProperties {
+	return {
+		flex: 1,
+		display: "flex",
+		flexDirection: "column",
+		minHeight: 0,
+		padding: isMobile ? "0.5rem" : "0.75rem",
+		gap: isMobile ? "0.5rem" : "0.75rem",
+		overflow: "hidden",
+	};
+}
+
 const loadingContainerStyle: React.CSSProperties = {
 	flex: 1,
 	display: "flex",
@@ -709,37 +1149,6 @@ const loadingContainerStyle: React.CSSProperties = {
 const loadingTextStyle: React.CSSProperties = {
 	fontSize: "0.9375rem",
 	color: "#6b7280",
-};
-
-const errorTextStyle: React.CSSProperties = {
-	fontSize: "0.9375rem",
-	color: "#dc2626",
-};
-
-function getStreamLayoutStyle(isMobile: boolean): React.CSSProperties {
-	return {
-		flex: 1,
-		display: "flex",
-		flexDirection: "column",
-		minHeight: 0,
-		padding: isMobile ? "0.75rem" : "1rem",
-		gap: isMobile ? "0.5rem" : "0.75rem",
-	};
-}
-
-const sessionSwitcherStyle: React.CSSProperties = {
-	flexShrink: 0,
-};
-
-const sessionSelectStyle: React.CSSProperties = {
-	width: "100%",
-	padding: "0.5rem 0.75rem",
-	fontSize: "0.875rem",
-	fontWeight: 500,
-	borderRadius: "0.5rem",
-	border: "1px solid #e5e7eb",
-	background: "#f8fafc",
-	color: "#1f2933",
 };
 
 function getMessagesContainerStyle(isMobile: boolean): React.CSSProperties {
