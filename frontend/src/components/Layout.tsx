@@ -8,6 +8,7 @@ const PRIMARY_NAV_ITEMS = [
   { to: '/overview', label: '总览', icon: '◌' },
   { to: '/topology', label: '拓扑', icon: '◇' },
   { to: '/kanban', label: '看板', icon: '▤' },
+  { to: '/team', label: '团队', icon: '◎' },
 ];
 
 function ToastContainer(): JSX.Element {

@@ -6,6 +6,7 @@ import { Layout, RedirectToOverview } from "./components/Layout";
 import { LoginPage } from "./components/LoginPage";
 import { OverviewPage } from "./components/OverviewPage";
 import SessionPage from "./components/SessionPage";
+import { TeamPage } from "./components/TeamPage";
 import { TopologyPage } from "./components/TopologyPage";
 import { AuthProvider } from "./hooks/useAuth";
 import { ToastProvider } from "./hooks/useToast";
@@ -32,7 +33,12 @@ function App(): JSX.Element {
 							<Route path="overview" element={<OverviewPage />} />
 							<Route path="topology" element={<TopologyPage />} />
 							<Route path="kanban" element={<CollabPage />} />
+							<Route path="team" element={<TeamPage />} />
 							<Route path="session" element={<SessionPage />} />
+							<Route
+								path="session/:agentId/:channelKey/:sessionKey"
+								element={<SessionPage />}
+							/>
 							<Route path="session/:instanceId" element={<SessionPage />} />
 								<Route
 									path="session/:instanceId/:agentId"

@@ -41,6 +41,13 @@ vi.mock("./SessionPage", () => ({
 	default: () => <div>session-page</div>,
 }));
 
+vi.mock(
+	"./TeamPage",
+	() => ({
+		TeamPage: () => <div>team-page</div>,
+	}),
+);
+
 describe("app routes", () => {
 	afterEach(() => {
 		cleanup();
@@ -62,5 +69,20 @@ describe("app routes", () => {
 		});
 
 		expect(screen.getByText("kanban-page")).toBeInTheDocument();
+	});
+
+	it("renders /team as a first-class app route", async () => {
+		document.body.innerHTML = '<div id="root"></div>';
+		window.history.pushState({}, "", "/team");
+
+		await act(async () => {
+			await import("../main");
+		});
+
+		await waitFor(() => {
+			expect(window.location.pathname).toBe("/team");
+		});
+
+		expect(screen.getByText("team-page")).toBeInTheDocument();
 	});
 });
