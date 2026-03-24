@@ -280,6 +280,8 @@ class ObserverDataSource(Protocol):
 
     def list_events(self, agent_id: str, node_id: str) -> list[EventRecord]: ...
 
+    def get_topology_snapshot(self) -> dict[str, Any] | None: ...
+
     def read_buffer(
         self,
         channel: str,
@@ -322,6 +324,9 @@ class StateBackedObserverDataSource:
 
     def list_events(self, agent_id: str, node_id: str) -> list[EventRecord]:
         return self._state_store.list_events(agent_id, node_id)
+
+    def get_topology_snapshot(self) -> dict[str, Any] | None:
+        return None
 
     def apply_event(self, event: ObserverRealtimeEvent) -> None:
         self._state_store.apply_event(event)
@@ -395,6 +400,10 @@ class OpenClawObserverDataSource(StateBackedObserverDataSource):
     def list_events(self, agent_id: str, node_id: str) -> list[EventRecord]:
         self._ensure_snapshot_loaded()
         return super().list_events(agent_id, node_id)
+
+    def get_topology_snapshot(self) -> dict[str, Any] | None:
+        self._ensure_snapshot_loaded()
+        return self._client.fetch_snapshot().snapshot
 
     def register_pending_control_request(
         self,
