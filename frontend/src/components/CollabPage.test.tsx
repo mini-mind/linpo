@@ -1,7 +1,13 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "../api/client";
 
+import type {
+	AggregateInstanceDiagnostic,
+	AggregateOverviewAgentItem,
+	AggregateOverviewResponse,
+} from "../api/types";
 import CollabPage from "./CollabPage";
 
 const { mockGetAggregateOverview } = vi.hoisted(() => ({
@@ -22,6 +28,63 @@ vi.mock("../hooks/useIsMobile", () => ({
 	useIsMobile: () => false,
 }));
 
+function buildAgent(
+	overrides: Partial<AggregateOverviewAgentItem> = {},
+): AggregateOverviewAgentItem {
+	return {
+		instance_id: "instance-alpha",
+		instance_name: "alpha-instance",
+		agent_id: "agent-alpha",
+		agent_name: "Alpha Agent",
+		status: "running",
+		is_active: true,
+		last_active_at: "2026-03-22T12:08:00Z",
+		drilldown_path: "/session/agent-alpha/__none__/__new__?instanceId=instance-alpha",
+		...overrides,
+	};
+}
+
+function buildDiagnostic(
+	overrides: Partial<AggregateInstanceDiagnostic> = {},
+): AggregateInstanceDiagnostic {
+	return {
+		instance_id: "instance-alpha",
+		instance_name: "alpha-instance",
+		status: "ok",
+		freshness: {
+			status: "fresh",
+			checked_at: "2026-03-22T12:10:00Z",
+		},
+		error: null,
+		...overrides,
+	};
+}
+
+function buildOverview(
+	overrides: Partial<AggregateOverviewResponse> = {},
+): AggregateOverviewResponse {
+	return {
+		request_id: "req-kanban",
+		freshness: {
+			status: "fresh",
+			checked_at: "2026-03-22T12:10:00Z",
+		},
+		partial_failure: false,
+		diagnostics: [],
+		agents: [],
+		stats: {
+			instance_count: 0,
+			agent_count: 0,
+			active_agent_count: 0,
+			attention_instance_count: 0,
+			total_tokens: null,
+		},
+		token_groups: [],
+		global_events: [],
+		...overrides,
+	};
+}
+
 function renderWithRouter(): ReturnType<typeof render> {
 	return render(
 		<MemoryRouter initialEntries={["/kanban"]}>
@@ -30,33 +93,31 @@ function renderWithRouter(): ReturnType<typeof render> {
 	);
 }
 
+function createDeferredPromise<T>(): {
+	promise: Promise<T>;
+	resolve: (value: T | PromiseLike<T>) => void;
+	reject: (reason?: unknown) => void;
+} {
+	let resolve!: (value: T | PromiseLike<T>) => void;
+	let reject!: (reason?: unknown) => void;
+	const promise = new Promise<T>((res, rej) => {
+		resolve = res;
+		reject = rej;
+	});
+	return { promise, resolve, reject };
+}
+
 describe("CollabPage", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 	});
 
-	it("renders four kanban columns with correct headers when agents exist", async () => {
-		mockGetAggregateOverview.mockResolvedValue({
-			request_id: "req-kanban-1",
-			freshness: {
-				status: "fresh",
-				checked_at: "2026-03-22T12:10:00Z",
-			},
-			partial_failure: false,
-			diagnostics: [],
-			agents: [
-				{
-					instance_id: "instance-alpha",
-					instance_name: "alpha-instance",
-					agent_id: "agent-alpha",
-					agent_name: "Alpha Agent",
-					status: "running",
-					is_active: true,
-					last_active_at: "2026-03-22T12:08:00Z",
-					drilldown_path: "/session/instance-alpha/agent-alpha",
-				},
-			],
-		});
+	it("renders task-board summary and stage framing instead of a read-only signal board", async () => {
+		mockGetAggregateOverview.mockResolvedValue(
+			buildOverview({
+				agents: [buildAgent()],
+			}),
+		);
 
 		renderWithRouter();
 
@@ -64,546 +125,461 @@ describe("CollabPage", () => {
 			expect(screen.getByRole("heading", { name: "看板" })).toBeInTheDocument();
 		});
 
-		expect(screen.getByRole("heading", { name: "需关注" })).toBeInTheDocument();
-		expect(screen.getByRole("heading", { name: "进行中" })).toBeInTheDocument();
-		expect(screen.getByRole("heading", { name: "待巡视" })).toBeInTheDocument();
-		expect(screen.getByRole("heading", { name: "已完成" })).toBeInTheDocument();
-	});
-
-	it("groups agents into correct columns based on status", async () => {
-		mockGetAggregateOverview.mockResolvedValue({
-			request_id: "req-kanban-2",
-			freshness: {
-				status: "fresh",
-				checked_at: "2026-03-22T12:10:00Z",
-			},
-			partial_failure: false,
-			diagnostics: [],
-			agents: [
-				{
-					instance_id: "instance-error",
-					instance_name: "error-instance",
-					agent_id: "agent-error",
-					agent_name: "Error Agent",
-					status: "error",
-					is_active: false,
-					last_active_at: "2026-03-22T12:00:00Z",
-					drilldown_path: "/session/instance-error/agent-error",
-				},
-				{
-					instance_id: "instance-running",
-					instance_name: "running-instance",
-					agent_id: "agent-running",
-					agent_name: "Running Agent",
-					status: "running",
-					is_active: true,
-					last_active_at: "2026-03-22T12:05:00Z",
-					drilldown_path: "/session/instance-running/agent-running",
-				},
-				{
-					instance_id: "instance-idle",
-					instance_name: "idle-instance",
-					agent_id: "agent-idle",
-					agent_name: "Idle Agent",
-					status: "idle",
-					is_active: false,
-					last_active_at: "2026-03-22T11:00:00Z",
-					drilldown_path: "/session/instance-idle/agent-idle",
-				},
-				{
-					instance_id: "instance-finished",
-					instance_name: "finished-instance",
-					agent_id: "agent-finished",
-					agent_name: "Finished Agent",
-					status: "finished",
-					is_active: false,
-					last_active_at: "2026-03-22T10:00:00Z",
-					drilldown_path: "/session/instance-finished/agent-finished",
-				},
-			],
-		});
-
-		renderWithRouter();
-
-		await waitFor(() => {
-			expect(screen.getByText("Error Agent")).toBeInTheDocument();
-		});
-
-		expect(screen.getByText("Running Agent")).toBeInTheDocument();
-		expect(screen.getByText("Idle Agent")).toBeInTheDocument();
-		expect(screen.getByText("Finished Agent")).toBeInTheDocument();
-
-		expect(screen.getByText("异常")).toBeInTheDocument();
-		expect(screen.getByText("运行中")).toBeInTheDocument();
-		expect(screen.getAllByText("待巡视").length).toBeGreaterThan(0);
-		expect(screen.getAllByText("已完成").length).toBeGreaterThan(0);
-	});
-
-	it("renders cards with title, instance, status, and drill-down link", async () => {
-		mockGetAggregateOverview.mockResolvedValue({
-			request_id: "req-kanban-3",
-			freshness: {
-				status: "fresh",
-				checked_at: "2026-03-22T12:10:00Z",
-			},
-			partial_failure: false,
-			diagnostics: [],
-			agents: [
-				{
-					instance_id: "instance-alpha",
-					instance_name: "alpha-instance",
-					agent_id: "agent-alpha",
-					agent_name: "Alpha Agent",
-					status: "running",
-					is_active: true,
-					last_active_at: "2026-03-22T12:08:00Z",
-					drilldown_path: "/session/instance-alpha/agent-alpha",
-				},
-			],
-		});
-
-		renderWithRouter();
-
-		await waitFor(() => {
-			expect(screen.getByText("Alpha Agent")).toBeInTheDocument();
-		});
-
-		expect(screen.getByText("alpha-instance")).toBeInTheDocument();
-		expect(screen.getByText("运行中")).toBeInTheDocument();
-		expect(screen.getByText(/最近活动/)).toBeInTheDocument();
 		expect(
-			screen.getByRole("link", { name: /进入会话 - Alpha Agent/i }),
-		).toHaveAttribute("href", "/session/instance-alpha/agent-alpha");
+			screen.getByText("从聚合读链路派生的任务板 · 1 张任务卡"),
+		).toBeInTheDocument();
+		expect(screen.getByText("任务总数")).toBeInTheDocument();
+		expect(screen.getByText("当前焦点")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "刷新任务板" })).toBeInTheDocument();
+		expect(screen.getByRole("heading", { name: "待处理" })).toBeInTheDocument();
+		expect(screen.getByRole("heading", { name: "推进中" })).toBeInTheDocument();
+		expect(screen.getByRole("heading", { name: "待确认" })).toBeInTheDocument();
+		expect(screen.getByRole("heading", { name: "已收尾" })).toBeInTheDocument();
+		expect(screen.getByText("优先处理阻塞、失败与需要接管的任务")).toBeInTheDocument();
+		expect(screen.getByText("持续补充上下文，推动任务越过当前阶段")).toBeInTheDocument();
+		expect(screen.getByText("确认输入、责任人与下一步，再决定是否继续推进")).toBeInTheDocument();
+		expect(screen.getByText("复盘结果、同步结论并完成收尾动作")).toBeInTheDocument();
 	});
 
-	it("shows diagnostic alert on cards with failed instances", async () => {
-		mockGetAggregateOverview.mockResolvedValue({
-			request_id: "req-kanban-4",
-			freshness: {
-				status: "fresh",
-				checked_at: "2026-03-22T12:10:00Z",
-			},
-			partial_failure: true,
-			diagnostics: [
-				{
-					instance_id: "instance-failed",
-					instance_name: "failed-instance",
-					status: "failed",
-					freshness: {
-						status: "failed",
-						checked_at: "2026-03-22T12:00:00Z",
-					},
-					error: {
-						code: "source_unavailable",
-						message: "OpenClaw upstream unavailable",
-						request_id: "req-kanban-4",
-						recoverable: true,
-						next_step: "检查实例连通性",
-					},
-				},
-			],
-			agents: [
-				{
-					instance_id: "instance-failed",
-					instance_name: "failed-instance",
-					agent_id: "agent-failed",
-					agent_name: "Failed Agent",
-					status: "error",
-					is_active: false,
-					last_active_at: "2026-03-22T11:00:00Z",
-					drilldown_path: "/session/instance-failed/agent-failed",
-				},
-			],
-		});
+	it("renders task cards with intent, ownership context and an explicit action row", async () => {
+		mockGetAggregateOverview.mockResolvedValue(
+			buildOverview({
+				agents: [
+					buildAgent({
+						agent_name: "Running Agent",
+						instance_id: "instance-running",
+						instance_name: "running-instance",
+						agent_id: "agent-running",
+						drilldown_path:
+							"/session/agent-running/__none__/__new__?instanceId=instance-running",
+					}),
+					buildAgent({
+						agent_name: "Finished Agent",
+						instance_id: "instance-finished",
+						instance_name: "finished-instance",
+						agent_id: "agent-finished",
+						status: "finished",
+						is_active: false,
+						drilldown_path:
+							"/session/agent-finished/__none__/__new__?instanceId=instance-finished",
+					}),
+				],
+			}),
+		);
 
 		renderWithRouter();
 
 		await waitFor(() => {
-			expect(screen.getByText("Failed Agent")).toBeInTheDocument();
+			expect(
+				screen.getByRole("heading", { name: "推进 Running Agent 当前任务" }),
+			).toBeInTheDocument();
 		});
 
-		expect(screen.getByText("OpenClaw upstream unavailable")).toBeInTheDocument();
+		expect(
+			screen.getByRole("heading", { name: "复盘 Finished Agent 最近交付" }),
+		).toBeInTheDocument();
+		expect(screen.queryByRole("heading", { name: "Running Agent" })).not.toBeInTheDocument();
+		expect(screen.getAllByText("任务意图")).toHaveLength(2);
+		expect(screen.getByText("责任主体 · Running Agent")).toBeInTheDocument();
+		expect(screen.getByText("责任主体 · Finished Agent")).toBeInTheDocument();
+		expect(screen.getByText("实例上下文 · running-instance")).toBeInTheDocument();
+		expect(screen.getByText("实例上下文 · finished-instance")).toBeInTheDocument();
+		expect(screen.getAllByText("来源 · overview 聚合")).toHaveLength(2);
+		expect(screen.getAllByText("可用动作")).toHaveLength(2);
+		expect(screen.getAllByRole("button", { name: "进入任务上下文" })).toHaveLength(2);
+
+		const sessionWorkspaceLinks = screen.getAllByRole("link", {
+			name: "进入 session 工作区",
+		});
+		expect(sessionWorkspaceLinks[0]).toHaveAttribute(
+			"href",
+			"/session/agent-running/__none__/__new__?instanceId=instance-running",
+		);
+		expect(sessionWorkspaceLinks[1]).toHaveAttribute(
+			"href",
+			"/session/agent-finished/__none__/__new__?instanceId=instance-finished",
+		);
 	});
 
-	it("preserves canonical session drill-down for all agents", async () => {
-		mockGetAggregateOverview.mockResolvedValue({
-			request_id: "req-kanban-5",
-			freshness: {
-				status: "fresh",
-				checked_at: "2026-03-22T12:10:00Z",
-			},
-			partial_failure: false,
-			diagnostics: [],
-			agents: [
-				{
-					instance_id: "inst-1",
-					instance_name: "Instance One",
-					agent_id: "ag-1",
-					agent_name: "Agent One",
-					status: "running",
-					is_active: true,
-					last_active_at: "2026-03-22T12:00:00Z",
-					drilldown_path: "/session/inst-1/ag-1",
-				},
-				{
-					instance_id: "inst-2",
-					instance_name: "Instance Two",
-					agent_id: "ag-2",
-					agent_name: "Agent Two",
-					status: "finished",
-					is_active: false,
-					last_active_at: "2026-03-22T11:00:00Z",
-					drilldown_path: "/session/inst-2/ag-2",
-				},
-			],
-		});
+	it("keeps task context entry separate from session workspace jump", async () => {
+		mockGetAggregateOverview.mockResolvedValue(
+			buildOverview({
+				agents: [
+					buildAgent({
+						agent_name: "Context Agent",
+						instance_id: "instance-context",
+						instance_name: "context-instance",
+						agent_id: "agent-context",
+						drilldown_path:
+							"/session/agent-context/__none__/__new__?instanceId=instance-context",
+					}),
+				],
+			}),
+		);
 
 		renderWithRouter();
 
 		await waitFor(() => {
-			expect(screen.getByText("Agent One")).toBeInTheDocument();
+			expect(
+				screen.getByRole("heading", { name: "推进 Context Agent 当前任务" }),
+			).toBeInTheDocument();
 		});
 
-		const links = screen.getAllByRole("link", { name: /进入会话/ });
-		expect(links).toHaveLength(2);
-		expect(links[0]).toHaveAttribute("href", "/session/inst-1/ag-1");
-		expect(links[1]).toHaveAttribute("href", "/session/inst-2/ag-2");
+		expect(screen.queryByText("任务上下文锚点")).not.toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: "进入任务上下文" }));
+
+		expect(screen.getByText("任务上下文锚点")).toBeInTheDocument();
+		expect(
+			screen.getByText("先确认为什么是这张任务卡，再决定是否跳转到 session 工作区继续推进。"),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("link", { name: "进入 session 工作区" }),
+		).toHaveAttribute(
+			"href",
+			"/session/agent-context/__none__/__new__?instanceId=instance-context",
+		);
 	});
 
-	describe("kanban-board testid contract", () => {
-		it("exposes kanban-board testid on the main board container", async () => {
-			mockGetAggregateOverview.mockResolvedValue({
-				request_id: "req-kanban-6",
-				freshness: {
-					status: "fresh",
-					checked_at: "2026-03-22T12:15:00Z",
-				},
-				partial_failure: false,
-				diagnostics: [],
+	it("shows disabled session fallback when task card lacks a valid session entry path", async () => {
+		mockGetAggregateOverview.mockResolvedValue(
+			buildOverview({
 				agents: [
-					{
-						instance_id: "instance-alpha",
-						instance_name: "alpha-instance",
-						agent_id: "agent-alpha",
-						agent_name: "Alpha Agent",
-						status: "running",
-						is_active: true,
-						last_active_at: "2026-03-22T12:10:00Z",
-						drilldown_path: "/session/instance-alpha/agent-alpha",
-					},
+					buildAgent({
+						agent_name: "Fallback Agent",
+						instance_id: "instance-fallback",
+						instance_name: "fallback-instance",
+						agent_id: "agent-fallback",
+						drilldown_path: "",
+					}),
 				],
-			});
+			}),
+		);
 
-			renderWithRouter();
+		renderWithRouter();
 
-			await waitFor(() => {
-				expect(screen.getByText("Alpha Agent")).toBeInTheDocument();
-			});
-
-			const kanbanBoard = screen.getByTestId("kanban-board");
-			expect(kanbanBoard).toBeInTheDocument();
-			expect(kanbanBoard).toHaveTextContent("Alpha Agent");
+		await waitFor(() => {
+			expect(
+				screen.getByRole("heading", { name: "推进 Fallback Agent 当前任务" }),
+			).toBeInTheDocument();
 		});
+
+		const sessionEntryButton = screen.getByRole("button", {
+			name: "进入 session 工作区",
+		});
+		expect(sessionEntryButton).toBeDisabled();
+		expect(screen.queryByRole("link", { name: "进入 session 工作区" })).not.toBeInTheDocument();
+		expect(
+			screen.getByText("需先在 topology / team / session 确认可用会话入口"),
+		).toBeInTheDocument();
 	});
 
-	describe("loading and error states", () => {
-		it("shows loading state initially", () => {
-			mockGetAggregateOverview.mockImplementation(() => new Promise(() => {}));
-
-			renderWithRouter();
-
-			expect(screen.getByText("加载中...")).toBeInTheDocument();
-		});
-
-		it("shows error state with retry button on failure", async () => {
-			mockGetAggregateOverview.mockRejectedValue(new Error("网络错误"));
-
-			renderWithRouter();
-
-			await waitFor(() => {
-				expect(screen.getByText("加载失败")).toBeInTheDocument();
-			});
-
-			expect(screen.getByText("网络错误")).toBeInTheDocument();
-			expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
-		});
-	});
-
-	describe("empty state", () => {
-		it("shows empty state when no agents exist", async () => {
-			mockGetAggregateOverview.mockResolvedValue({
-				request_id: "req-kanban-7",
-				freshness: {
-					status: "fresh",
-					checked_at: "2026-03-22T12:10:00Z",
-				},
-				partial_failure: false,
-				diagnostics: [],
-				agents: [],
-			});
-
-			renderWithRouter();
-
-			await waitFor(() => {
-				expect(screen.getByText("当前没有可观察的工作信号")).toBeInTheDocument();
-			});
-
-			expect(screen.getByRole("link", { name: "查看拓扑" })).toBeInTheDocument();
-		});
-	});
-
-	describe("column counts", () => {
-		it("shows correct counts in column badges", async () => {
-			mockGetAggregateOverview.mockResolvedValue({
-				request_id: "req-kanban-8",
-				freshness: {
-					status: "fresh",
-					checked_at: "2026-03-22T12:10:00Z",
-				},
-				partial_failure: false,
-				diagnostics: [],
-				agents: [
-					{
-						instance_id: "inst-1",
-						instance_name: "Instance One",
-						agent_id: "ag-1",
-						agent_name: "Agent One",
-						status: "error",
-						is_active: false,
-						last_active_at: null,
-						drilldown_path: "/session/inst-1/ag-1",
-					},
-					{
-						instance_id: "inst-2",
-						instance_name: "Instance Two",
-						agent_id: "ag-2",
-						agent_name: "Agent Two",
-						status: "running",
-						is_active: true,
-						last_active_at: null,
-						drilldown_path: "/session/inst-2/ag-2",
-					},
-					{
-						instance_id: "inst-3",
-						instance_name: "Instance Three",
-						agent_id: "ag-3",
-						agent_name: "Agent Three",
-						status: "idle",
-						is_active: false,
-						last_active_at: null,
-						drilldown_path: "/session/inst-3/ag-3",
-					},
-				],
-			});
-
-			renderWithRouter();
-
-			await waitFor(() => {
-				expect(screen.getByText("Agent One")).toBeInTheDocument();
-			});
-
-			const badges = screen.getAllByText(/\d/);
-			expect(badges.length).toBeGreaterThan(0);
-		});
-	});
-
-	describe("diagnostics priority in column assignment", () => {
-		it("prioritizes diagnostics failure over running status", async () => {
-			mockGetAggregateOverview.mockResolvedValue({
-				request_id: "req-diag-priority-1",
-				freshness: {
-					status: "stale",
-					checked_at: "2026-03-22T14:00:00Z",
-				},
+	it("prioritizes failed diagnostics into attention tasks instead of active signal cards", async () => {
+		mockGetAggregateOverview.mockResolvedValue(
+			buildOverview({
 				partial_failure: true,
 				diagnostics: [
-					{
-						instance_id: "instance-running-but-failed",
-						instance_name: "running-but-failed-instance",
+					buildDiagnostic({
+						instance_id: "instance-failed",
+						instance_name: "failed-instance",
 						status: "failed",
 						freshness: {
 							status: "failed",
-							checked_at: "2026-03-22T13:55:00Z",
+							checked_at: "2026-03-22T12:00:00Z",
 						},
 						error: {
 							code: "source_unavailable",
-							message: "Upstream connection lost",
-							request_id: "req-diag-priority-1",
+							message: "OpenClaw upstream unavailable",
+							request_id: "req-kanban-diag",
 							recoverable: true,
-							next_step: "Check network connectivity",
+							next_step: "检查实例连通性",
 						},
-					},
+					}),
 				],
 				agents: [
-					{
-						instance_id: "instance-running-but-failed",
-						instance_name: "running-but-failed-instance",
-						agent_id: "agent-running-but-failed",
-						agent_name: "Running But Failed Agent",
+					buildAgent({
+						instance_id: "instance-failed",
+						instance_name: "failed-instance",
+						agent_id: "agent-failed",
+						agent_name: "Failed Agent",
 						status: "running",
 						is_active: true,
-						last_active_at: "2026-03-22T14:00:00Z",
-						drilldown_path: "/session/instance-running-but-failed/agent-running-but-failed",
-					},
+						drilldown_path:
+							"/session/agent-failed/__none__/__new__?instanceId=instance-failed",
+					}),
 				],
-			});
+			}),
+		);
 
-			renderWithRouter();
+		renderWithRouter();
 
-			await waitFor(() => {
-				expect(screen.getByText("Running But Failed Agent")).toBeInTheDocument();
-			});
-
-			const needsAttentionColumn = screen.getByTestId("kanban-board").querySelector('[data-column-key="needs_attention"]');
-			expect(within(needsAttentionColumn as HTMLElement).getByText("Running But Failed Agent")).toBeInTheDocument();
-
-			const inProgressColumn = screen.getByTestId("kanban-board").querySelector('[data-column-key="in_progress"]');
-			expect(within(inProgressColumn as HTMLElement).queryByText("Running But Failed Agent")).not.toBeInTheDocument();
+		await waitFor(() => {
+			expect(
+				screen.getByRole("heading", { name: "处理 Failed Agent 的异常阻塞" }),
+			).toBeInTheDocument();
 		});
 
-		it("prioritizes diagnostics failure over finished status", async () => {
-			mockGetAggregateOverview.mockResolvedValue({
-				request_id: "req-diag-priority-2",
-				freshness: {
-					status: "stale",
-					checked_at: "2026-03-22T14:00:00Z",
-				},
+		const needsAttentionColumn = screen
+			.getByTestId("kanban-board")
+			.querySelector('[data-column-key="needs_attention"]');
+		expect(needsAttentionColumn).not.toBeNull();
+		expect(
+			within(needsAttentionColumn as HTMLElement).getByRole("heading", {
+				name: "处理 Failed Agent 的异常阻塞",
+			}),
+		).toBeInTheDocument();
+		expect(
+			within(needsAttentionColumn as HTMLElement).getByText("OpenClaw upstream unavailable"),
+		).toBeInTheDocument();
+		expect(
+			within(needsAttentionColumn as HTMLElement).getByRole("link", {
+				name: "进入 session 工作区",
+			}),
+		).toHaveAttribute(
+			"href",
+			"/session/agent-failed/__none__/__new__?instanceId=instance-failed",
+		);
+
+		const inProgressColumn = screen
+			.getByTestId("kanban-board")
+			.querySelector('[data-column-key="in_progress"]');
+		expect(inProgressColumn).not.toBeNull();
+		expect(
+			within(inProgressColumn as HTMLElement).queryByRole("heading", {
+				name: "处理 Failed Agent 的异常阻塞",
+			}),
+		).not.toBeInTheDocument();
+	});
+
+	it("keeps the main board container contract stable", async () => {
+		mockGetAggregateOverview.mockResolvedValue(
+			buildOverview({
+				agents: [buildAgent({ agent_name: "Stable Agent" })],
+			}),
+		);
+
+		renderWithRouter();
+
+		await waitFor(() => {
+			expect(
+				screen.getByRole("heading", { name: "推进 Stable Agent 当前任务" }),
+			).toBeInTheDocument();
+		});
+
+		const kanbanBoard = screen.getByTestId("kanban-board");
+		expect(kanbanBoard).toBeInTheDocument();
+		expect(kanbanBoard).toHaveTextContent("推进 Stable Agent 当前任务");
+	});
+
+	it("shows request clues for reconciliation in successful and partial-success states", async () => {
+		mockGetAggregateOverview.mockResolvedValue(
+			buildOverview({
 				partial_failure: true,
 				diagnostics: [
-					{
-						instance_id: "instance-finished-but-failed",
-						instance_name: "finished-but-failed-instance",
+					buildDiagnostic(),
+					buildDiagnostic({
+						instance_id: "instance-failed",
+						instance_name: "failed-instance",
 						status: "failed",
 						freshness: {
 							status: "failed",
-							checked_at: "2026-03-22T13:50:00Z",
+							checked_at: "2026-03-22T11:45:00Z",
 						},
 						error: {
-							code: "timeout",
-							message: "Instance health check timed out",
-							request_id: "req-diag-priority-2",
-							recoverable: false,
-							next_step: null,
+							code: "source_unavailable",
+							message: "OpenClaw upstream unavailable",
+							request_id: "req-kanban-diag",
+							recoverable: true,
+							next_step: "检查实例连通性",
 						},
-					},
+					}),
 				],
-				agents: [
-					{
-						instance_id: "instance-finished-but-failed",
-						instance_name: "finished-but-failed-instance",
-						agent_id: "agent-finished-but-failed",
-						agent_name: "Finished But Failed Agent",
-						status: "finished",
-						is_active: false,
-						last_active_at: "2026-03-22T13:45:00Z",
-						drilldown_path: "/session/instance-finished-but-failed/agent-finished-but-failed",
+				agents: [buildAgent()],
+			}),
+		);
+
+		renderWithRouter();
+
+		await waitFor(() => {
+			expect(screen.getByText("request_id · req-kanban")).toBeInTheDocument();
+		});
+
+		expect(screen.getByText("freshness · 数据新鲜")).toBeInTheDocument();
+		expect(screen.getByText("checked_at · 2026-03-22T12:10:00Z")).toBeInTheDocument();
+		expect(screen.getByText("diagnostics · 2 total / 1 failed")).toBeInTheDocument();
+		expect(screen.getByText("部分数据不可用")).toBeInTheDocument();
+		expect(screen.getByTestId("kanban-board")).toHaveTextContent(
+			"推进 Alpha Agent 当前任务",
+		);
+	});
+
+	it("re-reads aggregate overview when refresh is triggered from the successful state", async () => {
+		mockGetAggregateOverview
+			.mockResolvedValueOnce(
+				buildOverview({
+					agents: [buildAgent()],
+				}),
+			)
+			.mockResolvedValueOnce(
+				buildOverview({
+					request_id: "req-kanban-2",
+					freshness: {
+						status: "stale",
+						checked_at: "2026-03-22T12:15:00Z",
 					},
-				],
-			});
+					agents: [buildAgent()],
+				}),
+			);
+
+		renderWithRouter();
+
+		await waitFor(() => {
+			expect(screen.getByText("request_id · req-kanban")).toBeInTheDocument();
+		});
+
+		fireEvent.click(screen.getByRole("button", { name: "刷新任务板" }));
+
+		await waitFor(() => {
+			expect(screen.getByText("request_id · req-kanban-2")).toBeInTheDocument();
+		});
+
+		expect(mockGetAggregateOverview).toHaveBeenCalledTimes(2);
+		expect(screen.getByText("当前展示的是滞后任务板")).toBeInTheDocument();
+	});
+
+	describe("loading and error states", () => {
+		it("keeps the board shell visible while aggregate overview is loading", () => {
+			const deferred = createDeferredPromise<AggregateOverviewResponse>();
+			mockGetAggregateOverview.mockReturnValue(deferred.promise);
+
+			renderWithRouter();
+
+			expect(screen.getByRole("heading", { name: "看板" })).toBeInTheDocument();
+			expect(screen.getAllByText("正在同步 kanban 聚合状态")).toHaveLength(2);
+			expect(screen.getByText("任务板加载中")).toBeInTheDocument();
+			expect(screen.getByRole("heading", { name: "待处理" })).toBeInTheDocument();
+			expect(screen.getByRole("heading", { name: "推进中" })).toBeInTheDocument();
+		});
+
+		it("shows a readable failed state with request evidence and retry", async () => {
+			mockGetAggregateOverview.mockRejectedValue(
+				new ApiError(503, "OpenClaw upstream unavailable", {
+					code: "source_unavailable",
+					message: "OpenClaw upstream unavailable",
+					request_id: "req-kanban-503",
+					recoverable: true,
+					next_step: "检查实例连通性后重试",
+				}),
+			);
 
 			renderWithRouter();
 
 			await waitFor(() => {
-				expect(screen.getByText("Finished But Failed Agent")).toBeInTheDocument();
+				expect(screen.getByText("任务板暂时不可用")).toBeInTheDocument();
 			});
 
-			const needsAttentionColumn = screen.getByTestId("kanban-board").querySelector('[data-column-key="needs_attention"]');
-			expect(within(needsAttentionColumn as HTMLElement).getByText("Finished But Failed Agent")).toBeInTheDocument();
-
-			const completedColumn = screen.getByTestId("kanban-board").querySelector('[data-column-key="completed"]');
-			expect(within(completedColumn as HTMLElement).queryByText("Finished But Failed Agent")).not.toBeInTheDocument();
+			expect(screen.getByText("request_id · req-kanban-503")).toBeInTheDocument();
+			expect(screen.getByText("code · source_unavailable")).toBeInTheDocument();
+			expect(screen.getByText("OpenClaw upstream unavailable")).toBeInTheDocument();
+			expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
 		});
 
-		it("places running agent in in_progress when no diagnostic failure", async () => {
-			mockGetAggregateOverview.mockResolvedValue({
-				request_id: "req-diag-priority-3",
+		it("shows an explicit unauthorized state instead of a generic failure state", async () => {
+			mockGetAggregateOverview.mockRejectedValue(
+				new ApiError(401, "Unauthorized", {
+					code: "unauthorized",
+					message: "Unauthorized",
+					request_id: "req-kanban-401",
+					recoverable: true,
+					next_step: "重新登录后重试",
+				}),
+			);
+
+			renderWithRouter();
+
+			await waitFor(() => {
+				expect(screen.getByText("当前无权查看任务板")).toBeInTheDocument();
+			});
+
+			expect(screen.queryByText("任务板暂时不可用")).not.toBeInTheDocument();
+			expect(screen.getByText("request_id · req-kanban-401")).toBeInTheDocument();
+			expect(screen.getByText("重新登录后重试")).toBeInTheDocument();
+		});
+
+		it("re-reads aggregate overview when retry is triggered from the failed state", async () => {
+			mockGetAggregateOverview
+				.mockRejectedValueOnce(
+					new ApiError(503, "OpenClaw upstream unavailable", {
+						code: "source_unavailable",
+						message: "OpenClaw upstream unavailable",
+						request_id: "req-kanban-503",
+						recoverable: true,
+						next_step: "检查实例连通性后重试",
+					}),
+				)
+				.mockResolvedValueOnce(
+					buildOverview({
+						request_id: "req-kanban-recovered",
+						agents: [buildAgent()],
+					}),
+				);
+
+			renderWithRouter();
+
+			await waitFor(() => {
+				expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByRole("button", { name: "重试" }));
+
+			await waitFor(() => {
+				expect(screen.getByText("request_id · req-kanban-recovered")).toBeInTheDocument();
+			});
+
+			expect(mockGetAggregateOverview).toHaveBeenCalledTimes(2);
+		});
+	});
+
+	it("keeps the board shell visible with explicit empty-state language when no tasks can be derived", async () => {
+		mockGetAggregateOverview.mockResolvedValue(buildOverview());
+
+		renderWithRouter();
+
+		await waitFor(() => {
+			expect(screen.getByText("当前还没有可派生的任务卡")).toBeInTheDocument();
+		});
+
+		expect(screen.getByTestId("kanban-board")).toBeInTheDocument();
+		expect(screen.getByRole("heading", { name: "待处理" })).toBeInTheDocument();
+		expect(screen.getByRole("heading", { name: "推进中" })).toBeInTheDocument();
+		expect(screen.getByRole("heading", { name: "待确认" })).toBeInTheDocument();
+		expect(screen.getByRole("heading", { name: "已收尾" })).toBeInTheDocument();
+		expect(
+			screen.getByText("当前板面已就绪，但还没有真实任务信号进入各列。"),
+		).toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "去 topology 核对入口" })).toBeInTheDocument();
+	});
+
+	it("shows an explicit stale notice while keeping task-board content visible", async () => {
+		mockGetAggregateOverview.mockResolvedValue(
+			buildOverview({
 				freshness: {
-					status: "fresh",
-					checked_at: "2026-03-22T14:00:00Z",
+					status: "stale",
+					checked_at: "2026-03-22T11:40:00Z",
 				},
-				partial_failure: false,
-				diagnostics: [
-					{
-						instance_id: "instance-healthy",
-						instance_name: "healthy-instance",
-						status: "healthy",
-						freshness: {
-							status: "fresh",
-							checked_at: "2026-03-22T13:59:00Z",
-						},
-					},
-				],
-				agents: [
-					{
-						instance_id: "instance-healthy",
-						instance_name: "healthy-instance",
-						agent_id: "agent-healthy",
-						agent_name: "Healthy Running Agent",
-						status: "running",
-						is_active: true,
-						last_active_at: "2026-03-22T14:00:00Z",
-						drilldown_path: "/session/instance-healthy/agent-healthy",
-					},
-				],
-			});
+				agents: [buildAgent()],
+			}),
+		);
 
-			renderWithRouter();
+		renderWithRouter();
 
-			await waitFor(() => {
-				expect(screen.getByText("Healthy Running Agent")).toBeInTheDocument();
-			});
-
-			const inProgressColumn = screen.getByTestId("kanban-board").querySelector('[data-column-key="in_progress"]');
-			expect(within(inProgressColumn as HTMLElement).getByText("Healthy Running Agent")).toBeInTheDocument();
-
-			const needsAttentionColumn = screen.getByTestId("kanban-board").querySelector('[data-column-key="needs_attention"]');
-			expect(within(needsAttentionColumn as HTMLElement).queryByText("Healthy Running Agent")).not.toBeInTheDocument();
+		await waitFor(() => {
+			expect(screen.getByText("当前展示的是滞后任务板")).toBeInTheDocument();
 		});
 
-		it("places finished agent in completed when no diagnostic failure", async () => {
-			mockGetAggregateOverview.mockResolvedValue({
-				request_id: "req-diag-priority-4",
-				freshness: {
-					status: "fresh",
-					checked_at: "2026-03-22T14:00:00Z",
-				},
-				partial_failure: false,
-				diagnostics: [
-					{
-						instance_id: "instance-done",
-						instance_name: "done-instance",
-						status: "healthy",
-						freshness: {
-							status: "fresh",
-							checked_at: "2026-03-22T13:58:00Z",
-						},
-					},
-				],
-				agents: [
-					{
-						instance_id: "instance-done",
-						instance_name: "done-instance",
-						agent_id: "agent-done",
-						agent_name: "Done Agent",
-						status: "finished",
-						is_active: false,
-						last_active_at: "2026-03-22T13:55:00Z",
-						drilldown_path: "/session/instance-done/agent-done",
-					},
-				],
-			});
-
-			renderWithRouter();
-
-			await waitFor(() => {
-				expect(screen.getByText("Done Agent")).toBeInTheDocument();
-			});
-
-			const completedColumn = screen.getByTestId("kanban-board").querySelector('[data-column-key="completed"]');
-			expect(within(completedColumn as HTMLElement).getByText("Done Agent")).toBeInTheDocument();
-
-			const needsAttentionColumn = screen.getByTestId("kanban-board").querySelector('[data-column-key="needs_attention"]');
-			expect(within(needsAttentionColumn as HTMLElement).queryByText("Done Agent")).not.toBeInTheDocument();
-		});
+		expect(screen.getByTestId("kanban-board")).toHaveTextContent(
+			"推进 Alpha Agent 当前任务",
+		);
+		expect(screen.getByText("freshness · 数据滞后")).toBeInTheDocument();
 	});
 });
