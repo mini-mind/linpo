@@ -1,401 +1,744 @@
-# Linpo v0.6 UI Design Realignment
+# Linpo v0.6 新 5 页 IA 对齐唯一计划
 
-## TL;DR
-> **Summary**: Re-align the four observer pages so each page has a sharply different interface role: `overview` becomes an agents-first watchlist, `topology` becomes a pure auto-laid-out graph canvas, `kanban` becomes a mission-control-style read-only board, and `session` becomes a minimal message view.
-> **Deliverables**:
-> - Freeze the visual/interaction truth in docs
-> - Rebuild `overview`, `topology`, `kanban`, `session` to the confirmed design
-> - Preserve canonical drill-down routes and existing observer-only product boundaries
-> - Re-run frontend/backend/Playwright verification with new selectors and evidence
-> **Effort**: Large
-> **Parallel**: YES - 2 waves
-> **Critical Path**: 1 → 2 → 3/4/5/6 → 7
+> **状态**：ACTIVE
+> **用途**：当前阶段唯一执行入口
+> **目标**：把 Linpo 从旧的 4 页 observer 口径整体迁移为用户最新确认的 5 页 IA：`overview / topology / kanban / team / session`，并以此作为后续实现、全面审查、复审补齐与投产收口的唯一 plan 基线。
 
-## Context
-### Original Request
-- 用户在验收时指出“页面跟设计完全不一致”，并明确要求纠正信息架构、视觉风格、交互方式、内容表达。
+---
 
-### Interview Summary
-- `overview`: 必须以 agents 卡片列表为主舞台；次要信息与摘要只能缩到顶部或侧边的极小区域，不能挤占列表。
-- `topology`: 必须是更图形化的 graph 关系图，并带自动布局；页面内容只保留关系图，不混入配置详情、统计摘要或运行控制。
-- `kanban`: 必须参照 `../openclaw-mission-control` 的看板界面，且对齐强度是“近似复刻”结构、列节奏、卡片层级，只替换为 Linpo 语义。
-- `session`: 默认可见内容只保留极简标题、消息流、底部输入区；不要多标签页、状态区、侧栏；PC 端必须控制消息流宽度并保留左右留白。
+## 1. 当前阶段唯一目标
 
-### Confirmed Design Decisions
-- `overview`: 主舞台固定为 agents roster/watchlist；summary strip 仅能放 aggregate freshness、实例/异常数、轻量筛选这类极小辅助信息。
-- `topology`: 页面内容原则上只有 graph 关系图；允许的外围 UI 仅限极简标题区与 fit/reset 级别画布控件。
-- `kanban`: 近似复刻 Mission Control `TaskBoard` 的列节奏、卡片层级和 board 语言；Linpo 语义为只读观察，不复制拖拽写回或审批语义。
-- `session`: 页面默认只保留极简标题、单列消息流、底部输入区；桌面端中心阅读带最大宽度固定 `880px`。
+当前阶段只做一件事：
 
-### Metis Review (gaps addressed)
-- Guardrail incorporated: 这是 UI hierarchy / visual language correction，不是 IA 重写，也不是功能扩展。
-- Guardrail incorporated: `kanban` 只借鉴任务板语言，不复制 Mission Control 的拖拽写操作；Linpo 仍是 observer-only。
-- Guardrail incorporated: 每页都必须覆盖 `loading / empty / error / partial / retry` 中适用的状态矩阵，避免只“看起来像”。
-- Defaults applied: `topology` 允许极少量浮层，仅限 loading overlay、error overlay、fit/reset 控件；不允许详情侧栏、配置侧栏、统计卡。
-- Defaults applied: `session` 桌面端阅读带最大宽度固定为 `880px`，输入区与消息流共用同一宽度基线。
+把 Linpo 的当前 active UI 基线，整体替换为以下 **5 页 IA**：
 
-## Work Objectives
-### Core Objective
-- 在不改变 v0.6 observer-only 产品边界的前提下，把四个主页面改造成与用户确认设计一致的界面体系，并让文档、组件测试、Playwright 验收和现有 canonical 路由保持一致。
+- `/overview`
+- `/topology`
+- `/kanban`
+- `/team`
+- `/session`（实际路由形态见本计划第 6 节）
 
-### Deliverables
-- README / PRD / architecture 中补足 UI 设计真源与 guardrails
-- 新的 `overview` agents-first 列表页
-- 新的 `topology` graph-only 关系图页（自动布局）
-- 新的 `kanban` mission-control-style read-only 看板页
-- 新的 `session` 极简消息页
-- 更新后的页面测试、Playwright 场景与 evidence
+其中：
 
-### Definition of Done (verifiable conditions with commands)
-- `npm --prefix frontend run test -- src/components/OverviewPage.test.tsx src/components/InstanceTopology.test.tsx src/components/CollabPage.test.tsx src/components/SessionPage.test.tsx`
+- `overview` 是主页，也是默认入口
+- `topology` 是 IA 第一页
+- `kanban` 是 IA 第二页
+- `team` 是 IA 第三页
+- `session` 是从某个 agent 进入的会话工作区页
+
+当前阶段不新增第六个有效页面；`settings / profile` 明确列为 **out-of-scope / 暂缓**，不得被写成当前有效 IA，也不得在验收中冒充当前阶段完成项。
+
+本阶段“可投产”含义固定为：
+
+- 5 页 IA、页面职责、术语、路由语义、验证门禁全部切换到新世界观
+- 已部署前后端地址可访问
+- 浏览器级验收以已部署环境为准并可复现
+- refresh / retry / 状态展示命中真实读链路
+- 关键测试、build、健康检查通过
+- 唯一留痕载体完整存在，足以支撑下一轮全面审查与复审补齐
+
+当前阶段不处理：
+
+- `v0.6` 之后的长期版本设计
+- `settings / profile` 的产品定义与实现展开
+- 与新 5 页 IA 无直接关系的额外页面扩张
+
+---
+
+## 2. 旧条款失效与新条款接管
+
+本计划从本次重写起，明确替换旧 plan 中整套 4 页体系。以下旧条款 **全部失效**，不得继续作为当前执行依据：
+
+| 旧条款/旧口径 | 状态 | 新接管条款 |
+|------|------|------|
+| 当前有效页面只有 `overview / topology / kanban / session` 四页 | 失效 | 当前有效页面固定为 `overview / topology / kanban / team / session` 五页 |
+| `overview = agents-first watchlist` | 失效 | `overview = 主页/默认入口`，顶部汇总 token 与 agent 状态，主舞台为按实例分组的近期 token 消耗曲线，右侧为全局事件列表 |
+| `topology = graph-only 关系画布，但仍沿用旧实例/agent/skill/ACP 语义` | 失效 | `topology = 满屏 routing graph`，泳道固定为 `实例 / 智能体 / 会话 / 工具`，节点为圆形，从属关系连线参考可移植锚点 `openclaw/geteway-routing-graph` |
+| `kanban = Mission Control 风格只读板` | 失效 | `kanban = 任务板`，每张卡片一个任务，能力边界直接对齐可移植锚点 `openclaw/mission-control`，不再预设为“只读阉割版” |
+| `team` 不存在或被当作附录能力 | 失效 | `team = 当前有效第三页`，直接参考可移植锚点 `openclaw/center` 的 `Staff` 页面，承接 persistent agent cards |
+| `session = 单会话极简 drill-down` | 失效 | `session = 可开放对话的会话工作区`，从 agent 进入，左侧栏固定为“渠道在上，会话在下”，主区域为当前会话 |
+| `session` 只保留 title / stream / input 的极简单列布局 | 失效 | `session` 必须支持渠道与会话切换，不再允许把它收缩回旧的单列极简页 |
+| `overview / topology / kanban` 三页统一进入 `/session/:instanceId/:agentId` | 失效 | 会话进入改为“基于 agent 上下文的进入规则”，不再保留旧的三页统一进入语义 |
+| 以 `observer-only` 作为总边界 | 失效 | 新边界改为“只实现本计划冻结的 5 页 IA 与其确认能力，不扩张到未冻结页面、系统设置面、运行控制面或长期平台能力” |
+| 旧四页状态矩阵、旧四页验收清单、旧四页阻断项 | 失效 | 全量替换为本计划第 7 节、第 10 节、第 12 节定义的 5 页职责、矩阵、门禁与阻断规则 |
+| 旧 `/session/:instanceId/:agentId` 单一路由语义 | 失效 | 新 session 路由必须能表达 agent / channel / current session 的当前上下文；旧路径如保留，只能作为兼容入口，不得继续代表当前产品语义 |
+
+凡是旧 plan 中与上表冲突的内容，一律以本次重写后的新条款为准；不得保留旧骨架再做补丁式解释。
+
+---
+
+## 3. 当前有效页面集合、职责与 out-of-scope
+
+### 3.1 当前唯一有效页面集合
+
+| 页面 | 路由语义 | 当前角色 | 冻结结论 |
+|------|------|------|------|
+| `overview` | `/overview` | 主页 / 默认入口 | 有效 |
+| `topology` | `/topology` | IA 第一页 | 有效 |
+| `kanban` | `/kanban` | IA 第二页 | 有效 |
+| `team` | `/team` | IA 第三页 | 有效 |
+| `session` | `/session` 语义页，具体 URL 需承载 agent/channel/session 上下文 | 会话工作区 | 有效 |
+
+### 3.2 明确暂缓项
+
+以下内容当前明确为 **out-of-scope / 暂缓**：
+
+- `settings`
+- `profile`
+
+对上述页面的处理规则固定为：
+
+- 不纳入当前有效 IA 页面集合
+- 不纳入当前阶段实现完成定义
+- 不纳入当前阶段主链路浏览器验收
+- 不得作为本轮补充页面偷渡进入导航、状态矩阵或完成标准
+
+---
+
+## 4. 页面参考锚点与冻结方式
+
+执行时必须先锁定参考锚点到具体 commit SHA，并将路径/对象 + SHA 记入唯一留痕载体。未锁定前，不得宣称“已完成对齐”。
+
+### 4.1 页面级参考锚点
+
+#### overview
+- 主参考锚点：`LINPO-OVERVIEW-HOME-V1`
+- 该锚点固定指向：主页默认入口结构，且必须同时包含顶部 token/agent 状态统计区、按实例分组的近期 token 曲线主舞台、右侧全局事件列表三块
+- 执行前必须在唯一留痕载体中把 `LINPO-OVERVIEW-HOME-V1` 绑定到具体实现路径、页面对象或设计样本；不得以“用户已确认”这类口头语义代替可复核对象
+- 设计锚点：主页默认入口、顶部统计条、按实例分组的近期 token 消耗曲线、右侧全局事件列表
+- 对齐重点：主页结构、信息密度、曲线阅读优先级、全局事件侧栏
+- 明确不对齐：watchlist 首页、dashboard 大卡片首页、报告式首页、只保留 agent 列表的旧设计
+
+#### topology
+- 主参考锚点：可移植仓库标识固定为 `openclaw/geteway-routing-graph`；`../openclaw-geteway-routing-graph` 仅作为当前机器上的本地便利映射，不得单独作为唯一参考标识
+- 对齐重点：满屏画布、泳道分层、圆形节点、从属连线、关系图浏览节奏
+- 泳道冻结为：`实例 / 智能体 / 会话 / 工具`
+- 明确不对齐：旧的 graph-only 极简画布口径、旧 skill / ACP 专属语义、右侧详情侧栏工作台
+
+#### kanban
+- 主参考锚点：可移植仓库标识固定为 `openclaw/mission-control`；`../openclaw-mission-control` 仅作为当前机器上的本地便利映射，不得单独作为唯一参考标识
+- 对齐重点：任务板结构、列组织、卡片层级、任务推进与板面能力
+- 卡片聚合单位冻结为：`每张卡片 = 一个任务`
+- 明确不对齐：只读信号板、按 agent 聚合卡片、把 kanban 缩回 overview 衍生页
+
+#### team
+- 主参考锚点：可移植仓库标识固定为 `openclaw/center` 的 `Staff` 页面；`../openclaw-center` 仅作为当前机器上的本地便利映射，不得单独作为唯一参考标识
+- 对齐重点：persistent agent cards、卡片密度、人员/席位式布置、卡片作为会话入口
+- 卡片最小字段冻结为：agent 名字、实例名字、状态、最后会话时间、最后一次会话开头文字截断、头像
+- 明确不对齐：附录页、可选页、只做一个 agent 列表子组件
+
+#### session
+- 主参考锚点：`LINPO-SESSION-WORKSPACE-V1`
+- 该锚点固定指向：agent header、左侧渠道区、左侧会话区、当前会话主区、输入发送区五块同时成立的会话工作区
+- 执行前必须在唯一留痕载体中把 `LINPO-SESSION-WORKSPACE-V1` 绑定到具体实现路径、页面对象与 SHA；不得以“当前确认”或“当前实现整体”代替可复核对象
+- 对齐重点：可开放对话、从 agent 进入、左侧栏“渠道在上，会话在下”、主区域当前会话
+- 明确不对齐：旧的单会话极简 drill-down、只读会话页、没有 sidebar 的极简单列承接页
+
+### 4.2 参考裁决规则
+
+当参考锚点与当前计划约束发生冲突时，裁决优先级固定为：
+
+1. 本计划定义的 5 页 IA 与页面职责
+2. 已部署环境可验证性与真实读链路
+3. 页面级参考锚点与结构语言
+4. 视觉密度与样式接近程度
+
+允许语义等价实现；不允许为了贴近旧参考或旧 plan 文字，继续保留四页世界观。
+
+### 4.3 overview / session 锚点精度补充
+
+为避免 `overview` 与 `session` 的锚点继续自指或漂移，执行前必须在唯一留痕载体中额外冻结以下对象：
+
+- `overview`：当前确认的主页结构样本，至少包含顶部统计区、实例 token 曲线主舞台、右侧全局事件列表三块的对应实现路径或页面对象
+- `session`：当前确认的会话工作区样本，至少包含 agent header、左侧渠道区、左侧会话区、当前会话主区、输入发送区的对应实现路径或页面对象
+
+若未冻结到可独立定位的实现路径、页面对象或设计样本，一律不得宣称该页已完成对齐。
+
+---
+
+## 5. 术语体系冻结
+
+从本计划起，当前阶段统一使用以下术语：
+
+| 术语 | 定义 |
+|------|------|
+| `overview` | 主页 / 默认入口；展示总体 token 与 agent 状态概览、按实例分组的近期 token 曲线、全局事件列表 |
+| `topology` | routing graph 页面；满屏画布，按实例/智能体/会话/工具四条泳道组织结构 |
+| `kanban` | 任务板；每卡一个任务，能力面对齐可移植锚点 `openclaw/mission-control` |
+| `team` | 团队页；以 persistent agent cards 承接人员/席位式 agent 入口 |
+| `session` | 会话工作区；从 agent 进入，带渠道区与会话区，可继续开放对话 |
+| `channel` | session 左侧栏上半区对象，用于切换通信渠道或对话来源 |
+| `session item` | session 左侧栏下半区对象，用于切换具体会话 |
+| `persistent agent card` | team 页核心卡片；指向一个长期存在的 agent 身份入口 |
+| `global event list` | overview 右侧全局事件流，不是 session 消息流替身 |
+| `real read chain` | 页面 refresh / retry / 首次加载都必须命中真实后端读取，不得用 fixture/mock/static snapshot 冒充 |
+| `唯一留痕载体` | 本轮变更随仓库一并提交的执行/验收记录文件；本计划要求记录的路径、SHA、裁决、验收证据都必须落在这里 |
+
+以下旧术语明确废弃，不得在当前 plan 执行语义里继续使用：
+
+- `observer-only`
+- `watchlist overview`
+- `kanban 只读板`
+- `session 单会话极简 drill-down`
+- `overview / topology / kanban 三页统一进入 session`
+- `四页冻结语义`
+
+---
+
+## 6. 路由与跨页进入规则
+
+### 6.1 导航与页面层级
+
+- 默认落点固定为 `/overview`
+- 主 IA 顺序固定为：`overview -> topology -> kanban -> team`
+- `session` 是上下文工作区页，不是被旧四页逻辑吸进去的末级极简页
+- 当前阶段不得新增第六个有效主页面来分担 `team` 或 `session` 职责
+
+### 6.2 session 路由语义替换
+
+新 `session` 路由必须满足以下要求：
+
+- 当前阶段唯一 canonical session 路由固定为：`/session/:agentId/:channelKey/:sessionKey`
+- 当某个 agent 当前不存在任何可用 channel 与可用 session 时，空工作区 canonical 路由固定为：`/session/:agentId/__none__/__new__`
+- 当某个 agent 已有可用 channel、但当前没有可用具体 session 时，空会话 canonical 路由固定为：`/session/:agentId/:channelKey/__new__`
+- 保留字冻结为：`__none__` 与 `__new__`；真实 `channelKey` 与 `sessionKey` 不得取这两个值，若外部系统存在同名 key，进入当前系统前必须先做稳定转义
+- 稳定转义规则固定为：任何保留字冲突都必须采用前缀转义 `x--<original>`；反转义规则固定为仅当值以前缀 `x--` 开头且去前缀后恰好命中保留字时才执行反转义，不允许使用第二套编码/哈希/URL-safe 变体
+- “可用 channel” 固定指：当前 agent 下可被真实读取、可在左侧渠道区列出且非 unauthorized/failed 占位对象的 channel
+- “可用 session” 固定指：当前 agent/channel 下可被真实读取、可在左侧会话区列出且非 unauthorized/failed 占位对象的具体 session
+- 其中 `agentId`、`channelKey`、`sessionKey` 都必须是可稳定恢复当前上下文的显式 URL 参数
+- URL 需要能表达当前 agent 上下文
+- URL 需要能恢复当前 channel 上下文
+- URL 需要能恢复当前 session 上下文
+- URL 中三类上下文的默认真源优先级固定为：显式 URL 参数 > 服务端解析出的当前有效对象 > 客户端本地记忆；若三者冲突，必须以此顺序裁决并在唯一留痕载体中记录
+- 不允许仅靠客户端内存态恢复 channel 或当前 session
+- 如果当前实现仍保留旧 `/session/:instanceId/:agentId` 形态，该路径只能视为兼容入口或降级入口，不得继续代表当前产品完整语义
+- 旧 `/session/:instanceId/:agentId` 不得作为浏览器主链路验收、默认导航、页面设计说明或放行证据中的标准 session 路由样本
+- 不允许再把 `instanceId + agentId` 单独视为 session 的唯一真源
+
+### 6.3 进入规则
+
+- `team`：点击 persistent agent card 必须进入该 agent 对应的 session 工作区；默认落点固定为“该 agent 最近活跃的 channel 下的最近活跃 session”；“最近活跃”统一按会话最后活动时间排序，若并列则按稳定唯一 session 标识排序；若不存在任何可用 session，则进入该 agent 的空工作区骨架并要求用户在侧栏选择/创建会话上下文
+- `topology`：只有 `智能体` 与 `会话` 泳道节点允许直接进入 session；`实例` 与 `工具` 节点默认不得直接进入 session，除非当前节点已绑定唯一可恢复的 agent/session 上下文。所谓“绑定成立”固定指：执行该进入动作时，不需要额外用户选择，就能唯一恢复到一个 agent 工作区或一个具体 session，且该恢复规则已写入唯一留痕载体
+- `topology`：若同一节点同时能映射 agent 与具体 session，默认优先进入具体 session；若无法唯一确定具体 session，则退回该 agent 工作区默认落点
+- `overview`：仅以下对象允许直接进入 session：右侧全局事件列表中的 agent/session 相关事件、以及已在实现中绑定唯一 agent 上下文的图表交互对象。所谓“绑定唯一 agent 上下文”固定指：点击该对象时能唯一恢复一个 agent 工作区，且不需要再做实例/agent 二次选择
+- `overview`：顶部统计卡与仅有实例维度的曲线点默认不得直接进入 session
+- `overview`：默认首屏查询上下文固定为“全部实例 + 近期时间窗”；若实现支持记忆上次筛选，只能在不破坏该默认态可恢复性的前提下启用
+- `kanban`：任务卡若只绑定单一 `agent/channel/session` 组合，则直接进入对应 session；若绑定单一 agent 但存在多个 channel/session，则进入该 agent 工作区默认落点；若绑定多组关联，则不得擅自选择，必须先进入任务上下文或要求用户显式选择
+- `kanban`：所谓“进入任务上下文”固定指进入当前任务卡已存在的详情承接对象或当前板面内的任务上下文承接容器；不得借此新增第六个有效页面
+- `kanban`：只有在关联唯一会话上下文时，才允许把任务卡点击直接定义为 session 进入动作
+- `session`：当显式 URL 参数指向失效对象时，处理优先级固定为：先判断是否 `unauthorized`；若是，则进入未授权态；若不是未授权而是对象不存在或已失效，则进入失败态并禁止静默回退到其他对象；只有在 URL 未显式指定对应上下文时，才允许退回服务端当前有效对象或客户端记忆
+- 不再保留“只要来自 overview / topology / kanban 就统一跳某个旧 canonical session”的语义
+
+### 6.4 返回与状态恢复
+
+- 从 `session` 返回来源页时，来源页需尽量恢复其上下文
+- `overview` 最低恢复：时间范围、实例筛选、曲线滚动位置、右侧事件列表定位
+- `topology` 最低恢复：视口、当前聚焦节点/边、泳道折叠状态
+- `kanban` 最低恢复：当前列/筛选/横向滚动位置
+- `team` 最低恢复：筛选、滚动位置、当前卡片聚焦
+- 若恢复失败，只允许退回该页稳定默认态，不得随机跳转到其他对象
+
+---
+
+## 7. 5 页页面职责与交互冻结
+
+### 7.1 overview
+
+`overview` 是主页，也是默认入口。它不再承担旧 watchlist 首页语义。
+
+**必须成立：**
+
+- 顶部固定展示 token 统计与 agent 状态统计
+- 主区域固定为“每个实例的近期 token 消耗曲线”
+- 右侧固定保留全局事件列表
+- 页面优先回答：当前各实例最近消耗如何、agent 总体状态如何、刚刚发生了什么
+- refresh / retry 必须命中真实读链路，且能在曲线、统计或事件列表中体现刷新结果
+
+**明确禁止：**
+
+- 退回旧 watchlist 列表主舞台
+- 退回 dashboard 大卡片首页
+- 退回只按 agent 卡片巡视的旧结构
+- 把全局事件列表塞进主区域，或把 token 曲线降级成附属图表
+
+### 7.2 topology
+
+`topology` 是 IA 第一页，承担 routing graph 主舞台。
+
+**必须成立：**
+
+- 页面为满屏画布，不回退成多栏工作台
+- 泳道固定为：实例 / 智能体 / 会话 / 工具
+- 节点形状固定为圆形
+- 节点之间使用从属/依赖关系连线
+- 结构语言直接参考可移植锚点 `openclaw/geteway-routing-graph`
+- 交互优先服务于关系浏览、定位与切换，不引入旧世界观里的无关对象类型
+
+**明确禁止：**
+
+- 把 `skill / ACP` 继续冻结为当前 plan 的一等泳道对象
+- 回退到旧的 graph-only 极简示意图而不承接 session / tool 泳道
+- 重新长出详情侧栏、配置面板、统计面板挤占主舞台
+
+### 7.3 kanban
+
+`kanban` 是 IA 第二页，承担任务板语义。
+
+**必须成立：**
+
+- 每张卡片对应一个任务，而不是一个 agent
+- 板面能力、列组织、交互方式直接对齐可移植锚点 `openclaw/mission-control`
+- 当前 plan 不再预先把 kanban 冻结为“只读板”
+- 页面重点是任务推进、协作状态与任务级上下文，而不是旧信号看板
+- 若任务与 agent / session 相关联，允许以任务上下文进入 session 工作区
+
+**明确禁止：**
+
+- 把 kanban 再收缩回只读信号墙
+- 用旧 `Mission Control 风格只读板` 文案继续定义当前页面
+- 用 agent 卡片代替 task card
+
+### 7.4 team
+
+`team` 是 IA 第三页，不是附录，不是可选页。
+
+**必须成立：**
+
+- 页面直接参考可移植锚点 `openclaw/center` 的 `Staff` 页面
+- 页面核心对象是 persistent agent cards
+- 每张卡片最小字段必须包含：agent 名字、实例名字、状态、最后会话时间、最后一次会话开头文字截断、头像
+- 点击卡片必须进入该 agent 对应的 session 工作区
+- 页面承担“从团队视角进入 agent”的入口职责，而不是 overview 的附属分栏
+
+**明确禁止：**
+
+- 把 team 写成 appendix、future work 或 optional page
+- 只做一个平铺 agent 列表，不体现 staff / persistent cards 语义
+- 点击卡片后仍跳旧极简 session drill-down
+
+### 7.5 session
+
+`session` 继续保留，但语义完全替换为会话工作区。
+
+**必须成立：**
+
+- 页面可继续开放对话，不是只读页
+- 页面从某个 agent 进入
+- 左侧栏结构固定为：渠道在上，会话在下
+- 主区域固定为当前会话
+- 当前会话支持消息流、输入、发送、上下文切换与历史承接
+- 页面不再被定义为旧的“单会话极简 drill-down 页面”
+
+**明确禁止：**
+
+- 把 session 收缩回仅有 title / stream / input 的旧极简页
+- 把 session 写成只读消息回看页
+- 省略 sidebar 或把 sidebar 中渠道/会话顺序写反
+
+---
+
+## 8. 高层替换风险与处理规则
+
+本次迁移不是页面小修，而是基数替换。以下高层风险必须被显式处理：
+
+### 8.1 页面集合基数替换
+- 验证、导航、完成标准、留痕、截图、浏览器验收都必须从 4 页改为 5 页
+- `team` 不能遗漏在任务、验收、阻断项之外
+
+### 8.2 旧术语整体替换
+- 凡是仍以 `observer-only`、`watchlist overview`、`kanban 只读板`、`session 极简 drill-down` 作为当前语义的实现/文档/验收，一律判定为未完成替换
+
+### 8.3 旧路由整体替换
+- 不允许继续把旧 `/session/:instanceId/:agentId` 单一路径当作所有主链路的唯一终点
+- 新 session 路由语义需要覆盖 agent / channel / session 上下文；兼容入口不能反客为主
+
+### 8.4 旧门禁整体替换
+- 不再使用“overview / topology / kanban 严格只读 + session 唯一写入口”的旧门禁描述
+- 当前门禁改为：只实现本计划冻结的 5 页职责与交互，不引入 `settings / profile`、运行控制面或未冻结的系统管理能力
+
+### 8.5 旧状态矩阵与旧验证清单整体替换
+- 状态矩阵必须改为覆盖五页
+- 已部署浏览器验收必须改为五页主链路
+- 阻断项、放行项、截图样本、真实读链路验证样本也必须同步改为五页口径
+
+---
+
+## 9. 当前环境、真实读链路与唯一留痕载体
+
+### 9.1 当前环境约定
+
+- 工作目录：`/data/projects/linpo`
+- 前端部署地址：`http://175.178.213.10:5173`
+- 后端部署地址：`http://175.178.213.10:8000`
+- PostgreSQL 宿主机暴露端口：`40193`
+- 后端测试统一使用：`/data/projects/linpo/.venv/bin/pytest`
+- 浏览器验收默认使用一个已登录、具备当前 IA 主链路访问权限的测试身份；该身份标识、获取方式与有效性检查结果必须记录在唯一留痕载体中
+- 浏览器验收默认使用一组固定样本：overview 的默认时间窗、topology 的一个可进入对象、kanban 的一个可进入任务卡、team 的一个可进入 agent card、session 的一个主样本路由；若样本变更，必须在唯一留痕载体中记录原因与替换样本
+
+### 9.2 ravin 角色约定
+
+- `ravin` 只承担远端访问与浏览器验收发起
+- `ravin` 不承担仓库命令执行、构建、测试、部署
+- 已部署浏览器验收优先由 `ravin` 发起，站在真实用户访问视角完成
+
+### 9.3 真实读链路约定
+
+- overview / topology / kanban / team / session 的首屏读取、refresh、retry 都必须命中真实后端读链路
+- 不得使用 fixture、mock 响应、静态快照、前端伪更新时间来伪装刷新成功
+- 页面需要保留 `request_id`、`freshness`、`partial_failure`、`diagnostics` 等可对账线索
+- `partial_failure`、`failed`、`unauthorized` 必须可区分，不能伪装为空成功
+
+### 9.4 唯一留痕载体
+
+当前阶段凡是本计划要求“记录 / 写明 / 留痕 / 冻结”的内容，唯一允许的落盘位置固定为：
+
+- `.sisyphus/plans/ui-design-realignment-execution-record.md`
+
+不允许以下位置替代唯一留痕载体：
+
+- 聊天消息
+- 口头解释
+- 临时本地笔记
+- 只写在 commit message 的碎片说明
+- 只写在 PR 描述但未回写仓库文件的内容
+- 仅以外部 report link 代替仓库内证据索引
+
+唯一留痕载体至少必须记录：
+
+- 页面/模块名
+- 参考仓库的可移植标识（仓库名、可定位页面/组件对象、来源说明）
+- 对应 commit SHA
+- 若发生冲突：冲突点、裁决依据、最终替代方案
+- 若发生路由替换：旧语义、新语义、兼容策略
+- 验收证据位置：测试命令、截图、请求记录、仓库内报告路径
+- 每条证据的时间戳与适用环境（deployed/local）
+- 若引用仓库外参考对象，必须给出足以让其他复审者在不同机器上重新定位该对象的说明，不得只写本机相对路径
+- 对 unauthorized 豁免或不可达声明，必须附客观证据模板：测试身份、目标页面、目标动作、预期受限路径、实际结果、时间戳
+
+若唯一留痕载体缺失、命名不一致、未随变更一并提交，或其内容不足以让复审者独立定位参考锚点与验收证据，一律视为阻断。
+
+---
+
+## 10. 5 页状态矩阵与最低验收口径
+
+### 10.1 overview
+
+- `loading`：顶部统计、曲线区、右侧事件区都要有明确加载状态
+- `empty`：允许空曲线与空事件，但仍保持主页骨架
+- `partial_failure`：统计、曲线、事件任一部分缺失时必须明确提示“部分数据不可用”
+- `failed`：显示可读失败态与 retry
+- `unauthorized`：显示未授权提示，不伪装为零数据成功
+- `stale`：允许保留旧曲线/统计，但必须明确 stale
+
+### 10.2 topology
+
+- `loading`：允许画布 loading overlay
+- `empty`：显示空图态，但不能退回列表页
+- `partial_failure`：允许部分泳道/边缺失，但必须说明缺失来源
+- `failed`：显示整图级失败态与 retry
+- `unauthorized`：显示未授权态，不展示伪图
+- `stale`：允许显示旧图，但必须标识 stale
+
+### 10.3 kanban
+
+- `loading`：显示板面级加载态
+- `empty`：允许空板与空列，但仍保持任务板骨架
+- `partial_failure`：部分任务/列缺失时必须提示不完整
+- `failed`：显示板面级失败态与 retry
+- `unauthorized`：显示未授权态，不伪装成零任务
+- `stale`：允许保留旧板面，但必须标识 stale
+
+### 10.4 team
+
+- `loading`：显示 persistent agent cards 骨架
+- `empty`：显示空团队态，但仍保留 team 页面语义
+- `partial_failure`：部分 agent 卡缺字段或缺更新时必须明确提示
+- `failed`：显示页面级失败态与 retry
+- `unauthorized`：显示未授权态，不伪装成空 staff
+- `stale`：允许保留旧卡片，但必须标识 stale
+
+### 10.5 session
+
+- `loading`：左侧渠道区、会话区、主会话区都应可见加载状态
+- `empty`：允许空会话，但仍保持 sidebar + 当前会话骨架
+- `partial_failure`：消息区可保留已加载内容，同时明确哪些部分失败
+- `failed`：显示会话级失败态与 retry
+- `unauthorized`：显示未授权态；输入区必须禁用并解释原因
+- `stale`：允许保留旧消息，但必须标识 stale
+
+**状态验收总规则：**
+
+- 五页都必须按上表逐页验证，而不是只做 happy path
+- `session` 的 `unauthorized` 不允许豁免
+- 其余页面若主链路客观上不存在未授权可达路径，才允许在唯一留痕载体中写明理由后豁免
+
+### 10.6 状态冲突裁决规则
+
+当同一页面同时出现多个状态信号时，展示优先级固定为：
+
+1. `unauthorized`
+2. `failed`
+3. `partial_failure`
+4. `stale`
+5. `empty`
+6. `loading`
+
+裁决规则：
+- 若 `unauthorized` 成立，必须优先展示未授权态，不得被其他状态覆盖
+- `failed` 固定指：当前主对象或主读取动作整体不可恢复完成，导致页面主舞台无法以部分成功形式继续承接；其默认表现为整页/整块失败态
+- `partial_failure` 固定指：当前主对象或主读取动作仍有一部分成功结果可继续承接，但存在可明确指出的缺失、失败或不完整部分；其默认表现为保留已成功内容并附带部分失败提示
+- 若 `failed` 与 `stale` 同时存在，以 `failed` 为主状态，但可附带 stale 提示
+- 若 `partial_failure` 与 `stale` 同时存在，以 `partial_failure` 为主状态，但可附带 stale 提示
+- `empty` 仅在没有更高优先级错误/未授权/部分失败信号时才可成为主状态
+- `loading` 只在首屏或主动刷新过程中可作为主状态；一旦收到明确失败/未授权/空态信号，必须退让给更高优先级状态
+
+---
+
+## 11. 执行任务
+
+### Task 1：冻结新 5 页 IA 并清除旧世界观
+
+**目标**：让后续执行者只读本计划，就知道当前有效页面集合、术语体系、旧条款失效清单与高层替换风险。
+
+**必须完成：**
+
+- 用新 5 页 IA 替换旧四页口径
+- 写清旧条款失效与新条款接管
+- 明确 `settings / profile` 为暂缓项
+- 明确旧路由、旧门禁、旧状态矩阵、旧验证清单均已被替换
+
+**完成判定：**
+
+- 本计划内部不再依赖旧四页语义才能继续执行
+- 复审者只读本计划即可知道当前阶段不再接受旧 world model
+
+---
+
+### Task 2：overview 重构为主页默认入口
+
+**目标**：把 overview 从旧 watchlist 首页切换为主页/默认入口。
+
+**必须完成：**
+
+- 顶部 token 统计与 agent 状态统计成立
+- 主区域为按实例分组的近期 token 消耗曲线
+- 右侧全局事件列表成立
+- overview 的状态矩阵、refresh/retry、真实读链路要求成立
+
+**完成判定：**
+
+- 页面一眼可辨识为主页/全局脉搏页，而不是旧 watchlist
+- 执行记录中存在 overview 的结构截图、刷新证据、真实请求对账线索与状态验收记录
+
+---
+
+### Task 3：topology 重构为 routing graph
+
+**目标**：把 topology 对齐为可移植锚点 `openclaw/geteway-routing-graph` 风格的满屏 routing graph。
+
+**必须完成：**
+
+- 满屏画布成立
+- 四条泳道成立：实例 / 智能体 / 会话 / 工具
+- 圆形节点与从属关系连线成立
+- 节点进入 session 的规则明确且可验证
+
+**完成判定：**
+
+- 页面不再是旧 graph-only 极简图示页
+- 执行记录中存在 topology 的参考锚点路径、SHA、截图、状态验收与进入链路样本
+
+---
+
+### Task 4：kanban 重构为任务板
+
+**目标**：把 kanban 从旧只读信号板切换为任务板。
+
+**必须完成：**
+
+- 每卡一个任务
+- 板面能力对齐可移植锚点 `openclaw/mission-control`
+- 不再用旧只读板语义限制当前页面
+- 与任务相关的 session 进入或任务上下文承接规则明确
+
+**完成判定：**
+
+- 页面主语义是 task board，而不是 agent signal board
+- 执行记录中存在 kanban 的参考锚点路径、SHA、截图、状态验收与任务上下文样本
+
+---
+
+### Task 5：team 落地为第三页主入口
+
+**目标**：新增并冻结 team 为 IA 第三页主入口。
+
+**必须完成：**
+
+- 页面直接参考可移植锚点 `openclaw/center` 的 `Staff` 页面
+- persistent agent cards 成立
+- 卡片字段满足本计划第 7.4 节最小字段要求
+- 点击卡片进入 session 工作区成立
+
+**完成判定：**
+
+- team 不再是遗漏页、附录页或未来能力
+- 执行记录中存在 team 的参考锚点路径、SHA、截图、状态验收与 session 进入样本
+
+---
+
+### Task 6：session 重构为会话工作区
+
+**目标**：把 session 从旧极简 drill-down 页切换为可开放对话的会话工作区。
+
+**必须完成：**
+
+- 从 agent 进入
+- 左侧栏“渠道在上，会话在下”成立
+- 主区域为当前会话
+- 输入与发送能力保留
+- unauthorized 下输入禁用且原因可见
+
+**完成判定：**
+
+- 页面不再被认作旧单会话极简页
+- 执行记录中存在 session 的结构截图、渠道/会话切换样本、发送能力样本、unauthorized 样本与请求对账线索
+
+---
+
+### Task 7：共享路由、状态、真实读链路与留痕收口
+
+**目标**：确保五页共享约束一致，不把新 IA 做成只换外壳。
+
+**必须完成：**
+
+- 新 session 路由语义被明确记录
+- refresh / retry 都命中真实读链路
+- `request_id / freshness / partial_failure / diagnostics` 在五页保持可见且可对账
+- 参考锚点、SHA、冲突裁决、验收证据都进入唯一留痕载体
+
+**完成判定：**
+
+- 不存在只改页面外观但共享语义仍停留在旧四页的情况
+
+---
+
+### Task 8：统一验证与投产收口
+
+**目标**：以新 5 页 IA 为口径完成测试、浏览器验收、健康检查与放行判断。
+
+**必须完成：**
+
+- 组件测试、后端测试、build、质量门、健康检查通过
+- 已部署浏览器验收覆盖 `overview / topology / kanban / team / session`
+- 五页状态矩阵按第 10 节逐页验收
+- 真实读链路、刷新证据、请求对账证据完整
+- 下一轮全面审查所需的留痕足够完整
+
+**完成判定：**
+
+- 当前结果可作为后续全面审查、修正、再验收的唯一 plan 基线
+
+---
+
+## 12. 必跑验证与浏览器级验收门禁
+
+### 12.1 必跑验证
+
+以下验证仍是当前阶段硬门禁，不因 IA 改写而取消：
+
+- `npm --prefix frontend run test`
+- `/data/projects/linpo/.venv/bin/pytest`
 - `npm --prefix frontend run build`
-- `PLAYWRIGHT_BASE_URL=http://175.178.213.10:5173 npm --prefix frontend run e2e -- --grep "ui-realignment|v0.6"`
 - `make quality`
-
-### Must Have
-- `overview` 第一视觉区是 agents 卡片列表，摘要区只占极小区域。
-- `topology` 页面主内容只有 graph 关系图，并带自动布局。
-- `kanban` 保持多列板式结构、卡片节奏与列主次关系，接近 Mission Control 的 `TaskBoard` 语言。
-- `session` 页面只保留极简标题、消息流、底部输入区，且桌面端内容宽度受限。
-- 所有页面继续使用 canonical session 路径 `/session/:instanceId/:agentId`。
-- 所有页面继续保留 observer-only 边界，不新增控制面写操作。
-
-### Must NOT Have (guardrails, AI slop patterns, scope boundaries)
-- 不新增 tabs / sidebar / status panel 到 `session`。
-- 不在 `topology` 中回引配置表单、详情面板、实例摘要卡或运行控制按钮。
-- 不把 `overview` 做成 dashboard 式统计首页。
-- 不把 `kanban` 做成单列列表页，也不引入拖拽保存、列内排序写回、审批流写操作。
-- 不新增后端 API 字段、后端写能力或 observer 范围外的新功能。
-- 不复用一套模板化页面壳导致四页看起来只是文案不同。
-
-## Verification Strategy
-> ZERO HUMAN INTERVENTION — all verification is agent-executed.
-- Test decision: tests-after + existing `vitest` page tests + existing Playwright + final `make quality`
-- QA policy: Every task has agent-executed scenarios
-- Evidence: `.sisyphus/evidence/task-{N}-{slug}.{ext}`
-
-## Execution Strategy
-### Parallel Execution Waves
-> Target: 5-8 tasks per wave. <3 per wave (except final) = under-splitting.
-> Extract shared dependencies as Wave-1 tasks for max parallelism.
-
-Wave 1: 1 docs/truth-source freeze, 2 shared page-shell/test-id contract, 3 overview redesign, 6 session simplification
-Wave 2: 4 topology graph canvas, 5 kanban board rebuild, 7 verification + evidence refresh
-
-### Dependency Matrix (full, all tasks)
-- 1 blocks 2, 3, 4, 5, 6, 7
-- 2 blocks 3, 4, 5, 6, 7
-- 3 blocks 7
-- 4 blocks 7
-- 5 blocks 7
-- 6 blocks 7
-
-### Agent Dispatch Summary (wave → task count → categories)
-- Wave 1 → 4 tasks → `writing`, `visual-engineering`
-- Wave 2 → 3 tasks → `visual-engineering`, `unspecified-high`
-
-## TODOs
-> Implementation + Test = ONE task. Never separate.
-> EVERY task MUST have: Agent Profile + Parallelization + QA Scenarios.
-
-- [x] 1. 冻结 UI 设计真源与页面 guardrails
-
-  **What to do**: 更新 `README.md`、`docs/prd/2026-03-15-linpo-v0.1-observer-prd.md`、`docs/architecture/2026-03-15-observer-architecture.md`，把已确认的四页设计定位正式落盘：`overview` 是 agents-first watchlist、`topology` 是 graph-only canvas、`kanban` 近似 Mission Control 看板、`session` 是极简消息页；同时补充 observer-only guardrails，明确 `kanban` 不引入拖拽写回、`topology` 不再承担配置块、`session` 不允许 tabs/sidebar/status。
-  **Must NOT do**: 不改产品 IA，不新增功能范围，不把设计说明写成抽象口号；必须写出页面主舞台、次要区域、禁止项。
-
-  **Recommended Agent Profile**:
-  - Category: `writing` — Reason: 这是设计真源冻结任务，核心是把口头决策落成文档约束。
-  - Skills: [`superpowers/writing-plans`] — 用于保持文档表达精确、一致。
-  - Omitted: [`frontend-ui-ux`] — 此任务不直接改前端实现。
-
-  **Parallelization**: Can Parallel: NO | Wave 1 | Blocks: 2, 3, 4, 5, 6, 7 | Blocked By: none
-
-  **References** (executor has NO interview context — be exhaustive):
-  - Pattern: `README.md` — 当前仓库入口与页面职责摘要位置。
-  - Pattern: `docs/prd/2026-03-15-linpo-v0.1-observer-prd.md` — 当前 v0.6 页面边界与 observer-only 范围真源。
-  - Pattern: `docs/architecture/2026-03-15-observer-architecture.md` — 当前 IA、页面职责与验收边界真源。
-  - Pattern: `.sisyphus/plans/ui-design-realignment-work-plan.md:24` — 本计划已内嵌逐屏确认的设计决策，可直接作为执行真源。
-
-  **Acceptance Criteria** (agent-executable only):
-  - [ ] `rg --line-number "agents-first|watchlist|graph|Mission Control|极简标题|底部输入区|observer-only" README.md docs/prd/2026-03-15-linpo-v0.1-observer-prd.md docs/architecture/2026-03-15-observer-architecture.md` 命中新的 UI 设计真源。
-  - [ ] `rg --line-number "tabs|sidebar|status panel|拖拽写回|配置面板" README.md docs/prd/2026-03-15-linpo-v0.1-observer-prd.md docs/architecture/2026-03-15-observer-architecture.md` 只出现禁止项/排除项描述。
-
-  **QA Scenarios** (MANDATORY — task incomplete without these):
-  ```
-  Scenario: Design truth-source freeze
-    Tool: Bash
-    Steps: Run `rg --line-number "overview|topology|kanban|session" README.md docs/prd docs/architecture`
-    Expected: Matches explicitly describe the new four-page visual/interaction roles rather than generic page summaries
-    Evidence: .sisyphus/evidence/task-1-ui-truth-source.txt
-
-  Scenario: Scope guardrail freeze
-    Tool: Bash
-    Steps: Run `rg --line-number "拖拽|sidebar|tabs|配置面板|控制" README.md docs/prd docs/architecture`
-    Expected: Matches show these items are excluded from the wrong pages or constrained to observer-only behavior
-    Evidence: .sisyphus/evidence/task-1-ui-truth-source-error.txt
-  ```
-
-  **Commit**: YES | Message: `docs: 冻结四页 UI 设计真源与边界` | Files: [`README.md`, `docs/prd/2026-03-15-linpo-v0.1-observer-prd.md`, `docs/architecture/2026-03-15-observer-architecture.md`]
-
-- [x] 2. 建立共享页面骨架、test id 合约与视觉 guardrails
-
-  **What to do**: 先提取一个最小共享 UI 约束层，统一四页的背景、标题区、主舞台边距、桌面最大宽度与稳定 test id。新增或整理适合复用的轻量 page-shell / token helper（可放在 `frontend/src/components/` 或 `frontend/src/lib/` 下），并为每页定义稳定 test id：`overview-summary-strip`、`overview-agents-grid`、`topology-graph-canvas`、`kanban-board`、`session-stream-shell`、`session-input-shell`。同时清理 `Layout.tsx` 中过强的模板化页面观感，保留导航职责但避免统一页面壳挤压四页差异。
-  **Must NOT do**: 不创建新的设计系统工程，不引入复杂主题切换；不把四页重新拉平为统一 dashboard 模板。
-
-  **Recommended Agent Profile**:
-  - Category: `visual-engineering` — Reason: 这是后续四页改造的共享基础与结构 contract。
-  - Skills: [`frontend-ui-ux`] — 用于压住模板化复用，保留页面差异。
-  - Omitted: [`playwright`] — 本任务先以组件结构与 build 为主。
-
-  **Parallelization**: Can Parallel: NO | Wave 1 | Blocks: 3, 4, 5, 6, 7 | Blocked By: 1
-
-  **References** (executor has NO interview context — be exhaustive):
-  - Pattern: `frontend/src/components/Layout.tsx:7` — 当前主导航结构与页面背景/字体/主区域壳层。
-  - Pattern: `frontend/src/main.tsx:30` — 当前四页路由挂载位置。
-  - Pattern: `frontend/src/components/OverviewPage.tsx:61` — 当前页面根容器与 header/stats/summary 的旧结构。
-  - Pattern: `frontend/src/components/SessionPage.tsx:138` — 当前桌面双栏布局，是本次需要削减的典型反例。
-
-  **Acceptance Criteria** (agent-executable only):
-  - [ ] `npm --prefix frontend run test -- src/components/Layout.test.tsx src/components/OverviewPage.test.tsx src/components/SessionPage.test.tsx` 通过。
-  - [ ] `rg --line-number "overview-summary-strip|overview-agents-grid|topology-graph-canvas|kanban-board|session-stream-shell|session-input-shell" frontend/src/components frontend/src/lib` 命中新引入的稳定选择器。
-
-  **QA Scenarios** (MANDATORY — task incomplete without these):
-  ```
-  Scenario: Shared page-shell contract
-    Tool: Bash
-    Steps: Run `rg --line-number "overview-summary-strip|topology-graph-canvas|kanban-board|session-stream-shell" frontend/src`
-    Expected: Each page exposes a stable, unique main-stage test id and no two pages share the same main-stage selector
-    Evidence: .sisyphus/evidence/task-2-page-shell.txt
-
-  Scenario: Layout guardrail
-    Tool: Bash
-    Steps: Run `npm --prefix frontend run build`
-    Expected: Shared shell changes preserve route mounting and build output while allowing pages to diverge visually
-    Evidence: .sisyphus/evidence/task-2-page-shell-error.txt
-  ```
-
-  **Commit**: YES | Message: `refactor: 提取四页 UI 骨架与选择器约束` | Files: [`frontend/src/components/Layout.tsx`, `frontend/src/main.tsx`, `frontend/src/components/*`, `frontend/src/lib/*`]
-
-- [x] 3. 重建 overview 为 agents-first watchlist 页面
-
-  **What to do**: 重写 `frontend/src/components/OverviewPage.tsx` 及测试，使页面首屏 80% 以上注意力集中在 agents 卡片列表。顶部只保留极薄的 summary strip，包含 2-4 个紧凑信息块（推荐：aggregate freshness、实例数、异常实例数、一个轻量筛选入口）；删除当前大体量 stats grid 与诊断大卡区，把 diagnostics 缩到 summary strip 或卡片级信号。每个 agent 卡片固定包含：agent 名称、实例名、当前状态、最近活动、一个最关键的诊断/提醒、进入会话入口。空态应把用户送往 `/topology`，而不是展示大型 dashboard 提示。
-  **Must NOT do**: 不保留当前 stats grid / diagnostics grid 主舞台；不把 topology 信息、事件历史、实例配置入口塞回 overview；不新增控制按钮。
-
-  **Recommended Agent Profile**:
-  - Category: `visual-engineering` — Reason: 这是主页面层级重构，视觉和信息优先级最关键。
-  - Skills: [`frontend-ui-ux`] — 用于压强 agents 列表主舞台并缩小次要摘要。
-  - Omitted: [`playwright`] — 本任务先用组件测试锁结构。
-
-  **Parallelization**: Can Parallel: YES | Wave 1 | Blocks: 7 | Blocked By: 1, 2
-
-  **References** (executor has NO interview context — be exhaustive):
-  - Pattern: `frontend/src/components/OverviewPage.tsx:61` — 当前 overview 由 header + stats + summary + diagnostics + list 组成，需要反转主次。
-  - Test: `frontend/src/components/OverviewPage.test.tsx:160` — 当前测试已验证 canonical drill-down，可保留行为断言、重写结构断言。
-  - Pattern: `frontend/src/components/Layout.tsx:7` — overview 位于主导航第一个入口。
-  - Truth source: `.sisyphus/plans/ui-design-realignment-work-plan.md:24` — 已确认 overview 是 agents roster/watchlist，summary 只能占极小区域。
-
-  **Acceptance Criteria** (agent-executable only):
-  - [ ] `npm --prefix frontend run test -- src/components/OverviewPage.test.tsx` 通过。
-  - [ ] `npm --prefix frontend run build` 通过。
-
-  **QA Scenarios** (MANDATORY — task incomplete without these):
-  ```
-  Scenario: Overview cards-first hierarchy
-    Tool: Playwright
-    Steps: Open `/overview`; assert `[data-testid="overview-summary-strip"]` is visible; assert `[data-testid="overview-agents-grid"]` is the largest visible content region; open at least one `进入会话` link
-    Expected: Summary strip remains compact while the agents list dominates the page and drill-down still targets `/session/:instanceId/:agentId`
-    Evidence: .sisyphus/evidence/task-3-overview-cards-first.png
-
-  Scenario: Overview degraded state remains secondary
-    Tool: Vitest
-    Steps: Run `npm --prefix frontend run test -- src/components/OverviewPage.test.tsx --reporter=verbose`
-    Expected: Diagnostics/freshness appear as compact signals and do not reintroduce a full-width diagnostics section
-    Evidence: .sisyphus/evidence/task-3-overview-cards-first-error.txt
-  ```
-
-  **Commit**: YES | Message: `feat: 重建 overview 为 agents-first 列表页` | Files: [`frontend/src/components/OverviewPage.tsx`, `frontend/src/components/OverviewPage.test.tsx`]
-
-- [x] 4. 重建 topology 为 graph-only 自动布局画布
-
-  **What to do**: 为 `frontend` 引入明确的 graph/auto-layout 依赖：`@xyflow/react` 作为图形画布，`@dagrejs/dagre` 作为自动布局算法。重写 `frontend/src/components/InstanceTopology.tsx` 和必要测试，把页面收敛为单一 graph 画布；节点类型至少包括 instance、agent、skill、external_acp，且必须用不同视觉权重区分。页面只允许极简标题区与画布控制（推荐：fit、reset），不再展示实例详情面板、配置按钮、诊断大卡、未暴露 section 文案列表。`skills` / `external_acps` 为空时显示为空节点集或空图层，不用单独渲染大块 fallback 区。保持 agent 节点可直接 drill-down 到 canonical session。
-  **Must NOT do**: 不复用现有 `WorkbenchPanel` 多面板模式；不弹出 `InstanceFormModal`；不在 graph 外再放列表、统计、配置区。
-
-  **Recommended Agent Profile**:
-  - Category: `visual-engineering` — Reason: 这是图形化画布重构，涉及依赖引入、画布布局和可视层级。
-  - Skills: [`frontend-ui-ux`] — 用于控制节点层级与画布可读性。
-  - Omitted: [`playwright`] — 组件与 build 先锁定结构，Playwright 在任务 7 统一覆盖。
-
-  **Parallelization**: Can Parallel: YES | Wave 2 | Blocks: 7 | Blocked By: 1, 2
-
-  **References** (executor has NO interview context — be exhaustive):
-  - Pattern: `frontend/package.json:12` — 当前没有 graph 依赖，必须显式新增。
-  - Pattern: `frontend/src/components/InstanceTopology.tsx:21` — 当前 `WorkbenchPanel` 多视图结构是需要删除的旧设计。
-  - Test: `frontend/src/components/InstanceTopology.test.tsx:139` — 当前测试围绕按钮/配置/未暴露 section，需要重写为 graph canvas 断言。
-  - Wrapper: `frontend/src/components/TopologyPage.tsx:3` — topology 页面外层很薄，可保留。
-
-  **Acceptance Criteria** (agent-executable only):
-  - [ ] `npm --prefix frontend run test -- src/components/InstanceTopology.test.tsx` 通过。
-  - [ ] `npm --prefix frontend run build` 通过。
-
-  **QA Scenarios** (MANDATORY — task incomplete without these):
-  ```
-  Scenario: Pure graph canvas
-    Tool: Playwright
-    Steps: Open `/topology`; assert `[data-testid="topology-graph-canvas"]` is visible; assert no config/detail/sidebar selectors exist; click one agent node drill-down link
-    Expected: The page presents a graph canvas as the only main content and still reaches `/session/:instanceId/:agentId`
-    Evidence: .sisyphus/evidence/task-4-topology-graph.png
-
-  Scenario: Auto-layout stability
-    Tool: Vitest
-    Steps: Run `npm --prefix frontend run test -- src/components/InstanceTopology.test.tsx --reporter=verbose`
-    Expected: Tests verify graph renders with empty skill/acp layers without falling back to old panels, and layout code handles at least one instance+agent graph and an empty graph
-    Evidence: .sisyphus/evidence/task-4-topology-graph-error.txt
-  ```
-
-  **Commit**: YES | Message: `feat: 重建 topology 图形关系画布` | Files: [`frontend/package.json`, `frontend/src/components/InstanceTopology.tsx`, `frontend/src/components/InstanceTopology.test.tsx`, `frontend/src/components/TopologyPage.tsx`]
-
-- [x] 5. 重建 kanban 为 Mission Control 风格的只读看板
-
-  **What to do**: 重写 `frontend/src/components/CollabPage.tsx` 与测试，使 `kanban` 接近 `openclaw-mission-control` 的 `TaskBoard` 板式语言：多列布局、列头数量提示、紧凑卡片节奏、横向工作流感。Linpo 语义固定为只读 observer board，列定义统一为：`需关注`（error/failed diagnostics/watchlist）、`进行中`（running 且 active）、`待巡视`（idle / inactive）、`已完成`（finished）。每张卡片主信息固定为标题、实例、状态、最近活动，次要信息为轻量 diagnostics/tag。禁止拖拽持久化、禁止列内写回、禁止新增任务操作；只保留 drill-down 进入 session。
-  **Must NOT do**: 不复制 Mission Control 的审批、拖拽写回、review bucket、onTaskMove 等交互语义；不退化成单列 signal grid。
-
-  **Recommended Agent Profile**:
-  - Category: `visual-engineering` — Reason: 需要强参考对齐，同时保持 observer-only 语义。
-  - Skills: [`frontend-ui-ux`] — 用于在贴近 reference 的同时替换业务语义。
-  - Omitted: [`playwright`] — 统一在任务 7 做浏览器级收口。
-
-  **Parallelization**: Can Parallel: YES | Wave 2 | Blocks: 7 | Blocked By: 1, 2
-
-  **References** (executor has NO interview context — be exhaustive):
-  - Pattern: `frontend/src/components/CollabPage.tsx:63` — 当前看板仍是 summary + signal grid，不是 board。
-  - Test: `frontend/src/components/CollabPage.test.tsx:38` — 当前测试只锁定标题与单个链接，需要重写为列与卡片断言。
-  - Reference: `/data/projects/openclaw-mission-control/frontend/src/components/organisms/TaskBoard.tsx:43` — reference board columns, density, counts, and card grouping language.
-  - Reference: `/data/projects/openclaw-mission-control/frontend/src/components/organisms/TaskBoard.tsx:362` — reference board uses grid-based board shell and column headers.
-
-  **Acceptance Criteria** (agent-executable only):
-  - [ ] `npm --prefix frontend run test -- src/components/CollabPage.test.tsx` 通过。
-  - [ ] `npm --prefix frontend run build` 通过。
-
-  **QA Scenarios** (MANDATORY — task incomplete without these):
-  ```
-  Scenario: Read-only board language
-    Tool: Playwright
-    Steps: Open `/kanban`; assert `[data-testid="kanban-board"]` is visible; assert four column headers `需关注` `进行中` `待巡视` `已完成`; open a card drill-down link
-    Expected: The page reads as a multi-column board, not a dashboard or card grid, and drill-down remains canonical
-    Evidence: .sisyphus/evidence/task-5-kanban-board.png
-
-  Scenario: No write semantics leak in
-    Tool: Bash
-    Steps: Run `rg --line-number "draggable|onTaskMove|drop|review bucket|approval" frontend/src/components/CollabPage.tsx frontend/src/components/CollabPage.test.tsx`
-    Expected: No Mission Control drag/write semantics are copied into Linpo kanban implementation
-    Evidence: .sisyphus/evidence/task-5-kanban-board-error.txt
-  ```
-
-  **Commit**: YES | Message: `feat: 重建 kanban 为只读看板视图` | Files: [`frontend/src/components/CollabPage.tsx`, `frontend/src/components/CollabPage.test.tsx`]
-
-- [x] 6. 极简化 session 页面与 AgentWorkspace 主舞台
-
-  **What to do**: 重构 `frontend/src/components/SessionPage.tsx` 与 `frontend/src/components/AgentWorkspace.tsx`，让桌面与移动端默认只呈现极简标题、消息流、底部输入区。删除/隐藏现有实例列表侧栏、状态面板、tabs、日志/files/status 分区和任何非必要控制提示；保留 canonical route 处理与最小空态，但把未选中实例空态收缩成轻提示。桌面端将消息流容器与输入区包裹在同一个 `max-width: 880px` 的中心内容带内，两侧留白；移动端全宽但维持同一三段式信息层级。若当前 `AgentWorkspace` 仍保留只读提示或低频控制说明，默认收纳为折叠 disclosure，不得占用主舞台。
-  **Must NOT do**: 不保留 `InstanceList` 左栏，不新增右栏或标签页，不把状态/节点/日志板块继续放在默认页面上。
-
-  **Recommended Agent Profile**:
-  - Category: `visual-engineering` — Reason: 这是最明显的结构收缩任务，涉及父页面和工作区共同改造。
-  - Skills: [`frontend-ui-ux`] — 用于让消息阅读路径更稳定、克制。
-  - Omitted: [`playwright`] — 组件测试先锁结构，浏览器级在任务 7 统一验证。
-
-  **Parallelization**: Can Parallel: YES | Wave 1 | Blocks: 7 | Blocked By: 1, 2
-
-  **References** (executor has NO interview context — be exhaustive):
-  - Pattern: `frontend/src/components/SessionPage.tsx:138` — 当前桌面双栏（实例列表 + workspace）布局需要删除。
-  - Pattern: `frontend/src/components/AgentWorkspace.tsx:28` — 当前引用 `SessionActions` / `SessionList`，是本次极简化的关键入口。
-  - Pattern: `frontend/src/components/SessionActions.tsx` — 当前只读提示文本“当前阶段仅保留观察与进入能力”已存在，可改为折叠提示而非主内容。
-  - Test: `frontend/src/components/SessionPage.test.tsx:120` — 当前测试锁定实例列表与 canonical route，需要保留路由行为、替换结构断言。
-
-  **Acceptance Criteria** (agent-executable only):
-  - [ ] `npm --prefix frontend run test -- src/components/SessionPage.test.tsx src/components/AgentWorkspace.readonly.test.tsx src/components/SessionActions.readonly.test.tsx` 通过。
-  - [ ] `npm --prefix frontend run build` 通过。
-
-  **QA Scenarios** (MANDATORY — task incomplete without these):
-  ```
-  Scenario: Minimal session shell
-    Tool: Playwright
-    Steps: Open one canonical `/session/:instanceId/:agentId`; assert `[data-testid="session-stream-shell"]` and `[data-testid="session-input-shell"]` are visible; assert no sidebar/tabs/status-panel selectors exist
-    Expected: Session presents only title + stream + input and keeps canonical route intact
-    Evidence: .sisyphus/evidence/task-6-session-minimal.png
-
-  Scenario: Desktop width guardrail
-    Tool: Playwright
-    Steps: View the same session at desktop viewport; inspect content container width
-    Expected: Message stream wrapper max-width resolves to `880px` (or less due to viewport), with visible left/right whitespace
-    Evidence: .sisyphus/evidence/task-6-session-minimal-error.png
-  ```
-
-  **Commit**: YES | Message: `feat: 极简化 session 消息主舞台` | Files: [`frontend/src/components/SessionPage.tsx`, `frontend/src/components/AgentWorkspace.tsx`, `frontend/src/components/SessionPage.test.tsx`, `frontend/src/components/AgentWorkspace.readonly.test.tsx`, `frontend/src/components/SessionActions.readonly.test.tsx`]
-
-- [x] 7. 刷新测试、Playwright 场景与最终证据闭环
-
-  **What to do**: 在页面实现稳定后，系统性更新 Playwright 与组件测试，确保它们验证的是新的结构，而不是旧 dashboard / panel / sidebar 布局。新增或更新 e2e 场景，覆盖桌面 `overview` 主次层级、`topology` graph-only、`kanban` board-only、`session` minimal shell，以及至少一个移动断点验证。保留现有 canonical drill-down、instanceId 约束与 observer-only 行为断言。最后运行 `make quality` 与部署 Playwright，刷新 evidence。
-  **Must NOT do**: 不保留依赖旧 DOM 结构的脆弱选择器；不使用“人工看起来正确”作为完成标准；不把 Mission Control 的交互测试照搬进 Linpo。
-
-  **Recommended Agent Profile**:
-  - Category: `unspecified-high` — Reason: 这是多页面、多层验证与证据收口任务。
-  - Skills: [`playwright`, `superpowers/verification-before-completion`] — 用于浏览器验收和基于真实输出的收口。
-  - Omitted: [`frontend-ui-ux`] — 该任务聚焦验证，不是设计发散。
-
-  **Parallelization**: Can Parallel: NO | Wave 2 | Blocks: none | Blocked By: 2, 3, 4, 5, 6
-
-  **References** (executor has NO interview context — be exhaustive):
-  - Test: `frontend/src/components/OverviewPage.test.tsx` — 需保留 agent drill-down 行为断言。
-  - Test: `frontend/src/components/InstanceTopology.test.tsx` — 需替换掉旧按钮/未暴露 section 断言。
-  - Test: `frontend/src/components/CollabPage.test.tsx` — 需替换成列/卡片层级断言。
-  - Test: `frontend/src/components/SessionPage.test.tsx` — 需保留 canonical route 行为、删除实例侧栏依赖。
-  - E2E base: `frontend/playwright.config.ts` — 现有 Playwright 入口。
-  - Existing flow: `frontend/e2e/v0.6-overview-topology-session.spec.ts` — 现有 v0.6 浏览器验收脚本入口，可扩展为 UI realignment 验收。
-
-  **Acceptance Criteria** (agent-executable only):
-  - [ ] `npm --prefix frontend run test -- src/components/OverviewPage.test.tsx src/components/InstanceTopology.test.tsx src/components/CollabPage.test.tsx src/components/SessionPage.test.tsx` 通过。
-  - [ ] `PLAYWRIGHT_BASE_URL=http://175.178.213.10:5173 npm --prefix frontend run e2e -- --grep "ui-realignment|v0.6"` 通过。
-  - [ ] `make quality` 通过。
-
-  **QA Scenarios** (MANDATORY — task incomplete without these):
-  ```
-  Scenario: Desktop four-page UI verification
-    Tool: Playwright
-    Steps: Run the deployed flow through `/overview` → `/topology` → `/kanban` → `/session/:instanceId/:agentId`
-    Expected: Each page exposes the new main-stage selector and none of the banned structures (dashboard stats grid, topology panels, kanban signal grid, session sidebar) remain
-    Evidence: .sisyphus/evidence/task-7-ui-realignment.txt
-
-  Scenario: Mobile minimal regression
-    Tool: Playwright
-    Steps: Run one mobile viewport scenario across `/overview` and `/session/:instanceId/:agentId`
-    Expected: Overview degrades to a single-column card flow and session remains title + stream + input with no extra panels
-    Evidence: .sisyphus/evidence/task-7-ui-realignment-error.txt
-  ```
-
-  **Commit**: YES | Message: `test: 刷新 UI 重对齐验收与证据` | Files: [`frontend/src/components/*.test.tsx`, `frontend/e2e/*.spec.ts`, `.sisyphus/evidence/*`]
-
-## Final Verification Wave (4 parallel agents, ALL must APPROVE)
-- [x] F1. Plan Compliance Audit — oracle
-- [x] F2. Code Quality Review — unspecified-high
-- [x] F3. Real Manual QA — unspecified-high (+ playwright if UI)
-- [x] F4. Scope Fidelity Check — deep
-
-## Commit Strategy
-- 先提交 docs 真源冻结，再提交共享 shell/test-id contract。
-- `overview`、`topology`、`kanban`、`session` 各自独立提交，避免视觉回滚边界混杂。
-- graph 依赖引入与 topology 重构放在同一个提交，避免依赖半引入状态。
-- 最终测试与 evidence 刷新单独提交。
-
-## Success Criteria
-- 四个页面一眼可辨，不能再呈现模板化复用观感。
-- `overview` 的主舞台是 agents 卡片列表，摘要仅占极小区域。
-- `topology` 页面主内容只有自动布局 graph。
-- `kanban` 看起来是板式工作流界面，而不是 signal grid 或 dashboard。
-- `session` 页面默认只保留极简标题、消息流、底部输入区，且桌面端宽度受限。
-- 所有 drill-down 继续走 canonical `/session/:instanceId/:agentId`，所有 observer-only 边界仍成立。
-
-## Final Closure
-- 本计划已完成最终收口状态同步。Task1-7 与 Final Verification Wave 的 F1-F4 已按当前证据落盘状态完成勾选，不再保留未收口模板态。
-- 最终验收主证据见 `.sisyphus/evidence/task-7-ui-realignment.txt`。其中已记录部署环境 Playwright `ui-realignment|v0.6` 验收结果为 `3 passed`，并记录 `make quality` 结果为 `passed`，包含 pytest、basedpyright 与 frontend build 全链路通过。
-- 四类最终审计证据已落盘：`.sisyphus/evidence/f1-plan-compliance-20260322.md`、`.sisyphus/evidence/f2-code-quality-20260322.md`、`.sisyphus/evidence/f3-real-manual-qa-20260322.md`、`.sisyphus/evidence/f4-scope-fidelity-20260322.md`。
-- 本次收口同步只更新计划文档状态，不改动业务代码、测试代码与证据文件。若需追踪 F2、F3、F4 中记录的残余风险或条件说明，以各证据文件原文为准。
+- `curl -i http://175.178.213.10:8000/health`
+- 从 `ravin` 发起的已部署浏览器验收
+
+### 12.2 健康检查门禁
+
+- 后端健康检查目标固定为：`http://175.178.213.10:8000/health`
+- 必须返回健康结果
+- 若返回 5xx、超时、空响应或错误页，一律阻断，不得放行
+
+### 12.3 已部署浏览器验收门禁
+
+浏览器验收必须满足：
+
+- 从 `ravin` 发起
+- 访问已部署前端 `http://175.178.213.10:5173`
+- 在真实已登录用户态下完成
+- 覆盖五个核心页面：`/overview`、`/topology`、`/kanban`、`/team`、一个符合第 6.2 节新语义的 `session` 路由样本
+- 不得只凭拿到 `200` 或 shell 渲染成功就视为通过
+- 不得把旧 `/session/:instanceId/:agentId` 兼容入口当作主 session 样本完成验收
+- session 主链路样本不得只验证 1 条新语义入口而放任其他主入口继续走旧语义；凡是当前页面设计中被定义为 session 主入口的地方，都必须符合第 6.2 与第 6.3 节的当前规则
+- 必须至少分别验证一次普通 canonical session、空工作区 canonical、空会话 canonical 三类路由样本；若当前环境客观不存在其中某类样本，必须在唯一留痕载体中记录原因与证据
+
+每个核心页面的最小验收证据固定为：
+
+- 访问 URL
+- 页面截图
+- 时间戳
+- 至少一个可对账的 `request_id` 或同等唯一后端请求标识
+- 一条可证明来自已部署后端的请求记录
+- 若涉及 refresh / retry，必须附同一次读取链路上的前后对比证据
+
+### 12.4 五页主链路最低定义
+
+- `overview`：进入页面 -> 看到顶部统计 + 曲线主舞台 + 右侧事件列表 -> 触发 refresh 或时间范围切换 -> 对账真实请求；同时至少验证 1 个负向样本：顶部统计卡或仅实例维曲线点不得直接进入 session
+- `topology`：进入页面 -> 看到满屏 routing graph 与四泳道 -> 选择可进入对象 -> 验证进入规则或禁用规则；同时至少验证 1 个负向样本：不满足绑定成立条件的实例/工具节点不得直接进入 session
+- `kanban`：进入页面 -> 看到任务板与任务卡 -> 验证任务上下文或 session 承接 -> 对账真实请求；同时至少验证 1 个负向样本：多关联任务卡不得自动擅选 session
+- `team`：进入页面 -> 看到 persistent agent cards -> 点击卡片 -> 进入对应 session；同时至少验证 1 个负向样本：缺失最小字段或缺少可恢复上下文的卡片不得伪装成可安全进入 session
+- `session`：进入页面 -> 看到渠道区 / 会话区 / 当前会话区 -> 验证读取、切换、输入与 unauthorized 处理；同时至少验证 1 个负向样本：失效 URL 上下文不得静默回退到其他 session，对应失败态或未授权态必须成立
+
+### 12.5 放行规则
+
+只有同时满足以下条件，才允许宣称当前阶段通过：
+
+- 五页 IA 已全部按新口径建立
+- `team` 已进入完成定义，而不是附录
+- 不再残留旧四页、旧术语、旧门禁、旧状态矩阵、旧验证清单
+- 真实读链路、健康检查、浏览器验收、build、测试、质量门全部通过
+- 唯一留痕载体完整存在
+
+### 12.6 阻断规则
+
+出现任一情况，一律阻断：
+
+- 任一有效页面仍按旧四页世界观实现或验收
+- `team` 缺失、被降级为附录或未纳入主链路验收
+- `session` 仍是旧单会话极简页，或不支持 sidebar“渠道在上，会话在下”
+- 浏览器验收中的 session 样本仍使用旧 `/session/:instanceId/:agentId` 兼容入口作为主语义路由
+- `kanban` 仍按只读信号板验收
+- `overview` 仍按 watchlist 或 dashboard 大卡片首页验收
+- `topology` 未完成四泳道 routing graph 迁移
+- 浏览器验收未覆盖五页
+- 健康检查、build、测试或质量门任一失败
+- 无法证明 refresh / retry 命中真实读链路
+
+---
+
+## 13. 最终完成标准
+
+只有同时满足以下条件，才能认为当前阶段完成：
+
+1. 当前有效页面集合固定为 `overview / topology / kanban / team / session`
+2. `settings / profile` 已被明确标记为 out-of-scope / 暂缓，而不是被偷偷混入当前完成定义
+3. `overview` 已成为主页/默认入口，并具备顶部统计、实例 token 曲线主舞台、右侧全局事件列表
+4. `topology` 已成为四泳道满屏 routing graph，并对齐可移植锚点 `openclaw/geteway-routing-graph`
+5. `kanban` 已成为任务板，每卡一个任务，并以可移植锚点 `openclaw/mission-control` 为能力锚点
+6. `team` 已成为第三页主入口，并对齐可移植锚点 `openclaw/center` 的 `Staff` 页面
+7. `session` 已成为可开放对话的会话工作区，具备“渠道在上，会话在下”的 sidebar 与当前会话主区
+8. 不再残留 `observer-only`、`watchlist overview`、`kanban 只读板`、`session 极简 drill-down`、`三页统一进入 session` 等旧世界观作为当前有效口径
+9. 新路由语义、真实读链路、状态矩阵、验证门禁都已切换到 5 页 IA 口径
+10. 已部署前端/后端地址可访问，健康检查通过
+11. `/data/projects/linpo/.venv/bin/pytest`、前端测试、build、质量门通过
+12. 浏览器级验收已在 `ravin` 上对已部署环境完成，且覆盖五页主链路
+13. 唯一留痕载体完整存在，能支持下一轮全面审查与复审补齐
+
+---
+
+## 14. 执行纪律
+
+- 当前阶段只认本计划这一份 active plan
+- 当前重写不是“补丁更新”，而是整套世界观替换
+- 如实现、验收记录或后续 review 仍引用旧四页口径，必须先回到本计划修正
+- 下一轮全面审查必须以本计划为基线，逐条检查是否仍有旧语义残留

@@ -38,7 +38,7 @@ function App(): JSX.Element {
 									path="session/:instanceId/:agentId"
 									element={<SessionPage />}
 								/>
-							<Route path="collab" element={<CollabPage />} />
+							<Route path="collab" element={<Navigate to="/kanban" replace />} />
 							</Route>
 						</Route>
 						<Route path="*" element={<Navigate to="/login" replace />} />

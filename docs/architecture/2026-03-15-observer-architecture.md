@@ -1,4 +1,4 @@
-# Linpo v0.1 Observer Architecture
+# Linpo v0.1 IA Architecture
 
 > **状态**：当前有效架构边界文档
 > 
@@ -6,7 +6,7 @@
 
 ## 1. 文档目的
 
-本文档用于冻结 Linpo v0.1 的最小架构边界，明确 observer 角色、页面职责、视图边界，以及支撑产品成立所需的最小状态 / 事件模型。
+本文件用于冻结 Linpo v0.1 的当前架构边界，明确新 5 页 IA 的页面职责、视图边界，以及支撑产品成立所需的最小状态 / 事件模型。
 
 本文档不冻结具体技术栈实现细节，也不提前引入 v0.2+ 的扩张能力。
 
@@ -14,84 +14,75 @@
 
 ## 2. 架构角色边界
 
-Linpo v0.1 的系统角色是 **Observer**。
+Linpo 当前阶段的系统角色是：**多实例工作与协作入口**。
 
 这意味着 Linpo 在当前版本中：
 
-- 不负责启动 agent
-- 不负责暂停 / 恢复 / 重试
-- 不负责编排 subagents
-- 不负责调度任务优先级
-- 不负责统一 runtime 生命周期控制
+- 围绕 `overview / topology / kanban / team / session` 五页 IA 组织用户主路径
+- 既要承担总体态势与结构可见性，也要承担任务板、团队入口与会话工作区承接
+- 不把 `settings / profile` 纳入当前有效范围
+- 不把未冻结的第六个主页面、额外平台化控制面或长期规划能力混入当前执行
 
-Linpo v0.1 只承担一件事：
+当前阶段只承认一件事：
 
-> 把 agent 与其 subagents 的结构和状态变成可见、可浏览、可回看的对象。
-
-因此，当前架构必须围绕“结构可见性”和“状态可理解性”展开，而不是围绕执行控制面展开。
-
-当前 v0.6 也明确排除模板系统、工作流平台化与控制面扩张，所有新增页面与契约都必须服务于观测入口本身。
+> 把当前 active UI 基线整体替换为与新 5 页 IA 一致的页面职责、路由语义、验证门禁与可审计留痕。
 
 ---
 
 ## 3. 信息架构
 
-### 3.1 四层结构（当前 v0.6 冻结）
+### 3.1 当前 5 页结构（当前 v0.6 冻结）
 
-用户登录后首先进入 **`/overview` 总览页**。
+用户登录后首先进入 **`/overview` 主页**。
 
-Linpo 当前采用 **overview → topology / kanban → session** 的产品结构：
+Linpo 当前采用 **overview → topology / kanban / team → session** 的产品结构：
 
-冻结术语：**overview = `agents-first watchlist`，topology = `graph-only` 关系画布，kanban = `Mission Control` 风格只读板，session = 极简 drill-down**。
+冻结术语：**overview = 主页，topology = routing graph 画布，kanban = 任务板，team = persistent agent cards 主舞台，session = 会话工作区**。
 
-| 层级 | 路由 | 职责 |
+| 页面 | 路由 | 职责 |
 |------|------|------|
-| **总览层** | `/overview` | 默认 landing，全局脉搏主舞台，展示用户全部 agents |
-| **拓扑层** | `/topology` | `graph-only` 关系画布，展示实例 / agents / skills / ACP 关系；固定动作环存在，但只保留极简画布控件 |
-| **看板层** | `/kanban` | `Mission Control` 风格只读板，聚合工作项、协作状态与关键工作信号 |
-| **接管层** | `/session/:instanceId/:agentId` | 极简 drill-down 页，显式身份参数 |
+| **Overview** | `/overview` | 默认 landing / 主页；顶部统计 + 实例 token 曲线 + 右侧全局事件列表 |
+| **Topology** | `/topology` | 满屏 routing graph 画布；泳道固定为实例 / 智能体 / 会话 / 工具 |
+| **Kanban** | `/kanban` | 任务板；每卡一个任务，能力锚点为 `openclaw/mission-control` |
+| **Team** | `/team` | persistent agent cards 主舞台，对齐 `openclaw/center` 的 `Staff` 页面 |
+| **Session** | `/session/:agentId/:channelKey/:sessionKey` | 会话工作区 canonical 路由；从 agent 进入，侧栏“渠道在上，会话在下” |
 
 **关键约束：**
 
-- **首页汇报感硬红线**：首页汇报感禁止额外 prompt 注入，仅基于现有状态/事件/活跃度归纳生成，禁止向 agent 静默发送额外 prompt
-- **overview 对象**：`overview` 以用户全部 agents 为默认概览对象，承担概览 / 巡视入口
-- **聚合契约字段冻结**：overview / topology / kanban 共享的聚合语义必须显式包含 `request_id`、`freshness`、`partial_failure` / `diagnostics`；错误包络至少包含 `code`、`message`、`request_id`、`recoverable`、`next_step`
-- **freshness 语义冻结**：`freshness` 至少表达状态与时间戳，状态词汇固定为 `fresh` / `stale` / `failed`；部分成功与失败必须在页面上保持可读，不得伪装成空成功
-- **动作环首期范围**：仅承载 `查看 / 进入 / 配置 / 关系`，同屏仅单开；不支持 drill-down 的节点禁用“进入”
-- **禁止 destructive/runtime controls**：首期 topology 与 session 主路径不暴露 pause/reset/send/delete 等 destructive/runtime controls
-- **topology guardrail**：`topology` 主舞台固定为 `graph-only` canvas + auto layout，只允许极简画布控件；不包含详情侧栏、配置面板、统计卡或任何写操作
-- **路由真源**：`/session/:instanceId/:agentId` 的 URL 参数为唯一真源；`/session` 与 `/session/:instanceId` 仅作为兼容重定向入口，不承载长期状态
-- **消息历史展示**：普通消息支持 Markdown 渲染；工具调用统一折叠为摘要说明气泡，不直接暴露原始 JSON
-- **统一对话入口**：`overview`、`topology`、`kanban` 三页都必须提供进入 agent 对话的入口，并统一跳转到 `/session/:instanceId/:agentId`
-- **范围排除项**：不引入模板系统、工作流平台化或控制面扩张
+- **首页汇报感硬红线**：overview 禁止额外 prompt 注入，仅基于现有状态/事件/活跃度与真实读链路生成展示
+- **聚合契约字段冻结**：overview / topology / kanban / team / session 共享的聚合语义必须显式包含 `request_id`、`freshness`、`partial_failure` / `diagnostics`
+- **freshness 语义冻结**：`freshness` 至少表达状态与时间戳，状态词汇固定为 `fresh` / `stale` / `failed`
+- **session canonical 冻结**：`/session/:agentId/:channelKey/:sessionKey` 为当前唯一 canonical session 路由；空工作区 canonical 路由固定为 `/session/:agentId/__none__/__new__`，空会话 canonical 路由固定为 `/session/:agentId/:channelKey/__new__`
+- **team 冻结**：`team` 是当前有效第三页，不得缺失、降级或附录化
+- **范围排除项**：当前不纳入 `settings / profile`，也不引入第六个有效主页面
 
 ### 3.2 主对象
 
-当前主对象是 **用户拥有的实例下的 agent 聚合视角**。
+当前主对象不再是单一 agent 首页视角，而是按页面拆分：
 
-原因是：
-
-- 当前产品切入口已从单 agent 列表提升到多实例聚合观察
-- `overview` 负责跨实例的聚合观察入口，并展示用户全部 agents
-- `topology` 负责实例 / agents / skills / ACP 关系的 `graph-only` 呈现，而不是配置工作台
-- `kanban` 负责聚合工作信号，而不是单纯任务系统
-- `session` 是 drill-down 承接页，不是首页主对象
+- `overview`：总体 token / agent 状态 / 全局事件
+- `topology`：实例 / 智能体 / 会话 / 工具 的 routing 关系
+- `kanban`：任务
+- `team`：persistent agent cards
+- `session`：agent 工作区中的 channel / session 上下文
 
 ### 3.3 页面职责
 
 | 页面 | 路由 | 职责 |
 |------|------|------|
-| 总览页 | `/overview` | 全局脉搏主舞台，展示用户全部 agents，回答“谁在干活、哪里值得巡视”；首页汇报感禁止额外 prompt 注入 |
-| 拓扑页 | `/topology` | `graph-only` 关系画布，展示实例 / agents / skills / ACP 关系，并保留固定动作环 |
-| 看板页 | `/kanban` | `Mission Control` 风格只读板，聚合工作项、协作状态与关键工作信号，不扩张成审批/治理平台 |
-| 会话接管页 | `/session/:instanceId/:agentId` | 极简 `drill-down` 页，从 overview / topology / kanban 的进入动作跳转；URL 参数为真源 |
+| Overview | `/overview` | 默认入口；展示总体 token / agent 状态、实例 token 曲线与全局事件流 |
+| Topology | `/topology` | routing graph 画布，展示实例 / 智能体 / 会话 / 工具 的关系 |
+| Kanban | `/kanban` | 任务板，承接任务推进、协作状态与任务级上下文 |
+| Team | `/team` | 团队主入口，承接 persistent agent cards 与从团队视角进入 session |
+| Session | `/session/:agentId/:channelKey/:sessionKey` | 会话工作区，承接渠道切换、会话切换、消息流与输入发送 |
 
-**四页 UI guardrails：**
+**五页 UI guardrails：**
 
-- **overview**：主舞台固定为 `agents-first watchlist`，按 agent 巡视优先级组织信号；次要区域只保留极小 summary 辅助区；禁止把 summary 扩成首页主体、报告页或任何非 `observer-only` 控制面。
-- **topology**：主舞台固定为 `graph-only` canvas，关系图通过 auto layout 保持稳定；次要区域只允许极简画布控件；禁止详情侧栏、右侧 `配置面板`、统计卡、节点清单主导布局、拖拽写回与其他写操作。
-- **kanban**：主舞台固定为 `Mission Control` 风格只读板，且保持 `observer-only`；次要区域只允许轻量筛选、统计和 freshness 提示；禁止拖拽写回、列内编辑、批量改状态或审批工作流。
-- **session**：主舞台固定为极简标题 + 消息流 + 输入区，并继续使用 canonical 路径 `/session/:instanceId/:agentId`；次要区域只允许最小身份信息；禁止 `tabs`、`sidebar`、`status panel` 或多栏控制台，桌面 `max-width 880px`。
+- **overview**：主舞台固定为顶部统计 + 实例 token 曲线 + 全局事件侧栏；禁止回退成 `agents-first watchlist` 或 observer-only 首页。
+- **topology**：主舞台固定为四泳道满屏 routing graph；禁止回退成旧 graph-only observer 画布或以侧栏/面板挤占主舞台。
+- **kanban**：主舞台固定为任务板；禁止继续按“只读信号板”定义当前页面。
+- **team**：主舞台固定为 persistent agent cards；禁止被降级为附录、future work 或可选页。
+- **session**：主舞台固定为 agent header + 渠道区 + 会话区 + 当前会话区 + 输入/发送区；禁止回退到旧的单列极简 drill-down。
 
 ### 3.4 验收与收口约束
 
@@ -101,97 +92,79 @@ Linpo 当前采用 **overview → topology / kanban → session** 的产品结�
 
 ---
 
-## 4. 核心视图：拓扑图
+## 4. 核心视图：Topology Routing Graph
 
 ### 4.1 目标
 
-拓扑图的目标是帮助用户直接看清：
+`topology` 的目标是帮助用户直接看清：
 
-- 根 agent 与 subagents 的层级关系
+- 实例、智能体、会话、工具这四类对象如何在 routing graph 中组织
 - 当前结构是否完整
-- 哪些节点存在、彼此如何连接
+- 哪些对象可进入 session 工作区、哪些对象只能停留在结构浏览层
 - 节点当前是否活跃以及基础状态如何
 
-### 4.2 v0.1 展示原则
+### 4.2 当前展示原则
 
-v0.1 采用 **完整拓扑默认展示**。
+当前版本采用 **四泳道满屏 routing graph 默认展示**。
 
 当前版本不做：
 
-- 当前活跃路径高亮
-- 最近变化节点高亮
-- 自动聚焦逻辑
-- 智能推荐或自动摘要
+- 回退到旧 `graph-only observer` 语义
+- 详情侧栏 / 配置面板挤占主舞台
+- 把旧 `skill / ACP` 继续定义成一等泳道对象
 
-原因是 v0.1 首先要证明“结构外显”本身成立，而不是过早把系统做成解释层或诊断层。
-
-拓扑图在 v0.1 中首先是一张结构图，而不是决策图、资源图或运维图。
+拓扑图在当前阶段首先是一张 routing graph，而不是旧 observer 结构示意页。
 
 ---
 
 ## 5. 节点设计
 
-### 5.1 极简节点原则
+### 5.1 节点原则
 
-拓扑图中的节点应保持极简。每个节点只展示：
+拓扑中的节点保持清晰与可区分。每个节点至少需要能支持：
 
-- 名称
-- 状态
-- 是否活跃
-- 子节点数
-
-不在节点本体中直接堆叠以下信息：
-
-- 当前任务摘要
-- token 消耗
-- 错误分类
-- 资源占用
-- 最近事件
-- 运行时配置
+- 名称识别
+- 状态识别
+- 所在泳道识别
+- 是否具备进入 session 或其他承接上下文的资格
 
 ### 5.2 细节后送原则
 
-节点本体只承担结构识别与最小状态表达。`topology` 不通过详情侧栏或配置面板承接更多细节，用户如需进入单 agent 上下文，应走 canonical `/session/:instanceId/:agentId` drill-down。
-
-这一原则可概括为：
-
-> 结构优先，细节后置。
+`topology` 不通过详情侧栏或配置面板承接更多细节；如需进入 agent 或会话上下文，应走当前 5 页 IA 冻结的 session 进入规则，而不是回退到旧 `/session/:instanceId/:agentId` drill-down。
 
 ---
 
-## 6. 拓扑禁止项
+## 6. topology 禁止项
 
-为保持 `graph-only` 冻结边界，`topology` 当前版本明确不承接以下内容：
+为保持当前 routing graph 边界，`topology` 当前版本明确不承接以下内容：
 
 - 详情侧栏
-- `配置面板`
-- 独立统计卡或 summary strip
-- 拖拽写回
-- 列内编辑、批量操作或其他写操作
+- 配置面板挤占主舞台
+- 独立统计卡或 summary strip 挤占主舞台
+- 未冻结的额外对象类型回流为一等泳道
 
-拓扑页的职责是帮助用户看清结构关系，而不是扩展成配置工作台或控制台。
+拓扑页的职责是帮助用户看清 routing 关系，而不是回退成旧 observer 画布或扩成额外工作台。
 
 ---
 
-## 7. 首页 watchlist
+## 7. overview 主页
 
-`/overview` 采用 `agents-first watchlist` 语义，而不是旧的纯列表页。
+`/overview` 当前采用主页语义，而不是旧 watchlist 首页。
 
 主舞台应优先呈现：
 
-- 需要立刻巡视的 agents
-- 当前正在运行的 agents
-- 最近活跃但可能需要回看的 agents
-
-次要区域只保留极小 summary 辅助信息，用于补充总数、异常数与筛选状态。
+- 顶部 token 统计
+- 顶部 agent 状态统计
+- 按实例分组的近期 token 消耗曲线
+- 右侧全局事件列表
 
 当前版本明确不使用：
 
-- 大摘要首页
-- 报告式仪表盘
-- 突破 `observer-only` 的控制面
+- `agents-first watchlist` 作为首页主定义
+- 大摘要报告页
+- 旧 `observer-only` 首页语义
 
-`overview` 的职责是帮助用户快速判断巡视优先级，而不是承接新的平台首页语义。
+`overview` 的职责是帮助用户先把握总体态势与最近事件，而不是继续承担旧的 agent 卡片巡视首页。
 
 ---
 
@@ -251,290 +224,19 @@ v0.1 需要一套支持拓扑状态理解与 session 承接的最小事件模型
 - 后端技术栈细节
 - 部署拓扑细节
 
-这些内容应在后续实施计划中按阶段逐步冻结，但不得突破本文档的 observer 边界。
+这些内容应在后续实施计划中按阶段逐步冻结，但不得突破本文档定义的新 5 页 IA 边界。
 
 ---
 
-## 11. 架构演进路径
+## 11. 附录：长远规划
 
-> **状态**：2026-03-16 重新定义的架构演进规划
->
-> **说明**：本节描述从 v0.1 observer 到 v1.0 多实例协作平台的架构扩展路径，供后续版本架构文档参考。
-
-### 11.1 v0.3：控制能力引入
-
-当引入控制能力时，架构需要以下扩展：
-
-**协议层扩展：**
-
-| 扩展项 | 说明 |
-|--------|------|
-| `role` 参数 | 从隐式 observer 改为显式 `operator` |
-| `scopes` 声明 | 声明 `operator.read` + `operator.write` |
-| 设备身份 | 实现 `device` 参数（id, publicKey, signature） |
-
-**新增请求类型：**
-
-```
-agent.start    — 启动 agent
-agent.pause    — 暂停 agent
-agent.resume   — 恢复 agent
-agent.send     — 发送消息
-sessions_spawn — 创建 subagent
-```
-
-**新增事件订阅：**
-
-```
-tick    — 心跳
-agent   — agent 状态变化
-chat    — 聊天消息流
-```
-
-### 11.2 v0.4：单实例控制完善（已完成）
-
-> **完成日期**：2026-03-18
-> **提交**：`50a4dd6`
-
-**已落地：**
-
-| 能力 | 后端 API | 前端组件 |
-|------|----------|----------|
-| 会话列表 | `GET /chat/sessions` | `SessionList.tsx` |
-| 消息预览 | `GET /chat/sessions/preview` | `AgentWorkspace.tsx` |
-| 模型切换 | `GET /chat/models` + `PATCH /chat/sessions/{key}` | `ModelSelector.tsx` |
-| 会话重置 | `POST /chat/sessions/{key}/reset` | `SessionActions.tsx` |
-| 会话删除 | `DELETE /chat/sessions/{key}` | `SessionActions.tsx` |
-| 发送消息 | `POST /agents/{agent_id}/send-message` | `AgentWorkspace.tsx` |
-| 暂停控制 | `POST /agents/{agent_id}/pause` | `SessionActions.tsx` |
-
-**控制状态流转：**
-```
-sending → accepted → applied
-    ↓         ↓        ↓
-  failed   failed   failed
-    ↓         ↓
-  timeout  timeout
-```
-
-**未落地（OpenClaw 不支持）：**
-
-- `start`/`resume` 控制动作
-- `agents.list`/`bindings` 管理
-
-**不变项：**
-
-- 仍为单实例，不引入用户模型
-- 为 v0.5 用户模型预留扩展点
-
-### 11.3 v0.5：用户模型 + 实例配置基础
-
-> **状态**：已完成
->
-> **完成日期**：2026-03-18
-> **说明**：该阶段能力已并入当前 README / PRD / active `.sisyphus` plan 的 v0.6 基线，不再单独依赖旧 v0.5 plan 文件。
-
-**已落地设计约束：**
-
-| 约束项 | 决策 |
-|--------|------|
-| 登录方式 | 用户名 + 密码 |
-| 数据库存储 | PostgreSQL |
-| 实例保存前验证 | 必须验证 endpoint 可连通性与 token 可用性 |
-| 实例上限 | 每个用户最多 3 个实例 |
-| Token 存储 | Gateway Token 后端加密存储 |
-| 实例类型 | 首期只支持 `openclaw` |
-
-**数据模型：**
-
-```
-User {
-  id: UUID
-  username: string(64)      // 唯一
-  password_hash: text       // bcrypt 哈希
-  created_at: timestamp
-}
-
-Instance {
-  id: UUID
-  user_id: UUID             // 外键关联 User
-  name: string(100)
-  type: string(32)          // 首期仅 "openclaw"
-  endpoint: text            // OpenClaw gateway 地址
-  gateway_token_enc: text   // 加密存储的 token
-  status: string(32)        // "active" | "inactive"
-  last_check_at: timestamp  // 最后验证时间
-  created_at: timestamp
-}
-
-AuthSession {
-  session_id: string        // 服务端 session cookie
-  user_id: UUID
-  created_at: timestamp
-}
-```
-
-**UI 设计约束：**
-
-- 侧边栏底部账户区域只展示用户入口，不展示实例信息
-- 拓扑页保持全局拓扑视野，实例以节点形式展示，详情通过弹窗展示
-- 空状态引导用户新增第一个实例
-
-**非目标范围：**
-
-- 不引入 OAuth、RBAC、软删除、找回密码、多组织/团队模型
-
-**架构变更：**
-
-- 后端新增 `/auth` 与 `/instances` 两组 API
-- PostgreSQL 持久化用户与实例配置
-- 服务端 session cookie 维持登录态
-- 为 v0.6 多实例聚合做准备
-
-### 11.4 v0.6：多实例聚合视图 ← 核心差异化
-
-**架构扩展：**
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                       Linpo Platform                         │
-├─────────────────────────────────────────────────────────────┤
-│  Instance Registry   │  Health Monitor   │  Agent Aggregator │
-│  (实例注册管理)       │  (健康检测)        │  (聚合 agents.list)│
-├─────────────────────────────────────────────────────────────┤
-│                    Instance Adapter Layer                     │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐          │
-│  │ OpenClaw    │  │ KimiClaw    │  │ AutoClaw    │  ...     │
-│  │ Adapter     │  │ Adapter     │  │ Adapter     │          │
-│  └─────────────┘  └─────────────┘  └─────────────┘          │
-└─────────────────────────────────────────────────────────────┘
-         │                   │                   │
-         ▼                   ▼                   ▼
-   ┌───────────┐       ┌───────────┐       ┌───────────┐
-   │ OpenClaw  │       │ KimiClaw  │       │ AutoClaw  │
-   │ Instance  │       │ Instance  │       │ Instance  │
-   └───────────┘       └───────────┘       └───────────┘
-```
-
-**适配器抽象层：**
-
-```
-interface InstanceAdapter {
-  type: string                    // "openclaw" | "kimiclaw" | ...
-  connect(): Promise<void>        // 建立 WebSocket 连接
-  disconnect(): Promise<void>     // 断开连接
-  getAgents(): Promise<Agent[]>   // 获取 agent 列表
-  getHealth(): Promise<Health>    // 健康检测
-  sendMessage(msg): Promise<void> // 发送消息
-}
-```
-
-**Linpo 需实现：**
-
-| 功能 | 说明 |
-|------|------|
-| 适配器抽象层 | 统一接口，首期只实现 OpenClaw Adapter |
-| 实例注册管理 | 用户配置的实例列表 |
-| 健康检测 | 定期 ping 实例，展示状态 |
-| Agent 聚合 | 多实例 agents.list 合并为统一列表 |
-| 跨实例拓扑视图 | 单视图展示多个实例的 agents |
-
-### 11.5 v0.7：跨实例消息传递 ← 核心差异化
-
-**架构扩展：**
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                       Linpo Platform                         │
-├─────────────────────────────────────────────────────────────┤
-│                   Message Router Layer                       │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │  Route Table:                                        │    │
-│  │  (instance_id, agent_id) → WebSocket Connection      │    │
-│  └─────────────────────────────────────────────────────┘    │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │  Message Queue:                                      │    │
-│  │  离线消息缓存、重试、状态追踪                          │    │
-│  └─────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**消息路由逻辑：**
-
-```
-用户发送消息 → Linpo Message Router
-                    │
-                    ├── 查询目标 (instance_id, agent_id)
-                    ├── 获取对应实例的 WebSocket 连接
-                    ├── 转发消息（复用 agentToAgent 协议）
-                    └── 返回状态（发送/接收/失败）
-```
-
-**Linpo 需实现：**
-
-| 功能 | 说明 |
-|------|------|
-| 跨实例消息路由 | Linpo 作为路由层，不重新实现编排引擎 |
-| 消息发送 UI | 指定目标实例 + agent |
-| 消息流可视化 | 拓扑图上的边动态高亮 |
-| 消息状态追踪 | 发送/接收/失败状态 |
-
-**私有实例边界：**
-
-用户只能在自己的实例间传递消息，不涉及跨用户协作。
-
-### 11.6 v0.8：文件系统视图 + 文件传递
-
-**实现方式：**
-
-Linpo 封装 OpenClaw 工具为文件浏览器 UI：
-
-```
-Linpo UI ──HTTP/WebSocket──▶ Linpo Backend ──WebSocket──▶ OpenClaw Gateway
-                                   │
-                                   ├── 调用 read 工具获取文件内容
-                                   ├── 调用 exec (ls, tree) 获取目录结构
-                                   ├── 映射到文件树 UI 组件
-                                   └── 跨实例文件传递
-```
-
-**功能范围：**
-
-| 功能 | 说明 |
-|------|------|
-| 文件浏览器 | 目录树 + 文件预览 |
-| 配置编辑 | Agent 配置文件读写 |
-| 工作目录可视化 | Agent 工作目录展示 |
-| 跨实例文件传递 | Agent 间共享文件（需适配器支持） |
-
-**注意：** OpenClaw 无独立文件系统 API，需通过工具调用实现。
-
-### 11.7 v0.9：安全加固 + 审计
-
-**安全措施：**
-
-| 措施 | 说明 |
-|------|------|
-| 安全审计日志 | 记录所有控制操作和消息传递 |
-| 操作记录追溯 | 用户行为可追溯 |
-| 实例连接安全验证 | endpoint 可达性、证书验证 |
-| 漏洞修复 | 依赖扫描 + 安全测试 |
-
-### 11.8 v1.0：内测 + 修复
-
-**内测阶段：**
-
-- 内测用户反馈收集与处理
-- 稳定性修复
-- 性能优化
-- 为公开发布做准备
-
-### 11.9 v1.1：公开发布
+> `v0.6` 之后的长期架构方向统一收纳在 `docs/plans/`，不在当前架构文档中展开，也不参与当前阶段执行选路。
 
 ---
 
 ## 12. 与其他文档的关系
 
 - 产品目标、范围与不做项：见 `docs/prd/2026-03-15-linpo-v0.1-observer-prd.md`
-- 第一阶段实施拆解：见 `docs/plans/2026-03-15-linpo-v0.1-observer-implementation-plan.md`
-- 设计共识来源记录：见 `docs/plans/2026-03-15-linpo-v0.1-observer-design.md`
+- 当前阶段唯一计划：见 `.sisyphus/plans/ui-design-realignment-work-plan.md`
+- `docs/plans/` 仅存放长远规划，不作为当前阶段 active 执行入口
+

@@ -1,4 +1,0 @@
-/data/projects/linpo/.venv/bin/pytest tests/integration/test_aggregate_api.py tests/integration/test_agents_api.py tests/test_observer_realtime_state.py -q
-
-...................ss...............................................     [100%]
-66 passed, 2 skipped in 5.90s

@@ -4,7 +4,7 @@
 
 当前产品方向已切换为：
 
-> **面向人类的 agent / instance 运行观测入口：用户登录后可以查看自己的实例，并通过 `overview / topology / kanban / session drill-down` 理解系统状态、工作信号、结构关系与单 agent 上下文。**
+> **面向人类的多实例 agent 工作与协作入口：用户登录后通过 `overview / topology / kanban / team / session` 五页 IA 理解总体运行态势、结构关系、任务推进、团队入口与会话工作区。**
 
 当前仓库已完成一次项目级重置：旧版 roboard 的实现、设计与配置已迁出当前仓库根目录，仅作为仓库外本地归档参考，不再作为当前项目的权威来源。
 
@@ -12,29 +12,32 @@
 
 ## 产品信息架构（当前契约）
 
-Linpo 当前采用四层入口语义：
+Linpo 当前采用 **5 页 IA**：
 
-| 层级 | 路由 | 职责 |
+| 页面 | 路由语义 | 职责 |
 |------|------|------|
-| **总览层** | `/overview` | 默认 landing，全局脉搏主舞台，展示用户全部 agents，回答“谁在干活、哪里值得巡视” |
-| **拓扑层** | `/topology` | `graph-only` 关系画布，展示实例、agent、skill、外接 ACP 等关系；只保留极简画布控件，不承接配置入口或详情面板 |
-| **看板层** | `/kanban` | `Mission Control` 风格只读板，聚合工作项、协作状态与关键工作信号，不扩张成完整审批/项目管理平台 |
-| **接管层** | `/session/:instanceId/:agentId` | `drill-down`，以极简标题 + 消息流 + 输入区进入单 agent 上下文 |
+| **Overview** | `/overview` | 默认 landing / 主页；顶部展示 token 统计与 agent 状态统计，主区域展示按实例分组的近期 token 消耗曲线，右侧保留全局事件列表 |
+| **Topology** | `/topology` | IA 第一页；满屏 routing graph 画布，泳道固定为实例 / 智能体 / 会话 / 工具，结构语言对齐 `openclaw/geteway-routing-graph` |
+| **Kanban** | `/kanban` | IA 第二页；任务板，每卡一个任务，板面能力与交互边界对齐 `openclaw/mission-control` |
+| **Team** | `/team` | IA 第三页；persistent agent cards 主舞台，页面结构对齐 `openclaw/center` 的 `Staff` 页面 |
+| **Session** | `/session/:agentId/:channelKey/:sessionKey` | 会话工作区；从 agent 进入，侧栏固定为“渠道在上，会话在下”，主区域为当前会话；空工作区与空会话使用固定 canonical 变体 |
 
 **关键约束：**
-- `overview` 以用户全部 agents 为默认概览对象，承担概览/巡视入口
-- 首页汇报感禁止额外 prompt 注入，只能基于已有状态/事件/活跃度生成
-- 聚合读接口与页面展示必须显式贯通 `request_id`、`freshness`、`partial_failure` / `diagnostics` 与错误包络；错误包络至少包含 `code`、`message`、`request_id`、`recoverable`、`next_step`
-- `freshness` 至少表达状态与时间戳，状态词汇冻结为 `fresh` / `stale` / `failed`，不允许把降级态伪装成实时成功
-- overview / topology / kanban 在部分成功、失败、未授权场景都必须继续显示明确的诊断/错误摘要，而不是空成功
+- `overview` 是默认 landing，不再是旧的 `agents-first watchlist`
+- `team` 承接 persistent agent cards；agent card 点击进入 session 工作区
+- `session` 不再是旧的极简 drill-down；允许真实对话能力，并以 `agentId / channelKey / sessionKey` 为当前 canonical 路由上下文
+- `overview / topology / kanban / team / session` 五页共享聚合读链路与页面可见契约：`request_id`、`freshness`、`partial_failure` / `diagnostics`
+- `freshness` 至少表达状态与时间戳，状态词汇冻结为 `fresh` / `stale` / `failed`
+- overview / topology / kanban / team / session 在部分成功、失败、未授权场景都必须继续显示明确的诊断/错误摘要，而不是空成功
 - 工具调用消息不直接展示原始 JSON，而要折叠为摘要说明气泡
 - 会话消息历史支持 Markdown 渲染
-- `overview`、`topology`、`kanban` 三页都必须提供进入 agent 对话的入口，并统一落到 `/session/:instanceId/:agentId`
-- `/session/:instanceId/:agentId` 以 URL 参数为唯一真源；`/session` 与 `/session/:instanceId` 仅作为兼容重定向入口，不承载长期状态
-- topology 首期交互固定为 `查看 / 进入 / 配置 / 关系` 四类动作；不暴露 pause/reset/send/delete 等 destructive/runtime controls
-- `topology` 主舞台固定为 `graph-only` canvas + auto layout，只允许极简画布控件；不包含详情侧栏、配置面板、统计卡与任何写操作
-- `kanban` 保持 `Mission Control` 风格只读板，不引入拖拽写回、列内编辑、审批流或批量操作
-- 不引入模板系统、工作流平台化或控制面扩张
+- `session` 当前唯一 canonical 路由固定为 `/session/:agentId/:channelKey/:sessionKey`
+- 当某个 agent 无可用 channel 与 session 时，空工作区 canonical 路由固定为 `/session/:agentId/__none__/__new__`
+- 当某个 agent 有 channel 但无可用具体 session 时，空会话 canonical 路由固定为 `/session/:agentId/:channelKey/__new__`
+- `__none__` / `__new__` 为保留字；若外部系统存在同名 key，进入当前系统前必须按 plan 中的稳定转义规则处理
+- topology 交互固定围绕 routing graph 主舞台，不回退为旧的 graph-only observer 画布
+- kanban 不再按只读板定义，而以任务板语义与 `openclaw/mission-control` 能力锚点为准
+- 当前有效 IA 只包含 5 页；`settings / profile` 暂时搁置，不纳入当前完成定义
 - 每个 major feature 完成后都要完成部署，并由 ravin 发起 Playwright 集成验证，覆盖改动功能与强相关链路
 - 后端新增/修改的核心逻辑必须有完整单元测试覆盖
 - 全部计划完成后，必须逐条核对实现成果是否符合 plan / PRD / architecture，不一致继续补齐再收口
@@ -80,54 +83,54 @@ v0.5+ 运行需要以下环境配置：
 | 加密密钥 | Gateway Token 加密存储，需配置 `LINPO_SECRET_ENCRYPTION_KEY` |
 | CORS 来源 | 公网前端联调时需正确配置 `LINPO_CORS_ALLOW_ORIGINS` |
 | 前端 API 地址 | 前端需配置 `VITE_API_BASE_URL`（如 `http://175.178.213.10:8000`） |
-| OpenClaw 联调环境 | 如需同时验证 observer / session 相关链路，后端还需具备可用的 `OPENCLAW_BASE_URL`、`OPENCLAW_GATEWAY_TOKEN`、`OPENCLAW_ORIGIN` |
+| OpenClaw 联调环境 | 如需同时验证多实例聚合、任务板、团队入口与 session 工作区相关链路，后端还需具备可用的 `OPENCLAW_BASE_URL`、`OPENCLAW_GATEWAY_TOKEN`、`OPENCLAW_ORIGIN` |
 
 ## 当前阶段
 
-- **当前目标版本**：v0.6 多实例聚合视图与 IA 收敛
+- **当前唯一目标**：把 v0.6 做成对齐 `../` 参考仓库的新 5 页 IA 工作入口
+- **当前计划范围**：只处理 `overview / topology / kanban / team / session` 的页面职责、结构语言、交互边界与对应实现/验收收口
 - **当前稳定基线**：v0.6A 多实例聚合数据模型与筛选/健康接口（已完成）
-- **当前推进策略**：将 Linpo 收敛为 `overview / topology / kanban / session drill-down` 结构；首页固定为 `/overview` 默认 landing，`overview` 负责用户全部 agents 的概览/巡视，`/topology` 固定为 `graph-only` 关系画布，`/kanban` 固定为 `Mission Control` 风格只读板，`/session/:instanceId/:agentId` 负责显式单 agent 接管
-- **当前产品语义**：overview 承担 `agents-first watchlist` 主舞台，topology 承担 `graph-only` canvas + auto layout，kanban 承担 `Mission Control` 风格只读板，session 页固定为极简 title / stream / input drill-down
+- **当前推进策略**：按 `.sisyphus/plans/ui-design-realignment-work-plan.md` 这一份唯一计划收敛新 5 页 IA 的页面语义、实现范围、验证与收口，并以 `../` 参考仓库与当前冻结锚点作为对齐目标
+- **当前产品语义**：overview 承担主页/默认入口；topology 承担 routing graph 画布；kanban 承担任务板；team 承担 persistent agent cards 主舞台；session 承担会话工作区
 - **公网访问**：前端 `http://175.178.213.10:5173`，后端 `http://175.178.213.10:8000`
 
-## 版本路线
+> `docs/plans/` 仅存放长远规划，不参与当前 v0.6 执行。
 
-```
-v0.1 ─ Observer 起点（已完成）
-v0.2 ─ Realtime Observer（已完成）
-v0.3 ─ 单实例控制接入验证（已完成）
-v0.4 ─ 单实例控制完善（已完成）
-v0.5 ─ 用户模型 + 实例配置（已完成，公网验证通过）
-v0.6A ─ 多实例聚合数据与筛选闭环（已完成）
-v0.6B ─ overview / topology / kanban / session IA 收敛 ← 当前目标
-v0.7 ─ 跨实例消息传递
-```
-
-**v0.6B 关键交付：**
-- `/overview` 默认 landing，全局脉搏主舞台
-- `/topology` = `graph-only` canvas + auto layout，固定动作词 `查看 / 进入 / 配置 / 关系`
-- `/kanban` = `Mission Control` 风格只读板，聚合工作项、协作状态与关键信号
-- `overview / topology / kanban` 三页都可进入 agent 对话，并统一落到 `/session/:instanceId/:agentId`
-- `/session/:instanceId/:agentId` drill-down，URL 真源
+**当前对齐目标：**
+- `/overview` = 主页 / 默认入口；顶部 token 统计 + agent 状态统计，主区域为按实例分组的近期 token 曲线，右侧为全局事件列表
+- `/topology` = 满屏 routing graph 画布，泳道固定为实例 / 智能体 / 会话 / 工具
+- `/kanban` = 任务板，每卡一个任务，能力边界对齐 `openclaw/mission-control`
+- `/team` = persistent agent cards 主舞台，对齐 `openclaw/center` 的 `Staff` 页面
+- `/session/:agentId/:channelKey/:sessionKey` = 会话工作区 canonical 路由；空工作区与空会话使用固定 canonical 变体
 - 首页汇报感禁止额外 prompt 注入
 - 消息历史支持 Markdown，tool-call 展示为摘要气泡而非 raw JSON
-- 不引入模板系统、工作流平台化或控制面扩张
+- 不引入模板系统、工作流平台化或额外第六个有效页面
 
-**v0.6B UI 角色冻结：**
-- `overview` = `agents-first watchlist`。主舞台只服务于 agent 巡视与优先级判断，summary 只保留极小辅助区，不得反客为主；禁止把首页重写成大摘要首页、报告页或新的控制面，继续保持 `observer-only`。
-- `topology` = `graph-only` canvas + auto layout。主舞台固定为关系图画布，次要区域只保留极简画布控件；禁止详情侧栏、`配置面板`、统计卡、节点清单挤占主舞台与任何拖拽写回式编辑，继续保持 `observer-only`。
-- `kanban` = `Mission Control` 风格只读板。主舞台是聚合卡片流，次要区域只保留轻量筛选与统计；禁止拖拽写回、列内编辑、审批流、批量操作或项目管理扩张，继续保持 `observer-only`。
-- `/session/:instanceId/:agentId` = 极简标题 + 消息流 + 输入区。桌面内容区 `max-width 880px`，主舞台固定为单列会话流；禁止 `tabs`、`sidebar`、`status panel` 与多栏控制台结构。
+**当前 UI 角色冻结：**
+- `overview` = 主页。主舞台固定为顶部统计 + 实例 token 曲线 + 右侧全局事件流；禁止回退成 `agents-first watchlist`、大摘要报告页或旧 observer 首页。
+- `topology` = routing graph 画布。主舞台固定为四泳道满屏画布；禁止回退到旧 graph-only observer 语义或以侧栏/面板挤占主舞台。
+- `kanban` = 任务板。主舞台固定为 task board；禁止继续以“只读信号板”作为当前产品定义。
+- `team` = persistent agent cards 主舞台。承担从团队视角进入 agent 的入口职责；禁止被降级为附录或可选页。
+- `/session/:agentId/:channelKey/:sessionKey` = 会话工作区。固定包含渠道区、会话区、当前会话区与输入/发送能力；禁止回退为旧的极简 drill-down 单列页。
 
 ## 文档入口
 
 | 文档 | 路径 | 说明 |
 |------|------|------|
-| 产品需求（含版本路线） | `docs/prd/2026-03-15-linpo-v0.1-observer-prd.md` | 当前有效的产品边界与版本演进路线（已收敛到 v0.6 当前约束） |
-| 架构边界 | `docs/architecture/2026-03-15-observer-architecture.md` | 当前有效架构边界与 v0.6 IA/约束入口 |
-| 当前执行计划 | `.sisyphus/plans/v0.6-execution-work-plan.md` | 当前活跃执行计划与最终验收门禁 |
+| 产品需求（当前范围） | `docs/prd/2026-03-15-linpo-v0.1-observer-prd.md` | 当前有效产品边界；当前阶段只以 v0.6 对齐 `../` 参考仓库为执行目标 |
+| 架构边界（当前范围） | `docs/architecture/2026-03-15-observer-architecture.md` | 当前有效架构边界与 v0.6 IA/约束入口 |
+| 当前唯一计划 | `.sisyphus/plans/ui-design-realignment-work-plan.md` | 当前阶段唯一 active plan：定义并承载 v0.6 对齐 `../` 参考仓库的目标、实现范围、验证与收口要求 |
+| 长远规划 | `docs/plans/` | 非当前阶段版本设计与长期规划入口；`v0.6+` 未来版本不再作为当前执行入口 |
 | OpenClaw API 参考 | `OPENCLAW_API.md` | OpenClaw WebSocket API 参考 |
 | 仓库治理 | `AGENTS.md` | 当前项目治理规则 |
+
+### start-work 前置阅读与执行边界
+
+- 继续 `/start-work` 前，只读 `.sisyphus/plans/ui-design-realignment-work-plan.md` 这一份当前 active plan。
+- 当前阶段只允许围绕 **v0.6 对齐 `../` 参考仓库** 展开工作；`docs/plans/` 下的长期规划与其他非当前文件不得被当作执行入口。
+- 若当前 plan 与 truth docs 存在冲突，以 `README.md` + PRD + architecture 为准，并先修正文档口径再继续实现。
+- `ravin` 只承担远端访问与浏览器验收发起。
+- `ravin` 不承载仓库命令执行，不作为构建、测试、部署主机。
 
 ## 当前原则
 - 先做最小观测入口，再扩张平台能力

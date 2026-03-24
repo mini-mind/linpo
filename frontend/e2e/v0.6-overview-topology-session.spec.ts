@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { expect, type Page, type Route, test } from "@playwright/test";
 
 const DEFAULT_BASE_URL =
@@ -6,6 +7,15 @@ const DEFAULT_PASSWORD = "secret-123";
 const HEALTHY_OPENCLAW_ENDPOINT = "http://175.178.213.10:18789";
 const HEALTHY_OPENCLAW_GATEWAY_TOKEN =
 	"lhdWYU1MGLCWNwbHaQsIjlPkiSt5LKhEh9PjAtElrlE";
+const HAPPY_EVIDENCE_PATH = fileURLToPath(
+	new URL("../../.sisyphus/evidence/task-9-playwright.png", import.meta.url),
+);
+const DEGRADED_EVIDENCE_PATH = fileURLToPath(
+	new URL(
+		"../../.sisyphus/evidence/task-9-playwright-error.png",
+		import.meta.url,
+	),
+);
 const OVERVIEW_BANNED_SELECTORS = [
 	'[data-testid="overview-stats-grid"]',
 	'[data-testid="dashboard-stats-grid"]',
@@ -127,6 +137,140 @@ async function fulfillJson(route: Route, payload: unknown): Promise<void> {
 	});
 }
 
+async function captureEvidence(page: Page, filePath: string): Promise<void> {
+	await page.screenshot({
+		path: filePath,
+		fullPage: true,
+	});
+}
+
+async function mockDegradedAggregateResponses(page: Page): Promise<void> {
+	const degradedOverview = {
+		request_id: "req-v06-overview-degraded",
+		freshness: {
+			status: "stale",
+			checked_at: "2026-03-22T11:55:00Z",
+		},
+		partial_failure: true,
+		diagnostics: [
+			{
+				instance_id: "instance-failing",
+				instance_name: "failing-instance",
+				status: "failed",
+				freshness: {
+					status: "failed",
+					checked_at: "2026-03-22T11:50:00Z",
+				},
+				error: {
+					code: "source_unavailable",
+					message: "OpenClaw upstream unavailable",
+					request_id: "req-v06-overview-degraded",
+					recoverable: true,
+					next_step: "检查实例连通性或网关 token 后重试",
+				},
+			},
+		],
+		agents: [
+			{
+				instance_id: "instance-healthy",
+				instance_name: "healthy-instance",
+				agent_id: "agent-healthy",
+				agent_name: "Healthy Agent",
+				status: "running",
+				is_active: true,
+				last_active_at: "2026-03-22T11:54:00Z",
+				drilldown_path: "/session/instance-healthy/agent-healthy",
+			},
+			{
+				instance_id: "instance-failing",
+				instance_name: "failing-instance",
+				agent_id: "agent-failing",
+				agent_name: "Failing Agent",
+				status: "error",
+				is_active: false,
+				last_active_at: null,
+				drilldown_path: "/session/instance-failing/agent-failing",
+			},
+		],
+	};
+
+	const degradedTopology = {
+		request_id: "req-v06-topology-degraded",
+		freshness: {
+			status: "stale",
+			checked_at: "2026-03-22T11:55:00Z",
+		},
+		partial_failure: true,
+		diagnostics: [
+			{
+				instance_id: "instance-failing",
+				instance_name: "failing-instance",
+				status: "failed",
+				freshness: {
+					status: "failed",
+					checked_at: "2026-03-22T11:50:00Z",
+				},
+				error: {
+					code: "source_unavailable",
+					message: "OpenClaw upstream unavailable",
+					request_id: "req-v06-topology-degraded",
+					recoverable: true,
+					next_step: "检查实例连通性或网关 token 后重试",
+				},
+			},
+		],
+		instances: [
+			{
+				node_id: "instance:instance-healthy",
+				instance_id: "instance-healthy",
+				name: "healthy-instance",
+				type: "openclaw",
+				status: "active",
+				last_check_at: "2026-03-22T11:55:00Z",
+				created_at: "2026-03-22T11:00:00Z",
+			},
+			{
+				node_id: "instance:instance-failing",
+				instance_id: "instance-failing",
+				name: "failing-instance",
+				type: "openclaw",
+				status: "inactive",
+				last_check_at: "2026-03-22T11:50:00Z",
+				created_at: "2026-03-22T10:00:00Z",
+			},
+		],
+		agents: [
+			{
+				node_id: "agent:instance-healthy:agent-healthy",
+				instance_id: "instance-healthy",
+				instance_name: "healthy-instance",
+				agent_id: "agent-healthy",
+				agent_name: "Healthy Agent",
+				status: "running",
+				is_active: true,
+				last_active_at: "2026-03-22T11:54:00Z",
+				drilldown_path: "/session/instance-healthy/agent-healthy",
+			},
+		],
+		edges: [
+			{
+				source: "instance:instance-healthy",
+				target: "agent:instance-healthy:agent-healthy",
+				kind: "instance_agent",
+			},
+		],
+		skills: [],
+		external_acps: [],
+	};
+
+	await page.route(/\/aggregate\/overview(\?.*)?$/, async (route) => {
+		await fulfillJson(route, degradedOverview);
+	});
+	await page.route(/\/aggregate\/topology(\?.*)?$/, async (route) => {
+		await fulfillJson(route, degradedTopology);
+	});
+}
+
 async function expectNoBannedStructures(page: Page, selectors: string[]): Promise<void> {
 	for (const selector of selectors) {
 		await expect(page.locator(selector)).toHaveCount(0);
@@ -207,6 +351,7 @@ test.describe("v0.6 browser acceptance", () => {
 		await expect(page.getByTestId("session-stream-shell")).toBeVisible();
 		await expect(page.getByTestId("session-input-shell")).toBeVisible();
 		await expectNoBannedStructures(page, SESSION_BANNED_SELECTORS);
+		await captureEvidence(page, HAPPY_EVIDENCE_PATH);
 	});
 
 	test("v0.6 ui-realignment keeps degraded overview and topology diagnostics visible", async ({
@@ -215,159 +360,16 @@ test.describe("v0.6 browser acceptance", () => {
 		const credentials = buildUniqueCredentials("v06-degraded");
 
 		await register(page, credentials.username, credentials.password);
-
-		const degradedOverview = {
-			request_id: "req-v06-overview-degraded",
-			freshness: {
-				status: "stale",
-				checked_at: "2026-03-22T11:55:00Z",
-			},
-			partial_failure: true,
-			diagnostics: [
-				{
-					instance_id: "instance-failing",
-					instance_name: "failing-instance",
-					status: "failed",
-					freshness: {
-						status: "failed",
-						checked_at: "2026-03-22T11:50:00Z",
-					},
-					error: {
-						code: "source_unavailable",
-						message: "OpenClaw upstream unavailable",
-						request_id: "req-v06-overview-degraded",
-						recoverable: true,
-						next_step: "检查实例连通性或网关 token 后重试",
-					},
-				},
-			],
-			agents: [
-				{
-					instance_id: "instance-healthy",
-					instance_name: "healthy-instance",
-					agent_id: "agent-healthy",
-					agent_name: "Healthy Agent",
-					status: "running",
-					is_active: true,
-					last_active_at: "2026-03-22T11:54:00Z",
-					drilldown_path: "/session/instance-healthy/agent-healthy",
-				},
-			],
-		};
-
-		const degradedTopology = {
-			request_id: "req-v06-topology-degraded",
-			freshness: {
-				status: "stale",
-				checked_at: "2026-03-22T11:55:00Z",
-			},
-			partial_failure: true,
-			diagnostics: [
-				{
-					instance_id: "instance-failing",
-					instance_name: "failing-instance",
-					status: "failed",
-					freshness: {
-						status: "failed",
-						checked_at: "2026-03-22T11:50:00Z",
-					},
-					error: {
-						code: "source_unavailable",
-						message: "OpenClaw upstream unavailable",
-						request_id: "req-v06-topology-degraded",
-						recoverable: true,
-						next_step: "检查实例连通性或网关 token 后重试",
-					},
-				},
-			],
-			instances: [
-				{
-					node_id: "instance:instance-healthy",
-					instance_id: "instance-healthy",
-					name: "healthy-instance",
-					type: "openclaw",
-					status: "active",
-					last_check_at: "2026-03-22T11:55:00Z",
-					created_at: "2026-03-22T11:00:00Z",
-				},
-				{
-					node_id: "instance:instance-failing",
-					instance_id: "instance-failing",
-					name: "failing-instance",
-					type: "openclaw",
-					status: "inactive",
-					last_check_at: "2026-03-22T11:50:00Z",
-					created_at: "2026-03-22T10:00:00Z",
-				},
-			],
-			agents: [
-				{
-					node_id: "agent:instance-healthy:agent-healthy",
-					instance_id: "instance-healthy",
-					instance_name: "healthy-instance",
-					agent_id: "agent-healthy",
-					agent_name: "Healthy Agent",
-					status: "running",
-					is_active: true,
-					last_active_at: "2026-03-22T11:54:00Z",
-					drilldown_path: "/session/instance-healthy/agent-healthy",
-				},
-			],
-			edges: [
-				{
-					source: "instance:instance-healthy",
-					target: "agent:instance-healthy:agent-healthy",
-					kind: "instance_agent",
-				},
-			],
-			skills: [],
-			external_acps: [],
-		};
-
-		const topologyInstances = [
-			{
-				id: "instance-healthy",
-				name: "healthy-instance",
-				type: "openclaw",
-				endpoint: HEALTHY_OPENCLAW_ENDPOINT,
-				status: "connected",
-				last_check_at: "2026-03-22T11:55:00Z",
-				created_at: "2026-03-22T11:00:00Z",
-			},
-			{
-				id: "instance-failing",
-				name: "failing-instance",
-				type: "openclaw",
-				endpoint: "http://175.178.213.10:28789",
-				status: "disconnected",
-				last_check_at: "2026-03-22T11:50:00Z",
-				created_at: "2026-03-22T10:00:00Z",
-			},
-		];
-
-		await page.route(/\/aggregate\/overview\?/, async (route) => {
-			await fulfillJson(route, degradedOverview);
-		});
-		await page.route(/\/aggregate\/topology\?/, async (route) => {
-			await fulfillJson(route, degradedTopology);
-		});
-		await page.route(/\/instances$/, async (route) => {
-			if (route.request().method() !== "GET") {
-				await route.continue();
-				return;
-			}
-			await fulfillJson(route, topologyInstances);
-		});
+		await mockDegradedAggregateResponses(page);
 
 		await page.goto("/overview");
 		await expect(page.getByTestId("overview-summary-strip")).toBeVisible();
 		await expect(page.getByTestId("overview-agents-grid")).toBeVisible();
 		await expectNoBannedStructures(page, OVERVIEW_BANNED_SELECTORS);
-		await expect(page.getByText("部分降级")).toHaveCount(0);
 		await expect(page.getByText("异常实例")).toBeVisible();
-		await expect(page.getByText("OpenClaw upstream unavailable")).toHaveCount(0);
+		await expect(page.getByText("OpenClaw upstream unavailable")).toBeVisible();
 		await expect(
-			page.locator('a[href="/session/instance-healthy/agent-healthy"]'),
+			page.getByRole("link", { name: "进入会话 - Healthy Agent" }),
 		).toHaveAttribute("href", "/session/instance-healthy/agent-healthy");
 
 		await page.goto("/topology");
@@ -378,7 +380,6 @@ test.describe("v0.6 browser acceptance", () => {
 		await expect(
 			page.getByTestId("drilldown-link-agent-healthy"),
 		).toHaveAttribute("href", "/session/instance-healthy/agent-healthy");
-		await expect(page.getByText("OpenClaw upstream unavailable")).toHaveCount(0);
 
 		await page.goto("/kanban");
 		await expect(page.locator('section[aria-label="kanban-page"]')).toBeVisible();
@@ -386,12 +387,11 @@ test.describe("v0.6 browser acceptance", () => {
 		await expectNoBannedStructures(page, KANBAN_BANNED_SELECTORS);
 		await expect(page.getByRole("heading", { name: "看板" })).toBeVisible();
 		await expect(page.getByText("部分降级")).toBeVisible();
-		await expect(page.getByText("OpenClaw upstream unavailable")).toHaveCount(0);
-		await expect(page.getByText("request_id · req-v06-overview-degraded")).toHaveCount(0);
-		await expect(page.getByText("recoverable · true")).toHaveCount(0);
+		await expect(page.getByText("OpenClaw upstream unavailable")).toBeVisible();
 		await expect(
-			page.locator('a[href="/session/instance-healthy/agent-healthy"]'),
+			page.getByRole("link", { name: "进入会话 - Healthy Agent" }),
 		).toHaveAttribute("href", "/session/instance-healthy/agent-healthy");
+		await captureEvidence(page, DEGRADED_EVIDENCE_PATH);
 	});
 
 	test("v0.6 ui-realignment keeps overview single-column and session minimal shell on mobile", async ({
