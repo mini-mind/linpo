@@ -100,12 +100,48 @@ export interface AggregateOverviewAgentItem {
   drilldown_path: string;
 }
 
+export interface AggregateOverviewStats {
+  instance_count: number;
+  agent_count: number;
+  active_agent_count: number;
+  attention_instance_count: number;
+  total_tokens: number | null;
+}
+
+export interface AggregateOverviewTokenSample {
+  label: string;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+}
+
+export interface AggregateOverviewTokenGroup {
+  instance_id: string;
+  instance_name: string;
+  total_tokens: number | null;
+  samples: AggregateOverviewTokenSample[];
+}
+
+export interface AggregateOverviewGlobalEvent {
+  id: string;
+  instance_id: string;
+  instance_name: string;
+  agent_id: string | null;
+  agent_name: string | null;
+  type: EventType;
+  timestamp: string;
+  description: string;
+}
+
 export interface AggregateOverviewResponse {
   request_id: string;
   freshness: FreshnessInfo;
   partial_failure: boolean;
   diagnostics: AggregateInstanceDiagnostic[];
   agents: AggregateOverviewAgentItem[];
+  stats: AggregateOverviewStats;
+  token_groups: AggregateOverviewTokenGroup[];
+  global_events: AggregateOverviewGlobalEvent[];
 }
 
 export interface AggregateTopologyInstanceItem {
@@ -130,26 +166,31 @@ export interface AggregateTopologyAgentItem {
   drilldown_path: string;
 }
 
+export interface AggregateTopologySessionItem {
+  node_id: string;
+  instance_id: string;
+  instance_name: string;
+  agent_id: string;
+  agent_name: string;
+  session_key: string;
+  label: string;
+  updated_at: string | null;
+}
+
+export interface AggregateTopologyToolItem {
+  node_id: string;
+  instance_id: string;
+  instance_name: string;
+  agent_id: string;
+  agent_name: string;
+  tool_id: string;
+  name: string;
+}
+
 export interface AggregateTopologyEdgeItem {
   source: string;
   target: string;
   kind: string;
-}
-
-export interface AggregateTopologySkillItem {
-  id?: string;
-  node_id?: string;
-  name?: string;
-  label?: string;
-  target_ids?: string[];
-}
-
-export interface AggregateTopologyExternalAcpItem {
-  id?: string;
-  node_id?: string;
-  name?: string;
-  label?: string;
-  target_ids?: string[];
 }
 
 export interface AggregateTopologyResponse {
@@ -159,9 +200,9 @@ export interface AggregateTopologyResponse {
   diagnostics: AggregateInstanceDiagnostic[];
   instances: AggregateTopologyInstanceItem[];
   agents: AggregateTopologyAgentItem[];
+  sessions: AggregateTopologySessionItem[];
+  tools: AggregateTopologyToolItem[];
   edges: AggregateTopologyEdgeItem[];
-  skills: AggregateTopologySkillItem[];
-  external_acps: AggregateTopologyExternalAcpItem[];
 }
 
 export type AgentStatus = 'idle' | 'running' | 'finished' | 'error';
