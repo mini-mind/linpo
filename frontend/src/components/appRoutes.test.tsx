@@ -56,7 +56,7 @@ describe("app routes", () => {
 		window.history.pushState({}, "", "/");
 	});
 
-	it("redirects /collab to /kanban and renders kanban page", async () => {
+	it("does not preserve /collab as a live app route", async () => {
 		document.body.innerHTML = '<div id="root"></div>';
 		window.history.pushState({}, "", "/collab");
 
@@ -65,10 +65,11 @@ describe("app routes", () => {
 		});
 
 		await waitFor(() => {
-			expect(window.location.pathname).toBe("/kanban");
+			expect(window.location.pathname).toBe("/login");
 		});
 
-		expect(screen.getByText("kanban-page")).toBeInTheDocument();
+		expect(screen.getByText("login-page")).toBeInTheDocument();
+		expect(screen.queryByText("kanban-page")).not.toBeInTheDocument();
 	});
 
 	it("renders /team as a first-class app route", async () => {
@@ -84,5 +85,36 @@ describe("app routes", () => {
 		});
 
 		expect(screen.getByText("team-page")).toBeInTheDocument();
+	});
+
+	it("does not preserve legacy /session/:instanceId app entrypoints", async () => {
+		document.body.innerHTML = '<div id="root"></div>';
+		window.history.pushState({}, "", "/session/inst-2");
+
+		await act(async () => {
+			await import("../main");
+		});
+
+		await waitFor(() => {
+			expect(window.location.pathname).toBe("/login");
+		});
+
+		expect(screen.getByText("login-page")).toBeInTheDocument();
+		expect(screen.queryByText("session-page")).not.toBeInTheDocument();
+	});
+
+	it("renders canonical /session/:agentId/:channelKey/:sessionKey route", async () => {
+		document.body.innerHTML = '<div id="root"></div>';
+		window.history.pushState({}, "", "/session/main/__none__/__new__");
+
+		await act(async () => {
+			await import("../main");
+		});
+
+		await waitFor(() => {
+			expect(window.location.pathname).toBe("/session/main/__none__/__new__");
+		});
+
+		expect(screen.getByText("session-page")).toBeInTheDocument();
 	});
 });

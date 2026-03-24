@@ -32,7 +32,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Linpo Observer Bootstrap", lifespan=lifespan)
+app = FastAPI(title="Linpo API", lifespan=lifespan)
 _ALLOWED_CORS_ORIGINS = set(_get_cors_allow_origins())
 app.state.bootstrap_database = init_db
 

@@ -34,16 +34,13 @@ function getInstanceIdFromSearch(search: string): string | null {
 
 export function resolveSessionPageInstanceId({
 	search,
-	legacyInstanceId,
 	storedInstanceId,
 }: {
 	search: string;
-	legacyInstanceId?: string | null;
 	storedInstanceId?: string | null;
 }): string | null {
 	return (
 		normalizeNonEmpty(getInstanceIdFromSearch(search)) ??
-		normalizeNonEmpty(legacyInstanceId) ??
 		normalizeNonEmpty(storedInstanceId)
 	);
 }
@@ -131,8 +128,7 @@ export function buildCanonicalSessionPath(
 }
 
 export default function SessionPage(): JSX.Element {
-	const { instanceId, agentId, channelKey, sessionKey } = useParams<{
-		instanceId?: string;
+	const { agentId, channelKey, sessionKey } = useParams<{
 		agentId?: string;
 		channelKey?: string;
 		sessionKey?: string;
@@ -143,12 +139,9 @@ export default function SessionPage(): JSX.Element {
 	const [instances, setInstances] = useState<InstanceItem[]>([]);
 	const [instancesLoading, setInstancesLoading] = useState(false);
 	const [instancesError, setInstancesError] = useState<string | null>(null);
-	const isCanonicalSessionRoute = Boolean(agentId && channelKey && sessionKey);
-	const legacyInstanceId = isCanonicalSessionRoute ? null : instanceId ?? null;
 	const storedInstanceId = getStoredCurrentInstanceId();
 	const selectedInstanceId = resolveSessionPageInstanceId({
 		search: location.search,
-		legacyInstanceId,
 		storedInstanceId,
 	});
 	const selectedAgentId = agentId ?? null;
@@ -189,39 +182,6 @@ export default function SessionPage(): JSX.Element {
 			})
 			.finally(() => setInstancesLoading(false));
 	}, []);
-
-	useEffect(() => {
-		if (legacyInstanceId && selectedAgentId && !selectedChannelKey && !selectedSessionKey) {
-			navigate(
-				buildSessionEntryPath({
-					instanceId: legacyInstanceId,
-					agentId: selectedAgentId,
-					preferredSessionKey,
-					search: location.search,
-				}),
-				{ replace: true },
-			);
-			return;
-		}
-
-		if (legacyInstanceId && !selectedAgentId) {
-			navigate(
-				buildSessionEntryPath({
-					instanceId: legacyInstanceId,
-					search: location.search,
-				}),
-				{ replace: true },
-			);
-		}
-	}, [
-		legacyInstanceId,
-		location.search,
-		navigate,
-		preferredSessionKey,
-		selectedAgentId,
-		selectedChannelKey,
-		selectedSessionKey,
-	]);
 
 	useEffect(() => {
 		if (!selectedInstanceId) return;

@@ -48,7 +48,6 @@ describe('Layout sidebar account area', () => {
                   <Route path="/overview" element={<div>总览页内容</div>} />
                   <Route path="/topology" element={<div>拓扑页内容</div>} />
                   <Route path="/session" element={<div>会话页内容</div>} />
-                  <Route path="/collab" element={<div>协作页内容</div>} />
                 </Route>
               </Routes>
             </AuthProvider>

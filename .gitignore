@@ -17,3 +17,5 @@ htmlcov/
 *.swo
 .opencode
 node_modules
+.sisyphus/evidence/
+frontend/test-results/

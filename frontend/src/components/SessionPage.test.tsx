@@ -49,7 +49,7 @@ vi.mock("./AgentWorkspace", async () => {
 					<div>
 						{`workspace-props:${props.instanceId ?? "none"}:${props.agentId ?? "none"}:${props.preferredSessionKey ?? "none"}`}
 					</div>
-					<div data-testid="session-input-shell">observer-only placeholder</div>
+					<div data-testid="session-input-shell">session input placeholder</div>
 				</div>
 			);
 		},
@@ -85,8 +85,6 @@ function renderSessionPage(initialEntry: string): void {
 			<LocationDisplay />
 			<Routes>
 				<Route path="/session" element={<SessionPage />} />
-				<Route path="/session/:instanceId" element={<SessionPage />} />
-				<Route path="/session/:instanceId/:agentId" element={<SessionPage />} />
 				<Route
 					path="/session/:agentId/:channelKey/:sessionKey"
 					element={<SessionPage />}
@@ -145,7 +143,6 @@ describe("SessionPage", () => {
 		expect(
 			resolveSessionPageInstanceId({
 				search: "?instanceId=inst-2",
-				legacyInstanceId: "inst-legacy",
 				storedInstanceId: "inst-1",
 			}),
 		).toBe("inst-2");
@@ -155,67 +152,9 @@ describe("SessionPage", () => {
 		expect(
 			resolveSessionPageInstanceId({
 				search: "",
-				legacyInstanceId: null,
 				storedInstanceId: "inst-1",
 			}),
 		).toBe("inst-1");
-	});
-
-	it("upgrades legacy /session/:instanceId to empty workspace canonical route and preserves query string", async () => {
-		listInstancesMock.mockResolvedValue([
-			buildInstance("inst-1", "First Instance"),
-			buildInstance("inst-2", "Second Instance"),
-		]);
-
-		renderSessionPage("/session/inst-2?focus=active");
-
-		await waitFor(() => {
-			expect(screen.getByTestId("location-display")).toHaveTextContent(
-				buildSessionEntryPath({
-					instanceId: "inst-2",
-					search: "?focus=active",
-				}),
-			);
-		});
-
-		await waitFor(() => {
-			expect(
-				screen.getByText("workspace-route:main:__none__:__new__"),
-			).toBeInTheDocument();
-			expect(
-				screen.getByText("workspace-props:inst-2:main:none"),
-			).toBeInTheDocument();
-		});
-	});
-
-	it("upgrades legacy /session/:instanceId/:agentId into the new canonical route", async () => {
-		listInstancesMock.mockResolvedValue([
-			buildInstance("inst-1", "First Instance"),
-			buildInstance("inst-2", "Second Instance"),
-		]);
-
-		renderSessionPage(
-			"/session/inst-2/main?focus=active&session=agent%3Aagent-alpha%3Amain",
-		);
-
-		await waitFor(() => {
-			expect(screen.getByTestId("location-display")).toHaveTextContent(
-				buildSessionEntryPath({
-					instanceId: "inst-2",
-					agentId: "main",
-					preferredSessionKey: "agent:agent-alpha:main",
-					search: "?focus=active",
-				}),
-			);
-		});
-
-		await waitFor(() => {
-			expect(
-				screen.getByText(
-					"workspace-route:main:agent:agent:agent-alpha:main",
-				),
-			).toBeInTheDocument();
-		});
 	});
 
 	it("renders workspace on canonical session route with instance name in header", async () => {
@@ -271,6 +210,23 @@ describe("SessionPage", () => {
 				),
 			).toBeInTheDocument();
 		});
+	});
+
+	it("preserves canonical path and query string instead of upgrading legacy entrypoints", async () => {
+		listInstancesMock.mockResolvedValue([
+			buildInstance("inst-1", "First Instance"),
+			buildInstance("inst-2", "Second Instance"),
+		]);
+
+		renderSessionPage("/session/main/__none__/__new__?instanceId=inst-2&focus=active");
+
+		await waitFor(() => {
+			expect(screen.getByTestId("location-display")).toHaveTextContent(
+				"/session/main/__none__/__new__?instanceId=inst-2&focus=active",
+			);
+		});
+
+		expect(screen.getByText("workspace-route:main:__none__:__new__")).toBeInTheDocument();
 	});
 
 	it("uses stored instance memory only when canonical URL does not provide one", async () => {
