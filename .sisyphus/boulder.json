@@ -1,10 +1,10 @@
 {
-  "active_plan": "/data/projects/linpo/.sisyphus/plans/ui-design-realignment-work-plan.md",
-  "started_at": "2026-03-23T12:05:06.479Z",
+  "active_plan": "/data/projects/linpo/.sisyphus/plans/v0.6-backend-layered-breakly-implementation-work-plan.md",
+  "started_at": "2026-03-24T03:52:53.093Z",
   "session_ids": [
     "ses_2e56a6195ffeDic3zOySKGULDn",
     "ses_2e5550a5bffecG5Ydas6decCFR"
   ],
-  "plan_name": "ui-design-realignment-work-plan",
+  "plan_name": "v0.6-backend-layered-breakly-implementation-work-plan",
   "worktree_path": "/data/projects/linpo"
 }

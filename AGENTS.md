@@ -27,7 +27,7 @@
 | 文档总入口 | `README.md` | 仓库导航与当前文档索引 |
 | 产品需求 | `docs/prd/2026-03-24-linpo-v0.6-observer-prd.md` | 当前有效的产品边界与当前阶段范围 |
 | 当前架构 | `docs/architecture/2026-03-24-observer-architecture.md` | 当前有效架构边界与 v0.6 IA/验收约束入口 |
-| 当前唯一计划 | `.sisyphus/plans/ui-design-realignment-work-plan.md` | 当前阶段唯一 active plan，用于定义与承载 v0.6 对齐 `../` 参考仓库的目标、范围、验证与收口 |
+| 当前唯一计划 | `.sisyphus/plans/v0.6-backend-layered-breakly-implementation-work-plan.md` | 当前阶段唯一 active plan，用于定义与承载 v0.6 后端分层与 breakly 迁移目标、范围、验证与收口 |
 
 
 ## 开发环境与验证约定
@@ -57,7 +57,7 @@
 ## 治理规则
 
 ### Doc-First 协作原则
-- 当前阶段以 `README.md`、`docs/prd/`、`docs/architecture/` 中的当前有效文档作为 truth docs；当前唯一 active plan 为 `.sisyphus/plans/ui-design-realignment-work-plan.md`，用于承载当前阶段执行细节与收口要求。
+- 当前阶段以 `README.md`、`docs/prd/`、`docs/architecture/` 中的当前有效文档作为 truth docs；当前唯一 active plan 为 `.sisyphus/plans/v0.6-backend-layered-breakly-implementation-work-plan.md`，用于承载当前阶段执行细节与收口要求。
 - 口头约定无效；只有写入当前有效文档的约束才算数。
 - 架构、产品边界或阶段目标发生变化时，必须先更新文档，再推进实现。
 - “实现已改但文档未更新” = 项目漂移，必须立即修复。

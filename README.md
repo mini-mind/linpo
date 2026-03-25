@@ -90,7 +90,7 @@ v0.5+ 运行需要以下环境配置：
 - **当前唯一目标**：把 v0.6 做成对齐 `../` 参考仓库的新 5 页 IA 工作入口
 - **当前计划范围**：只处理 `overview / topology / kanban / team / session` 的页面职责、结构语言、交互边界与对应实现/验收收口
 - **当前稳定基线**：v0.6A 多实例聚合数据模型与筛选/健康接口（已完成）
-- **当前推进策略**：按 `.sisyphus/plans/ui-design-realignment-work-plan.md` 这一份唯一计划收敛新 5 页 IA 的页面语义、实现范围、验证与收口，并以 `../` 参考仓库与当前冻结锚点作为对齐目标
+- **当前推进策略**：按 `.sisyphus/plans/v0.6-backend-layered-breakly-implementation-work-plan.md` 这一份唯一计划完成后端分层与 breakly 迁移收口，并保持与当前冻结锚点一致
 - **当前产品语义**：overview 承担主页/默认入口；topology 承担 routing graph 画布；kanban 承担任务板；team 承担 persistent agent cards 主舞台；session 承担会话工作区
 - **公网访问**：前端 `http://175.178.213.10:5173`，后端 `http://175.178.213.10:8000`
 
@@ -119,14 +119,14 @@ v0.5+ 运行需要以下环境配置：
 |------|------|------|
 | 产品需求（当前范围） | `docs/prd/2026-03-24-linpo-v0.6-observer-prd.md` | 当前有效产品边界；当前阶段只以 v0.6 对齐 `../` 参考仓库为执行目标 |
 | 架构边界（当前范围） | `docs/architecture/2026-03-24-observer-architecture.md` | 当前有效架构边界与 v0.6 IA/约束入口 |
-| 当前唯一计划 | `.sisyphus/plans/ui-design-realignment-work-plan.md` | 当前阶段唯一 active plan：定义并承载 v0.6 对齐 `../` 参考仓库的目标、实现范围、验证与收口要求 |
+| 当前唯一计划 | `.sisyphus/plans/v0.6-backend-layered-breakly-implementation-work-plan.md` | 当前阶段唯一 active plan：定义并承载 v0.6 后端分层与 breakly 迁移的目标、实现范围、验证与收口要求 |
 | 长远规划 | `docs/plans/` | 非当前阶段版本设计与长期规划入口；`v0.6+` 未来版本不再作为当前执行入口 |
 | OpenClaw API 参考 | `OPENCLAW_API.md` | OpenClaw WebSocket API 参考 |
 | 仓库治理 | `AGENTS.md` | 当前项目治理规则 |
 
 ### start-work 前置阅读与执行边界
 
-- 继续 `/start-work` 前，只读 `.sisyphus/plans/ui-design-realignment-work-plan.md` 这一份当前 active plan。
+- 继续 `/start-work` 前，只读 `.sisyphus/plans/v0.6-backend-layered-breakly-implementation-work-plan.md` 这一份当前 active plan。
 - 当前阶段只允许围绕 **v0.6 对齐 `../` 参考仓库** 展开工作；`docs/plans/` 下的长期规划与其他非当前文件不得被当作执行入口。
 - 若当前 plan 与 truth docs 存在冲突，以 `README.md` + PRD + architecture 为准，并先修正文档口径再继续实现。
 - `ravin` 只承担远端访问与浏览器验收发起。

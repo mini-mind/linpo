@@ -307,6 +307,6 @@ breakly 不等于无门禁。必须通过以下门禁后方可收口：
 ## 14. 与其他文档的关系
 
 - 产品目标、范围与不做项：见 `docs/prd/2026-03-24-linpo-v0.6-observer-prd.md`
-- 当前阶段唯一计划：见 `.sisyphus/plans/ui-design-realignment-work-plan.md`
+- 当前阶段唯一计划：见 `.sisyphus/plans/v0.6-backend-layered-breakly-implementation-work-plan.md`
 - `docs/plans/` 仅存放长远规划，不作为当前阶段 active 执行入口
 
