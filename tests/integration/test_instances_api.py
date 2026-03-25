@@ -741,32 +741,38 @@ def test_observer_request_uses_selected_instance_context(
     assert create_status == 201
 
     expected_base_url, expected_origin = normalize_instance_endpoint("https://example.com:28789")
-    captured: dict[str, str | None] = {}
-
-    class FakeClient:
-        def __init__(
-            self,
-            *,
-            base_url: str | None = None,
-            gateway_token: str | None = None,
-            origin: str | None = None,
-        ) -> None:
-            captured["base_url"] = base_url
-            captured["gateway_token"] = gateway_token
-            captured["origin"] = origin
-            self._config = (base_url, gateway_token, origin)
-
-        def config_key(self) -> tuple[str | None, str | None, str | None]:
-            return self._config
+    captured: dict[str, object] = {}
 
     class FakeDataSource:
         def list_agents(self) -> list[object]:
             return []
 
-    monkeypatch.setattr("app.api.agents.OpenClawClient", FakeClient)
+    class FakeProviderApplicationService:
+        def build_execution_context(self, instance_context: Any) -> object:
+            captured["base_url"] = instance_context.websocket_url
+            captured["gateway_token"] = instance_context.gateway_token
+            captured["origin"] = instance_context.origin
+            return type(
+                "ExecutionContext",
+                (),
+                {"adapter": object(), "cache_key": instance_context.cache_key},
+            )()
+
+        def resolve_observer_data_source(
+            self,
+            data_source: str | None,
+            execution_context: object | None,
+        ) -> object:
+            captured["data_source"] = data_source
+            captured["cache_key"] = getattr(execution_context, "cache_key", None)
+            return FakeDataSource()
+
+    from app.main import app as fastapi_app
+
     monkeypatch.setattr(
-        "app.api.agents.get_observer_data_source",
-        lambda data_source=None, client=None, cache_key=None: FakeDataSource(),
+        fastapi_app.state,
+        "provider_application_service",
+        FakeProviderApplicationService(),
     )
 
     status_code, _, body = request(
@@ -777,11 +783,15 @@ def test_observer_request_uses_selected_instance_context(
 
     assert status_code == 200
     assert json.loads(body.decode("utf-8")) == []
-    assert captured == {
-        "base_url": expected_base_url,
-        "gateway_token": "alice-token",
-        "origin": expected_origin,
-    }
+    assert captured["base_url"] == expected_base_url
+    assert captured["gateway_token"] == "alice-token"
+    assert captured["origin"] == expected_origin
+    assert captured["data_source"] == "openclaw"
+    cache_key = cast(tuple[object, object, object, object], captured["cache_key"])
+    assert cache_key[0] == create_payload["id"]
+    assert cache_key[1] == expected_base_url
+    assert isinstance(cache_key[2], str) and cache_key[2]
+    assert cache_key[3] == expected_origin
 
 
 def test_observer_request_requires_auth_for_selected_instance_context(
@@ -813,10 +823,17 @@ def test_observer_request_requires_auth_for_selected_instance_context(
     )
     assert create_status == 201
 
-    def fail_data_source(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("instance-scoped observer request should fail before data source creation")
+    from app.main import app as fastapi_app
 
-    monkeypatch.setattr("app.api.agents.get_observer_data_source", fail_data_source)
+    class FailProviderApplicationService:
+        def build_execution_context(self, *_args: object, **_kwargs: object) -> object:
+            raise AssertionError("instance-scoped observer request should fail before data source creation")
+
+    monkeypatch.setattr(
+        fastapi_app.state,
+        "provider_application_service",
+        FailProviderApplicationService(),
+    )
 
     status_code, _, body = request(
         "GET",
@@ -857,10 +874,17 @@ def test_chat_request_rejects_other_users_instance_context(
     )
     assert create_status == 201
 
-    def fail_operator_service(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("cross-user request should fail before operator service creation")
+    from app.main import app as fastapi_app
 
-    monkeypatch.setattr("app.api.agents.get_openclaw_operator_service", fail_operator_service)
+    class FailProviderApplicationService:
+        def list_sessions(self, *_args: object, **_kwargs: object) -> object:
+            raise AssertionError("cross-user request should fail before provider application service execution")
+
+    monkeypatch.setattr(
+        fastapi_app.state,
+        "provider_application_service",
+        FailProviderApplicationService(),
+    )
 
     status_code, _, body = request(
         "GET",
@@ -906,23 +930,7 @@ def test_observer_websocket_uses_selected_instance_context(
     assert create_status == 201
 
     expected_base_url, expected_origin = normalize_instance_endpoint("https://example.com:28789")
-    captured: dict[str, str | None] = {}
-
-    class FakeClient:
-        def __init__(
-            self,
-            *,
-            base_url: str | None = None,
-            gateway_token: str | None = None,
-            origin: str | None = None,
-        ) -> None:
-            captured["base_url"] = base_url
-            captured["gateway_token"] = gateway_token
-            captured["origin"] = origin
-            self._config = (base_url, gateway_token, origin)
-
-        def config_key(self) -> tuple[str | None, str | None, str | None]:
-            return self._config
+    captured: dict[str, object] = {}
 
     class FakeDataSource:
         def validate_realtime_channel(self, channel: str) -> None:
@@ -939,10 +947,32 @@ def test_observer_websocket_uses_selected_instance_context(
         def pump_realtime(self, channel: str) -> None:
             del channel
 
-    monkeypatch.setattr("app.api.realtime.OpenClawClient", FakeClient)
+    class FakeProviderApplicationService:
+        def build_execution_context(self, instance_context: Any) -> object:
+            captured["base_url"] = instance_context.websocket_url
+            captured["gateway_token"] = instance_context.gateway_token
+            captured["origin"] = instance_context.origin
+            return type(
+                "ExecutionContext",
+                (),
+                {"adapter": object(), "cache_key": instance_context.cache_key},
+            )()
+
+        def resolve_observer_data_source(
+            self,
+            data_source: str | None,
+            execution_context: object | None,
+        ) -> object:
+            captured["data_source"] = data_source
+            captured["cache_key"] = getattr(execution_context, "cache_key", None)
+            return FakeDataSource()
+
+    from app.main import app as fastapi_app
+
     monkeypatch.setattr(
-        "app.api.realtime.get_observer_data_source",
-        lambda data_source=None, client=None, cache_key=None: FakeDataSource(),
+        fastapi_app.state,
+        "provider_application_service",
+        FakeProviderApplicationService(),
     )
 
     messages = websocket(
@@ -957,11 +987,15 @@ def test_observer_websocket_uses_selected_instance_context(
     ]
 
     assert payloads[0]["type"] == "snapshot_ready"
-    assert captured == {
-        "base_url": expected_base_url,
-        "gateway_token": "alice-token",
-        "origin": expected_origin,
-    }
+    assert captured["base_url"] == expected_base_url
+    assert captured["gateway_token"] == "alice-token"
+    assert captured["origin"] == expected_origin
+    assert captured["data_source"] == "openclaw"
+    cache_key = cast(tuple[object, object, object, object], captured["cache_key"])
+    assert cache_key[0] == create_payload["id"]
+    assert cache_key[1] == expected_base_url
+    assert isinstance(cache_key[2], str) and cache_key[2]
+    assert cache_key[3] == expected_origin
 
 
 def test_observer_websocket_rejects_unauthenticated_instance_context(

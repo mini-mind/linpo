@@ -169,7 +169,7 @@ describe("AgentWorkspace readonly mode", () => {
 			screen.getByText("request_id · 当前真实读链路未返回 aggregate request_id"),
 		).toBeInTheDocument();
 		expect(
-			screen.getByText("freshness · inferred fresh from listSessions.ts"),
+			screen.getByText("freshness · inferred stale from listSessions.ts"),
 		).toBeInTheDocument();
 		expect(
 			screen.getByText(

@@ -1,0 +1,73 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any, Protocol
+
+from app.domain.provider_contract import DomainProviderRequest, DomainProviderResponse
+
+
+@dataclass(frozen=True)
+class ProviderPayloadResult:
+    response: DomainProviderResponse
+    payload: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class ProviderSnapshotResult:
+    response: DomainProviderResponse
+    snapshot: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class ProviderStreamEvent:
+    response: DomainProviderResponse
+    message: dict[str, Any]
+
+
+class ProviderAdapterError(Exception):
+    def __init__(self, response: DomainProviderResponse) -> None:
+        super().__init__(response.error.message if response.error is not None else "provider adapter failed")
+        self.response = response
+
+
+class ProviderAdapter(Protocol):
+    def config_key(self) -> tuple[str | None, str | None, str]: ...
+
+    def fetch_snapshot(self, request: DomainProviderRequest) -> ProviderSnapshotResult: ...
+
+    def stream_agent_events(
+        self,
+        request: DomainProviderRequest,
+        on_event: Callable[[ProviderStreamEvent], None],
+    ) -> None: ...
+
+    def models_list(self, request: DomainProviderRequest) -> ProviderPayloadResult: ...
+
+    def sessions_list(
+        self,
+        request: DomainProviderRequest,
+        *,
+        agent_id: str | None,
+        include_derived_titles: bool,
+        include_last_message: bool,
+    ) -> ProviderPayloadResult: ...
+
+    def sessions_preview(
+        self,
+        request: DomainProviderRequest,
+        *,
+        keys: list[str],
+        limit: int,
+        max_chars: int,
+    ) -> ProviderPayloadResult: ...
+
+    def sessions_patch(
+        self,
+        request: DomainProviderRequest,
+        *,
+        key: str,
+        agent_id: str | None,
+        model: str | None,
+        thinking_level: str | None,
+    ) -> ProviderPayloadResult: ...

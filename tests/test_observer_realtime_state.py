@@ -5,6 +5,7 @@ from typing import Any, cast
 from fastapi import HTTPException
 import pytest
 
+from app.adapters.openclaw_adapter import OpenClawAdapter
 import app.services.observer_data as observer_data
 from app.domain.agent import Agent, AgentStatus
 from app.domain.control_request import ControlRequestStatus
@@ -63,6 +64,24 @@ def _make_event() -> EventRecord:
         timestamp="2026-03-16T09:02:00Z",
         description="Realtime Worker started a refresh task.",
     )
+
+
+def _openclaw_source(client: Any) -> observer_data.OpenClawObserverDataSource:
+    return observer_data.OpenClawObserverDataSource(
+        adapter=OpenClawAdapter(client=cast(Any, client))
+    )
+
+
+def test_openclaw_observer_data_source_no_longer_accepts_client_keyword() -> None:
+    with pytest.raises(TypeError):
+        cast(Any, observer_data.OpenClawObserverDataSource)(client=cast(Any, object()))
+
+
+def test_get_observer_data_source_no_longer_accepts_client_keyword() -> None:
+    with pytest.raises(TypeError):
+        cast(Any, observer_data.get_observer_data_source)(
+            "openclaw", client=cast(Any, object())
+        )
 
 
 def test_operator_service_sends_pause_action_without_redundant_preconnect_call() -> None:
@@ -1094,7 +1113,7 @@ def test_openclaw_realtime_queue_discards_stale_unconsumed_updates() -> None:
                 }
             )
 
-    source = observer_data.OpenClawObserverDataSource(client=FakeClient())
+    source = _openclaw_source(FakeClient())
 
     source.pump_realtime(observer_data.agents_list_channel())
 
@@ -1176,7 +1195,7 @@ def test_openclaw_realtime_maps_detail_events_into_detail_channel_buffer() -> No
                 }
             )
 
-    source = observer_data.OpenClawObserverDataSource(client=FakeClient())
+    source = _openclaw_source(FakeClient())
 
     source.pump_realtime(observer_data.agent_detail_channel("main"))
 
@@ -1235,7 +1254,7 @@ def test_openclaw_control_request_transitions_from_accepted_to_applied_on_chat_a
                 }
             )
 
-    source = observer_data.OpenClawObserverDataSource(client=FakeClient())
+    source = _openclaw_source(FakeClient())
 
     source.register_pending_control_request(
         request_id="control-pause-applied-1",
@@ -1297,7 +1316,7 @@ def test_openclaw_control_request_does_not_apply_without_chat_abort_event() -> N
                 }
             )
 
-    source = observer_data.OpenClawObserverDataSource(client=FakeClient())
+    source = _openclaw_source(FakeClient())
     source.register_pending_control_request(
         request_id="control-pause-not-applied-1",
         agent_id="main",
@@ -1353,7 +1372,7 @@ def test_openclaw_control_request_keeps_all_pending_when_pause_confirmation_is_a
                 }
             )
 
-    source = observer_data.OpenClawObserverDataSource(client=FakeClient())
+    source = _openclaw_source(FakeClient())
     source.register_pending_control_request(
         request_id="control-pause-ambiguous-1",
         agent_id="main",
@@ -1406,7 +1425,7 @@ def test_openclaw_control_request_transitions_from_accepted_to_timeout_without_c
             del on_message
             raise TimeoutError()
 
-    source = observer_data.OpenClawObserverDataSource(client=FakeClient())
+    source = _openclaw_source(FakeClient())
 
     source.register_pending_control_request(
         request_id="control-pause-timeout-1",
@@ -1487,7 +1506,7 @@ def test_openclaw_realtime_ignores_detail_events_for_unknown_agents() -> None:
                 }
             )
 
-    source = observer_data.OpenClawObserverDataSource(client=FakeClient())
+    source = _openclaw_source(FakeClient())
 
     source.pump_realtime(observer_data.agent_detail_channel("main"))
 
@@ -1569,7 +1588,7 @@ def test_openclaw_realtime_drains_topology_before_node_events_for_same_agent() -
                 }
             )
 
-    source = observer_data.OpenClawObserverDataSource(client=FakeClient())
+    source = _openclaw_source(FakeClient())
 
     source.pump_realtime(observer_data.agent_detail_channel("main"))
 
@@ -1632,7 +1651,7 @@ def test_openclaw_realtime_restarts_after_upstream_failure() -> None:
                 }
             )
 
-    source = observer_data.OpenClawObserverDataSource(client=FakeClient())
+    source = _openclaw_source(FakeClient())
 
     with pytest.raises(HTTPException, match="OpenClaw realtime failed: boom"):
         source.pump_realtime(observer_data.agents_list_channel())
@@ -1669,7 +1688,7 @@ def test_openclaw_realtime_ignores_idle_stream_timeout() -> None:
             del on_message
             raise TimeoutError()
 
-    source = observer_data.OpenClawObserverDataSource(client=FakeClient())
+    source = _openclaw_source(FakeClient())
 
     source.pump_realtime(observer_data.agents_list_channel())
 
@@ -1722,7 +1741,7 @@ def test_openclaw_realtime_restarts_after_upstream_exit() -> None:
                 }
             )
 
-    source = observer_data.OpenClawObserverDataSource(client=FakeClient())
+    source = _openclaw_source(FakeClient())
 
     source.pump_realtime(observer_data.agents_list_channel())
     source.pump_realtime(observer_data.agents_list_channel())

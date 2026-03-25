@@ -28,8 +28,8 @@ from app.db.models import Instance
 from app.domain.agent import Agent
 from app.domain.event import EventRecord
 from app.services.instance_service import InstanceService
-from app.services.observer_data import ObserverDataSource, get_observer_data_source
-from app.services.openclaw_client import OpenClawClient
+from app.services.observer_data import ObserverDataSource
+from app.services.provider_application_service import ProviderApplicationService
 
 
 @dataclass(frozen=True)
@@ -42,8 +42,13 @@ class InstanceAggregateSnapshot:
 
 
 class AggregateService:
-    def __init__(self, instance_service: InstanceService | None = None) -> None:
+    def __init__(
+        self,
+        instance_service: InstanceService | None = None,
+        provider_application_service: ProviderApplicationService | None = None,
+    ) -> None:
         self._instance_service = instance_service or InstanceService()
+        self._provider_application_service = provider_application_service or ProviderApplicationService()
 
     def get_overview(self, db_session: Session, *, user_id: UUID) -> AggregateOverviewResponse:
         request_id = str(uuid4())
@@ -235,14 +240,12 @@ class AggregateService:
             user_id=user_id,
             instance_id=instance_id,
         )
-        data_source = get_observer_data_source(
+        execution_context = self._provider_application_service.build_execution_context(
+            instance_context
+        )
+        data_source = self._provider_application_service.resolve_observer_data_source(
             "openclaw",
-            client=OpenClawClient(
-                base_url=instance_context.websocket_url,
-                gateway_token=instance_context.gateway_token,
-                origin=instance_context.origin,
-            ),
-            cache_key=instance_context.cache_key,
+            execution_context,
         )
         return data_source
 
@@ -352,6 +355,8 @@ class AggregateService:
                 code = "source_unavailable"
             else:
                 code = "source_error"
+            if "pairing" in message_lower or "unauthorized" in message_lower:
+                code = "auth_failed"
 
         return AggregateInstanceDiagnostic(
             instance_id=str(instance.id),

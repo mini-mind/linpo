@@ -4,12 +4,15 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
 
+from app.adapters.provider_registry import build_default_provider_registry
 from app.api.aggregate import router as aggregate_router
 from app.api.agents import router as agents_router
 from app.api.auth import router as auth_router
 from app.api.instances import router as instances_router
 from app.api.realtime import router as realtime_router
 from app.db.session import init_db
+from app.services.aggregate_service import AggregateService
+from app.services.provider_application_service import ProviderApplicationService
 
 _DEFAULT_CORS_ORIGINS = [
     "http://localhost:4173",
@@ -44,6 +47,13 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Linpo API", lifespan=lifespan)
 _ALLOWED_CORS_ORIGINS = set(_get_cors_allow_origins())
 app.state.bootstrap_database = init_db
+app.state.provider_registry = build_default_provider_registry()
+app.state.provider_application_service = ProviderApplicationService(
+    provider_registry=app.state.provider_registry
+)
+app.state.aggregate_service = AggregateService(
+    provider_application_service=app.state.provider_application_service
+)
 
 
 def _get_cors_allow_headers(request: Request) -> str:

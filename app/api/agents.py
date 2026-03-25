@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from typing import cast
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -24,25 +24,23 @@ from app.api.schemas import (
     TopologyNodeItem,
 )
 from app.db.session import get_session
-from app.services.openclaw_client import OpenClawClient, OpenClawOperatorService
 from app.services.auth_service import get_authenticated_user
 from app.services.instance_service import (
     InstanceNotFoundError,
-    InstanceOpenClawContext,
     InstanceService,
 )
-from app.services.observer_data import get_observer_data_source
-from app.services.openclaw_client import OpenClawClient, OpenClawOperatorService
+from app.services.provider_application_service import (
+    ProviderApplicationService,
+    ProviderExecutionContext,
+)
 
 router = APIRouter()
-
-
-def get_openclaw_operator_service() -> OpenClawOperatorService:
-    return OpenClawOperatorService()
-
-
 def get_instance_service() -> InstanceService:
     return InstanceService()
+
+
+def get_provider_application_service(request: Request) -> ProviderApplicationService:
+    return cast(ProviderApplicationService, request.app.state.provider_application_service)
 
 
 def _error_response(
@@ -95,7 +93,7 @@ def _http_exception_response(exc: HTTPException) -> JSONResponse:
         code = "invalid_request"
         next_step = "修正请求参数后重试"
         recoverable = True
-    elif "token" in message_lower:
+    elif "token" in message_lower or "pairing" in message_lower or "unauthorized" in message_lower:
         code = "auth_failed"
         next_step = "检查实例连通性或网关 token 后重试"
         recoverable = True
@@ -116,10 +114,7 @@ def _http_exception_response(exc: HTTPException) -> JSONResponse:
     )
 
 
-@dataclass(frozen=True)
-class RequestOpenClawContext:
-    client: OpenClawClient
-    cache_key: object
+RequestOpenClawContext = ProviderExecutionContext
 
 
 def get_request_openclaw_context(
@@ -127,6 +122,7 @@ def get_request_openclaw_context(
     instance_id: UUID | None = Query(default=None, alias="instanceId"),
     db_session: Session = Depends(get_session),
     instance_service: InstanceService = Depends(get_instance_service),
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
 ) -> RequestOpenClawContext | None:
     if instance_id is None:
         return None
@@ -144,35 +140,18 @@ def get_request_openclaw_context(
     except InstanceNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found") from exc
 
-    return RequestOpenClawContext(
-        client=_build_openclaw_client(instance_context),
-        cache_key=instance_context.cache_key,
-    )
-
-
-def _build_openclaw_client(instance_context: InstanceOpenClawContext) -> OpenClawClient:
-    return OpenClawClient(
-        base_url=instance_context.websocket_url,
-        gateway_token=instance_context.gateway_token,
-        origin=instance_context.origin,
-    )
+    return provider_application_service.build_execution_context(instance_context)
 
 
 def _resolve_observer_data_source(
+    provider_application_service: ProviderApplicationService,
     data_source: str | None,
     request_context: RequestOpenClawContext | None,
 ):
-    if request_context is None:
-        return get_observer_data_source(data_source)
-    return get_observer_data_source(
+    return provider_application_service.resolve_observer_data_source(
         data_source,
-        client=request_context.client,
-        cache_key=request_context.cache_key,
+        request_context,
     )
-
-
-def _resolve_openclaw_client(request_context: RequestOpenClawContext | None) -> OpenClawClient:
-    return request_context.client if request_context is not None else OpenClawClient()
 
 
 # === Observer API ===
@@ -182,9 +161,14 @@ def _resolve_openclaw_client(request_context: RequestOpenClawContext | None) -> 
 def list_agents(
     data_source: str | None = Query(default=None),
     request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
 ) -> list[AgentListItem] | JSONResponse:
     try:
-        data_source_impl = _resolve_observer_data_source(data_source, request_context)
+        data_source_impl = _resolve_observer_data_source(
+            provider_application_service,
+            data_source,
+            request_context,
+        )
         return [
             AgentListItem(
                 id=agent.id,
@@ -204,9 +188,14 @@ def get_agent_detail(
     agent_id: str,
     data_source: str | None = Query(default=None),
     request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
-) -> AgentDetailResponse | JSONResponse:
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
+    ) -> AgentDetailResponse | JSONResponse:
     try:
-        data_source_impl = _resolve_observer_data_source(data_source, request_context)
+        data_source_impl = _resolve_observer_data_source(
+            provider_application_service,
+            data_source,
+            request_context,
+        )
         agent = data_source_impl.get_agent(agent_id)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
@@ -249,9 +238,14 @@ def get_node_detail(
     node_id: str,
     data_source: str | None = Query(default=None),
     request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
 ) -> NodeDetailResponse | JSONResponse:
     try:
-        data_source_impl = _resolve_observer_data_source(data_source, request_context)
+        data_source_impl = _resolve_observer_data_source(
+            provider_application_service,
+            data_source,
+            request_context,
+        )
         agent = data_source_impl.get_agent(agent_id)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
@@ -288,24 +282,13 @@ def get_node_detail(
 def list_models(
     data_source: str | None = Query(default=None),
     request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
 ) -> ModelsListResponse | JSONResponse:
     try:
-        if data_source != "openclaw":
-            raise HTTPException(
-                status_code=503,
-                detail="models.list is only available with the OpenClaw data source",
-            )
-
-        client = _resolve_openclaw_client(request_context)
-        result = client.models_list()
-
-        if not result.get("ok"):
-            error = result.get("error", {})
-            message = error.get("message", "Failed to list models")
-            raise HTTPException(status_code=503, detail=message)
-
-        payload = result.get("payload", {})
-        models_raw = payload.get("models", [])
+        models_raw = provider_application_service.list_models(
+            data_source=data_source,
+            execution_context=request_context,
+        )
 
         models = []
         for m in models_raw:
@@ -336,28 +319,16 @@ def list_sessions(
     include_last_message: bool = Query(default=True, alias="includeLastMessage"),
     data_source: str | None = Query(default=None),
     request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
 ) -> SessionsListResponse | JSONResponse:
     try:
-        if data_source != "openclaw":
-            raise HTTPException(
-                status_code=503,
-                detail="sessions.list is only available with the OpenClaw data source",
-            )
-
-        client = _resolve_openclaw_client(request_context)
-        result = client.sessions_list(
+        payload = provider_application_service.list_sessions(
+            data_source=data_source,
+            execution_context=request_context,
             agent_id=agent_id,
             include_derived_titles=include_derived_titles,
             include_last_message=include_last_message,
         )
-
-        if not result.get("ok"):
-            raise HTTPException(
-                status_code=503,
-                detail=result.get("error", {}).get("message", "sessions.list failed"),
-            )
-
-        payload = result.get("payload", {})
         sessions_raw = payload.get("sessions", [])
 
         sessions = [
@@ -394,28 +365,16 @@ def preview_sessions(
     max_chars: int = Query(default=2000, alias="maxChars"),
     data_source: str | None = Query(default=None),
     request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
 ) -> SessionsPreviewResponse | JSONResponse:
     try:
-        if data_source != "openclaw":
-            raise HTTPException(
-                status_code=503,
-                detail="sessions.preview is only available with the OpenClaw data source",
-            )
-
-        client = _resolve_openclaw_client(request_context)
-        result = client.sessions_preview(
+        payload = provider_application_service.preview_sessions(
+            data_source=data_source,
+            execution_context=request_context,
             keys=keys.split(","),
             limit=limit,
             max_chars=max_chars,
         )
-
-        if not result.get("ok"):
-            raise HTTPException(
-                status_code=503,
-                detail=result.get("error", {}).get("message", "sessions.preview failed"),
-            )
-
-        payload = result.get("payload", {})
         previews_raw = payload.get("previews", [])
 
         previews = []
@@ -450,29 +409,17 @@ def patch_session(
     body: SessionPatchRequest,
     data_source: str | None = Query(default=None),
     request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
 ) -> SessionPatchResponse | JSONResponse:
     try:
-        if data_source != "openclaw":
-            raise HTTPException(
-                status_code=503,
-                detail="sessions.patch is only available with the OpenClaw data source",
-            )
-
-        client = _resolve_openclaw_client(request_context)
-        result = client.sessions_patch(
+        updated = provider_application_service.patch_session(
+            data_source=data_source,
+            execution_context=request_context,
             key=key,
             agent_id=body.agent_id,
             model=body.model,
             thinking_level=body.thinking_level,
         )
-
-        if not result.get("ok"):
-            raise HTTPException(
-                status_code=503,
-                detail=result.get("error", {}).get("message", "sessions.patch failed"),
-            )
-
-        payload = result.get("payload", {})
-        return SessionPatchResponse(updated=payload.get("ok", False))
+        return SessionPatchResponse(updated=updated)
     except HTTPException as exc:
         return _http_exception_response(exc)

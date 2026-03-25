@@ -21,8 +21,8 @@ from app.services.auth_service import get_authenticated_user
 router = APIRouter(prefix="/aggregate", tags=["aggregate"])
 
 
-def get_aggregate_service() -> AggregateService:
-    return AggregateService()
+def get_aggregate_service(request: Request) -> AggregateService:
+    return cast(AggregateService, request.app.state.aggregate_service)
 
 
 def _error_response(

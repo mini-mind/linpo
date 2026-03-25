@@ -1,11 +1,10 @@
 import asyncio
 import json
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, WebSocket
+from fastapi import APIRouter, Depends, HTTPException, WebSocket
 from fastapi.websockets import WebSocketDisconnect
 from sqlalchemy.orm import Session
 
@@ -14,24 +13,23 @@ from app.domain.agent import Agent
 from app.domain.event import EventRecord
 from app.domain.node import TopologyNode
 from app.services.auth_service import get_authenticated_user
-from app.services.instance_service import InstanceNotFoundError, InstanceOpenClawContext, InstanceService
+from app.services.instance_service import InstanceNotFoundError, InstanceService
 from app.services.observer_data import (
     BufferedObserverEvent,
     ObserverRealtimeEvent,
     agent_detail_channel,
     agents_list_channel,
-    get_observer_data_source,
     get_observer_data_source_name,
 )
-from app.services.openclaw_client import OpenClawClient
+from app.services.provider_application_service import (
+    ProviderApplicationService,
+    ProviderExecutionContext,
+)
 
 router = APIRouter()
 
 
-@dataclass(frozen=True)
-class RealtimeOpenClawContext:
-    client: OpenClawClient
-    cache_key: object
+RealtimeOpenClawContext = ProviderExecutionContext
 
 
 class RealtimeObserverDataSource(Protocol):
@@ -44,18 +42,15 @@ class RealtimeObserverDataSource(Protocol):
     def pump_realtime(self, channel: str) -> None: ...
 
 
-def _build_openclaw_client(instance_context: InstanceOpenClawContext) -> OpenClawClient:
-    return OpenClawClient(
-        base_url=instance_context.websocket_url,
-        gateway_token=instance_context.gateway_token,
-        origin=instance_context.origin,
-    )
+def get_provider_application_service(websocket: WebSocket) -> ProviderApplicationService:
+    return cast(ProviderApplicationService, websocket.app.state.provider_application_service)
 
 
 def _resolve_realtime_openclaw_context(
     websocket: WebSocket,
     *,
     data_source_name: str,
+    provider_application_service: ProviderApplicationService,
 ) -> RealtimeOpenClawContext | None:
     if data_source_name != "openclaw":
         return None
@@ -84,31 +79,28 @@ def _resolve_realtime_openclaw_context(
         except InstanceNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Instance not found") from exc
 
-    return RealtimeOpenClawContext(
-        client=_build_openclaw_client(instance_context),
-        cache_key=instance_context.cache_key,
-    )
+    return provider_application_service.build_execution_context(instance_context)
 
 
 def _resolve_realtime_data_source(
+    provider_application_service: ProviderApplicationService,
     data_source_name: str,
     request_context: RealtimeOpenClawContext | None,
 ) -> RealtimeObserverDataSource:
-    if request_context is None:
-        return cast(RealtimeObserverDataSource, get_observer_data_source(data_source_name))
-
     return cast(
         RealtimeObserverDataSource,
-        get_observer_data_source(
+        provider_application_service.resolve_observer_data_source(
             data_source_name,
-            client=request_context.client,
-            cache_key=request_context.cache_key,
+            request_context,
         ),
     )
 
 
 @router.websocket("/ws/observer")
-async def observer_websocket(websocket: WebSocket) -> None:
+async def observer_websocket(
+    websocket: WebSocket,
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
+) -> None:
     await websocket.accept()
     channel = "unknown"
 
@@ -125,8 +117,13 @@ async def observer_websocket(websocket: WebSocket) -> None:
         request_context = _resolve_realtime_openclaw_context(
             websocket,
             data_source_name=selected_data_source,
+            provider_application_service=provider_application_service,
         )
-        data_source = _resolve_realtime_data_source(selected_data_source, request_context)
+        data_source = _resolve_realtime_data_source(
+            provider_application_service,
+            selected_data_source,
+            request_context,
+        )
 
         data_source.validate_realtime_channel(channel)
         _validate_channel(channel, data_source)

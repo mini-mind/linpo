@@ -2,7 +2,7 @@ import json
 from collections.abc import Callable
 from typing import Any, cast
 
-import app.api.realtime as realtime_api
+from app.adapters.openclaw_adapter import OpenClawAdapter
 import app.services.observer_data as observer_data
 from app.domain.agent import Agent, AgentStatus
 from app.domain.event import EventRecord, EventType
@@ -68,6 +68,39 @@ def _realtime_source() -> observer_data.StateBackedObserverDataSource:
         },
     )
     return source
+
+
+def _openclaw_source(client: Any) -> observer_data.OpenClawObserverDataSource:
+    return observer_data.OpenClawObserverDataSource(
+        adapter=OpenClawAdapter(client=cast(Any, client))
+    )
+
+
+def _install_provider_application_service(
+    monkeypatch: Any,
+    *,
+    source: object | None = None,
+    error: Exception | None = None,
+) -> None:
+    from app.main import app as fastapi_app
+
+    class FakeProviderApplicationService:
+        def resolve_observer_data_source(
+            self,
+            data_source: str | None,
+            execution_context: object | None,
+        ) -> object:
+            del data_source, execution_context
+            if error is not None:
+                raise error
+            assert source is not None
+            return source
+
+    monkeypatch.setattr(
+        fastapi_app.state,
+        "provider_application_service",
+        FakeProviderApplicationService(),
+    )
 
 
 def _realtime_source_with_capacity(
@@ -149,12 +182,7 @@ def test_websocket_replays_buffered_messages_from_last_seq(monkeypatch: Any) -> 
             ],
         )
     )
-    monkeypatch.setattr(
-        realtime_api,
-        "get_observer_data_source",
-        lambda _data_source=None: source,
-        raising=False,
-    )
+    _install_provider_application_service(monkeypatch, source=source)
 
     messages = websocket(
         "/ws/observer",
@@ -218,12 +246,7 @@ def test_websocket_returns_resync_required_when_last_seq_falls_outside_buffer(
                 ],
             )
         )
-    monkeypatch.setattr(
-        realtime_api,
-        "get_observer_data_source",
-        lambda _data_source=None: source,
-        raising=False,
-    )
+    _install_provider_application_service(monkeypatch, source=source)
 
     messages = websocket(
         "/ws/observer",
@@ -275,12 +298,7 @@ def test_websocket_pushes_agent_summary_update_after_subscription(
     monkeypatch: Any,
 ) -> None:
     source = _realtime_source()
-    monkeypatch.setattr(
-        realtime_api,
-        "get_observer_data_source",
-        lambda _data_source=None: source,
-        raising=False,
-    )
+    _install_provider_application_service(monkeypatch, source=source)
 
     messages = websocket(
         "/ws/observer",
@@ -326,12 +344,7 @@ def test_websocket_pushes_agent_summary_update_after_subscription(
 
 def test_websocket_pushes_topology_update_after_subscription(monkeypatch: Any) -> None:
     source = _realtime_source()
-    monkeypatch.setattr(
-        realtime_api,
-        "get_observer_data_source",
-        lambda _data_source=None: source,
-        raising=False,
-    )
+    _install_provider_application_service(monkeypatch, source=source)
 
     messages = websocket(
         "/ws/observer",
@@ -453,12 +466,23 @@ def test_websocket_supports_openclaw_agents_list_realtime(monkeypatch: Any) -> N
                 }
             )
 
-    source = observer_data.OpenClawObserverDataSource(client=FakeClient())
+    source = _openclaw_source(cast(Any, FakeClient()))
+
+    class FakeProviderApplicationService:
+        def resolve_observer_data_source(
+            self,
+            data_source: str | None,
+            execution_context: object | None,
+        ) -> object:
+            del data_source, execution_context
+            return source
+
+    from app.main import app as fastapi_app
+
     monkeypatch.setattr(
-        realtime_api,
-        "get_observer_data_source",
-        lambda _data_source=None: source,
-        raising=False,
+        fastapi_app.state,
+        "provider_application_service",
+        FakeProviderApplicationService(),
     )
 
     messages = websocket(
@@ -522,12 +546,23 @@ def test_websocket_supports_openclaw_agents_list_with_event_loop_safe_client(mon
             del on_message
             return
 
-    source = observer_data.OpenClawObserverDataSource(client=FakeClient())
+    source = _openclaw_source(cast(Any, FakeClient()))
+
+    class FakeProviderApplicationService:
+        def resolve_observer_data_source(
+            self,
+            data_source: str | None,
+            execution_context: object | None,
+        ) -> object:
+            del data_source, execution_context
+            return source
+
+    from app.main import app as fastapi_app
+
     monkeypatch.setattr(
-        realtime_api,
-        "get_observer_data_source",
-        lambda _data_source=None: source,
-        raising=False,
+        fastapi_app.state,
+        "provider_application_service",
+        FakeProviderApplicationService(),
     )
 
     messages = websocket(
@@ -570,12 +605,23 @@ def test_websocket_reports_openclaw_realtime_upstream_failure(monkeypatch: Any) 
             del on_message
             raise HTTPException(status_code=503, detail="OpenClaw realtime failed: boom")
 
-    source = observer_data.OpenClawObserverDataSource(client=FakeClient())
+    source = _openclaw_source(cast(Any, FakeClient()))
+
+    class FakeProviderApplicationService:
+        def resolve_observer_data_source(
+            self,
+            data_source: str | None,
+            execution_context: object | None,
+        ) -> object:
+            del data_source, execution_context
+            return source
+
+    from app.main import app as fastapi_app
+
     monkeypatch.setattr(
-        realtime_api,
-        "get_observer_data_source",
-        lambda _data_source=None: source,
-        raising=False,
+        fastapi_app.state,
+        "provider_application_service",
+        FakeProviderApplicationService(),
     )
 
     messages = websocket(
@@ -679,12 +725,23 @@ def test_websocket_supports_openclaw_detail_realtime(monkeypatch: Any) -> None:
                 }
             )
 
-    source = observer_data.OpenClawObserverDataSource(client=FakeClient())
+    source = _openclaw_source(cast(Any, FakeClient()))
+
+    class FakeProviderApplicationService:
+        def resolve_observer_data_source(
+            self,
+            data_source: str | None,
+            execution_context: object | None,
+        ) -> object:
+            del data_source, execution_context
+            return source
+
+    from app.main import app as fastapi_app
+
     monkeypatch.setattr(
-        realtime_api,
-        "get_observer_data_source",
-        lambda _data_source=None: source,
-        raising=False,
+        fastapi_app.state,
+        "provider_application_service",
+        FakeProviderApplicationService(),
     )
 
     messages = websocket(
@@ -817,12 +874,23 @@ def test_websocket_supports_openclaw_session_messages_channel(monkeypatch: Any) 
                 }
             )
 
-    source = observer_data.OpenClawObserverDataSource(client=FakeClient())
+    source = _openclaw_source(cast(Any, FakeClient()))
+
+    class FakeProviderApplicationService:
+        def resolve_observer_data_source(
+            self,
+            data_source: str | None,
+            execution_context: object | None,
+        ) -> object:
+            del data_source, execution_context
+            return source
+
+    from app.main import app as fastapi_app
+
     monkeypatch.setattr(
-        realtime_api,
-        "get_observer_data_source",
-        lambda _data_source=None: source,
-        raising=False,
+        fastapi_app.state,
+        "provider_application_service",
+        FakeProviderApplicationService(),
     )
 
     messages = websocket(
@@ -902,19 +970,14 @@ def test_websocket_exposes_control_request_status_on_existing_detail_channel(
                 }
             )
 
-    source = observer_data.OpenClawObserverDataSource(client=FakeClient())
+    source = _openclaw_source(cast(Any, FakeClient()))
     source.register_pending_control_request(
         request_id="control-main-pause-1",
         agent_id="main",
         action="pause",
         correlation_hint="agent:main action:pause",
     )
-    monkeypatch.setattr(
-        realtime_api,
-        "get_observer_data_source",
-        lambda _data_source=None: source,
-        raising=False,
-    )
+    _install_provider_application_service(monkeypatch, source=source)
 
     messages = websocket(
         "/ws/observer?data_source=openclaw",
@@ -974,13 +1037,8 @@ def test_websocket_openclaw_detail_channel_still_errors_for_unknown_agent(
         ) -> None:
             del on_message
 
-    source = observer_data.OpenClawObserverDataSource(client=FakeClient())
-    monkeypatch.setattr(
-        realtime_api,
-        "get_observer_data_source",
-        lambda _data_source=None: source,
-        raising=False,
-    )
+    source = _openclaw_source(cast(Any, FakeClient()))
+    _install_provider_application_service(monkeypatch, source=source)
 
     messages = websocket(
         "/ws/observer?data_source=openclaw",
@@ -1008,12 +1066,7 @@ def test_websocket_returns_resync_required_when_last_seq_exceeds_current_server_
     monkeypatch: Any,
 ) -> None:
     source = _realtime_source()
-    monkeypatch.setattr(
-        realtime_api,
-        "get_observer_data_source",
-        lambda _data_source=None: source,
-        raising=False,
-    )
+    _install_provider_application_service(monkeypatch, source=source)
 
     messages = websocket(
         "/ws/observer",
@@ -1041,14 +1094,21 @@ def test_websocket_returns_resync_required_when_last_seq_exceeds_current_server_
 def test_websocket_returns_error_when_data_source_raises_http_exception(
     monkeypatch: Any,
 ) -> None:
-    def _raise_http_exception(_data_source: str | None = None) -> Any:
-        raise HTTPException(status_code=503, detail="OpenClaw connection failed: boom")
+    class FakeProviderApplicationService:
+        def resolve_observer_data_source(
+            self,
+            data_source: str | None,
+            execution_context: object | None,
+        ) -> object:
+            del data_source, execution_context
+            raise HTTPException(status_code=503, detail="OpenClaw connection failed: boom")
+
+    from app.main import app as fastapi_app
 
     monkeypatch.setattr(
-        realtime_api,
-        "get_observer_data_source",
-        _raise_http_exception,
-        raising=False,
+        fastapi_app.state,
+        "provider_application_service",
+        FakeProviderApplicationService(),
     )
 
     messages = websocket(

@@ -224,6 +224,7 @@ def test_openclaw_agent_detail_returns_real_snapshot_data() -> None:
 
 
 def test_openclaw_presence_noise_is_filtered_from_node_events(monkeypatch: Any) -> None:
+    from app.adapters.openclaw_adapter import OpenClawAdapter
     from app.services.observer_data import OpenClawObserverDataSource
 
     class FakeClient:
@@ -257,7 +258,11 @@ def test_openclaw_presence_noise_is_filtered_from_node_events(monkeypatch: Any) 
                 },
             )()
 
-    monkeypatch.setattr(OpenClawObserverDataSource, '__init__', lambda self: setattr(self, '_client', FakeClient()))
+    monkeypatch.setattr(
+        OpenClawObserverDataSource,
+        '__init__',
+        lambda self: setattr(self, '_adapter', OpenClawAdapter(client=FakeClient())),
+    )
 
     status_code, _, body = request('GET', '/agents/main/nodes/node-main?data_source=openclaw')
 
@@ -411,39 +416,40 @@ def test_list_sessions_requires_openclaw_data_source() -> None:
 
 
 def test_list_sessions_returns_sessions_list(monkeypatch: Any) -> None:
-    from app.api import agents as agents_api
+    from app.main import app as fastapi_app
 
-    class FakeClient:
-        def sessions_list(self, **kwargs: Any) -> dict[str, Any]:
-            del kwargs
+    class FakeProviderApplicationService:
+        def list_sessions(self, **kwargs: Any) -> dict[str, Any]:
+            assert kwargs["data_source"] == "openclaw"
             return {
-                "ok": True,
-                "payload": {
-                    "ts": 1234567890000,
-                    "count": 2,
-                    "sessions": [
-                        {
-                            "key": "agent:main:main",
-                            "kind": "direct",
-                            "label": None,
-                            "derivedTitle": "Session about Python",
-                            "lastMessagePreview": "Write a Python script",
-                            "updatedAt": 1234567890000,
-                        },
-                        {
-                            "key": "agent:main:secondary",
-                            "kind": "direct",
-                            "label": "Secondary Session",
-                            "derivedTitle": None,
-                            "lastMessagePreview": None,
-                            "updatedAt": 1234567880000,
-                        },
-                    ],
-                    "defaults": {"model": "claude-sonnet-4"},
-                }
+                "ts": 1234567890000,
+                "count": 2,
+                "sessions": [
+                    {
+                        "key": "agent:main:main",
+                        "kind": "direct",
+                        "label": None,
+                        "derivedTitle": "Session about Python",
+                        "lastMessagePreview": "Write a Python script",
+                        "updatedAt": 1234567890000,
+                    },
+                    {
+                        "key": "agent:main:secondary",
+                        "kind": "direct",
+                        "label": "Secondary Session",
+                        "derivedTitle": None,
+                        "lastMessagePreview": None,
+                        "updatedAt": 1234567880000,
+                    },
+                ],
+                "defaults": {"model": "claude-sonnet-4"},
             }
 
-    monkeypatch.setattr(agents_api, "OpenClawClient", FakeClient)
+    monkeypatch.setattr(
+        fastapi_app.state,
+        "provider_application_service",
+        FakeProviderApplicationService(),
+    )
 
     status_code, _, body = request("GET", "/chat/sessions?data_source=openclaw")
     assert status_code == 200
@@ -469,29 +475,30 @@ def test_preview_sessions_requires_openclaw_data_source() -> None:
 
 
 def test_preview_sessions_returns_message_previews(monkeypatch: Any) -> None:
-    from app.api import agents as agents_api
+    from app.main import app as fastapi_app
 
-    class FakeClient:
-        def sessions_preview(self, **kwargs: Any) -> dict[str, Any]:
+    class FakeProviderApplicationService:
+        def preview_sessions(self, **kwargs: Any) -> dict[str, Any]:
             assert kwargs["max_chars"] == 2000
             return {
-                "ok": True,
-                "payload": {
-                    "ts": 1234567890000,
-                    "previews": [
-                        {
-                            "key": "agent:main:main",
-                            "status": "ok",
-                            "items": [
-                                {"role": "user", "text": "Write a Python script"},
-                                {"role": "assistant", "text": "Here's a Python script..."},
-                            ],
-                        }
-                    ]
-                }
+                "ts": 1234567890000,
+                "previews": [
+                    {
+                        "key": "agent:main:main",
+                        "status": "ok",
+                        "items": [
+                            {"role": "user", "text": "Write a Python script"},
+                            {"role": "assistant", "text": "Here's a Python script..."},
+                        ],
+                    }
+                ],
             }
 
-    monkeypatch.setattr(agents_api, "OpenClawClient", FakeClient)
+    monkeypatch.setattr(
+        fastapi_app.state,
+        "provider_application_service",
+        FakeProviderApplicationService(),
+    )
 
     status_code, _, body = request(
         "GET", "/chat/sessions/preview?keys=agent:main:main&data_source=openclaw"
@@ -549,33 +556,33 @@ def test_list_models_requires_openclaw_data_source() -> None:
 
 
 def test_list_models_returns_available_models(monkeypatch: Any) -> None:
-    from app.api import agents as agents_api
+    from app.main import app as fastapi_app
 
-    class FakeClient:
-        def models_list(self) -> dict[str, Any]:
-            return {
-                "ok": True,
-                "payload": {
-                    "models": [
-                        {
-                            "id": "claude-sonnet-4",
-                            "name": "Claude Sonnet 4",
-                            "provider": "anthropic",
-                            "contextWindow": 200000,
-                            "reasoning": True,
-                        },
-                        {
-                            "id": "gpt-4o",
-                            "name": "GPT-4o",
-                            "provider": "openai",
-                            "contextWindow": 128000,
-                            "reasoning": False,
-                        },
-                    ]
-                }
-            }
+    class FakeProviderApplicationService:
+        def list_models(self, **kwargs: Any) -> list[dict[str, Any]]:
+            assert kwargs["data_source"] == "openclaw"
+            return [
+                {
+                    "id": "claude-sonnet-4",
+                    "name": "Claude Sonnet 4",
+                    "provider": "anthropic",
+                    "contextWindow": 200000,
+                    "reasoning": True,
+                },
+                {
+                    "id": "gpt-4o",
+                    "name": "GPT-4o",
+                    "provider": "openai",
+                    "contextWindow": 128000,
+                    "reasoning": False,
+                },
+            ]
 
-    monkeypatch.setattr(agents_api, "OpenClawClient", FakeClient)
+    monkeypatch.setattr(
+        fastapi_app.state,
+        "provider_application_service",
+        FakeProviderApplicationService(),
+    )
 
     status_code, _, body = request("GET", "/chat/models?data_source=openclaw")
     assert status_code == 200
@@ -605,16 +612,20 @@ def test_patch_session_requires_openclaw_data_source() -> None:
 
 
 def test_patch_session_updates_session_model(monkeypatch: Any) -> None:
-    from app.api import agents as agents_api
+    from app.main import app as fastapi_app
 
-    class FakeClient:
-        def sessions_patch(self, **kwargs: Any) -> dict[str, Any]:
+    class FakeProviderApplicationService:
+        def patch_session(self, **kwargs: Any) -> bool:
             assert kwargs["key"] == "agent:main:main"
             assert kwargs["model"] == "claude-sonnet-4"
             assert kwargs["thinking_level"] == "high"
-            return {"ok": True, "payload": {"ok": True}}
+            return True
 
-    monkeypatch.setattr(agents_api, "OpenClawClient", FakeClient)
+    monkeypatch.setattr(
+        fastapi_app.state,
+        "provider_application_service",
+        FakeProviderApplicationService(),
+    )
 
     status_code, _, body = request(
         "PATCH",
@@ -625,5 +636,3 @@ def test_patch_session_updates_session_model(monkeypatch: Any) -> None:
     assert status_code == 200
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
     assert payload == {"updated": True}
-
-

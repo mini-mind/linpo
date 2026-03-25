@@ -1,6 +1,5 @@
 import os
 from collections import deque
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from threading import Event, Lock, Thread, current_thread
@@ -8,12 +7,15 @@ from typing import Any, Literal, Protocol
 
 from fastapi import HTTPException
 
+from app.adapters.openclaw_adapter import OpenClawAdapter
+from app.adapters.provider_adapter import ProviderAdapter, ProviderAdapterError, ProviderStreamEvent
 from app.domain.agent import Agent, AgentStatus
 from app.domain.control_request import ControlRequestRecord, ControlRequestStatus
 from app.domain.event import EventRecord, EventType
 from app.domain.node import TopologyNode
+from app.domain.provider_contract import DomainProviderCapability
+from app.domain.provider_contract_mapping import to_domain_request
 from app.services import stub_data
-from app.services.openclaw_client import OpenClawClient
 
 ObserverRealtimeEventType = Literal[
     "snapshot_ready",
@@ -294,12 +296,6 @@ class ObserverDataSource(Protocol):
     def pump_realtime(self, channel: str) -> None: ...
 
 
-class OpenClawObserverClient(Protocol):
-    def fetch_snapshot(self) -> Any: ...
-
-    def stream_agent_events(self, on_message: Callable[[dict[str, Any]], None]) -> None: ...
-
-
 class StateBackedObserverDataSource:
     def __init__(
         self,
@@ -368,8 +364,11 @@ class StubObserverDataSource(StateBackedObserverDataSource):
 
 
 class OpenClawObserverDataSource(StateBackedObserverDataSource):
-    def __init__(self, client: OpenClawObserverClient | None = None) -> None:
-        self._client = client or OpenClawClient()
+    def __init__(
+        self,
+        adapter: ProviderAdapter | None = None,
+    ) -> None:
+        self._adapter = adapter or OpenClawAdapter()
         raw_timeout = os.getenv("LINPO_CONTROL_CONFIRM_TIMEOUT_SECONDS", "5")
         try:
             timeout_seconds = float(raw_timeout)
@@ -403,7 +402,7 @@ class OpenClawObserverDataSource(StateBackedObserverDataSource):
 
     def get_topology_snapshot(self) -> dict[str, Any] | None:
         self._ensure_snapshot_loaded()
-        return self._client.fetch_snapshot().snapshot
+        return self._fetch_snapshot_payload(request_id="observer-topology-snapshot")
 
     def register_pending_control_request(
         self,
@@ -473,7 +472,7 @@ class OpenClawObserverDataSource(StateBackedObserverDataSource):
         self._apply_control_request_timeouts()
 
     def _build_snapshot(self) -> dict[str, Any]:
-        snapshot = self._client.fetch_snapshot().snapshot
+        snapshot = self._fetch_snapshot_payload(request_id="observer-bootstrap-snapshot")
         health = self._require_dict(
             snapshot.get("health"),
             detail="OpenClaw snapshot missing health payload",
@@ -602,6 +601,19 @@ class OpenClawObserverDataSource(StateBackedObserverDataSource):
             raise HTTPException(status_code=503, detail=detail)
         return value
 
+    def _fetch_snapshot_payload(self, *, request_id: str) -> dict[str, Any]:
+        result = self._adapter.fetch_snapshot(
+            to_domain_request(
+                request_id=request_id,
+                capability=DomainProviderCapability.AGGREGATE_READ,
+            )
+        )
+        if result.response.error is not None:
+            raise HTTPException(status_code=503, detail=_provider_error_message(result.response))
+        if result.snapshot is None:
+            raise HTTPException(status_code=503, detail="OpenClaw handshake failed: missing snapshot payload")
+        return result.snapshot
+
     def _ensure_realtime_runtime(self) -> None:
         if hasattr(self, "_pending_realtime_events"):
             return
@@ -626,8 +638,22 @@ class OpenClawObserverDataSource(StateBackedObserverDataSource):
 
     def _consume_realtime_stream(self) -> None:
         try:
-            self._client.stream_agent_events(self._handle_realtime_message)
+            self._adapter.stream_agent_events(
+                to_domain_request(
+                    request_id="observer-realtime-stream",
+                    capability=DomainProviderCapability.SESSION_READ,
+                ),
+                self._handle_realtime_message,
+            )
         except TimeoutError:
+            self._realtime_activity.set()
+        except ProviderAdapterError as exc:
+            detail = _provider_error_message(exc.response)
+            if "timed out" in detail.lower() or "timeout" in detail.lower():
+                self._realtime_activity.set()
+                return
+            with self._realtime_lock:
+                self._pending_realtime_error = detail
             self._realtime_activity.set()
         except HTTPException as exc:
             detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
@@ -644,8 +670,8 @@ class OpenClawObserverDataSource(StateBackedObserverDataSource):
                     self._realtime_thread = None
             self._realtime_activity.set()
 
-    def _handle_realtime_message(self, message: dict[str, Any]) -> None:
-        event = self._map_realtime_message(message)
+    def _handle_realtime_message(self, adapter_event: ProviderStreamEvent) -> None:
+        event = self._map_realtime_message(adapter_event.message)
         if event is None:
             return
         with self._realtime_lock:
@@ -794,7 +820,7 @@ class OpenClawObserverDataSource(StateBackedObserverDataSource):
         return None
 
     def _session_key_for_agent(self, agent_id: str) -> str | None:
-        snapshot = self._client.fetch_snapshot().snapshot
+        snapshot = self._fetch_snapshot_payload(request_id=f"observer-session-key:{agent_id}")
         health = self._require_dict(
             snapshot.get("health"),
             detail="OpenClaw snapshot missing health payload",
@@ -1083,7 +1109,7 @@ def _openclaw_data_source_config() -> tuple[str | None, str | None, str]:
 def get_observer_data_source(
     data_source: str | None = None,
     *,
-    client: OpenClawClient | None = None,
+    adapter: ProviderAdapter | None = None,
     cache_key: object | None = None,
 ) -> ObserverDataSource:
 
@@ -1092,15 +1118,24 @@ def get_observer_data_source(
     if selected == "stub":
         return _DATA_SOURCE
     if selected == "openclaw":
-        resolved_cache_key = cache_key or (client.config_key() if client is not None else _openclaw_data_source_config())
+        resolved_cache_key = cache_key or (
+            adapter.config_key() if adapter is not None else _openclaw_data_source_config()
+        )
         with _OPENCLAW_DATA_SOURCE_LOCK:
             if resolved_cache_key not in _OPENCLAW_DATA_SOURCES:
-                if client is None:
+                if adapter is None:
                     _OPENCLAW_DATA_SOURCES[resolved_cache_key] = OpenClawObserverDataSource()
                 else:
                     _OPENCLAW_DATA_SOURCES[resolved_cache_key] = OpenClawObserverDataSource(
-                        client=client
+                        adapter=adapter,
                     )
             return _OPENCLAW_DATA_SOURCES[resolved_cache_key]
 
     raise HTTPException(status_code=400, detail=f"Unsupported data source: {selected}")
+
+
+def _provider_error_message(response: Any) -> str:
+    error = getattr(response, "error", None)
+    if error is None:
+        return "OpenClaw request failed"
+    return error.message

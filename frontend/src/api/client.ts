@@ -162,8 +162,7 @@ export async function patchSession(
   });
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || `API error: ${response.status}`);
+    throw await buildApiError(response);
   }
 
   return response.json() as Promise<SessionPatchResponse>;
@@ -204,9 +203,7 @@ export async function previewSessions(
     };
   }
   const params = new URLSearchParams();
-  keys.forEach((key) => {
-    params.append('keys', key);
-  });
+  params.set('keys', keys.join(','));
   params.set('maxChars', '2000');
   const path = `/chat/sessions/preview?${params.toString()}`;
   const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, options)}`, {

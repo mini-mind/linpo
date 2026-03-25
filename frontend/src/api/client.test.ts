@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { getAggregateOverview, listAgents } from './client';
+import {
+  getAggregateOverview,
+  listAgents,
+  patchSession,
+  previewSessions,
+} from './client';
 
 const fetchMock = vi.fn();
 
@@ -49,5 +54,48 @@ describe('business API client instance context', () => {
       'http://localhost:8000/aggregate/overview?data_source=openclaw&instanceId=instance-1',
       expect.objectContaining({ credentials: 'include' }),
     );
+  });
+
+  it('sends previewSessions keys as comma-separated query parameter', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: async () => ({ ts: 123, previews: [] }),
+    });
+
+    await previewSessions(['session-a', 'session-b']);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8000/chat/sessions/preview?keys=session-a%2Csession-b&maxChars=2000&data_source=openclaw',
+      expect.objectContaining({ credentials: 'include' }),
+    );
+  });
+
+  it('patchSession throws ApiError with envelope when backend returns error envelope', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: 'Not Found',
+      json: async () => ({
+        error: {
+          code: 'not_found',
+          message: 'Session not found',
+          request_id: 'req-404',
+          recoverable: false,
+          next_step: '确认目标资源仍存在后重试',
+        },
+      }),
+    });
+
+    await expect(patchSession('missing-session', {})).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 404,
+      message: 'Session not found',
+      envelope: expect.objectContaining({
+        code: 'not_found',
+        request_id: 'req-404',
+      }),
+    });
   });
 });

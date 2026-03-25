@@ -107,17 +107,21 @@ def _install_aggregate_data_source(
     *,
     providers_by_token: dict[str, object],
 ) -> None:
-    aggregate_service = importlib.import_module("app.services.aggregate_service")
+    provider_application_service = importlib.import_module(
+        "app.services.provider_application_service"
+    )
 
     def fake_get_observer_data_source(
         data_source: str | None = None,
         *,
+        adapter: object | None = None,
         client: object | None = None,
         cache_key: object | None = None,
     ) -> object:
         del data_source, cache_key
-        assert client is not None
-        base_url, gateway_token, origin = cast(SupportsConfigKey, client).config_key()
+        resolved = adapter if adapter is not None else client
+        assert resolved is not None
+        base_url, gateway_token, origin = cast(SupportsConfigKey, resolved).config_key()
         assert isinstance(base_url, str)
         assert isinstance(gateway_token, str)
         assert isinstance(origin, str)
@@ -127,7 +131,7 @@ def _install_aggregate_data_source(
         return provider
 
     monkeypatch.setattr(
-        aggregate_service,
+        provider_application_service,
         "get_observer_data_source",
         fake_get_observer_data_source,
     )
