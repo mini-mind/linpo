@@ -69,6 +69,33 @@ class OpenClawClientProtocol(Protocol):
         thinking_level: str | None,
     ) -> dict[str, Any]: ...
 
+    def sessions_reset(
+        self,
+        *,
+        key: str,
+    ) -> dict[str, Any]: ...
+
+    def sessions_delete(
+        self,
+        *,
+        key: str,
+    ) -> dict[str, Any]: ...
+
+    def chat_send(
+        self,
+        *,
+        agent_id: str,
+        message: str,
+        session_key: str | None,
+    ) -> dict[str, Any]: ...
+
+    def chat_abort(
+        self,
+        *,
+        agent_id: str,
+        session_key: str | None,
+    ) -> dict[str, Any]: ...
+
 
 @dataclass(frozen=True)
 class OpenClawAdapter:
@@ -176,6 +203,64 @@ class OpenClawAdapter:
                 thinking_level=thinking_level,
             ),
             default_error_message="sessions.patch failed",
+        )
+
+    def sessions_reset(
+        self,
+        request: DomainProviderRequest,
+        *,
+        key: str,
+    ) -> ProviderPayloadResult:
+        return self._execute_payload_call(
+            request,
+            lambda: self._client.sessions_reset(key=key),
+            default_error_message="sessions.reset failed",
+        )
+
+    def sessions_delete(
+        self,
+        request: DomainProviderRequest,
+        *,
+        key: str,
+    ) -> ProviderPayloadResult:
+        return self._execute_payload_call(
+            request,
+            lambda: self._client.sessions_delete(key=key),
+            default_error_message="sessions.delete failed",
+        )
+
+    def chat_send(
+        self,
+        request: DomainProviderRequest,
+        *,
+        agent_id: str,
+        message: str,
+        session_key: str | None,
+    ) -> ProviderPayloadResult:
+        return self._execute_payload_call(
+            request,
+            lambda: self._client.chat_send(
+                agent_id=agent_id,
+                message=message,
+                session_key=session_key,
+            ),
+            default_error_message="chat.send failed",
+        )
+
+    def chat_pause(
+        self,
+        request: DomainProviderRequest,
+        *,
+        agent_id: str,
+        session_key: str | None,
+    ) -> ProviderPayloadResult:
+        return self._execute_payload_call(
+            request,
+            lambda: self._client.chat_abort(
+                agent_id=agent_id,
+                session_key=session_key,
+            ),
+            default_error_message="chat.abort failed",
         )
 
     @property

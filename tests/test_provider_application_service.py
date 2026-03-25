@@ -239,6 +239,109 @@ def test_list_models_uses_registry_when_execution_context_is_absent() -> None:
     assert models == [{"id": "m-1", "name": "Model 1", "provider": "x"}]
 
 
+def test_send_chat_message_returns_normalized_payload() -> None:
+    from app.services.provider_application_service import ProviderApplicationService, ProviderExecutionContext
+
+    class FakeAdapter:
+        def chat_send(self, request: Any, **kwargs: Any) -> ProviderPayloadResult:
+            assert kwargs["agent_id"] == "main"
+            assert kwargs["message"] == "hello"
+            diagnostic = to_domain_diagnostic(
+                instance_id="instance-alpha",
+                instance_name="Alpha",
+                status="ok",
+                freshness_status="fresh",
+                checked_at=None,
+            )
+            return ProviderPayloadResult(
+                response=to_domain_response(request=request, diagnostics=[diagnostic]),
+                payload={
+                    "request_id": "control-send-1",
+                    "agent_id": "main",
+                    "status": "accepted",
+                },
+            )
+
+    service = ProviderApplicationService()
+    context = ProviderExecutionContext(adapter=cast(ProviderAdapter, FakeAdapter()), cache_key=("cache",))
+
+    payload = service.send_chat_message(
+        data_source="openclaw",
+        execution_context=context,
+        agent_id="main",
+        message="hello",
+        session_key="agent:main:main",
+    )
+
+    assert payload == {
+        "request_id": "control-send-1",
+        "agent_id": "main",
+        "status": "accepted",
+        "message": None,
+    }
+
+
+def test_reset_session_rejects_non_openclaw_data_source() -> None:
+    from app.services.provider_application_service import ProviderApplicationService, ProviderExecutionContext
+
+    service = ProviderApplicationService()
+    context = ProviderExecutionContext(adapter=cast(ProviderAdapter, object()), cache_key=("cache",))
+
+    with pytest.raises(HTTPException) as exc_info:
+        service.reset_session(
+            data_source="stub",
+            execution_context=context,
+            key="agent:main:main",
+        )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "sessions.reset is only available with the OpenClaw data source"
+
+
+def test_delete_session_raises_http_exception_when_adapter_returns_domain_error() -> None:
+    from app.services.provider_application_service import ProviderApplicationService, ProviderExecutionContext
+
+    class FakeAdapter:
+        def sessions_delete(self, request: Any, **kwargs: Any) -> ProviderPayloadResult:
+            del kwargs
+            error = to_domain_error(
+                code="source_error",
+                message="sessions.delete failed",
+                request_id=request.request_id,
+                recoverable=True,
+                next_step="检查实例连通性或网关 token 后重试",
+            )
+            diagnostic = to_domain_diagnostic(
+                instance_id="instance-alpha",
+                instance_name="Alpha",
+                status="failed",
+                freshness_status="failed",
+                checked_at=None,
+                error_code=error.code,
+                error_message=error.message,
+                request_id=error.request_id,
+                recoverable=error.recoverable,
+                next_step=error.next_step,
+            )
+            return ProviderPayloadResult(
+                response=to_domain_response(request=request, diagnostics=[diagnostic], error=error),
+                payload=None,
+            )
+
+    service = ProviderApplicationService()
+    context = ProviderExecutionContext(adapter=cast(ProviderAdapter, FakeAdapter()), cache_key=("cache",))
+
+    with pytest.raises(HTTPException) as exc_info:
+        service.delete_session(
+            data_source="openclaw",
+            execution_context=context,
+            key="agent:main:main",
+        )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "sessions.delete failed"
+
+
 def test_provider_application_service_no_longer_accepts_adapter_factory() -> None:
     from app.services.provider_application_service import ProviderApplicationService
 

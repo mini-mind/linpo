@@ -13,6 +13,10 @@ const mockRealtimeClient = {
 const mockGetAgentDetail = vi.fn();
 const mockListSessions = vi.fn();
 const mockPreviewSessions = vi.fn();
+const mockSendChatMessage = vi.fn();
+const mockPauseSession = vi.fn();
+const mockResetSession = vi.fn();
+const mockDeleteSession = vi.fn();
 
 vi.mock("../api/client", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../api/client")>();
@@ -22,6 +26,10 @@ vi.mock("../api/client", async (importOriginal) => {
 		getDefaultObserverDataSource: vi.fn().mockReturnValue("openclaw"),
 		listSessions: (...args: unknown[]) => mockListSessions(...args),
 		previewSessions: (...args: unknown[]) => mockPreviewSessions(...args),
+		sendChatMessage: (...args: unknown[]) => mockSendChatMessage(...args),
+		pauseSession: (...args: unknown[]) => mockPauseSession(...args),
+		resetSession: (...args: unknown[]) => mockResetSession(...args),
+		deleteSession: (...args: unknown[]) => mockDeleteSession(...args),
 	};
 });
 
@@ -96,9 +104,17 @@ describe("AgentWorkspace session workspace", () => {
 			ts: Date.parse("2026-03-24T05:31:00Z"),
 			previews: [{ key: "session-1", status: "ok", items: [] }],
 		});
+		mockSendChatMessage.mockResolvedValue({
+			request_id: "req-send-1",
+			agent_id: "main",
+			status: "queued",
+		});
+		mockPauseSession.mockResolvedValue({ paused: true });
+		mockResetSession.mockResolvedValue({ reset: true });
+		mockDeleteSession.mockResolvedValue({ deleted: true });
 	});
 
-	it("shows chat input and hides destructive session controls", async () => {
+	it("shows chat input and real session action controls", async () => {
 		render(<AgentWorkspace />);
 
 		await waitFor(() => {
@@ -107,19 +123,12 @@ describe("AgentWorkspace session workspace", () => {
 
 		expect(screen.getByLabelText("消息输入")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: /^发送$/i })).toBeInTheDocument();
-
-		expect(
-			screen.queryByRole("button", { name: /暂停/i }),
-		).not.toBeInTheDocument();
-		expect(
-			screen.queryByRole("button", { name: /重置会话/i }),
-		).not.toBeInTheDocument();
-		expect(
-			screen.queryByRole("button", { name: /删除会话/i }),
-		).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /^暂停$/i })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /^重置会话$/i })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /^删除会话$/i })).toBeInTheDocument();
 	});
 
-	it("appends user message to conversation area when sending", async () => {
+	it("sends message through send API and clears input after success", async () => {
 		render(<AgentWorkspace />);
 
 		await waitFor(() => {
@@ -132,11 +141,17 @@ describe("AgentWorkspace session workspace", () => {
 		await userEvent.type(input, "你好\n第二行");
 		await userEvent.click(sendButton);
 
-		expect(
-			within(screen.getByTestId("session-conversation-area")).getByText(
-				/你好\s*第二行/,
-			),
-		).toBeInTheDocument();
+		await waitFor(() => {
+			expect(mockSendChatMessage).toHaveBeenCalledWith(
+				{
+					agentId: "main",
+					sessionKey: "session-1",
+					message: "你好\n第二行",
+				},
+				{ instanceId: null },
+			);
+		});
+		expect(input).toHaveValue("");
 	});
 
 	it("does not render tabs for status/logs/files", async () => {
@@ -206,6 +221,17 @@ describe("AgentWorkspace session workspace", () => {
 	});
 
 	it("targets a doubao-like layout with full-width shell but narrowed center conversation column", async () => {
+		mockPreviewSessions.mockResolvedValue({
+			ts: Date.parse("2026-03-24T05:31:00Z"),
+			previews: [
+				{
+					key: "session-1",
+					status: "ok",
+					items: [{ role: "user", text: "doubao 样式约束" }],
+				},
+			],
+		});
+
 		render(<AgentWorkspace />);
 
 		await waitFor(() => {
@@ -217,12 +243,8 @@ describe("AgentWorkspace session workspace", () => {
 		const conversationArea = screen.getByTestId("session-conversation-area");
 		const inputShell = screen.getByTestId("session-input-shell");
 		const composerInput = screen.getByLabelText("消息输入");
-		const sendButton = screen.getByRole("button", { name: /^发送$/i });
 
-		await userEvent.type(composerInput, "doubao 样式约束");
-		await userEvent.click(sendButton);
-
-		const userRoleLabel = within(conversationArea).getByText("用户");
+		const userRoleLabel = await within(conversationArea).findByText("用户");
 		const userBubble = userRoleLabel.parentElement;
 		expect(userBubble).not.toBeNull();
 
@@ -407,6 +429,20 @@ describe("AgentWorkspace session workspace", () => {
 		const dateNowSpy = vi
 			.spyOn(Date, "now")
 			.mockReturnValue(Date.parse("2026-03-24T05:40:30Z"));
+		mockListSessions.mockResolvedValueOnce({
+			ts: Date.parse("2026-03-24T05:40:20Z"),
+			sessions: [
+				{
+					key: "session-1",
+					kind: "direct",
+					label: "Session 1",
+					derived_title: "First Session",
+					last_message_preview: null,
+					updated_at: Date.parse("2026-03-24T05:40:19Z"),
+				},
+			],
+			defaults: { model: "gpt-4" },
+		});
 		mockPreviewSessions.mockResolvedValueOnce({
 			ts: Date.parse("2026-03-24T05:31:00Z"),
 			previews: [{ key: "session-1", status: "ok", items: [] }],

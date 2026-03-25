@@ -28,8 +28,6 @@ def test_legacy_control_routes_are_not_exposed_in_v0_6() -> None:
     routes = [
         ("POST", "/chat/send?agentId=agent-root-observer"),
         ("POST", "/chat/abort?agentId=agent-root-observer"),
-        ("POST", "/chat/sessions/agent:main:main/reset"),
-        ("DELETE", "/chat/sessions/agent:main:main"),
     ]
 
     for method, path in routes:
@@ -37,6 +35,181 @@ def test_legacy_control_routes_are_not_exposed_in_v0_6() -> None:
         assert status_code in {404, 405}
         payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
         assert payload["detail"] in {"Not Found", "Method Not Allowed"}
+
+
+def test_send_chat_message_requires_openclaw_data_source() -> None:
+    status_code, _, body = request(
+        "POST",
+        "/chat/agents/agent-root-observer/send",
+        body=json.dumps({"message": "hello", "sessionKey": "agent:main:main"}).encode("utf-8"),
+        headers={"content-type": "application/json"},
+    )
+    assert status_code == 503
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    _assert_error_envelope(
+        payload,
+        code="unsupported_data_source",
+        message="chat.send is only available with the OpenClaw data source",
+        recoverable=True,
+        next_step="切换到 openclaw data_source 后重试",
+    )
+
+
+def test_send_chat_message_returns_success_payload(monkeypatch: Any) -> None:
+    from app.main import app as fastapi_app
+
+    class FakeProviderApplicationService:
+        def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
+            assert kwargs["agent_id"] == "agent-root-observer"
+            assert kwargs["message"] == "hello"
+            assert kwargs["session_key"] == "agent:main:main"
+            return {
+                "request_id": "control-send-1",
+                "agent_id": "agent-root-observer",
+                "status": "accepted",
+                "message": None,
+            }
+
+    monkeypatch.setattr(
+        fastapi_app.state,
+        "provider_application_service",
+        FakeProviderApplicationService(),
+    )
+
+    status_code, _, body = request(
+        "POST",
+        "/chat/agents/agent-root-observer/send?data_source=openclaw",
+        body=json.dumps({"message": "hello", "sessionKey": "agent:main:main"}).encode("utf-8"),
+        headers={"content-type": "application/json"},
+    )
+    assert status_code == 200
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {
+        "request_id": "control-send-1",
+        "agent_id": "agent-root-observer",
+        "status": "accepted",
+        "message": None,
+    }
+
+
+def test_pause_agent_requires_openclaw_data_source() -> None:
+    status_code, _, body = request("POST", "/chat/agents/agent-root-observer/pause")
+    assert status_code == 503
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    _assert_error_envelope(
+        payload,
+        code="unsupported_data_source",
+        message="chat.abort is only available with the OpenClaw data source",
+        recoverable=True,
+        next_step="切换到 openclaw data_source 后重试",
+    )
+
+
+def test_pause_agent_returns_success_payload(monkeypatch: Any) -> None:
+    from app.main import app as fastapi_app
+
+    class FakeProviderApplicationService:
+        def pause_agent(self, **kwargs: Any) -> dict[str, Any]:
+            assert kwargs["agent_id"] == "agent-root-observer"
+            assert kwargs["session_key"] == "agent:main:main"
+            return {
+                "request_id": "control-pause-1",
+                "agent_id": "agent-root-observer",
+                "status": "accepted",
+                "message": None,
+            }
+
+    monkeypatch.setattr(
+        fastapi_app.state,
+        "provider_application_service",
+        FakeProviderApplicationService(),
+    )
+
+    status_code, _, body = request(
+        "POST",
+        "/chat/agents/agent-root-observer/pause"
+        "?data_source=openclaw&sessionKey=agent:main:main",
+    )
+    assert status_code == 200
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {
+        "request_id": "control-pause-1",
+        "agent_id": "agent-root-observer",
+        "status": "accepted",
+        "message": None,
+    }
+
+
+def test_reset_session_requires_openclaw_data_source() -> None:
+    status_code, _, body = request("POST", "/chat/sessions/agent:main:main/reset")
+    assert status_code == 503
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    _assert_error_envelope(
+        payload,
+        code="unsupported_data_source",
+        message="sessions.reset is only available with the OpenClaw data source",
+        recoverable=True,
+        next_step="切换到 openclaw data_source 后重试",
+    )
+
+
+def test_reset_session_returns_success_payload(monkeypatch: Any) -> None:
+    from app.main import app as fastapi_app
+
+    class FakeProviderApplicationService:
+        def reset_session(self, **kwargs: Any) -> bool:
+            assert kwargs["key"] == "agent:main:main"
+            return True
+
+    monkeypatch.setattr(
+        fastapi_app.state,
+        "provider_application_service",
+        FakeProviderApplicationService(),
+    )
+
+    status_code, _, body = request(
+        "POST",
+        "/chat/sessions/agent:main:main/reset?data_source=openclaw",
+    )
+    assert status_code == 200
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {"reset": True}
+
+
+def test_delete_session_requires_openclaw_data_source() -> None:
+    status_code, _, body = request("DELETE", "/chat/sessions/agent:main:main")
+    assert status_code == 503
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    _assert_error_envelope(
+        payload,
+        code="unsupported_data_source",
+        message="sessions.delete is only available with the OpenClaw data source",
+        recoverable=True,
+        next_step="切换到 openclaw data_source 后重试",
+    )
+
+
+def test_delete_session_returns_success_payload(monkeypatch: Any) -> None:
+    from app.main import app as fastapi_app
+
+    class FakeProviderApplicationService:
+        def delete_session(self, **kwargs: Any) -> bool:
+            assert kwargs["key"] == "agent:main:main"
+            return True
+
+    monkeypatch.setattr(
+        fastapi_app.state,
+        "provider_application_service",
+        FakeProviderApplicationService(),
+    )
+
+    status_code, _, body = request(
+        "DELETE",
+        "/chat/sessions/agent:main:main?data_source=openclaw",
+    )
+    assert status_code == 200
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {"deleted": True}
 
 
 

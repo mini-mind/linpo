@@ -9,6 +9,9 @@ from sqlalchemy.orm import Session
 from app.api.schemas import (
     AgentDetailResponse,
     AgentListItem,
+    ChatPauseResponse,
+    ChatSendRequest,
+    ChatSendResponse,
     ErrorEnvelope,
     ErrorResponse,
     EventRecordItem,
@@ -18,8 +21,10 @@ from app.api.schemas import (
     SessionListItem,
     SessionPatchRequest,
     SessionPatchResponse,
+    SessionDeleteResponse,
     SessionPreview,
     SessionPreviewItem,
+    SessionResetResponse,
     SessionsListResponse,
     TopologyNodeItem,
 )
@@ -152,6 +157,15 @@ def _resolve_observer_data_source(
         data_source,
         request_context,
     )
+
+
+def _normalize_optional_session_key(session_key: str | None) -> str | None:
+    if session_key is None:
+        return None
+    normalized = session_key.strip()
+    if normalized == "":
+        return None
+    return normalized
 
 
 # === Observer API ===
@@ -312,6 +326,61 @@ def list_models(
 # === Sessions API ===
 
 
+@router.post("/chat/agents/{agent_id}/send", response_model=ChatSendResponse)
+def send_chat_message(
+    agent_id: str,
+    body: ChatSendRequest,
+    data_source: str | None = Query(default=None),
+    request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
+) -> ChatSendResponse | JSONResponse:
+    try:
+        message = body.message.strip()
+        if message == "":
+            raise HTTPException(status_code=400, detail="message is required")
+
+        payload = provider_application_service.send_chat_message(
+            data_source=data_source,
+            execution_context=request_context,
+            agent_id=agent_id,
+            message=message,
+            session_key=_normalize_optional_session_key(body.session_key),
+        )
+        return ChatSendResponse(
+            request_id=str(payload.get("request_id", "")),
+            agent_id=str(payload.get("agent_id", agent_id)),
+            status=str(payload.get("status", "accepted")),
+            message=payload.get("message"),
+        )
+    except HTTPException as exc:
+        return _http_exception_response(exc)
+
+
+@router.post("/chat/agents/{agent_id}/pause", response_model=ChatPauseResponse)
+def pause_agent(
+    agent_id: str,
+    session_key: str | None = Query(default=None, alias="sessionKey"),
+    data_source: str | None = Query(default=None),
+    request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
+) -> ChatPauseResponse | JSONResponse:
+    try:
+        payload = provider_application_service.pause_agent(
+            data_source=data_source,
+            execution_context=request_context,
+            agent_id=agent_id,
+            session_key=_normalize_optional_session_key(session_key),
+        )
+        return ChatPauseResponse(
+            request_id=str(payload.get("request_id", "")),
+            agent_id=str(payload.get("agent_id", agent_id)),
+            status=str(payload.get("status", "accepted")),
+            message=payload.get("message"),
+        )
+    except HTTPException as exc:
+        return _http_exception_response(exc)
+
+
 @router.get("/chat/sessions", response_model=SessionsListResponse)
 def list_sessions(
     agent_id: str | None = Query(default=None, alias="agentId"),
@@ -421,5 +490,41 @@ def patch_session(
             thinking_level=body.thinking_level,
         )
         return SessionPatchResponse(updated=updated)
+    except HTTPException as exc:
+        return _http_exception_response(exc)
+
+
+@router.post("/chat/sessions/{key}/reset", response_model=SessionResetResponse)
+def reset_session(
+    key: str,
+    data_source: str | None = Query(default=None),
+    request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
+) -> SessionResetResponse | JSONResponse:
+    try:
+        reset = provider_application_service.reset_session(
+            data_source=data_source,
+            execution_context=request_context,
+            key=key,
+        )
+        return SessionResetResponse(reset=reset)
+    except HTTPException as exc:
+        return _http_exception_response(exc)
+
+
+@router.delete("/chat/sessions/{key}", response_model=SessionDeleteResponse)
+def delete_session(
+    key: str,
+    data_source: str | None = Query(default=None),
+    request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
+) -> SessionDeleteResponse | JSONResponse:
+    try:
+        deleted = provider_application_service.delete_session(
+            data_source=data_source,
+            execution_context=request_context,
+            key=key,
+        )
+        return SessionDeleteResponse(deleted=deleted)
     except HTTPException as exc:
         return _http_exception_response(exc)

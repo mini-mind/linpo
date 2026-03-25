@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  deleteSession,
   getAggregateOverview,
   listAgents,
+  pauseSession,
   patchSession,
   previewSessions,
+  resetSession,
 } from './client';
 
 const fetchMock = vi.fn();
@@ -96,6 +99,77 @@ describe('business API client instance context', () => {
         code: 'not_found',
         request_id: 'req-404',
       }),
+    });
+  });
+
+  it('calls resetSession with POST /chat/sessions/{key}/reset', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: async () => ({ reset: true }),
+    });
+
+    await resetSession('session-a');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8000/chat/sessions/session-a/reset?data_source=openclaw',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+      }),
+    );
+  });
+
+  it('calls deleteSession with DELETE /chat/sessions/{key}', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: async () => ({ deleted: true }),
+    });
+
+    await deleteSession('session-a');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8000/chat/sessions/session-a?data_source=openclaw',
+      expect.objectContaining({
+        method: 'DELETE',
+        credentials: 'include',
+      }),
+    );
+  });
+
+  it('calls pauseSession with POST /chat/agents/{agentId}/pause', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: async () => ({
+        request_id: 'control-pause-1',
+        agent_id: 'main',
+        status: 'accepted',
+      }),
+    });
+
+    await pauseSession({ sessionKey: 'session-a', agentId: 'main' });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8000/chat/agents/main/pause?sessionKey=session-a&data_source=openclaw',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+      }),
+    );
+  });
+
+  it('pauseSession requires agentId', async () => {
+    await expect(
+      pauseSession({ sessionKey: 'session-a' })
+    ).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 400,
+      message: 'agentId is required to pause session',
     });
   });
 });

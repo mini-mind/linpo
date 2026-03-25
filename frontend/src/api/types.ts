@@ -234,6 +234,18 @@ export interface SessionDeleteResponse {
   deleted: boolean;
 }
 
+export interface SessionPauseRequest {
+  sessionKey: string;
+  agentId?: string;
+}
+
+export interface SessionPauseResponse {
+  request_id: string;
+  agent_id: string;
+  status: string;
+  message?: string;
+}
+
 export interface ChatSendRequest {
   agentId: string;
   sessionKey: string;

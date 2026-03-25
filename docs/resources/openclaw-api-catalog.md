@@ -20,15 +20,21 @@
 - `sessions.list`（并已对外：`GET /chat/sessions`）
 - `sessions.preview`（并已对外：`GET /chat/sessions/preview`）
 - `sessions.patch`（并已对外：`PATCH /chat/sessions/{key}`）
+- `sessions.reset`（并已对外：`POST /chat/sessions/{key}/reset`）
+- `sessions.delete`（并已对外：`DELETE /chat/sessions/{key}`）
+- `chat.send`（并已对外：`POST /chat/agents/{agent_id}/send`）
+- `chat.abort`（并已对外：`POST /chat/agents/{agent_id}/pause`，对外动作名为 pause）
 
 ## 1. Chat 相关
 
 | 方法 | 功能 | Linpo v0.6 状态 | 说明 |
 |---|---|---|---|
-| `chat.send` | 发送消息到 agent | 🟨 Client 已实现 | `OpenClawClient` 有请求构造与发送，但未进入 Adapter/API 主链路 |
-| `chat.abort` | 中断/停止 agent 运行 | 🟨 Client 已实现 | 用于 pause 控制链路，但未作为公共 Adapter 能力对外 |
+| `chat.send` | 发送消息到 agent | ✅ 已接入（Adapter+HTTP） | 适配层已封装；HTTP：`POST /chat/agents/{agent_id}/send` |
+| `chat.abort` | 中断/停止 agent 运行 | ✅ 已接入（Adapter+HTTP） | 适配层以 `chat_pause` 暴露并映射到 RPC `chat.abort`；HTTP：`POST /chat/agents/{agent_id}/pause` |
 | `chat.history` | 获取会话历史消息 | ❌ 未接入 | 无对应实现 |
 | `chat.inject` | 注入消息到会话（不触发 agent） | ❌ 未接入 | 无对应实现 |
+
+兼容性说明：v0.6 未暴露 legacy 路由 `/chat/send`、`/chat/abort`，统一使用 `/chat/agents/{agent_id}/send|pause`。
 
 ## 2. Session 管理
 
@@ -37,8 +43,8 @@
 | `sessions.list` | 列出会话 | ✅ 已接入（Adapter+HTTP） | 适配层已封装，HTTP 已暴露 |
 | `sessions.preview` | 预览会话内容 | ✅ 已接入（Adapter+HTTP） | 适配层已封装，HTTP 已暴露 |
 | `sessions.patch` | 修改会话配置 | ✅ 已接入（Adapter+HTTP） | 适配层已封装，HTTP 已暴露 |
-| `sessions.reset` | 重置会话 | 🟨 Client 已实现 | `OpenClawClient` 有方法，未进入 Adapter/API 主链路 |
-| `sessions.delete` | 删除会话 | 🟨 Client 已实现 | `OpenClawClient` 有方法，未进入 Adapter/API 主链路 |
+| `sessions.reset` | 重置会话 | ✅ 已接入（Adapter+HTTP） | 适配层已封装；HTTP：`POST /chat/sessions/{key}/reset` |
+| `sessions.delete` | 删除会话 | ✅ 已接入（Adapter+HTTP） | 适配层已封装；HTTP：`DELETE /chat/sessions/{key}` |
 | `sessions.compact` | 压缩会话 | ❌ 未接入 | 无对应实现 |
 | `sessions.resolve` | 解析会话 key | ❌ 未接入 | 无对应实现 |
 

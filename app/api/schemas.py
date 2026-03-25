@@ -57,6 +57,20 @@ class ChatSendRequest(BaseModel):
     session_key: str = Field(default="", alias="sessionKey")
 
 
+class ChatSendResponse(BaseModel):
+    request_id: str
+    agent_id: str
+    status: str
+    message: str | None = None
+
+
+class ChatPauseResponse(BaseModel):
+    request_id: str
+    agent_id: str
+    status: str
+    message: str | None = None
+
+
 # === Session API Schemas ===
 
 

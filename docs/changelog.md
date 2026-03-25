@@ -11,6 +11,7 @@
 - 补回关键联调资源：`ravin` 地址、OpenClaw `claw1/2/3` Token、运行时环境变量前置条件、保留字稳定转义规则。
 - 新增治理规则：subagent 默认模型为 `gpt-5.3-codex`。
 - 补回并更新 OpenClaw 全量接口文档：`docs/resources/openclaw-api-catalog.md`（切换为 v0.6 接入状态口径，含未接入项）。
+- 校正文档漂移：`chat.send` / `chat.abort` / `sessions.reset` / `sessions.delete` 状态更新为 `✅ 已接入（Adapter+HTTP）`，并补充 v0.6 路由映射。
 
 ## 维护规则
 

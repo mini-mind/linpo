@@ -71,3 +71,34 @@ class ProviderAdapter(Protocol):
         model: str | None,
         thinking_level: str | None,
     ) -> ProviderPayloadResult: ...
+
+    def sessions_reset(
+        self,
+        request: DomainProviderRequest,
+        *,
+        key: str,
+    ) -> ProviderPayloadResult: ...
+
+    def sessions_delete(
+        self,
+        request: DomainProviderRequest,
+        *,
+        key: str,
+    ) -> ProviderPayloadResult: ...
+
+    def chat_send(
+        self,
+        request: DomainProviderRequest,
+        *,
+        agent_id: str,
+        message: str,
+        session_key: str | None,
+    ) -> ProviderPayloadResult: ...
+
+    def chat_pause(
+        self,
+        request: DomainProviderRequest,
+        *,
+        agent_id: str,
+        session_key: str | None,
+    ) -> ProviderPayloadResult: ...

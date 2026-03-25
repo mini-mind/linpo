@@ -141,6 +141,108 @@ class ProviderApplicationService:
         payload = self._payload_or_raise(result)
         return payload.get("ok", False) is True
 
+    def reset_session(
+        self,
+        *,
+        data_source: str | None,
+        execution_context: ProviderExecutionContext | None,
+        key: str,
+    ) -> bool:
+        result = self._adapter_for_openclaw(
+            data_source=data_source,
+            execution_context=execution_context,
+            unsupported_detail="sessions.reset is only available with the OpenClaw data source",
+        ).sessions_reset(
+            to_domain_request(
+                request_id=_provider_request_id(),
+                capability=DomainProviderCapability.SESSION_CONTROL,
+            ),
+            key=key,
+        )
+        payload = self._payload_or_raise(result)
+        return self._bool_flag_from_payload(payload, preferred_key="reset")
+
+    def delete_session(
+        self,
+        *,
+        data_source: str | None,
+        execution_context: ProviderExecutionContext | None,
+        key: str,
+    ) -> bool:
+        result = self._adapter_for_openclaw(
+            data_source=data_source,
+            execution_context=execution_context,
+            unsupported_detail="sessions.delete is only available with the OpenClaw data source",
+        ).sessions_delete(
+            to_domain_request(
+                request_id=_provider_request_id(),
+                capability=DomainProviderCapability.SESSION_CONTROL,
+            ),
+            key=key,
+        )
+        payload = self._payload_or_raise(result)
+        return self._bool_flag_from_payload(payload, preferred_key="deleted")
+
+    def send_chat_message(
+        self,
+        *,
+        data_source: str | None,
+        execution_context: ProviderExecutionContext | None,
+        agent_id: str,
+        message: str,
+        session_key: str | None,
+    ) -> dict[str, Any]:
+        result = self._adapter_for_openclaw(
+            data_source=data_source,
+            execution_context=execution_context,
+            unsupported_detail="chat.send is only available with the OpenClaw data source",
+        ).chat_send(
+            to_domain_request(
+                request_id=_provider_request_id(),
+                capability=DomainProviderCapability.SESSION_CONTROL,
+            ),
+            agent_id=agent_id,
+            message=message,
+            session_key=session_key,
+        )
+        payload = self._payload_or_raise(result)
+        request_id = payload.get("request_id")
+        return {
+            "request_id": request_id if isinstance(request_id, str) and request_id else _provider_request_id(),
+            "agent_id": str(payload.get("agent_id", agent_id)),
+            "status": str(payload.get("status", "accepted")),
+            "message": payload.get("message"),
+        }
+
+    def pause_agent(
+        self,
+        *,
+        data_source: str | None,
+        execution_context: ProviderExecutionContext | None,
+        agent_id: str,
+        session_key: str | None,
+    ) -> dict[str, Any]:
+        result = self._adapter_for_openclaw(
+            data_source=data_source,
+            execution_context=execution_context,
+            unsupported_detail="chat.abort is only available with the OpenClaw data source",
+        ).chat_pause(
+            to_domain_request(
+                request_id=_provider_request_id(),
+                capability=DomainProviderCapability.SESSION_CONTROL,
+            ),
+            agent_id=agent_id,
+            session_key=session_key,
+        )
+        payload = self._payload_or_raise(result)
+        request_id = payload.get("request_id")
+        return {
+            "request_id": request_id if isinstance(request_id, str) and request_id else _provider_request_id(),
+            "agent_id": str(payload.get("agent_id", agent_id)),
+            "status": str(payload.get("status", "accepted")),
+            "message": payload.get("message"),
+        }
+
     def _adapter_for_openclaw(
         self,
         *,
@@ -159,6 +261,15 @@ class ProviderApplicationService:
         if error is not None:
             raise HTTPException(status_code=503, detail=error.message)
         return result.payload or {}
+
+    def _bool_flag_from_payload(self, payload: dict[str, Any], *, preferred_key: str) -> bool:
+        value = payload.get(preferred_key)
+        if isinstance(value, bool):
+            return value
+        value_ok = payload.get("ok")
+        if isinstance(value_ok, bool):
+            return value_ok
+        return True
 
 
 def _provider_request_id() -> str:

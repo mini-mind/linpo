@@ -1,12 +1,15 @@
 import type React from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import {
 	ApiError,
+	deleteSession,
 	getAgentDetail,
 	getDefaultObserverDataSource,
 	listSessions,
+	pauseSession,
 	previewSessions,
+	resetSession,
 	sendChatMessage,
 } from "../api/client";
 import {
@@ -27,6 +30,7 @@ import {
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useToast } from "../hooks/useToast";
 import { MarkdownMessage } from "./MarkdownMessage";
+import { SessionActions } from "./SessionActions";
 
 interface AgentWorkspaceProps {
 	agentId?: string;
@@ -37,6 +41,12 @@ interface AgentWorkspaceProps {
 interface RealtimeState {
 	status: "realtime" | "reconnecting" | "resyncing" | "disconnected" | "error";
 	message: string | null;
+}
+
+interface ChannelSummary {
+	key: string;
+	label: string;
+	sessionCount: number;
 }
 
 type AgentDetailUpdate =
@@ -61,6 +71,16 @@ const SESSION_READ_CHAIN_CLUE =
 
 function withErrorMessage(error: unknown, fallback: string): string {
 	return error instanceof Error ? error.message : fallback;
+}
+
+function getSessionActionErrorMessage(
+	error: unknown,
+	actionLabel: string,
+): string {
+	if (error instanceof ApiError && error.status === 404) {
+		return `后端暂未提供${actionLabel}接口`;
+	}
+	return withErrorMessage(error, `${actionLabel}失败`);
 }
 
 function ensureError(error: unknown, fallback: string): Error {
@@ -212,6 +232,39 @@ export function shouldShowModelUpdateStatus(
 	currentSessionKey: string | null,
 ): boolean {
 	return status !== "idle" && updateSessionKey === currentSessionKey;
+}
+
+function getChannelKeyFromSessionKey(sessionKey: string): string {
+	const delimiterIndex = sessionKey.indexOf(":");
+	if (delimiterIndex <= 0) return sessionKey;
+	return sessionKey.slice(0, delimiterIndex);
+}
+
+function getChannelLabelFromSession(session: SessionListItem): string {
+	if (session.kind === "direct") return "direct";
+	if (session.kind === "group") return "group";
+	if (session.kind === "global") return "global";
+	return getChannelKeyFromSessionKey(session.key);
+}
+
+function buildChannelSummaries(sessions: SessionListItem[]): ChannelSummary[] {
+	const channelMap = new Map<string, ChannelSummary>();
+	for (const session of sessions) {
+		const key = getChannelKeyFromSessionKey(session.key);
+		const existing = channelMap.get(key);
+		if (existing) {
+			existing.sessionCount += 1;
+			continue;
+		}
+		channelMap.set(key, {
+			key,
+			label: getChannelLabelFromSession(session),
+			sessionCount: 1,
+		});
+	}
+	return [...channelMap.values()].sort((left, right) =>
+		left.label.localeCompare(right.label, "en"),
+	);
 }
 
 export function getPreviewItemsForSession(
@@ -383,9 +436,6 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 	const [agentError, setAgentError] = useState<Error | null>(null);
 	const [selectedSessionKey, setSelectedSessionKey] = useState<string | null>(null);
 	const [previewItems, setPreviewItems] = useState<SessionPreviewItem[]>([]);
-	const [localAppendedItemsBySession, setLocalAppendedItemsBySession] = useState<
-		Record<string, SessionPreviewItem[]>
-	>({});
 	const [previewLoading, setPreviewLoading] = useState(false);
 	const [previewError, setPreviewError] = useState<Error | null>(null);
 	const [previewTs, setPreviewTs] = useState<number | null>(null);
@@ -395,7 +445,6 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 	const [sessionListTs, setSessionListTs] = useState<number | null>(null);
 	const [draftMessage, setDraftMessage] = useState("");
 	const [sendBusy, setSendBusy] = useState(false);
-	const [sendUnavailable, setSendUnavailable] = useState(false);
 
 	const messagesAreaRef = useRef<HTMLDivElement | null>(null);
 	const sessionRealtimeRef = useRef<ObserverRealtimeClient | null>(null);
@@ -414,8 +463,6 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 			setSessionListTs(null);
 			setDraftMessage("");
 			setSendBusy(false);
-			setSendUnavailable(false);
-			setLocalAppendedItemsBySession({});
 			prevSessionKeyRef.current = null;
 			return;
 		}
@@ -430,8 +477,6 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		setSessionListTs(null);
 		setDraftMessage("");
 		setSendBusy(false);
-		setSendUnavailable(false);
-		setLocalAppendedItemsBySession({});
 		prevSessionKeyRef.current = null;
 	}, [agentId]);
 
@@ -497,16 +542,6 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		}, 0);
 	}, []);
 
-	const appendLocalUserMessage = useCallback((sessionKey: string, message: string) => {
-		setLocalAppendedItemsBySession((previous) => ({
-			...previous,
-			[sessionKey]: [
-				...(previous[sessionKey] ?? []),
-				{ role: "user", text: message },
-			],
-		}));
-	}, []);
-
 	const sendUserMessage = useCallback((): void => {
 		const currentAgentId = agentId;
 		const sessionKey = selectedSessionKey;
@@ -515,11 +550,6 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		if (!sessionKey) return;
 		if (!message) return;
 		if (sendBusy) return;
-
-		setDraftMessage("");
-		appendLocalUserMessage(sessionKey, message);
-		scrollToBottom();
-		if (sendUnavailable) return;
 
 		setSendBusy(true);
 		void sendChatMessage(
@@ -531,19 +561,10 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 			{ instanceId },
 		)
 			.then(() => {
-				setSendUnavailable(false);
+				setDraftMessage("");
+				scrollToBottom();
 			})
 			.catch((error: unknown) => {
-				if (error instanceof ApiError && error.status === 404) {
-					if (!sendUnavailable) {
-						addToast(
-							"后端暂未提供发送接口：已在本地追加消息，等待后端接入后可真实发送",
-							"warning",
-						);
-					}
-					setSendUnavailable(true);
-					return;
-				}
 				addToast(withErrorMessage(error, "发送消息失败"), "error");
 			})
 			.finally(() => {
@@ -554,8 +575,6 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		selectedSessionKey,
 		draftMessage,
 		sendBusy,
-		sendUnavailable,
-		appendLocalUserMessage,
 		scrollToBottom,
 		addToast,
 		instanceId,
@@ -643,6 +662,63 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		[instanceId, selectedSessionKey, scrollToBottom],
 	);
 
+	const handlePauseSession = useCallback(async (): Promise<void> => {
+		const sessionKey = selectedSessionKey;
+		if (!sessionKey) return;
+		try {
+			await pauseSession(
+				{ sessionKey, agentId: agentId ?? undefined },
+				{ instanceId },
+			);
+			addToast("已发送暂停请求", "success");
+		} catch (error) {
+			const message = getSessionActionErrorMessage(error, "暂停");
+			addToast(message, "error");
+			throw ensureError(error, message);
+		}
+	}, [selectedSessionKey, agentId, instanceId, addToast]);
+
+	const handleResetSession = useCallback(async (): Promise<void> => {
+		const sessionKey = selectedSessionKey;
+		if (!sessionKey) return;
+		try {
+			await resetSession(sessionKey, { instanceId });
+			await refreshPreview(sessionKey);
+			addToast("会话已重置", "success");
+		} catch (error) {
+			const message = getSessionActionErrorMessage(error, "重置会话");
+			addToast(message, "error");
+			throw ensureError(error, message);
+		}
+	}, [selectedSessionKey, instanceId, refreshPreview, addToast]);
+
+	const handleDeleteSession = useCallback(async (): Promise<void> => {
+		const sessionKey = selectedSessionKey;
+		if (!sessionKey) return;
+		try {
+			await deleteSession(sessionKey, { instanceId });
+			const nextSessionKey = getFallbackSessionKeyAfterDelete(sessions, sessionKey);
+			setSessions((previous) =>
+				previous.filter((session) => session.key !== sessionKey),
+			);
+			setSelectedSessionKey(nextSessionKey);
+			if (nextSessionKey) {
+				await refreshPreview(nextSessionKey);
+			} else {
+				setPreviewItems([]);
+				setPreviewLoading(false);
+				setPreviewError(null);
+				setPreviewTs(null);
+				prevSessionKeyRef.current = null;
+			}
+			addToast("会话已删除", "success");
+		} catch (error) {
+			const message = getSessionActionErrorMessage(error, "删除会话");
+			addToast(message, "error");
+			throw ensureError(error, message);
+		}
+	}, [selectedSessionKey, instanceId, sessions, refreshPreview, addToast]);
+
 	useEffect(() => {
 		if (!selectedSessionKey) {
 			sessionRealtimeRef.current?.close();
@@ -704,28 +780,6 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 			sessionRealtimeRef.current = null;
 		};
 	}, [instanceId, selectedSessionKey, refreshPreview, scrollToBottom]);
-
-	useEffect(() => {
-		if (!selectedSessionKey) return;
-		setLocalAppendedItemsBySession((previous) => {
-			const local = previous[selectedSessionKey];
-			if (!local || local.length === 0) return previous;
-			const nextLocal = local.filter(
-				(item) =>
-					!previewItems.some(
-						(server) => server.role === item.role && server.text === item.text,
-					),
-			);
-			if (nextLocal.length === local.length) return previous;
-			const next = { ...previous };
-			if (nextLocal.length === 0) {
-				delete next[selectedSessionKey];
-				return next;
-			}
-			next[selectedSessionKey] = nextLocal;
-			return next;
-		});
-	}, [previewItems, selectedSessionKey]);
 
 	useEffect(() => {
 		if (!agentId) {
@@ -827,13 +881,11 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 			? "● 运行中"
 			: "○ 已停止";
 	const emptySessionText = selectedSessionKey ? "暂无消息" : "当前工作区暂无可用会话";
-	const localItemsForSelectedSession = selectedSessionKey
-		? localAppendedItemsBySession[selectedSessionKey] ?? []
-		: [];
-	const displayedPreviewItems =
-		localItemsForSelectedSession.length > 0
-			? [...previewItems, ...localItemsForSelectedSession]
-			: previewItems;
+	const displayedPreviewItems = previewItems;
+	const channelSummaries = useMemo(() => buildChannelSummaries(sessions), [sessions]);
+	const selectedChannelKey = selectedSessionKey
+		? getChannelKeyFromSessionKey(selectedSessionKey)
+		: null;
 
 	useEffect(() => {
 		if (loading) return;
@@ -896,7 +948,24 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 							<span style={sectionLabelStyle}>渠道</span>
 						</div>
 						<div style={sidebarSectionBodyStyle}>
-							<span style={placeholderTextStyle}>当前阶段暂无渠道数据</span>
+							{sessionsError ? (
+								<span style={sidebarErrorTextStyle}>
+									渠道汇总失败：{sessionsError.message}
+								</span>
+							) : channelSummaries.length === 0 ? (
+								<span style={placeholderTextStyle}>暂无渠道</span>
+							) : (
+								<div style={channelListStyle}>
+									{channelSummaries.map((channel) => (
+										<span
+											key={channel.key}
+											style={getChannelBadgeStyle(channel.key === selectedChannelKey)}
+										>
+											{channel.label} · {channel.sessionCount}
+										</span>
+									))}
+								</div>
+							)}
 						</div>
 					</div>
 
@@ -929,6 +998,22 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 									))}
 								</div>
 							)}
+						</div>
+					</div>
+
+					<div data-testid="session-actions-area" style={sessionActionsAreaStyle}>
+						<div style={sidebarSectionHeaderStyle}>
+							<span style={sectionLabelStyle}>操作</span>
+						</div>
+						<div style={sidebarSectionBodyStyle}>
+							<SessionActions
+								sessionKey={selectedSessionKey}
+								onPause={handlePauseSession}
+								onReset={handleResetSession}
+								onDelete={handleDeleteSession}
+								showPauseButton={Boolean(agent?.is_active)}
+								disabled={!selectedSessionKey || Boolean(unauthorizedEnvelope)}
+							/>
 						</div>
 					</div>
 				</div>
@@ -1051,13 +1136,8 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 								disabled={!selectedSessionKey || sendBusy || draftMessage.trim().length === 0}
 								style={getSendButtonStyle(!selectedSessionKey || sendBusy)}
 							>
-									发送
-								</button>
-								{sendUnavailable ? (
-									<span style={composerHintStyle}>
-										发送接口缺失：当前为本地追加模式
-									</span>
-								) : null}
+								发送
+							</button>
 							</div>
 						)}
 					</div>
@@ -1158,6 +1238,11 @@ const sessionListAreaStyle: React.CSSProperties = {
 	minHeight: 0,
 };
 
+const sessionActionsAreaStyle: React.CSSProperties = {
+	borderTop: "1px solid #e5e7eb",
+	flexShrink: 0,
+};
+
 const sectionLabelStyle: React.CSSProperties = {
 	fontSize: "0.6875rem",
 	fontWeight: 600,
@@ -1243,6 +1328,26 @@ const sessionListStyle: React.CSSProperties = {
 	flexDirection: "column",
 	gap: "0.25rem",
 };
+
+const channelListStyle: React.CSSProperties = {
+	display: "flex",
+	flexWrap: "wrap",
+	gap: "0.375rem",
+};
+
+function getChannelBadgeStyle(isSelected: boolean): React.CSSProperties {
+	return {
+		display: "inline-flex",
+		alignItems: "center",
+		padding: "0.1875rem 0.5rem",
+		borderRadius: "999px",
+		border: isSelected ? "1px solid #3730a3" : "1px solid #d1d5db",
+		background: isSelected ? "#e0e7ff" : "#f8fafc",
+		color: isSelected ? "#312e81" : "#475569",
+		fontSize: "0.6875rem",
+		fontWeight: 600,
+	};
+}
 
 function getSessionItemStyle(isSelected: boolean): React.CSSProperties {
 	return {
@@ -1385,11 +1490,6 @@ function getSendButtonStyle(isDisabled: boolean): React.CSSProperties {
 		cursor: isDisabled ? "not-allowed" : "pointer",
 	};
 }
-
-const composerHintStyle: React.CSSProperties = {
-	fontSize: "0.75rem",
-	color: "#b45309",
-};
 
 const disclosureContentStyle: React.CSSProperties = {
 	display: "flex",

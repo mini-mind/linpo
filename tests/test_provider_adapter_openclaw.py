@@ -192,3 +192,86 @@ def test_openclaw_adapter_stream_agent_events_raises_normalized_timeout_error() 
     assert "timed out" in response.error.message.lower()
     assert response.error.request_id == "req-provider-1"
     assert response.freshness.status == DomainFreshnessStatus.FAILED
+
+
+def test_openclaw_adapter_chat_send_maps_success_payload() -> None:
+    from app.adapters.openclaw_adapter import OpenClawAdapter
+
+    class FakeClient:
+        def chat_send(self, *, agent_id: str, message: str, session_key: str | None) -> dict[str, Any]:
+            assert agent_id == "main"
+            assert message == "hello"
+            assert session_key == "agent:main:main"
+            return {
+                "ok": True,
+                "payload": {
+                    "request_id": "control-send-1",
+                    "agent_id": "main",
+                    "status": "accepted",
+                },
+            }
+
+        def config_key(self) -> tuple[str | None, str | None, str]:
+            return ("ws://example.invalid/ws", "token-alpha", "http://example.invalid")
+
+    adapter = OpenClawAdapter(
+        client=FakeClient(),
+        instance_id="instance-alpha",
+        instance_name="Alpha",
+    )
+
+    result = adapter.chat_send(
+        _make_request(DomainProviderCapability.SESSION_CONTROL),
+        agent_id="main",
+        message="hello",
+        session_key="agent:main:main",
+    )
+
+    assert result.response.error is None
+    assert result.payload == {
+        "request_id": "control-send-1",
+        "agent_id": "main",
+        "status": "accepted",
+    }
+
+
+@pytest.mark.parametrize(
+    ("method_name", "default_error_message"),
+    [
+        ("sessions_reset", "sessions.reset failed"),
+        ("sessions_delete", "sessions.delete failed"),
+    ],
+)
+def test_openclaw_adapter_session_mutation_methods_normalize_error_payload(
+    method_name: str,
+    default_error_message: str,
+) -> None:
+    from app.adapters.openclaw_adapter import OpenClawAdapter
+
+    class FakeClient:
+        def sessions_reset(self, *, key: str) -> dict[str, Any]:
+            assert key == "agent:main:main"
+            return {"ok": False, "error": {"message": default_error_message}}
+
+        def sessions_delete(self, *, key: str) -> dict[str, Any]:
+            assert key == "agent:main:main"
+            return {"ok": False, "error": {"message": default_error_message}}
+
+        def config_key(self) -> tuple[str | None, str | None, str]:
+            return ("ws://example.invalid/ws", "token-alpha", "http://example.invalid")
+
+    adapter = OpenClawAdapter(
+        client=FakeClient(),
+        instance_id="instance-alpha",
+        instance_name="Alpha",
+    )
+
+    result = getattr(adapter, method_name)(
+        _make_request(DomainProviderCapability.SESSION_CONTROL),
+        key="agent:main:main",
+    )
+
+    assert result.payload is None
+    assert result.response.error is not None
+    assert result.response.error.code == "source_unavailable"
+    assert result.response.error.message == default_error_message

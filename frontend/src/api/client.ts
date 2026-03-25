@@ -10,8 +10,12 @@ import type {
 	ErrorResponse,
 	ModelItem,
 	NodeDetailResponse,
+	SessionDeleteResponse,
+	SessionPauseRequest,
+	SessionPauseResponse,
 	SessionPatchRequest,
 	SessionPatchResponse,
+	SessionResetResponse,
 	SessionsListResponse,
 	SessionsPreviewResponse,
 } from './types';
@@ -192,6 +196,69 @@ export async function patchSession(
   return response.json() as Promise<SessionPatchResponse>;
 }
 
+export async function resetSession(
+  sessionKey: string,
+  options?: ObserverRequestOptions
+): Promise<SessionResetResponse> {
+  const path = `/chat/sessions/${encodeURIComponent(sessionKey)}/reset`;
+  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, options)}`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    throw await buildApiError(response);
+  }
+
+  return response.json() as Promise<SessionResetResponse>;
+}
+
+export async function deleteSession(
+  sessionKey: string,
+  options?: ObserverRequestOptions
+): Promise<SessionDeleteResponse> {
+  const path = `/chat/sessions/${encodeURIComponent(sessionKey)}`;
+  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, options)}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    throw await buildApiError(response);
+  }
+
+  return response.json() as Promise<SessionDeleteResponse>;
+}
+
+export async function pauseSession(
+  request: SessionPauseRequest,
+  options?: ObserverRequestOptions
+): Promise<SessionPauseResponse> {
+  if (!request.agentId) {
+    throw new ApiError(400, 'agentId is required to pause session');
+  }
+
+  const params = new URLSearchParams();
+  if (request.sessionKey) {
+    params.set('sessionKey', request.sessionKey);
+  }
+  const query = params.toString();
+  const path = query
+    ? `/chat/agents/${encodeURIComponent(request.agentId)}/pause?${query}`
+    : `/chat/agents/${encodeURIComponent(request.agentId)}/pause`;
+
+  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, options)}`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    throw await buildApiError(response);
+  }
+
+  return response.json() as Promise<SessionPauseResponse>;
+}
+
 export async function listSessions(
   agentId?: string,
   options?: ObserverRequestOptions
@@ -206,14 +273,7 @@ export async function listSessions(
   if (!response.ok) {
     throw new Error(`API error: ${response.status} ${response.statusText}`);
   }
-  const data = await response.json() as Partial<SessionsListResponse>;
-  const sessions = Array.isArray(data.sessions) ? data.sessions : [];
-  return {
-    ts: typeof data.ts === 'number' ? data.ts : Date.now(),
-    count: typeof data.count === 'number' ? data.count : sessions.length,
-    sessions,
-    defaults: data.defaults ?? null,
-  };
+  return response.json() as Promise<SessionsListResponse>;
 }
 
 export async function previewSessions(
@@ -222,7 +282,7 @@ export async function previewSessions(
 ): Promise<SessionsPreviewResponse> {
   if (keys.length === 0) {
     return {
-      ts: Date.now(),
+      ts: 0,
       previews: [],
     };
   }
@@ -236,9 +296,5 @@ export async function previewSessions(
   if (!response.ok) {
     throw new Error(`API error: ${response.status} ${response.statusText}`);
   }
-  const data = (await response.json()) as Partial<SessionsPreviewResponse>;
-  return {
-    ts: typeof data.ts === 'number' ? data.ts : Date.now(),
-    previews: Array.isArray(data.previews) ? data.previews : [],
-  };
+  return response.json() as Promise<SessionsPreviewResponse>;
 }

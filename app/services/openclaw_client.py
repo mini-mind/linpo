@@ -486,6 +486,65 @@ class OpenClawClient:
         )
         return self._run_sync(self._send_control_request(request))
 
+    def chat_send(
+        self,
+        *,
+        agent_id: str,
+        message: str,
+        session_key: str | None = None,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        resolved_request_id = request_id or self._next_control_request_id()
+        resolved_session_key = self._resolve_session_key(agent_id=agent_id, session_key=session_key)
+        result = self._send_chat_send(
+            session_key=resolved_session_key,
+            request_id=resolved_request_id,
+            message=message,
+        )
+
+        if result.get("ok") is not True:
+            return result
+
+        payload = result.get("payload")
+        normalized_payload = payload if isinstance(payload, dict) else {}
+        response_id = result.get("id")
+        normalized_payload.setdefault(
+            "request_id",
+            response_id if isinstance(response_id, str) and response_id else resolved_request_id,
+        )
+        normalized_payload.setdefault("agent_id", agent_id)
+        normalized_payload.setdefault("status", "accepted")
+        return {"ok": True, "payload": normalized_payload}
+
+    def chat_abort(
+        self,
+        *,
+        agent_id: str,
+        session_key: str | None = None,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        resolved_request_id = request_id or self._next_control_request_id()
+        resolved_session_key = self._resolve_session_key(agent_id=agent_id, session_key=session_key)
+        result = self.send_operator_action(
+            session_key=resolved_session_key,
+            action=AgentControlAction.PAUSE,
+            request_id=resolved_request_id,
+        )
+
+        if result.get("ok") is not True:
+            return result
+
+        payload = result.get("payload")
+        normalized_payload = payload if isinstance(payload, dict) else {}
+        response_id = result.get("id")
+        normalized_payload.setdefault(
+            "request_id",
+            response_id if isinstance(response_id, str) and response_id else resolved_request_id,
+        )
+        normalized_payload.setdefault("agent_id", agent_id)
+        normalized_payload.setdefault("status", "accepted")
+        return {"ok": True, "payload": normalized_payload}
+
     def sessions_list(
         self,
         *,
@@ -554,6 +613,13 @@ class OpenClawClient:
 
     def _next_control_request_id(self) -> str:
         return f"control-{uuid4().hex[:12]}"
+
+    def _resolve_session_key(self, *, agent_id: str, session_key: str | None) -> str:
+        if isinstance(session_key, str):
+            normalized_session_key = session_key.strip()
+            if normalized_session_key:
+                return normalized_session_key
+        return self.resolve_agent_session_key(agent_id)
 
 
 @dataclass(frozen=True)
