@@ -1,5 +1,8 @@
 # OpenClaw WebSocket API 参考
 
+> 用途：保留 OpenClaw 全量接口清单（含当前未接入项），防止信息丢失。  
+> 注意：本文中的“Linpo 状态 / v0.4 目标 / 未来版本 / 未计划”等字段属于历史记录，不作为当前项目承诺。当前有效约束以 `AGENTS.md`、`docs/prd/v0.6.md`、`docs/architecture/v0.6.md` 为准。
+
 本文档整理了 OpenClaw Gateway 提供的 WebSocket RPC 方法，用于规划 Linpo 的 API 对接优先级。
 
 > 来源：`/data/projects/openclaw/src/gateway/server-methods-list.ts` 及相关源码
