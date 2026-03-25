@@ -348,19 +348,31 @@ describe("SessionPage", () => {
 			expect(screen.queryByRole("button", { name: /Second Instance/ })).not.toBeInTheDocument();
 		});
 
-		it("shows only instance name header, message stream, and input area", async () => {
+		it("uses full-width desktop shell instead of centered max-width wrapper", async () => {
 			listInstancesMock.mockResolvedValue([
-				buildInstance("inst-1", "Test Instance"),
+				buildInstance("inst-1", "Full Width Instance"),
 			]);
 
 			renderSessionPage("/session/main/__none__/__new__?instanceId=inst-1");
 
 			await waitFor(() => {
-				expect(screen.getByRole("heading", { name: "Test Instance" })).toBeInTheDocument();
+				expect(
+					screen.getByText("workspace-props:inst-1:main:none"),
+				).toBeInTheDocument();
 			});
 
-			expect(screen.getByTestId("session-stream-shell")).toBeInTheDocument();
-			expect(screen.getByTestId("session-input-shell")).toBeInTheDocument();
+			const headerTitle = screen.getByRole("heading", {
+				name: "Full Width Instance",
+			});
+			const headerInner = headerTitle.parentElement;
+			expect(headerInner).not.toHaveStyle({ maxWidth: "880px" });
+
+			const mainElement = screen
+				.getByTestId("session-stream-shell")
+				.closest("main");
+			expect(mainElement).not.toBeNull();
+			expect(mainElement).not.toHaveStyle({ justifyContent: "center" });
 		});
+
 	});
 });

@@ -1,4 +1,5 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../api/client";
@@ -46,7 +47,7 @@ vi.mock("react-router-dom", () => ({
 	}),
 }));
 
-describe("AgentWorkspace readonly mode", () => {
+describe("AgentWorkspace session workspace", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockGetAgentDetail.mockResolvedValue({
@@ -97,15 +98,15 @@ describe("AgentWorkspace readonly mode", () => {
 		});
 	});
 
-	it("shows collapsed disclosure and hides destructive session controls", async () => {
+	it("shows chat input and hides destructive session controls", async () => {
 		render(<AgentWorkspace />);
 
 		await waitFor(() => {
 			expect(screen.getByTestId("session-input-shell")).toBeInTheDocument();
 		});
 
-		expect(screen.getByText(/observer-only/i)).toBeInTheDocument();
-		expect(screen.getByText(/点击查看详情/i)).toBeInTheDocument();
+		expect(screen.getByLabelText("消息输入")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /^发送$/i })).toBeInTheDocument();
 
 		expect(
 			screen.queryByRole("button", { name: /暂停/i }),
@@ -116,10 +117,26 @@ describe("AgentWorkspace readonly mode", () => {
 		expect(
 			screen.queryByRole("button", { name: /删除会话/i }),
 		).not.toBeInTheDocument();
+	});
+
+	it("appends user message to conversation area when sending", async () => {
+		render(<AgentWorkspace />);
+
+		await waitFor(() => {
+			expect(screen.getByLabelText("消息输入")).toBeInTheDocument();
+		});
+
+		const input = screen.getByLabelText("消息输入");
+		const sendButton = screen.getByRole("button", { name: /^发送$/i });
+
+		await userEvent.type(input, "你好\n第二行");
+		await userEvent.click(sendButton);
+
 		expect(
-			screen.queryByRole("button", { name: /^发送$/i }),
-		).not.toBeInTheDocument();
-		expect(screen.queryByLabelText("消息输入")).not.toBeInTheDocument();
+			within(screen.getByTestId("session-conversation-area")).getByText(
+				/你好\s*第二行/,
+			),
+		).toBeInTheDocument();
 	});
 
 	it("does not render tabs for status/logs/files", async () => {
@@ -147,7 +164,7 @@ describe("AgentWorkspace readonly mode", () => {
 		expect(screen.getByText("加载中...")).toBeInTheDocument();
 	});
 
-	it("shows request clues and an explicit empty workspace state when no sessions are available", async () => {
+	it("does not render request clues block and keeps explicit empty workspace state when no sessions are available", async () => {
 		mockListSessions.mockResolvedValueOnce({
 			ts: Date.parse("2026-03-24T05:30:00Z"),
 			sessions: [],
@@ -157,81 +174,168 @@ describe("AgentWorkspace readonly mode", () => {
 		render(<AgentWorkspace />);
 
 		await waitFor(() => {
-			expect(screen.getByText("请求线索")).toBeInTheDocument();
+			expect(screen.getByTestId("session-conversation-area")).toBeInTheDocument();
 		});
 
-		expect(
-			screen.getByText(
-				"read chain · getAgentDetail -> listSessions -> previewSessions (+ realtime after selection)",
-			),
-		).toBeInTheDocument();
-		expect(
-			screen.getByText("request_id · 当前真实读链路未返回 aggregate request_id"),
-		).toBeInTheDocument();
-		expect(
-			screen.getByText("freshness · inferred stale from listSessions.ts"),
-		).toBeInTheDocument();
-		expect(
-			screen.getByText(
-				"diagnostics · getAgentDetail ok · listSessions empty(0) · previewSessions skipped",
-			),
-		).toBeInTheDocument();
+		expect(screen.queryByText("请求线索")).not.toBeInTheDocument();
 		expect(screen.getByText("当前工作区暂无可用会话")).toBeInTheDocument();
 		expect(screen.queryByText("会话下游读取失败")).not.toBeInTheDocument();
 	});
 
-	it("surfaces downstream list failure as partial failure instead of swallowing it into an empty state", async () => {
-		mockListSessions.mockRejectedValueOnce(new Error("session list unavailable"));
+	it("writes request/freshness/diagnostics clues to console instead of page block", async () => {
+		const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
 
+		try {
+			render(<AgentWorkspace />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId("session-conversation-area")).toBeInTheDocument();
+			});
+
+			await waitFor(() => {
+				expect(infoSpy).toHaveBeenCalled();
+			});
+
+			const output = infoSpy.mock.calls.flat().map(String).join(" ");
+			expect(output).toContain("request");
+			expect(output).toContain("freshness");
+			expect(output).toContain("diagnostics");
+		} finally {
+			infoSpy.mockRestore();
+		}
+	});
+
+	it("targets a doubao-like layout with full-width shell but narrowed center conversation column", async () => {
 		render(<AgentWorkspace />);
 
 		await waitFor(() => {
-			expect(screen.getByText("会话下游读取失败")).toBeInTheDocument();
+			expect(screen.getByTestId("session-conversation-area")).toBeInTheDocument();
 		});
 
-		expect(
-			within(screen.getByTestId("session-list-area")).getByText(
-				"会话列表读取失败：session list unavailable",
-			),
-		).toBeInTheDocument();
-		expect(
-			within(screen.getByTestId("session-conversation-area")).getByText(
-				"当前会话列表不可用",
-			),
-		).toBeInTheDocument();
-		expect(
-			screen.getByText(
-				"diagnostics · getAgentDetail ok · listSessions failed · previewSessions skipped",
-			),
-		).toBeInTheDocument();
-		expect(screen.queryByText("当前工作区暂无可用会话")).not.toBeInTheDocument();
+		const streamShell = screen.getByTestId("session-stream-shell");
+		const leftSidebar = screen.getByTestId("session-left-sidebar");
+		const conversationArea = screen.getByTestId("session-conversation-area");
+		const inputShell = screen.getByTestId("session-input-shell");
+		const composerInput = screen.getByLabelText("消息输入");
+		const sendButton = screen.getByRole("button", { name: /^发送$/i });
+
+		await userEvent.type(composerInput, "doubao 样式约束");
+		await userEvent.click(sendButton);
+
+		const userRoleLabel = within(conversationArea).getByText("用户");
+		const userBubble = userRoleLabel.parentElement;
+		expect(userBubble).not.toBeNull();
+
+		expect(streamShell.style.width).toBe("100%");
+		expect(streamShell.style.maxWidth).toBe("none");
+		expect(streamShell.style.marginLeft).toBe("0px");
+		expect(streamShell.style.marginRight).toBe("0px");
+
+		expect(leftSidebar.style.marginLeft).toBe("0px");
+		expect(leftSidebar.style.paddingLeft).toBe("0px");
+		expect(leftSidebar.style.paddingRight).toBe("0px");
+
+		expect(conversationArea.style.width).toBe("100%");
+		expect(conversationArea.style.maxWidth).toBe("960px");
+		expect(conversationArea.style.marginLeft).toBe("auto");
+		expect(conversationArea.style.marginRight).toBe("auto");
+		expect(conversationArea.style.paddingLeft).toBe("0px");
+		expect(conversationArea.style.paddingRight).toBe("0px");
+		expect(conversationArea.style.background).toBe("#fff");
+		const messageViewport = conversationArea.firstElementChild as HTMLElement | null;
+		expect(messageViewport).not.toBeNull();
+		expect(messageViewport?.style.overflow).toBe("auto");
+
+		expect(inputShell.style.maxWidth).toBe("960px");
+		expect(inputShell.style.marginLeft).toBe("auto");
+		expect(inputShell.style.marginRight).toBe("auto");
+		expect(inputShell.style.paddingLeft).toBe("0px");
+		expect(inputShell.style.paddingRight).toBe("0px");
+		expect(inputShell.style.borderTop).toContain("none");
+		expect(inputShell.style.border).toContain("none");
+		expect(inputShell.style.boxShadow).toBe("none");
+		expect(composerInput).toHaveStyle({ border: "1px solid #e2e8f0" });
+
+		expect(userBubble?.style.borderRadius).toBe("18px");
+		expect(userBubble?.style.maxWidth).toBe("78%");
+	});
+
+	it("surfaces downstream list failure as partial failure instead of swallowing it into an empty state", async () => {
+		const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+		mockListSessions.mockRejectedValueOnce(new Error("session list unavailable"));
+
+		try {
+			render(<AgentWorkspace />);
+
+			await waitFor(() => {
+				expect(screen.getByText("会话下游读取失败")).toBeInTheDocument();
+			});
+
+			expect(
+				within(screen.getByTestId("session-list-area")).getByText(
+					"会话列表读取失败：session list unavailable",
+				),
+			).toBeInTheDocument();
+			expect(
+				within(screen.getByTestId("session-conversation-area")).getByText(
+					"当前会话列表不可用",
+				),
+			).toBeInTheDocument();
+			expect(screen.queryByText("当前工作区暂无可用会话")).not.toBeInTheDocument();
+
+			await waitFor(() => {
+				expect(infoSpy).toHaveBeenCalled();
+			});
+			const payloads = infoSpy.mock.calls
+				.map((call) => call[1])
+				.filter((value): value is { diagnostics?: string } =>
+					typeof value === "object" && value !== null,
+				);
+			expect(
+				payloads.some((payload) => payload.diagnostics?.includes("listSessions failed")),
+			).toBe(true);
+		} finally {
+			infoSpy.mockRestore();
+		}
 	});
 
 	it("surfaces downstream preview failure with the selected session still visible", async () => {
+		const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
 		mockPreviewSessions.mockRejectedValueOnce(new Error("preview unavailable"));
 
-		render(<AgentWorkspace />);
+		try {
+			render(<AgentWorkspace />);
 
-		await waitFor(() => {
-			expect(screen.getByText("会话下游读取失败")).toBeInTheDocument();
-		});
+			await waitFor(() => {
+				expect(screen.getByText("会话下游读取失败")).toBeInTheDocument();
+			});
 
-		expect(screen.getByRole("button", { name: "First Session" })).toBeInTheDocument();
-		expect(
-			within(screen.getByTestId("session-conversation-area")).getByText(
-				"当前会话预览不可用",
-			),
-		).toBeInTheDocument();
-		expect(
-			within(screen.getByTestId("session-conversation-area")).getByText(
-				"previewSessions 失败：preview unavailable",
-			),
-		).toBeInTheDocument();
-		expect(
-			screen.getByText(
-				"diagnostics · getAgentDetail ok · listSessions ok(2) · previewSessions failed",
-			),
-		).toBeInTheDocument();
+			expect(screen.getByRole("button", { name: "First Session" })).toBeInTheDocument();
+			expect(
+				within(screen.getByTestId("session-conversation-area")).getByText(
+					"当前会话预览不可用",
+				),
+			).toBeInTheDocument();
+			expect(
+				within(screen.getByTestId("session-conversation-area")).getByText(
+					"previewSessions 失败：preview unavailable",
+				),
+			).toBeInTheDocument();
+
+			await waitFor(() => {
+				expect(infoSpy).toHaveBeenCalled();
+			});
+			const payloads = infoSpy.mock.calls
+				.map((call) => call[1])
+				.filter((value): value is { diagnostics?: string } =>
+					typeof value === "object" && value !== null,
+				);
+			expect(
+				payloads.some((payload) => payload.diagnostics?.includes("previewSessions failed")),
+			).toBe(true);
+		} finally {
+			infoSpy.mockRestore();
+		}
 	});
 
 	it("shows an explicit failed state when the core agent shell cannot be established", async () => {
@@ -249,6 +353,7 @@ describe("AgentWorkspace readonly mode", () => {
 	});
 
 	it("shows an explicit unauthorized state and keeps the input zone readonly with a visible reason", async () => {
+		const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
 		mockGetAgentDetail.mockRejectedValueOnce(
 			new ApiError(401, "Unauthorized", {
 				code: "unauthorized",
@@ -259,23 +364,46 @@ describe("AgentWorkspace readonly mode", () => {
 			}),
 		);
 
-		render(<AgentWorkspace />);
+		try {
+			render(<AgentWorkspace />);
 
-		await waitFor(() => {
-			expect(screen.getByText("当前无权查看该会话工作区")).toBeInTheDocument();
-		});
+			await waitFor(() => {
+				expect(screen.getByText("当前无权查看该会话工作区")).toBeInTheDocument();
+			});
 
-		expect(screen.getByText("request_id · req-session-401")).toBeInTheDocument();
-		expect(screen.getByText("diagnostic_reason · 当前账号缺少 session 读取权限")).toBeInTheDocument();
-		expect(screen.getByText("重新登录后重试")).toBeInTheDocument();
-		expect(screen.getByTestId("session-input-shell")).toHaveAttribute(
-			"aria-disabled",
-			"true",
-		);
-		expect(screen.getByText("输入区保持只读：当前账号缺少 session 读取权限")).toBeInTheDocument();
+			expect(screen.getByText("重新登录后重试")).toBeInTheDocument();
+			expect(screen.getByTestId("session-input-shell")).toHaveAttribute(
+				"aria-disabled",
+				"true",
+			);
+			expect(screen.getByText("输入区保持只读：当前账号缺少 session 读取权限")).toBeInTheDocument();
+
+			await waitFor(() => {
+				expect(infoSpy).toHaveBeenCalled();
+			});
+			const payloads = infoSpy.mock.calls
+				.map((call) => call[1])
+				.filter(
+					(
+						value,
+					): value is { request?: string; diagnosticReason?: string | null } =>
+						typeof value === "object" && value !== null,
+				);
+			expect(payloads.some((payload) => payload.request === "req-session-401")).toBe(
+				true,
+			);
+			expect(
+				payloads.some(
+					(payload) => payload.diagnosticReason === "当前账号缺少 session 读取权限",
+				),
+			).toBe(true);
+		} finally {
+			infoSpy.mockRestore();
+		}
 	});
 
 	it("truthfully marks stale state from aged preview timestamp instead of inventing aggregate freshness", async () => {
+		const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
 		const dateNowSpy = vi
 			.spyOn(Date, "now")
 			.mockReturnValue(Date.parse("2026-03-24T05:40:30Z"));
@@ -284,23 +412,32 @@ describe("AgentWorkspace readonly mode", () => {
 			previews: [{ key: "session-1", status: "ok", items: [] }],
 		});
 
-		render(<AgentWorkspace />);
+		try {
+			render(<AgentWorkspace />);
 
-		await waitFor(() => {
+			await waitFor(() => {
+				expect(screen.getByText("当前展示的是推断滞后数据")).toBeInTheDocument();
+			});
+
 			expect(
-				screen.getByText("freshness · inferred stale from previewSessions.ts"),
+				screen.getByText("当前 session 没有 aggregate freshness；此处仅根据最近一次 list/preview ts 推断。"),
 			).toBeInTheDocument();
-		});
 
-		expect(screen.getByText("当前展示的是推断滞后数据")).toBeInTheDocument();
-		expect(
-			screen.getByText("freshness · inferred stale from previewSessions.ts"),
-		).toBeInTheDocument();
-		expect(
-			screen.getByText("当前 session 没有 aggregate freshness；此处仅根据最近一次 list/preview ts 推断。"),
-		).toBeInTheDocument();
-
-		dateNowSpy.mockRestore();
+			await waitFor(() => {
+				expect(infoSpy).toHaveBeenCalled();
+			});
+			const payloads = infoSpy.mock.calls
+				.map((call) => call[1])
+				.filter((value): value is { freshness?: string } =>
+					typeof value === "object" && value !== null,
+				);
+			expect(
+				payloads.some((payload) => payload.freshness === "inferred stale from previewSessions.ts"),
+			).toBe(true);
+		} finally {
+			dateNowSpy.mockRestore();
+			infoSpy.mockRestore();
+		}
 	});
 });
 
@@ -351,7 +488,7 @@ describe("AgentWorkspace five-block structure", () => {
 		expect(screen.getByTestId("session-conversation-area")).toBeInTheDocument();
 	});
 
-	it("renders input/send area with readonly explanation", async () => {
+	it("renders input/send area", async () => {
 		render(<AgentWorkspace />);
 
 		await waitFor(() => {
@@ -360,8 +497,7 @@ describe("AgentWorkspace five-block structure", () => {
 
 		const inputShell = screen.getByTestId("session-input-shell");
 		expect(inputShell).toBeInTheDocument();
-
-		expect(screen.getByText(/observer-only/i)).toBeInTheDocument();
+		expect(screen.getByLabelText("消息输入")).toBeInTheDocument();
 	});
 
 	it("renders all five structural areas visible in workspace", async () => {

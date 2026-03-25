@@ -1,17 +1,19 @@
 import { resolveCurrentInstanceId } from '../hooks/useCurrentInstance';
 import type {
-  AgentDetailResponse,
-  AgentListItem,
-  AggregateOverviewResponse,
-  AggregateTopologyResponse,
-  ErrorEnvelope,
-  ErrorResponse,
-  ModelItem,
-  NodeDetailResponse,
-  SessionPatchRequest,
-  SessionPatchResponse,
-  SessionsListResponse,
-  SessionsPreviewResponse,
+	AgentDetailResponse,
+	AgentListItem,
+	AggregateOverviewResponse,
+	AggregateTopologyResponse,
+	ChatSendRequest,
+	ChatSendResponse,
+	ErrorEnvelope,
+	ErrorResponse,
+	ModelItem,
+	NodeDetailResponse,
+	SessionPatchRequest,
+	SessionPatchResponse,
+	SessionsListResponse,
+	SessionsPreviewResponse,
 } from './types';
 
 const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
@@ -133,14 +135,36 @@ export async function getNodeDetail(
 }
 
 export async function listModels(options?: ObserverRequestOptions): Promise<ModelItem[]> {
-  const response = await fetch(`${API_BASE_URL}${withBusinessContext('/chat/models', options)}`, {
-    credentials: 'include',
-  });
-  if (!response.ok) {
-    throw new Error(`API error: ${response.status} ${response.statusText}`);
-  }
-  const data = await response.json();
-  return data.models ?? [];
+	const response = await fetch(`${API_BASE_URL}${withBusinessContext('/chat/models', options)}`, {
+		credentials: 'include',
+	});
+	if (!response.ok) {
+		throw new Error(`API error: ${response.status} ${response.statusText}`);
+	}
+	const data = await response.json();
+	return data.models ?? [];
+}
+
+export async function sendChatMessage(
+	request: ChatSendRequest,
+	options?: ObserverRequestOptions
+): Promise<ChatSendResponse> {
+	const path = `/chat/agents/${encodeURIComponent(request.agentId)}/send`;
+	const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, options)}`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			message: request.message,
+			sessionKey: request.sessionKey,
+		}),
+		credentials: 'include',
+	});
+
+	if (!response.ok) {
+		throw await buildApiError(response);
+	}
+
+	return response.json() as Promise<ChatSendResponse>;
 }
 
 export async function patchSession(
@@ -218,4 +242,3 @@ export async function previewSessions(
     previews: Array.isArray(data.previews) ? data.previews : [],
   };
 }
-

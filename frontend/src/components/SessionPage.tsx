@@ -11,7 +11,6 @@ import { useIsMobile } from "../hooks/useIsMobile";
 import { AgentWorkspace } from "./AgentWorkspace";
 
 const DEFAULT_SESSION_AGENT_ID = "main";
-const DESKTOP_MAX_WIDTH = 880;
 const RESERVED_NONE_CHANNEL_KEY = "__none__";
 const RESERVED_NEW_SESSION_KEY = "__new__";
 const INSTANCE_ID_QUERY_KEY = "instanceId";
@@ -334,7 +333,7 @@ const desktopContainerStyle: React.CSSProperties = {
 
 const desktopHeaderStyle: React.CSSProperties = {
 	display: "flex",
-	justifyContent: "center",
+	justifyContent: "stretch",
 	background: "#fff",
 	borderBottom: "1px solid #e5e7eb",
 	flexShrink: 0,
@@ -355,14 +354,13 @@ const desktopStatusStyle: React.CSSProperties = {
 const desktopMainStyle: React.CSSProperties = {
 	flex: 1,
 	display: "flex",
-	justifyContent: "center",
+	justifyContent: "stretch",
 	overflow: "hidden",
 	minHeight: 0,
 };
 
 const desktopCenterWrapperStyle: React.CSSProperties = {
 	width: "100%",
-	maxWidth: `${DESKTOP_MAX_WIDTH}px`,
 	height: "100%",
 	display: "flex",
 	flexDirection: "column",
@@ -371,7 +369,6 @@ const desktopCenterWrapperStyle: React.CSSProperties = {
 function getDesktopHeaderInnerStyle(_isMobile: boolean): React.CSSProperties {
 	return {
 		width: "100%",
-		maxWidth: `${DESKTOP_MAX_WIDTH}px`,
 		display: "flex",
 		alignItems: "center",
 		justifyContent: "space-between",

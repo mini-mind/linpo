@@ -7,6 +7,7 @@ import {
 	getDefaultObserverDataSource,
 	listSessions,
 	previewSessions,
+	sendChatMessage,
 } from "../api/client";
 import {
 	createObserverRealtimeClient,
@@ -24,6 +25,8 @@ import {
 	type TopologyNode,
 } from "../api/types";
 import { useIsMobile } from "../hooks/useIsMobile";
+import { useToast } from "../hooks/useToast";
+import { MarkdownMessage } from "./MarkdownMessage";
 
 interface AgentWorkspaceProps {
 	agentId?: string;
@@ -374,11 +377,15 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 	const agentId = props.agentId ?? paramAgentId;
 	const instanceId = props.instanceId ?? paramInstanceId ?? null;
 	const isMobile = useIsMobile();
+	const { addToast } = useToast();
 	const [agent, setAgent] = useState<AgentDetailResponse | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [agentError, setAgentError] = useState<Error | null>(null);
 	const [selectedSessionKey, setSelectedSessionKey] = useState<string | null>(null);
 	const [previewItems, setPreviewItems] = useState<SessionPreviewItem[]>([]);
+	const [localAppendedItemsBySession, setLocalAppendedItemsBySession] = useState<
+		Record<string, SessionPreviewItem[]>
+	>({});
 	const [previewLoading, setPreviewLoading] = useState(false);
 	const [previewError, setPreviewError] = useState<Error | null>(null);
 	const [previewTs, setPreviewTs] = useState<number | null>(null);
@@ -386,7 +393,9 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 	const [sessionsError, setSessionsError] = useState<Error | null>(null);
 	const [sessionListLoaded, setSessionListLoaded] = useState(false);
 	const [sessionListTs, setSessionListTs] = useState<number | null>(null);
-	const [showDisclosure, setShowDisclosure] = useState(false);
+	const [draftMessage, setDraftMessage] = useState("");
+	const [sendBusy, setSendBusy] = useState(false);
+	const [sendUnavailable, setSendUnavailable] = useState(false);
 
 	const messagesAreaRef = useRef<HTMLDivElement | null>(null);
 	const sessionRealtimeRef = useRef<ObserverRealtimeClient | null>(null);
@@ -403,6 +412,10 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 			setSessionsError(null);
 			setSessionListLoaded(false);
 			setSessionListTs(null);
+			setDraftMessage("");
+			setSendBusy(false);
+			setSendUnavailable(false);
+			setLocalAppendedItemsBySession({});
 			prevSessionKeyRef.current = null;
 			return;
 		}
@@ -415,6 +428,10 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		setSessionsError(null);
 		setSessionListLoaded(false);
 		setSessionListTs(null);
+		setDraftMessage("");
+		setSendBusy(false);
+		setSendUnavailable(false);
+		setLocalAppendedItemsBySession({});
 		prevSessionKeyRef.current = null;
 	}, [agentId]);
 
@@ -479,6 +496,70 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 			}
 		}, 0);
 	}, []);
+
+	const appendLocalUserMessage = useCallback((sessionKey: string, message: string) => {
+		setLocalAppendedItemsBySession((previous) => ({
+			...previous,
+			[sessionKey]: [
+				...(previous[sessionKey] ?? []),
+				{ role: "user", text: message },
+			],
+		}));
+	}, []);
+
+	const sendUserMessage = useCallback((): void => {
+		const currentAgentId = agentId;
+		const sessionKey = selectedSessionKey;
+		const message = draftMessage.trim();
+		if (!currentAgentId) return;
+		if (!sessionKey) return;
+		if (!message) return;
+		if (sendBusy) return;
+
+		setDraftMessage("");
+		appendLocalUserMessage(sessionKey, message);
+		scrollToBottom();
+		if (sendUnavailable) return;
+
+		setSendBusy(true);
+		void sendChatMessage(
+			{
+				agentId: currentAgentId,
+				sessionKey,
+				message,
+			},
+			{ instanceId },
+		)
+			.then(() => {
+				setSendUnavailable(false);
+			})
+			.catch((error: unknown) => {
+				if (error instanceof ApiError && error.status === 404) {
+					if (!sendUnavailable) {
+						addToast(
+							"后端暂未提供发送接口：已在本地追加消息，等待后端接入后可真实发送",
+							"warning",
+						);
+					}
+					setSendUnavailable(true);
+					return;
+				}
+				addToast(withErrorMessage(error, "发送消息失败"), "error");
+			})
+			.finally(() => {
+				setSendBusy(false);
+			});
+	}, [
+		agentId,
+		selectedSessionKey,
+		draftMessage,
+		sendBusy,
+		sendUnavailable,
+		appendLocalUserMessage,
+		scrollToBottom,
+		addToast,
+		instanceId,
+	]);
 
 	useEffect(() => {
 		if (!selectedSessionKey) return;
@@ -625,6 +706,28 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 	}, [instanceId, selectedSessionKey, refreshPreview, scrollToBottom]);
 
 	useEffect(() => {
+		if (!selectedSessionKey) return;
+		setLocalAppendedItemsBySession((previous) => {
+			const local = previous[selectedSessionKey];
+			if (!local || local.length === 0) return previous;
+			const nextLocal = local.filter(
+				(item) =>
+					!previewItems.some(
+						(server) => server.role === item.role && server.text === item.text,
+					),
+			);
+			if (nextLocal.length === local.length) return previous;
+			const next = { ...previous };
+			if (nextLocal.length === 0) {
+				delete next[selectedSessionKey];
+				return next;
+			}
+			next[selectedSessionKey] = nextLocal;
+			return next;
+		});
+	}, [previewItems, selectedSessionKey]);
+
+	useEffect(() => {
 		if (!agentId) {
 			setAgentError(new Error("未提供实例 ID"));
 			setLoading(false);
@@ -673,16 +776,6 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		};
 	}, [agentId, instanceId]);
 
-	if (loading) {
-		return (
-			<div style={getContainerStyle(isMobile)} data-testid="session-stream-shell">
-				<div style={loadingContainerStyle}>
-					<span style={loadingTextStyle}>加载中...</span>
-				</div>
-			</div>
-		);
-	}
-
 	const agentEnvelope = getErrorEnvelope(agentError);
 	const sessionsEnvelope = getErrorEnvelope(sessionsError);
 	const previewEnvelope = getErrorEnvelope(previewError);
@@ -724,6 +817,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 		sessionsError,
 		previewError,
 	]);
+	const diagnosticReason = unauthorizedEnvelope?.message ?? null;
 	const showPartialFailure =
 		!unauthorizedEnvelope && Boolean(agent) && Boolean(sessionsError || previewError);
 	const shellTitle = agent?.id ?? agentId ?? "unknown-agent";
@@ -733,6 +827,34 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 			? "● 运行中"
 			: "○ 已停止";
 	const emptySessionText = selectedSessionKey ? "暂无消息" : "当前工作区暂无可用会话";
+	const localItemsForSelectedSession = selectedSessionKey
+		? localAppendedItemsBySession[selectedSessionKey] ?? []
+		: [];
+	const displayedPreviewItems =
+		localItemsForSelectedSession.length > 0
+			? [...previewItems, ...localItemsForSelectedSession]
+			: previewItems;
+
+	useEffect(() => {
+		if (loading) return;
+		console.info("[AgentWorkspace] request/freshness/diagnostics", {
+			request: requestIdClue,
+			freshness: freshness.label,
+			diagnostics: diagnosticsClue,
+			readChain: SESSION_READ_CHAIN_CLUE,
+			diagnosticReason,
+		});
+	}, [loading, requestIdClue, freshness.label, diagnosticsClue, diagnosticReason]);
+
+	if (loading) {
+		return (
+			<div style={getContainerStyle(isMobile)} data-testid="session-stream-shell">
+				<div style={loadingContainerStyle}>
+					<span style={loadingTextStyle}>加载中...</span>
+				</div>
+			</div>
+		);
+	}
 
 	if (agentError && !unauthorizedEnvelope) {
 		return (
@@ -770,55 +892,48 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 			<div style={getWorkspaceLayoutStyle(isMobile)}>
 				<div data-testid="session-left-sidebar" style={getLeftSidebarStyle(isMobile)}>
 					<div data-testid="session-channel-area" style={channelAreaStyle}>
-						<span style={sectionLabelStyle}>渠道</span>
-						<span style={placeholderTextStyle}>当前阶段暂无渠道数据</span>
+						<div style={sidebarSectionHeaderStyle}>
+							<span style={sectionLabelStyle}>渠道</span>
+						</div>
+						<div style={sidebarSectionBodyStyle}>
+							<span style={placeholderTextStyle}>当前阶段暂无渠道数据</span>
+						</div>
 					</div>
 
 					<div data-testid="session-list-area" style={sessionListAreaStyle}>
-						<span style={sectionLabelStyle}>会话</span>
-						{sessionsError ? (
-							<span style={sidebarErrorTextStyle}>
-								会话列表读取失败：{sessionsError.message}
-							</span>
-						) : sessions.length === 0 ? (
-							<span style={placeholderTextStyle}>暂无会话</span>
-						) : (
-							<div style={sessionListStyle}>
-								{sessions.map((session) => (
-									<button
-										key={session.key}
-										type="button"
-										onClick={() => {
-											setSelectedSessionKey(session.key);
-											setPreviewItems([]);
-											setPreviewLoading(true);
-										}}
-										style={getSessionItemStyle(session.key === selectedSessionKey)}
-									>
-										{session.derived_title || session.label || session.key}
-									</button>
-								))}
-							</div>
-						)}
+						<div style={sidebarSectionHeaderStyle}>
+							<span style={sectionLabelStyle}>会话</span>
+						</div>
+						<div style={sidebarSectionBodyStyle}>
+							{sessionsError ? (
+								<span style={sidebarErrorTextStyle}>
+									会话列表读取失败：{sessionsError.message}
+								</span>
+							) : sessions.length === 0 ? (
+								<span style={placeholderTextStyle}>暂无会话</span>
+							) : (
+								<div style={sessionListStyle}>
+									{sessions.map((session) => (
+										<button
+											key={session.key}
+											type="button"
+											onClick={() => {
+												setSelectedSessionKey(session.key);
+												setPreviewItems([]);
+												setPreviewLoading(true);
+											}}
+											style={getSessionItemStyle(session.key === selectedSessionKey)}
+										>
+											{session.derived_title || session.label || session.key}
+										</button>
+									))}
+								</div>
+							)}
+						</div>
 					</div>
 				</div>
 
 				<div style={getMainContentStyle(isMobile)}>
-					<div style={requestCluesWrapStyle}>
-						<span style={sectionLabelStyle}>请求线索</span>
-						<div style={requestCluesBoxStyle}>
-							<p style={requestClueTextStyle}>request_id · {requestIdClue}</p>
-							<p style={requestClueTextStyle}>freshness · {freshness.label}</p>
-							<p style={requestClueTextStyle}>diagnostics · {diagnosticsClue}</p>
-							<p style={requestClueTextStyle}>read chain · {SESSION_READ_CHAIN_CLUE}</p>
-							{unauthorizedEnvelope ? (
-								<p style={requestClueTextStyle}>
-									diagnostic_reason · {unauthorizedEnvelope.message}
-								</p>
-							) : null}
-						</div>
-					</div>
-
 					{showPartialFailure ? (
 						<div style={warningNoticeStyle}>
 							<strong style={statusCardTitleStyle}>会话下游读取失败</strong>
@@ -873,25 +988,25 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 										previewSessions 失败：{previewError.message}
 									</p>
 								</div>
-							) : previewItems.length === 0 ? (
+							) : displayedPreviewItems.length === 0 ? (
 								<div style={messagesEmptyStyle}>
 									<span style={messagesEmptyTextStyle}>{emptySessionText}</span>
 								</div>
 							) : (
 								<div style={previewListStyle}>
-									{previewItems.map((item, index) => (
+									{displayedPreviewItems.map((item, index) => (
 										<div
 											key={`msg-${index}-${item.role}`}
 											style={getPreviewItemStyle(item.role)}
 										>
-											<span style={previewRoleStyle}>
-												{getRoleLabel(item.role)}
-											</span>
-											<p style={previewTextStyle}>{item.text}</p>
-										</div>
-									))}
-								</div>
-							)}
+										<span style={previewRoleStyle}>
+											{getRoleLabel(item.role)}
+										</span>
+										<MarkdownMessage text={item.text} style={previewTextStyle} />
+									</div>
+								))}
+							</div>
+						)}
 						</div>
 					</div>
 
@@ -907,25 +1022,42 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 									输入区保持只读：{unauthorizedEnvelope.message}
 								</span>
 							</div>
-						) : !showDisclosure ? (
+						) : (
+							<div style={composerWrapStyle}>
+								<label style={visuallyHiddenLabelStyle} htmlFor="session-message-input">
+									消息输入
+								</label>
+							<textarea
+								id="session-message-input"
+								aria-label="消息输入"
+									placeholder={
+										selectedSessionKey ? "输入消息..." : "暂无可用会话，暂不可发送"
+									}
+								value={draftMessage}
+								onChange={(event) => setDraftMessage(event.currentTarget.value)}
+								onKeyDown={(event) => {
+									if (event.key !== "Enter") return;
+									if (event.shiftKey) return;
+									event.preventDefault();
+									sendUserMessage();
+								}}
+								disabled={!selectedSessionKey || sendBusy}
+								rows={isMobile ? 2 : 3}
+								style={composerInputStyle}
+							/>
 							<button
 								type="button"
-								onClick={() => setShowDisclosure(true)}
-								style={disclosureTriggerStyle}
+								onClick={sendUserMessage}
+								disabled={!selectedSessionKey || sendBusy || draftMessage.trim().length === 0}
+								style={getSendButtonStyle(!selectedSessionKey || sendBusy)}
 							>
-								<span style={disclosureHintStyle}>observer-only · 点击查看详情</span>
-							</button>
-						) : (
-							<div style={disclosureContentStyle}>
-								<span style={disclosureTitleStyle}>只读观察模式</span>
-								<span style={disclosureTextStyle}>当前阶段仅保留观察与进入能力</span>
-								<button
-									type="button"
-									onClick={() => setShowDisclosure(false)}
-									style={disclosureCloseStyle}
-								>
-									收起
+									发送
 								</button>
+								{sendUnavailable ? (
+									<span style={composerHintStyle}>
+										发送接口缺失：当前为本地追加模式
+									</span>
+								) : null}
 							</div>
 						)}
 					</div>
@@ -948,6 +1080,12 @@ function getRoleLabel(role: string): string {
 
 function getContainerStyle(_isMobile: boolean): React.CSSProperties {
 	return {
+		width: "100%",
+		maxWidth: "none",
+		marginLeft: 0,
+		marginRight: 0,
+		paddingLeft: 0,
+		paddingRight: 0,
 		height: "100%",
 		display: "flex",
 		flexDirection: "column",
@@ -992,11 +1130,15 @@ function getWorkspaceLayoutStyle(isMobile: boolean): React.CSSProperties {
 
 function getLeftSidebarStyle(isMobile: boolean): React.CSSProperties {
 	return {
-		width: isMobile ? "100%" : "220px",
+		width: isMobile ? "100%" : "248px",
+		marginLeft: 0,
+		marginRight: 0,
+		paddingLeft: 0,
+		paddingRight: 0,
 		flexShrink: 0,
 		display: "flex",
 		flexDirection: "column",
-		background: "#f8fafc",
+		background: "#f4f6f8",
 		borderRight: isMobile ? "none" : "1px solid #e5e7eb",
 		borderBottom: isMobile ? "1px solid #e5e7eb" : "none",
 		overflow: "hidden",
@@ -1004,14 +1146,14 @@ function getLeftSidebarStyle(isMobile: boolean): React.CSSProperties {
 }
 
 const channelAreaStyle: React.CSSProperties = {
-	padding: "0.75rem",
+	padding: 0,
 	borderBottom: "1px solid #e5e7eb",
 	flexShrink: 0,
 };
 
 const sessionListAreaStyle: React.CSSProperties = {
 	flex: 1,
-	padding: "0.75rem",
+	padding: 0,
 	overflow: "auto",
 	minHeight: 0,
 };
@@ -1023,23 +1165,7 @@ const sectionLabelStyle: React.CSSProperties = {
 	textTransform: "uppercase",
 	letterSpacing: "0.05em",
 	display: "block",
-	marginBottom: "0.5rem",
-};
-
-const requestCluesWrapStyle: React.CSSProperties = {
-	display: "flex",
-	flexDirection: "column",
-	gap: "0.4rem",
-};
-
-const requestCluesBoxStyle: React.CSSProperties = {
-	display: "flex",
-	flexWrap: "wrap",
-	gap: "0.5rem",
-	padding: "0.75rem 0.875rem",
-	borderRadius: "0.75rem",
-	border: "1px solid #e5e7eb",
-	background: "#f8fafc",
+	marginBottom: 0,
 };
 
 const requestClueTextStyle: React.CSSProperties = {
@@ -1047,6 +1173,14 @@ const requestClueTextStyle: React.CSSProperties = {
 	fontSize: "0.75rem",
 	color: "#6b7280",
 	fontFamily: 'ui-monospace, SFMono-Regular, "SFMono-Regular", Consolas, monospace',
+};
+
+const sidebarSectionHeaderStyle: React.CSSProperties = {
+	padding: "0.75rem 0.75rem 0.375rem",
+};
+
+const sidebarSectionBodyStyle: React.CSSProperties = {
+	padding: "0 0.75rem 0.75rem",
 };
 
 const placeholderTextStyle: React.CSSProperties = {
@@ -1127,14 +1261,14 @@ function getSessionItemStyle(isSelected: boolean): React.CSSProperties {
 	};
 }
 
-function getMainContentStyle(isMobile: boolean): React.CSSProperties {
+function getMainContentStyle(_isMobile: boolean): React.CSSProperties {
 	return {
 		flex: 1,
 		display: "flex",
 		flexDirection: "column",
 		minHeight: 0,
-		padding: isMobile ? "0.5rem" : "0.75rem",
-		gap: isMobile ? "0.5rem" : "0.75rem",
+		padding: 0,
+		gap: 0,
 		overflow: "hidden",
 	};
 }
@@ -1154,14 +1288,20 @@ const loadingTextStyle: React.CSSProperties = {
 function getMessagesContainerStyle(isMobile: boolean): React.CSSProperties {
 	return {
 		flex: 1,
+		width: "100%",
+		maxWidth: isMobile ? "none" : "960px",
+		marginLeft: isMobile ? 0 : "auto",
+		marginRight: isMobile ? 0 : "auto",
 		display: "flex",
 		flexDirection: "column",
 		minHeight: 0,
-		background: "#f8fafc",
-		border: "1px solid #e5e7eb",
-		borderRadius: "0.75rem",
+		background: "#fff",
+		border: "none",
+		borderRadius: 0,
 		overflow: "hidden",
-		padding: isMobile ? "0.5rem" : "0.75rem",
+		padding: 0,
+		paddingLeft: 0,
+		paddingRight: 0,
 	};
 }
 
@@ -1185,30 +1325,70 @@ const messagesEmptyTextStyle: React.CSSProperties = {
 function getInputShellStyle(isMobile: boolean): React.CSSProperties {
 	return {
 		flexShrink: 0,
-		padding: isMobile ? "0.625rem 0.75rem" : "0.75rem 1rem",
-		background: "#f8fafc",
-		border: "1px solid #e5e7eb",
-		borderRadius: "0.75rem",
-		textAlign: "center",
+		width: "100%",
+		maxWidth: isMobile ? "none" : "960px",
+		marginLeft: isMobile ? 0 : "auto",
+		marginRight: isMobile ? 0 : "auto",
+		padding: 0,
+		paddingLeft: 0,
+		paddingRight: 0,
+		background: "#fff",
+		border: "none",
+		borderTop: "none",
+		borderRadius: 0,
+		boxShadow: "none",
+		textAlign: "left",
 	};
 }
 
-const disclosureTriggerStyle: React.CSSProperties = {
-	display: "inline-flex",
-	alignItems: "center",
-	gap: "0.25rem",
-	padding: "0.375rem 0.75rem",
-	border: "none",
-	background: "transparent",
-	color: "#9ca3af",
-	fontSize: "0.75rem",
-	cursor: "pointer",
-	borderRadius: "0.375rem",
-	transition: "color 0.15s, background 0.15s",
+const visuallyHiddenLabelStyle: React.CSSProperties = {
+	position: "absolute",
+	width: "1px",
+	height: "1px",
+	padding: 0,
+	margin: "-1px",
+	overflow: "hidden",
+	clip: "rect(0, 0, 0, 0)",
+	whiteSpace: "nowrap",
+	border: 0,
 };
 
-const disclosureHintStyle: React.CSSProperties = {
+const composerWrapStyle: React.CSSProperties = {
+	display: "flex",
+	alignItems: "flex-end",
+	gap: "0.5rem",
+	padding: "0.625rem 0.75rem",
+};
+
+const composerInputStyle: React.CSSProperties = {
+	flex: 1,
+	resize: "none",
+	borderRadius: "0.75rem",
+	border: "1px solid #e2e8f0",
+	padding: "0.625rem 0.75rem",
+	fontSize: "0.875rem",
+	lineHeight: 1.4,
+	outline: "none",
+	background: "#fff",
+};
+
+function getSendButtonStyle(isDisabled: boolean): React.CSSProperties {
+	return {
+		flexShrink: 0,
+		padding: "0.625rem 0.875rem",
+		borderRadius: "0.75rem",
+		border: "1px solid #e5e7eb",
+		background: isDisabled ? "#f1f5f9" : "#111827",
+		color: isDisabled ? "#94a3b8" : "#fff",
+		fontSize: "0.875rem",
+		fontWeight: 600,
+		cursor: isDisabled ? "not-allowed" : "pointer",
+	};
+}
+
+const composerHintStyle: React.CSSProperties = {
 	fontSize: "0.75rem",
+	color: "#b45309",
 };
 
 const disclosureContentStyle: React.CSSProperties = {
@@ -1229,25 +1409,14 @@ const disclosureTextStyle: React.CSSProperties = {
 	color: "#6b7280",
 };
 
-const disclosureCloseStyle: React.CSSProperties = {
-	marginTop: "0.25rem",
-	padding: "0.25rem 0.5rem",
-	fontSize: "0.6875rem",
-	color: "#6b7280",
-	background: "#fff",
-	border: "1px solid #e5e7eb",
-	borderRadius: "0.25rem",
-	cursor: "pointer",
-};
-
 function getPreviewItemStyle(role: string): React.CSSProperties {
 	const isUser = role === "user";
 	return {
 		padding: "0.625rem 0.875rem",
-		borderRadius: "0.5rem",
+		borderRadius: "18px",
 		background: isUser ? "#eff6ff" : "#fff",
 		marginBottom: "0.5rem",
-		maxWidth: "85%",
+		maxWidth: "78%",
 		alignSelf: isUser ? "flex-end" : "flex-start",
 		border: "1px solid #e5e7eb",
 	};
