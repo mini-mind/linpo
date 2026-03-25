@@ -31,13 +31,6 @@ interface TeamAgentCardRecord {
 	sessionEntry: TeamSessionEntry;
 }
 
-interface TeamRequestCluesState {
-	requestId: string;
-	freshnessStatus: string;
-	checkedAt: string | null;
-	diagnosticsSummary: string;
-}
-
 interface TeamAgentCardBuildResult {
 	card: TeamAgentCardRecord;
 	derivedDiagnostics: string[];
@@ -89,37 +82,19 @@ export function TeamPage(): JSX.Element {
 	const [cards, setCards] = useState<TeamAgentCardRecord[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<Error | null>(null);
-	const [requestClues, setRequestClues] =
-		useState<TeamRequestCluesState | null>(null);
-	const [partialFailureDetail, setPartialFailureDetail] = useState<string | null>(
-		null,
-	);
-	const [showStaleNotice, setShowStaleNotice] = useState(false);
 	const [failedStateDetail, setFailedStateDetail] = useState<string | null>(null);
 
 	const loadCards = useCallback(async () => {
 		setLoading(true);
 		setError(null);
-		setRequestClues(null);
-		setPartialFailureDetail(null);
-		setShowStaleNotice(false);
 		setFailedStateDetail(null);
 
 		try {
 			const overview = await getAggregateOverview();
-			const failedDiagnostics = overview.diagnostics.filter(
-				(item) => item.status === "failed",
-			);
 			const payloadFailed = overview.freshness.status === "failed";
 
 			if (payloadFailed) {
 				setCards([]);
-				setRequestClues({
-					requestId: overview.request_id,
-					freshnessStatus: formatFreshnessLabel(overview.freshness.status),
-					checkedAt: overview.freshness.checked_at,
-					diagnosticsSummary: `${overview.diagnostics.length} overview / ${failedDiagnostics.length} failed`,
-				});
 				setFailedStateDetail(
 					"当前返回的团队聚合结果已标记为失败，请结合请求线索排查。",
 				);
@@ -131,44 +106,8 @@ export function TeamPage(): JSX.Element {
 					.sort(sortAgentsForStage)
 					.map((agent) => buildTeamAgentCard(agent, location.search)),
 			);
-			const derivedDiagnostics = nextCardResults.flatMap(
-				(result) => result.derivedDiagnostics,
-			);
-			const showPartialFailure =
-				overview.partial_failure ||
-				(failedDiagnostics.length > 0 &&
-					failedDiagnostics.length < overview.diagnostics.length) ||
-				derivedDiagnostics.length > 0;
-			const diagnosticsSummary =
-				derivedDiagnostics.length > 0
-					? `${overview.diagnostics.length} overview / ${failedDiagnostics.length} failed / ${derivedDiagnostics.length} derived`
-					: `${overview.diagnostics.length} overview / ${failedDiagnostics.length} failed`;
-			const partialFailureParts: string[] = [];
-			if (failedDiagnostics.length > 0) {
-				partialFailureParts.push(
-					`受影响实例：${failedDiagnostics.map((item) => item.instance_name).join("、")}`,
-				);
-			}
-			if (derivedDiagnostics.length > 0) {
-				partialFailureParts.push(
-					`派生读取受影响：${derivedDiagnostics.join("、")}`,
-				);
-			}
 
 			setCards(nextCardResults.map((result) => result.card));
-			setRequestClues({
-				requestId: overview.request_id,
-				freshnessStatus: formatFreshnessLabel(overview.freshness.status),
-				checkedAt: overview.freshness.checked_at,
-				diagnosticsSummary,
-			});
-			setPartialFailureDetail(
-				showPartialFailure
-					? partialFailureParts.join("；") ||
-						"团队卡片的部分聚合结果暂不可用，请结合请求线索继续核对。"
-					: null,
-			);
-			setShowStaleNotice(overview.freshness.status === "stale");
 		} catch (nextError) {
 			setError(
 				nextError instanceof Error ? nextError : new Error("获取团队页失败"),
@@ -185,61 +124,6 @@ export function TeamPage(): JSX.Element {
 
 	return (
 		<section aria-label="team-page" style={getContainerStyle(isMobile)}>
-			<header style={headerStyle}>
-				<span style={eyebrowStyle}>TEAM STAGE</span>
-				<div style={headlineRowStyle}>
-					<div style={headlineCopyStyle}>
-						<h1 style={titleStyle}>团队</h1>
-						<p style={subtitleStyle}>
-							persistent agent cards 主舞台，直接用现有 overview / sessions
-							读链路沉淀团队常驻席位。
-						</p>
-					</div>
-					<button
-						type="button"
-						style={actionButtonStyle}
-						onClick={() => void loadCards()}
-					>
-						刷新卡片
-					</button>
-				</div>
-			</header>
-
-			<section style={introPanelStyle}>
-				<div style={introTextStyle}>
-					<span style={introEyebrowStyle}>persistent agent roster</span>
-					<h2 style={sectionTitleStyle}>
-						团队主舞台先对齐卡片密度，再延后 session 进入裁决
-					</h2>
-					<p style={bodyTextStyle}>
-						现在只展示真实可读出的常驻 agent
-						画像：名字、实例、状态、最近会话时间、最近会话开头与头像，不额外发明
-						roster API。
-					</p>
-				</div>
-				<div style={sourceRowStyle}>
-					<span style={sourcePillStyle}>aggregate overview</span>
-					<span style={sourcePillStyle}>chat/sessions</span>
-					<span style={sourcePillStyle}>sessions/preview</span>
-				</div>
-			</section>
-
-			{requestClues ? <TeamRequestClues clues={requestClues} /> : null}
-			{partialFailureDetail ? (
-				<TeamStatusNotice
-					tone="warning"
-					title="部分数据不可用"
-					detail={partialFailureDetail}
-				/>
-			) : null}
-			{showStaleNotice ? (
-				<TeamStatusNotice
-					tone="info"
-					title="当前展示的是滞后团队卡片"
-					detail="展示内容仍可用于核对团队席位，但可能落后于实例最新状态。"
-				/>
-			) : null}
-
 			{loading ? (
 				<TeamLoadingStage isMobile={isMobile} />
 			) : error ? (
@@ -248,16 +132,6 @@ export function TeamPage(): JSX.Element {
 				<TeamPayloadFailedState detail={failedStateDetail} onRetry={loadCards} />
 			) : (
 				<section style={stageStyle}>
-					<div style={stageHeaderStyle}>
-						<div>
-							<h2 style={sectionTitleStyle}>Persistent Agent Cards</h2>
-							<p style={sectionHintStyle}>
-								像 staff 页面一样先读常驻席位，再决定之后的进入规则。
-							</p>
-						</div>
-						<span style={countPillStyle}>{cards.length} 张卡片</span>
-					</div>
-
 					{cards.length === 0 ? (
 						<div style={emptyStateStyle}>
 							当前没有可展示的 persistent agents
@@ -376,57 +250,10 @@ export function TeamPage(): JSX.Element {
 	);
 }
 
-function TeamRequestClues({
-	clues,
-}: {
-	clues: TeamRequestCluesState;
-}): JSX.Element {
-	return (
-		<div style={requestCluesStyle}>
-			<p style={requestClueTextStyle}>request_id · {clues.requestId}</p>
-			<p style={requestClueTextStyle}>freshness · {clues.freshnessStatus}</p>
-			<p style={requestClueTextStyle}>
-				checked_at · {clues.checkedAt ?? "暂未上报"}
-			</p>
-			<p style={requestClueTextStyle}>
-				diagnostics · {clues.diagnosticsSummary}
-			</p>
-			<p style={requestClueTextStyle}>
-				read_chain · overview -&gt; listSessions -&gt; previewSessions
-			</p>
-		</div>
-	);
-}
-
-function TeamStatusNotice({
-	tone,
-	title,
-	detail,
-}: {
-	tone: "info" | "warning";
-	title: string;
-	detail: string;
-}): JSX.Element {
-	return (
-		<div style={getStatusNoticeStyle(tone)}>
-			<strong style={statusNoticeTitleStyle}>{title}</strong>
-			<p style={statusNoticeDetailStyle}>{detail}</p>
-		</div>
-	);
-}
-
 function TeamLoadingStage({ isMobile }: { isMobile: boolean }): JSX.Element {
 	return (
 		<section style={stageStyle}>
-			<div style={stageHeaderStyle}>
-				<div>
-					<h2 style={sectionTitleStyle}>Persistent Agent Cards</h2>
-					<p style={sectionHintStyle}>正在同步团队常驻席位。</p>
-				</div>
-				<span style={countPillStyle}>加载中</span>
-			</div>
-
-			<div style={getCardGridStyle(isMobile)}>
+			<div style={getCardGridStyle(isMobile)} data-testid="team-agent-cards-stage">
 				{loadingCardIds.slice(0, isMobile ? 2 : 3).map((loadingCardId) => (
 					<article
 						key={`loading-card-${loadingCardId}`}
@@ -737,19 +564,6 @@ function truncateText(value: string, maxLength: number): string {
 	return `${value.slice(0, maxLength).trimEnd()}…`;
 }
 
-function formatFreshnessLabel(status: string): string {
-	if (status === "fresh") {
-		return "数据新鲜";
-	}
-	if (status === "stale") {
-		return "数据滞后";
-	}
-	if (status === "failed") {
-		return "数据失败";
-	}
-	return status;
-}
-
 function getAvatarText(name: string): string {
 	const trimmedName = name.trim();
 	if (!trimmedName) {
@@ -819,47 +633,6 @@ function getStatusBadgeStyle(statusLabel: string): CSSProperties {
 	};
 }
 
-const headerStyle: CSSProperties = {
-	display: "flex",
-	flexDirection: "column",
-	gap: "0.75rem",
-};
-
-const headlineRowStyle: CSSProperties = {
-	display: "flex",
-	justifyContent: "space-between",
-	alignItems: "flex-start",
-	gap: "1rem",
-	flexWrap: "wrap",
-};
-
-const headlineCopyStyle: CSSProperties = {
-	display: "flex",
-	flexDirection: "column",
-	gap: "0.5rem",
-	maxWidth: "48rem",
-};
-
-const eyebrowStyle: CSSProperties = {
-	fontSize: "0.75rem",
-	letterSpacing: "0.18em",
-	fontWeight: 700,
-	color: "#9a6b39",
-};
-
-const titleStyle: CSSProperties = {
-	margin: 0,
-	fontSize: "2rem",
-	fontWeight: 700,
-};
-
-const subtitleStyle: CSSProperties = {
-	margin: 0,
-	fontSize: "1rem",
-	lineHeight: 1.6,
-	color: "#52606d",
-};
-
 const actionButtonStyle: CSSProperties = {
 	border: "1px solid #d8c7b4",
 	borderRadius: "999px",
@@ -869,31 +642,6 @@ const actionButtonStyle: CSSProperties = {
 	fontSize: "0.8rem",
 	fontWeight: 700,
 	cursor: "pointer",
-};
-
-const introPanelStyle: CSSProperties = {
-	display: "flex",
-	flexDirection: "column",
-	gap: "1rem",
-	padding: "1.4rem 1.5rem",
-	borderRadius: "1.15rem",
-	border: "1px solid #eadbc8",
-	background: "linear-gradient(135deg, #fff8ef 0%, #fffdf8 100%)",
-	boxShadow: "0 18px 40px -28px rgba(116, 76, 36, 0.45)",
-};
-
-const introTextStyle: CSSProperties = {
-	display: "flex",
-	flexDirection: "column",
-	gap: "0.45rem",
-};
-
-const introEyebrowStyle: CSSProperties = {
-	fontSize: "0.72rem",
-	fontWeight: 700,
-	letterSpacing: "0.12em",
-	textTransform: "uppercase",
-	color: "#8b5e34",
 };
 
 const sectionTitleStyle: CSSProperties = {
@@ -910,99 +658,10 @@ const bodyTextStyle: CSSProperties = {
 	color: "#52606d",
 };
 
-const sourceRowStyle: CSSProperties = {
-	display: "flex",
-	flexWrap: "wrap",
-	gap: "0.75rem",
-};
-
-const sourcePillStyle: CSSProperties = {
-	padding: "0.45rem 0.75rem",
-	borderRadius: "999px",
-	background: "#f3e8d7",
-	color: "#8b5e34",
-	fontSize: "0.76rem",
-	fontWeight: 700,
-	textTransform: "uppercase",
-	letterSpacing: "0.04em",
-};
-
-const requestCluesStyle: CSSProperties = {
-	display: "grid",
-	gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-	gap: "0.75rem",
-	padding: "0.95rem 1rem",
-	borderRadius: "1rem",
-	border: "1px solid #e4d6c6",
-	background: "rgba(255, 253, 248, 0.88)",
-	boxShadow: "0 16px 32px -28px rgba(85, 56, 29, 0.35)",
-};
-
-const requestClueTextStyle: CSSProperties = {
-	margin: 0,
-	fontSize: "0.8rem",
-	fontWeight: 700,
-	color: "#6a4b2d",
-	wordBreak: "break-word",
-};
-
-function getStatusNoticeStyle(tone: "info" | "warning"): CSSProperties {
-	return {
-		display: "flex",
-		flexDirection: "column",
-		gap: "0.35rem",
-		padding: "0.95rem 1rem",
-		borderRadius: "1rem",
-		border:
-			tone === "warning" ? "1px solid #ead2a8" : "1px solid #d7d9e6",
-		background:
-			tone === "warning"
-				? "linear-gradient(135deg, #fff7e2 0%, #fffdf8 100%)"
-				: "linear-gradient(135deg, #f5f7fb 0%, #fffdf8 100%)",
-	};
-}
-
-const statusNoticeTitleStyle: CSSProperties = {
-	fontSize: "0.9rem",
-	color: "#1f2933",
-};
-
-const statusNoticeDetailStyle: CSSProperties = {
-	margin: 0,
-	fontSize: "0.82rem",
-	lineHeight: 1.6,
-	color: "#52606d",
-};
-
 const stageStyle: CSSProperties = {
 	display: "flex",
 	flexDirection: "column",
 	gap: "1rem",
-};
-
-const stageHeaderStyle: CSSProperties = {
-	display: "flex",
-	justifyContent: "space-between",
-	alignItems: "flex-start",
-	gap: "1rem",
-	flexWrap: "wrap",
-};
-
-const sectionHintStyle: CSSProperties = {
-	margin: "0.2rem 0 0 0",
-	fontSize: "0.82rem",
-	lineHeight: 1.5,
-	color: "#6b7280",
-};
-
-const countPillStyle: CSSProperties = {
-	padding: "0.45rem 0.8rem",
-	borderRadius: "999px",
-	background: "rgba(255, 255, 255, 0.88)",
-	border: "1px solid #ded6c7",
-	fontSize: "0.78rem",
-	fontWeight: 700,
-	color: "#52606d",
 };
 
 function getCardStyle(isClickable: boolean): CSSProperties {
