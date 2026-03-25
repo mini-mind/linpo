@@ -49,7 +49,7 @@ Linpo 当前定位：面向人类的多实例 agent 工作与协作入口。
 - `docs/prd/v0.6.md`：产品范围、IA、路由与成功标准
 - `docs/architecture/v0.6.md`：架构边界、分层、契约与迁移纪律
 - `docs/resources/test-resources.md`：测试/联调资源与 OpenClaw 参考
-- `docs/resources/openclaw-api-catalog.md`：OpenClaw 全量接口历史清单（含未接入项）
+- `docs/resources/openclaw-api-catalog.md`：OpenClaw 全量接口清单（含 v0.6 接入状态与未接入项）
 - `docs/changelog.md`：文档结构与治理口径变更记录
 
 ### 4.2 按需读取（不全读）
@@ -58,7 +58,7 @@ Linpo 当前定位：面向人类的多实例 agent 工作与协作入口。
 - 功能/交互变更：读 `docs/prd/v0.6.md`。
 - 技术实现/边界变更：读 `docs/architecture/v0.6.md`。
 - 测试、部署、联调或外部协议细节：读 `docs/resources/test-resources.md`。
-- 需要查未接入接口或历史接口列表：读 `docs/resources/openclaw-api-catalog.md`。
+- 需要查未接入接口或 v0.6 接入状态：读 `docs/resources/openclaw-api-catalog.md`。
 
 ## 5. 需求拆分与 Subagent 协作
 
