@@ -198,48 +198,79 @@ describe("OverviewPage", () => {
 		expect(screen.queryByTestId("overview-agents-grid")).not.toBeInTheDocument();
 	});
 
-	it("shows request clues for reconciliation in the successful overview state", async () => {
+	it("uses stable composite key for global events to avoid duplicate key warnings", async () => {
+		const duplicateEventId = "event-duplicate-id";
+		mockGetAggregateOverview.mockResolvedValue({
+			...overviewFixture,
+			global_events: [
+				{
+					id: duplicateEventId,
+					instance_id: "instance-alpha",
+					instance_name: "alpha-instance",
+					agent_id: "agent-alpha",
+					agent_name: "Alpha Agent",
+					type: "status_changed",
+					timestamp: "2026-03-22T11:59:00Z",
+					description: "First event with duplicate id",
+				},
+				{
+					id: duplicateEventId,
+					instance_id: "instance-beta",
+					instance_name: "beta-instance",
+					agent_id: null,
+					agent_name: null,
+					type: "activity_stopped",
+					timestamp: "2026-03-22T11:47:00Z",
+					description: "Second event with duplicate id",
+				},
+			],
+		});
+
+		renderWithRouter();
+
+		await waitFor(() => {
+			expect(screen.getByTestId("overview-global-events")).toBeInTheDocument();
+		});
+
+		expect(screen.getByText("First event with duplicate id")).toBeInTheDocument();
+		expect(screen.getByText("Second event with duplicate id")).toBeInTheDocument();
+	});
+
+	it("shows stats panel in the successful overview state", async () => {
 		mockGetAggregateOverview.mockResolvedValue(overviewFixture);
 
 		renderWithRouter();
 
 		await waitFor(() => {
-			expect(screen.getByText("request_id · req-overview-1")).toBeInTheDocument();
+			expect(screen.getByTestId("overview-stats-panel")).toBeInTheDocument();
 		});
 
-		expect(screen.getByText("freshness · 数据新鲜")).toBeInTheDocument();
-		expect(
-			screen.getByText("checked_at · 2026-03-22T12:00:00Z"),
-		).toBeInTheDocument();
-		expect(screen.getByText("diagnostics · 2 total / 1 failed")).toBeInTheDocument();
+		expect(screen.getByText("实例总数")).toBeInTheDocument();
+		expect(screen.getByText("活跃 agents")).toBeInTheDocument();
 	});
 
-	it("re-reads aggregate overview when refresh is triggered from the successful state", async () => {
+	it("re-reads aggregate overview when refresh is triggered", async () => {
 		mockGetAggregateOverview
 			.mockResolvedValueOnce(overviewFixture)
 			.mockResolvedValueOnce({
 				...overviewFixture,
-				request_id: "req-overview-2",
-				freshness: {
-					status: "stale",
-					checked_at: "2026-03-22T12:05:00Z",
+				stats: {
+					...overviewFixture.stats,
+					instance_count: 3,
 				},
 			});
 
 		renderWithRouter();
 
 		await waitFor(() => {
-			expect(screen.getByText("request_id · req-overview-1")).toBeInTheDocument();
+			expect(screen.getByTestId("overview-stats-panel")).toBeInTheDocument();
 		});
 
 		fireEvent.click(screen.getByRole("button", { name: "刷新" }));
 
 		await waitFor(() => {
-			expect(screen.getByText("request_id · req-overview-2")).toBeInTheDocument();
+			expect(mockGetAggregateOverview).toHaveBeenCalledTimes(2);
 		});
-
-		expect(mockGetAggregateOverview).toHaveBeenCalledTimes(2);
-		expect(screen.getByText("freshness · 数据滞后")).toBeInTheDocument();
 	});
 
 	it("keeps the overview shell visible while aggregate overview is loading", () => {
@@ -248,7 +279,6 @@ describe("OverviewPage", () => {
 
 		renderWithRouter();
 
-		expect(screen.getByRole("heading", { name: "总览" })).toBeInTheDocument();
 		expect(screen.getByTestId("overview-stats-panel")).toHaveTextContent(
 			"总览数据加载中",
 		);
@@ -282,7 +312,6 @@ describe("OverviewPage", () => {
 			expect(screen.getByTestId("overview-stats-panel")).toBeInTheDocument();
 		});
 
-		expect(screen.getByRole("heading", { name: "总览" })).toBeInTheDocument();
 		expect(screen.getByTestId("overview-token-stage")).toHaveTextContent(
 			"当前没有可展示的实例 token 数据",
 		);
@@ -291,7 +320,7 @@ describe("OverviewPage", () => {
 		);
 	});
 
-	it("keeps the event rail rendered even when there are no global events yet", async () => {
+it("keeps the event rail rendered even when there are no global events yet", async () => {
 		mockGetAggregateOverview.mockResolvedValue({
 			...overviewFixture,
 			global_events: [],
@@ -317,7 +346,7 @@ describe("OverviewPage", () => {
 		renderWithRouter();
 
 		await waitFor(() => {
-			expect(screen.getByText("部分数据不可用")).toBeInTheDocument();
+			expect(screen.getByTestId("overview-stats-panel")).toBeInTheDocument();
 		});
 
 		expect(screen.getByTestId("overview-token-stage")).toHaveTextContent(
@@ -338,7 +367,7 @@ describe("OverviewPage", () => {
 		renderWithRouter();
 
 		await waitFor(() => {
-			expect(screen.getByText("部分数据不可用")).toBeInTheDocument();
+			expect(screen.getByTestId("overview-stats-panel")).toBeInTheDocument();
 		});
 
 		expect(screen.getByTestId("overview-token-stage")).toHaveTextContent(
@@ -424,7 +453,6 @@ describe("OverviewPage", () => {
 			)
 			.mockResolvedValueOnce({
 				...overviewFixture,
-				request_id: "req-overview-recovered",
 			});
 
 		renderWithRouter();
@@ -436,13 +464,13 @@ describe("OverviewPage", () => {
 		fireEvent.click(screen.getByRole("button", { name: "重试" }));
 
 		await waitFor(() => {
-			expect(screen.getByText("request_id · req-overview-recovered")).toBeInTheDocument();
+			expect(screen.getByTestId("overview-stats-panel")).toBeInTheDocument();
 		});
 
 		expect(mockGetAggregateOverview).toHaveBeenCalledTimes(2);
 	});
 
-	it("shows an explicit stale notice while keeping overview content visible", async () => {
+	it("keeps overview content visible even with stale data", async () => {
 		mockGetAggregateOverview.mockResolvedValue({
 			...overviewFixture,
 			freshness: {
@@ -454,7 +482,7 @@ describe("OverviewPage", () => {
 		renderWithRouter();
 
 		await waitFor(() => {
-			expect(screen.getByText("当前展示的是滞后数据")).toBeInTheDocument();
+			expect(screen.getByTestId("overview-stats-panel")).toBeInTheDocument();
 		});
 
 		expect(screen.getByTestId("overview-stats-panel")).toHaveTextContent("330");

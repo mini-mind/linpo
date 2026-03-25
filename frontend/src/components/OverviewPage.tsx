@@ -40,7 +40,6 @@ export function OverviewPage(): JSX.Element {
 	if (loading) {
 		return (
 			<div style={getContainerStyle(isMobile)}>
-				<OverviewHeader subtitle="正在同步 overview 聚合状态" />
 				<LoadingStatsPanel />
 				<div style={getMainLayoutStyle(isMobile)}>
 					<LoadingTokenStage />
@@ -55,13 +54,6 @@ export function OverviewPage(): JSX.Element {
 		const unauthorized = envelope?.code === "unauthorized";
 		return (
 			<div style={getContainerStyle(isMobile)}>
-				<OverviewHeader
-					subtitle={
-						unauthorized
-							? "当前账号缺少 overview 读取权限"
-							: "聚合读取失败，请根据请求线索排查"
-					}
-				/>
 				<div style={errorPanelStyle}>
 					<h2 style={errorTitleStyle}>
 						{unauthorized ? "当前无权查看总览" : "总览暂时不可用"}
@@ -79,7 +71,6 @@ export function OverviewPage(): JSX.Element {
 	if (!overview) {
 		return (
 			<div style={getContainerStyle(isMobile)}>
-				<OverviewHeader subtitle="当前没有返回 overview 聚合结果" />
 				<div style={emptyPanelStyle}>当前没有可展示的总览数据</div>
 			</div>
 		);
@@ -88,51 +79,10 @@ export function OverviewPage(): JSX.Element {
 	const diagnosticsByInstance = new Map(
 		overview.diagnostics.map((item) => [item.instance_id, item]),
 	);
-	const failedDiagnostics = overview.diagnostics.filter((item) => item.status === "failed");
-	const showPartialFailure =
-		overview.partial_failure ||
-		(failedDiagnostics.length > 0 && failedDiagnostics.length < overview.diagnostics.length);
-	const partialFailureDetail =
-		failedDiagnostics.length > 0
-			? `受影响实例：${failedDiagnostics
-				.map((item) => item.instance_name)
-				.join("、")}`
-			: "统计、曲线或事件中有部分聚合结果暂不可用。";
-	const diagnosticsSummary = `${overview.diagnostics.length} total / ${failedDiagnostics.length} failed`;
 
 	return (
 		<div style={getContainerStyle(isMobile)}>
-			<div style={headerRowStyle}>
-				<OverviewHeader
-					subtitle={`${formatFreshnessLabel(overview.freshness.status)} · 最新检查${overview.freshness.checked_at ?? "暂未上报"}`}
-				/>
-				<button type="button" style={actionButtonStyle} onClick={handleReload}>
-					刷新
-				</button>
-			</div>
-			<OverviewRequestClues
-				requestId={overview.request_id}
-				freshnessStatus={formatFreshnessLabel(overview.freshness.status)}
-				checkedAt={overview.freshness.checked_at}
-				diagnosticsSummary={diagnosticsSummary}
-			/>
-			{showPartialFailure ? (
-				<OverviewStatusNotice
-					tone="warning"
-					title="部分数据不可用"
-					detail={partialFailureDetail}
-				/>
-			) : null}
-			{overview.freshness.status === "stale" ? (
-				<OverviewStatusNotice
-					tone="info"
-					title="当前展示的是滞后数据"
-					detail="展示内容仍可用于对账，但可能落后于实例最新状态。"
-				/>
-			) : null}
-
-			<StatsPanel overview={overview} />
-
+			<StatsPanel overview={overview} onReload={handleReload} />
 			<div style={getMainLayoutStyle(isMobile)}>
 				<TokenStage
 					tokenGroups={overview.token_groups}
@@ -141,53 +91,6 @@ export function OverviewPage(): JSX.Element {
 				/>
 				<GlobalEventsRail events={overview.global_events} isMobile={isMobile} />
 			</div>
-		</div>
-	);
-}
-
-function OverviewHeader({ subtitle }: { subtitle: string }): JSX.Element {
-	return (
-		<div style={headerStyle}>
-			<h1 style={titleStyle}>总览</h1>
-			<p style={subtitleStyle}>{subtitle}</p>
-		</div>
-	);
-}
-
-function OverviewRequestClues({
-	requestId,
-	freshnessStatus,
-	checkedAt,
-	diagnosticsSummary,
-}: {
-	requestId: string;
-	freshnessStatus: string;
-	checkedAt: string | null;
-	diagnosticsSummary: string;
-}): JSX.Element {
-	return (
-		<div style={requestCluesStyle}>
-			<p style={requestClueTextStyle}>request_id · {requestId}</p>
-			<p style={requestClueTextStyle}>freshness · {freshnessStatus}</p>
-			<p style={requestClueTextStyle}>checked_at · {checkedAt ?? "暂未上报"}</p>
-			<p style={requestClueTextStyle}>diagnostics · {diagnosticsSummary}</p>
-		</div>
-	);
-}
-
-function OverviewStatusNotice({
-	tone,
-	title,
-	detail,
-}: {
-	tone: "info" | "warning";
-	title: string;
-	detail: string;
-}): JSX.Element {
-	return (
-		<div style={getStatusNoticeStyle(tone)}>
-			<strong style={statusNoticeTitleStyle}>{title}</strong>
-			<p style={statusNoticeDetailStyle}>{detail}</p>
 		</div>
 	);
 }
@@ -230,7 +133,13 @@ function LoadingEventsRail({ isMobile }: { isMobile: boolean }): JSX.Element {
 	);
 }
 
-function StatsPanel({ overview }: { overview: AggregateOverviewResponse }): JSX.Element {
+function StatsPanel({
+	overview,
+	onReload,
+}: {
+	overview: AggregateOverviewResponse;
+	onReload: () => void;
+}): JSX.Element {
 	const stats = useMemo(
 		() => [
 			{ label: "实例总数", value: formatCount(overview.stats.instance_count) },
@@ -242,13 +151,20 @@ function StatsPanel({ overview }: { overview: AggregateOverviewResponse }): JSX.
 	);
 
 	return (
-		<div style={statsPanelStyle} data-testid="overview-stats-panel">
-			{stats.map((item) => (
-				<div key={item.label} style={statsCardStyle}>
-					<span style={statsLabelStyle}>{item.label}</span>
-					<span style={statsValueStyle}>{item.value}</span>
-				</div>
-			))}
+		<div style={overviewStatsCardStyle} data-testid="overview-stats-panel">
+			<div style={statsActionRowStyle}>
+				<button type="button" style={actionButtonStyle} onClick={onReload}>
+					刷新
+				</button>
+			</div>
+			<div style={statsGridStyle}>
+				{stats.map((item) => (
+					<div key={item.label} style={statsItemStyle}>
+						<span style={statsLabelStyle}>{item.label}</span>
+						<span style={statsValueStyle}>{item.value}</span>
+					</div>
+				))}
+			</div>
 		</div>
 	);
 }
@@ -352,8 +268,8 @@ function GlobalEventsRail({
 				<div style={emptyPanelStyle}>当前没有可展示的全局事件</div>
 			) : (
 				<div style={eventListStyle}>
-					{events.map((event) => (
-						<article key={event.id} style={eventCardStyle}>
+					{events.map((event, index) => (
+						<article key={`${event.id}:${event.instance_id}:${index}`} style={eventCardStyle}>
 							<p style={eventMetaStyle}>
 								{event.instance_name}
 								{event.agent_name ? ` · ${event.agent_name}` : ""}
@@ -459,31 +375,9 @@ function getEventsRailStyle(isMobile: boolean): React.CSSProperties {
 	};
 }
 
-const headerStyle: React.CSSProperties = {
+const statsActionRowStyle: React.CSSProperties = {
 	display: "flex",
-	flexDirection: "column",
-	gap: "0.25rem",
-};
-
-const headerRowStyle: React.CSSProperties = {
-	display: "flex",
-	justifyContent: "space-between",
-	alignItems: "flex-start",
-	gap: "0.75rem",
-	flexWrap: "wrap",
-};
-
-const titleStyle: React.CSSProperties = {
-	fontSize: "1.25rem",
-	fontWeight: 700,
-	color: "#1f2933",
-	margin: 0,
-};
-
-const subtitleStyle: React.CSSProperties = {
-	margin: 0,
-	fontSize: "0.8125rem",
-	color: "#6b7280",
+	justifyContent: "flex-end",
 };
 
 const actionButtonStyle: React.CSSProperties = {
@@ -498,27 +392,31 @@ const actionButtonStyle: React.CSSProperties = {
 	whiteSpace: "nowrap",
 };
 
-const requestCluesStyle: React.CSSProperties = {
-	display: "flex",
-	flexWrap: "wrap",
-	gap: "0.5rem",
-	padding: "0.75rem 0.875rem",
-	borderRadius: "0.875rem",
-	border: "1px solid #ded6c7",
-	background: "rgba(255, 255, 255, 0.82)",
-};
-
-const requestClueTextStyle: React.CSSProperties = {
-	margin: 0,
-	fontSize: "0.75rem",
-	color: "#6b7280",
-	fontFamily: 'ui-monospace, SFMono-Regular, "SFMono-Regular", Consolas, monospace',
-};
-
 const statsPanelStyle: React.CSSProperties = {
 	display: "grid",
 	gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
 	gap: "0.75rem",
+};
+
+const statsGridStyle: React.CSSProperties = {
+	...statsPanelStyle,
+	gap: "1rem",
+};
+
+const statsItemStyle: React.CSSProperties = {
+	display: "flex",
+	flexDirection: "column",
+	gap: "0.35rem",
+};
+
+const overviewStatsCardStyle: React.CSSProperties = {
+	background: "rgba(255, 255, 255, 0.88)",
+	border: "1px solid #ded6c7",
+	borderRadius: "1rem",
+	padding: "1rem",
+	display: "flex",
+	flexDirection: "column",
+	gap: "1rem",
 };
 
 const statsCardStyle: React.CSSProperties = {
@@ -766,43 +664,8 @@ const errorHintStyle: React.CSSProperties = {
 	textAlign: "left",
 };
 
-const statusNoticeTitleStyle: React.CSSProperties = {
-	fontSize: "0.875rem",
-	color: "#1f2933",
-};
-
-const statusNoticeDetailStyle: React.CSSProperties = {
-	margin: 0,
-	fontSize: "0.75rem",
-	color: "#6b7280",
-};
-
 const errorStyle: React.CSSProperties = {
 	color: "#6b7280",
 	textAlign: "left",
 	margin: 0,
 };
-
-function getStatusNoticeStyle(tone: "info" | "warning"): React.CSSProperties {
-	if (tone === "warning") {
-		return {
-			padding: "0.875rem 1rem",
-			borderRadius: "0.875rem",
-			border: "1px solid #e6c589",
-			background: "rgba(255, 248, 230, 0.9)",
-			display: "flex",
-			flexDirection: "column",
-			gap: "0.25rem",
-		};
-	}
-
-	return {
-		padding: "0.875rem 1rem",
-		borderRadius: "0.875rem",
-		border: "1px solid #b8d4de",
-		background: "rgba(237, 247, 250, 0.92)",
-		display: "flex",
-		flexDirection: "column",
-		gap: "0.25rem",
-	};
-}
