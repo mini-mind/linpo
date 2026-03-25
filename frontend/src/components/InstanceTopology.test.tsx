@@ -223,7 +223,6 @@ describe("InstanceTopology", () => {
 			renderWithRouter();
 
 			await waitFor(() => {
-				expect(screen.getByTestId("topology-routing-stage")).toBeInTheDocument();
 				expect(screen.getByTestId("topology-graph-canvas")).toBeInTheDocument();
 			});
 		});
@@ -240,33 +239,6 @@ describe("InstanceTopology", () => {
 			expect(screen.queryByTestId("topology-sidebar")).not.toBeInTheDocument();
 			expect(screen.queryByTestId("topology-detail-panel")).not.toBeInTheDocument();
 			expect(screen.queryByTestId("topology-config-panel")).not.toBeInTheDocument();
-		});
-
-		it("renders routing-graph framing, request clues, and canvas controls", async () => {
-			mockGetAggregateTopology.mockResolvedValue(aggregateTopologyFixture);
-
-			renderWithRouter();
-
-			await waitFor(() => {
-				expect(
-					screen.getByRole("heading", { name: "Routing Graph 主舞台" }),
-				).toBeInTheDocument();
-			});
-
-			expect(
-				screen.getByText("保持单一满屏画布，沿真实聚合读链路查看当前路由关系。"),
-			).toBeInTheDocument();
-			expect(screen.getByText("请求线索")).toBeInTheDocument();
-			expect(screen.getByText("request_id · req-topology-1")).toBeInTheDocument();
-			expect(screen.getByText("freshness · fresh")).toBeInTheDocument();
-			expect(screen.getByText("checked_at · 2026-03-22T12:05:00Z")).toBeInTheDocument();
-			expect(screen.getByText("diagnostics · 2 sources")).toBeInTheDocument();
-			expect(screen.getByText("实例")).toBeInTheDocument();
-			expect(screen.getByText("智能体")).toBeInTheDocument();
-			expect(screen.getByText("会话")).toBeInTheDocument();
-			expect(screen.getByText("工具")).toBeInTheDocument();
-			expect(screen.getByRole("button", { name: "适配画布" })).toBeInTheDocument();
-			expect(screen.getByRole("button", { name: "刷新拓扑" })).toBeInTheDocument();
 		});
 	});
 
@@ -413,20 +385,17 @@ describe("InstanceTopology", () => {
 	});
 
 	describe("loading and error states", () => {
-		it("keeps the routing-stage shell visible while aggregate topology is loading", () => {
+		it("keeps the topology canvas visible while aggregate topology is loading", () => {
 			const deferred = createDeferredPromise<typeof aggregateTopologyFixture>();
 			mockGetAggregateTopology.mockReturnValue(deferred.promise);
 
 			renderWithRouter();
 
-			expect(
-				screen.getByRole("heading", { name: "Routing Graph 主舞台" }),
-			).toBeInTheDocument();
-			expect(screen.getByTestId("topology-routing-stage")).toBeInTheDocument();
+			expect(screen.getByTestId("topology-graph-canvas")).toBeInTheDocument();
 			expect(screen.getByText("加载拓扑数据...")).toBeInTheDocument();
 		});
 
-		it("keeps the topology shell and shows an explicit empty state when the aggregate payload has no graph data", async () => {
+		it("keeps the topology canvas and shows an explicit empty state when the aggregate payload has no graph data", async () => {
 			mockGetAggregateTopology.mockResolvedValue({
 				...aggregateTopologyFixture,
 				request_id: "req-topology-empty",
@@ -441,16 +410,15 @@ describe("InstanceTopology", () => {
 			renderWithRouter();
 
 			await waitFor(() => {
-				expect(screen.getByTestId("topology-routing-stage")).toBeInTheDocument();
+				expect(screen.getByTestId("topology-graph-canvas")).toBeInTheDocument();
 			});
 
-			expect(screen.getByText("request_id · req-topology-empty")).toBeInTheDocument();
 			expect(screen.getByTestId("topology-graph-canvas")).toHaveTextContent(
 				"当前没有可展示的拓扑关系",
 			);
 		});
 
-		it("keeps successful topology content visible while surfacing partial failure diagnostics", async () => {
+		it("keeps successful topology content visible with nodes rendered", async () => {
 			mockGetAggregateTopology.mockResolvedValue({
 				...aggregateTopologyFixture,
 				partial_failure: false,
@@ -459,16 +427,10 @@ describe("InstanceTopology", () => {
 			renderWithRouter();
 
 			await waitFor(() => {
-				expect(screen.getByText("部分数据不可用")).toBeInTheDocument();
-			});
-
-			await waitFor(() => {
 				expect(
 					screen.getByTestId("topology-node-instance-instance-alpha"),
 				).toBeInTheDocument();
 			});
-			expect(screen.getByText("受影响实例：empty-instance")).toBeInTheDocument();
-			expect(screen.getByText("diagnostics · 2 sources")).toBeInTheDocument();
 		});
 
 		it("surfaces aggregate request failures with error envelope", async () => {
@@ -541,7 +503,7 @@ describe("InstanceTopology", () => {
 			expect(screen.getByText("重新登录后重试")).toBeInTheDocument();
 		});
 
-		it("shows an explicit stale notice while keeping topology content visible", async () => {
+		it("keeps topology nodes visible even with stale data", async () => {
 			mockGetAggregateTopology.mockResolvedValue({
 				...aggregateTopologyFixture,
 				freshness: {
@@ -553,42 +515,33 @@ describe("InstanceTopology", () => {
 			renderWithRouter();
 
 			await waitFor(() => {
-				expect(screen.getByText("当前展示的是滞后拓扑")).toBeInTheDocument();
+				expect(
+					screen.getByTestId("topology-node-instance-instance-alpha"),
+				).toBeInTheDocument();
 			});
+		});
+
+		it("re-reads aggregate topology when refresh is triggered", async () => {
+			mockGetAggregateTopology
+				.mockResolvedValueOnce(aggregateTopologyFixture)
+				.mockResolvedValueOnce({
+					...aggregateTopologyFixture,
+					request_id: "req-topology-2",
+				});
+
+			renderWithRouter();
 
 			await waitFor(() => {
 				expect(
 					screen.getByTestId("topology-node-instance-instance-alpha"),
 				).toBeInTheDocument();
 			});
-			expect(screen.getByText("freshness · stale")).toBeInTheDocument();
-		});
 
-		it("re-reads aggregate topology when refresh is triggered from the successful state", async () => {
-			mockGetAggregateTopology
-				.mockResolvedValueOnce(aggregateTopologyFixture)
-				.mockResolvedValueOnce({
-					...aggregateTopologyFixture,
-					request_id: "req-topology-2",
-					freshness: {
-						status: "stale",
-						checked_at: "2026-03-22T12:10:00Z",
-					},
-				});
-
-			renderWithRouter();
+			fireEvent.click(screen.getByRole("button", { name: "刷新" }));
 
 			await waitFor(() => {
-				expect(screen.getByText("request_id · req-topology-1")).toBeInTheDocument();
+				expect(mockGetAggregateTopology).toHaveBeenCalledTimes(2);
 			});
-
-			fireEvent.click(screen.getByRole("button", { name: "刷新拓扑" }));
-
-			await waitFor(() => {
-				expect(screen.getByText("request_id · req-topology-2")).toBeInTheDocument();
-			});
-
-			expect(mockGetAggregateTopology).toHaveBeenCalledTimes(2);
 		});
 
 		it("re-reads aggregate topology when retry is triggered from the failed state", async () => {
@@ -604,7 +557,6 @@ describe("InstanceTopology", () => {
 				)
 				.mockResolvedValueOnce({
 					...aggregateTopologyFixture,
-					request_id: "req-topology-recovered",
 				});
 
 			renderWithRouter();
@@ -616,7 +568,9 @@ describe("InstanceTopology", () => {
 			fireEvent.click(screen.getByRole("button", { name: "重试" }));
 
 			await waitFor(() => {
-				expect(screen.getByText("request_id · req-topology-recovered")).toBeInTheDocument();
+				expect(
+					screen.getByTestId("topology-node-instance-instance-alpha"),
+				).toBeInTheDocument();
 			});
 
 			expect(mockGetAggregateTopology).toHaveBeenCalledTimes(2);
@@ -624,7 +578,7 @@ describe("InstanceTopology", () => {
 	});
 
 	describe("routing stage compliance", () => {
-		it("surfaces read-chain clues instead of observer-only footer framing", async () => {
+		it("renders only the canvas without external panels", async () => {
 			mockGetAggregateTopology.mockResolvedValue(aggregateTopologyFixture);
 
 			renderWithRouter();
@@ -633,11 +587,8 @@ describe("InstanceTopology", () => {
 				expect(screen.getByTestId("topology-graph-canvas")).toBeInTheDocument();
 			});
 
-			expect(screen.getByText("请求线索")).toBeInTheDocument();
-			expect(
-				screen.getByText("聚合链路继续使用 getAggregateTopology，不引入旁路面板。"),
-			).toBeInTheDocument();
 			expect(screen.queryByTestId("topology-footer-summary")).not.toBeInTheDocument();
+			expect(screen.queryByText("请求线索")).not.toBeInTheDocument();
 		});
 
 		it("renders session nodes connected via edges from backend", async () => {

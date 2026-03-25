@@ -1,12 +1,11 @@
 import type React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ApiError, getAggregateOverview } from "../api/client";
+import { getAggregateOverview } from "../api/client";
 import type {
 	AggregateInstanceDiagnostic,
 	AggregateOverviewAgentItem,
 	AggregateOverviewResponse,
-	ErrorEnvelope,
 } from "../api/types";
 import { useIsMobile } from "../hooks/useIsMobile";
 
@@ -145,215 +144,27 @@ export default function CollabPage(): JSX.Element {
 		return grouped;
 	}, [overview?.agents, diagnosticsByInstance, failedInstanceIds]);
 
-	const failedDiagnostics = useMemo(() => {
-		return (overview?.diagnostics ?? []).filter((diagnostic) => diagnostic.status === "failed");
-	}, [overview?.diagnostics]);
-
-	const boardFocus = useMemo(() => {
-		if (loading) {
-			return "正在同步任务板上下文";
-		}
-
-		const focusOrder: Array<{ key: KanbanColumn; label: string }> = [
-			{ key: "needs_attention", label: "优先处理异常阻塞" },
-			{ key: "in_progress", label: "跟进推进中的任务" },
-			{ key: "pending_review", label: "明确下一步与责任人" },
-			{ key: "completed", label: "复盘并收尾最近交付" },
-		];
-
-		for (const focus of focusOrder) {
-			const count = tasksByColumn[focus.key].length;
-			if (count > 0) {
-				return `${focus.label} · ${count} 张任务卡`;
-			}
-		}
-
-		return "等待新的任务上下文进入板面";
-	}, [loading, tasksByColumn]);
-
 	const agents = overview?.agents ?? [];
-	const totalCards = agents.length;
-	const errorEnvelope = error instanceof ApiError ? error.envelope : null;
-	const unauthorized = errorEnvelope?.code === "unauthorized";
-	const showPartialFailure =
-		overview !== null &&
-		(overview.partial_failure ||
-			(failedDiagnostics.length > 0 && failedDiagnostics.length < overview.diagnostics.length));
-	const partialFailureDetail =
-		failedDiagnostics.length > 0
-			? `受影响实例：${failedDiagnostics.map((item) => item.instance_name).join("、")}`
-			: "任务板中的部分实例诊断暂不可用，请结合请求线索继续核对。";
-	const diagnosticsSummary = overview
-		? `${overview.diagnostics.length} total / ${failedDiagnostics.length} failed`
-		: "同步中";
-	const subtitle = loading
-		? "正在同步 kanban 聚合状态"
-		: error
-			? unauthorized
-				? "当前账号缺少 kanban 读取权限"
-				: "聚合读取失败，请根据请求线索排查"
-			: `从聚合读链路派生的任务板 · ${totalCards} 张任务卡`;
-
 
 	return (
 		<section aria-label="kanban-page" style={getContainerStyle(isMobile)}>
-			<header style={headerStyle}>
-				<div style={headerTopRowStyle}>
-					<div>
-						<h1 style={titleStyle}>看板</h1>
-						<p style={subtitleStyle}>{subtitle}</p>
-					</div>
-					{error ? null : (
-						<button
-							type="button"
-							onClick={handleReload}
-							style={refreshButtonStyle}
-							disabled={loading}
-						>
-							刷新任务板
-						</button>
-					)}
-				</div>
-			</header>
-
 			{error ? (
 				<div style={errorPanelStyle}>
-					<p style={errorTitleStyle}>{unauthorized ? "当前无权查看任务板" : "任务板暂时不可用"}</p>
+					<p style={errorTitleStyle}>任务板加载失败</p>
 					<p style={errorMessageStyle}>{error.message}</p>
-					{errorEnvelope ? <EnvelopeErrorDetails envelope={errorEnvelope} /> : null}
 					<button type="button" onClick={handleReload} style={retryButtonStyle}>
 						重试
 					</button>
 				</div>
 			) : (
-				<>
-					{overview ? (
-						<KanbanRequestClues
-							requestId={overview.request_id}
-							freshnessStatus={formatFreshnessLabel(overview.freshness.status)}
-							checkedAt={overview.freshness.checked_at}
-							diagnosticsSummary={diagnosticsSummary}
-						/>
-					) : null}
-					{loading ? (
-						<KanbanStatusNotice
-							tone="info"
-							title="正在同步 kanban 聚合状态"
-							detail="任务板加载中"
-						/>
-					) : null}
-					{!loading && showPartialFailure ? (
-						<KanbanStatusNotice
-							tone="warning"
-							title="部分数据不可用"
-							detail={partialFailureDetail}
-						/>
-					) : null}
-					{!loading && overview?.freshness.status === "stale" ? (
-						<KanbanStatusNotice
-							tone="info"
-							title="当前展示的是滞后任务板"
-							detail="展示内容仍可用于推进任务，但可能落后于实例最新状态。"
-						/>
-					) : null}
-					<KanbanSummaryStrip
-						isMobile={isMobile}
-						totalCards={loading ? "同步中" : `${totalCards} 张任务卡`}
-						boardFocus={boardFocus}
-						freshnessStatus={loading ? "同步中" : formatFreshnessLabel(overview?.freshness.status ?? "fresh")}
-						diagnosticsSummary={diagnosticsSummary}
-					/>
-					{!loading && agents.length === 0 ? <EmptyKanbanState /> : null}
-					<KanbanBoard isMobile={isMobile} tasksByColumn={tasksByColumn} loading={loading} />
-				</>
+				<KanbanBoard
+					isMobile={isMobile}
+					tasksByColumn={tasksByColumn}
+					loading={loading}
+					isEmpty={!loading && agents.length === 0}
+				/>
 			)}
 		</section>
-	);
-}
-
-function EnvelopeErrorDetails({ envelope }: { envelope: ErrorEnvelope }): JSX.Element {
-	return (
-		<div style={errorMetaStyle}>
-			<p style={metaTextStyle}>code · {envelope.code}</p>
-			<p style={metaTextStyle}>request_id · {envelope.request_id}</p>
-			<p style={metaTextStyle}>recoverable · {String(envelope.recoverable)}</p>
-			{envelope.next_step && (
-				<p style={hintTextStyle}>{envelope.next_step}</p>
-			)}
-		</div>
-	);
-}
-
-function KanbanRequestClues({
-	requestId,
-	freshnessStatus,
-	checkedAt,
-	diagnosticsSummary,
-}: {
-	requestId: string;
-	freshnessStatus: string;
-	checkedAt: string | null;
-	diagnosticsSummary: string;
-}): JSX.Element {
-	return (
-		<div style={requestCluesStyle}>
-			<p style={requestClueTextStyle}>request_id · {requestId}</p>
-			<p style={requestClueTextStyle}>freshness · {freshnessStatus}</p>
-			<p style={requestClueTextStyle}>checked_at · {checkedAt ?? "暂未上报"}</p>
-			<p style={requestClueTextStyle}>diagnostics · {diagnosticsSummary}</p>
-		</div>
-	);
-}
-
-function KanbanStatusNotice({
-	tone,
-	title,
-	detail,
-}: {
-	tone: "info" | "warning";
-	title: string;
-	detail: string;
-}): JSX.Element {
-	return (
-		<div style={getStatusNoticeStyle(tone)}>
-			<strong style={statusNoticeTitleStyle}>{title}</strong>
-			<p style={statusNoticeDetailStyle}>{detail}</p>
-		</div>
-	);
-}
-
-function KanbanSummaryStrip({
-	isMobile,
-	totalCards,
-	boardFocus,
-	freshnessStatus,
-	diagnosticsSummary,
-}: {
-	isMobile: boolean;
-	totalCards: string;
-	boardFocus: string;
-	freshnessStatus: string;
-	diagnosticsSummary: string;
-}): JSX.Element {
-	return (
-		<div style={getSummaryStripStyle(isMobile)}>
-			<div style={summaryItemStyle}>
-				<span style={summaryLabelStyle}>任务总数</span>
-				<span style={summaryValueStyle}>{totalCards}</span>
-			</div>
-			<div style={summaryItemStyle}>
-				<span style={summaryLabelStyle}>当前焦点</span>
-				<span style={summaryValueStyle}>{boardFocus}</span>
-			</div>
-			<div style={summaryItemStyle}>
-				<span style={summaryLabelStyle}>聚合状态</span>
-				<span style={summaryValueStyle}>{freshnessStatus}</span>
-			</div>
-			<div style={summaryItemStyle}>
-				<span style={summaryLabelStyle}>诊断</span>
-				<span style={summaryValueStyle}>{diagnosticsSummary}</span>
-			</div>
-		</div>
 	);
 }
 
@@ -361,9 +172,6 @@ function EmptyKanbanState(): JSX.Element {
 	return (
 		<div style={emptyStateStyle}>
 			<p style={emptyTitleStyle}>当前还没有可派生的任务卡</p>
-			<p style={emptyHintStyle}>
-				当前板面已就绪，但还没有真实任务信号进入各列。
-			</p>
 			<Link to="/topology" style={emptyLinkStyle}>
 				去 topology 核对入口
 			</Link>
@@ -375,39 +183,47 @@ function KanbanBoard({
 	isMobile,
 	tasksByColumn,
 	loading,
+	isEmpty,
 }: {
 	isMobile: boolean;
 	tasksByColumn: Record<KanbanColumn, KanbanTaskCard[]>;
 	loading: boolean;
+	isEmpty: boolean;
 }): JSX.Element {
 	return (
 		<div data-testid="kanban-board" style={getBoardStyle(isMobile)}>
-			{COLUMNS.map((column) => {
-				const columnTasks = tasksByColumn[column.key];
-				return (
-					<div key={column.key} data-column-key={column.key} style={getColumnStyle(isMobile)}>
-						<div style={getColumnHeaderStyle(column.dotColor)}>
-							<div style={columnTitleRowStyle}>
-								<div style={columnTitleTopRowStyle}>
-									<span style={getDotStyle(column.dotColor)} aria-hidden="true" />
-									<h2 style={columnTitleStyle}>{column.title}</h2>
+			{isEmpty ? (
+				<div style={emptyBoardAreaStyle}>
+					<EmptyKanbanState />
+				</div>
+			) : (
+				COLUMNS.map((column) => {
+					const columnTasks = tasksByColumn[column.key];
+					return (
+						<div key={column.key} data-column-key={column.key} style={getColumnStyle(isMobile)}>
+							<div style={getColumnHeaderStyle(column.dotColor)}>
+								<div style={columnTitleRowStyle}>
+									<div style={columnTitleTopRowStyle}>
+										<span style={getDotStyle(column.dotColor)} aria-hidden="true" />
+										<h2 style={columnTitleStyle}>{column.title}</h2>
+									</div>
+									<p style={columnDescriptionStyle}>{column.description}</p>
 								</div>
-								<p style={columnDescriptionStyle}>{column.description}</p>
+								<span style={getBadgeStyle(column.badgeBg, column.badgeText)}>{columnTasks.length}</span>
 							</div>
-							<span style={getBadgeStyle(column.badgeBg, column.badgeText)}>{columnTasks.length}</span>
+							<div style={columnBodyStyle}>
+								{loading ? (
+									<div style={emptyColumnStyle}>同步中</div>
+								) : columnTasks.length === 0 ? (
+									<div style={emptyColumnStyle}>暂无任务</div>
+								) : (
+									columnTasks.map((task) => <KanbanCard key={task.id} task={task} />)
+								)}
+							</div>
 						</div>
-						<div style={columnBodyStyle}>
-							{loading ? (
-								<div style={emptyColumnStyle}>同步中</div>
-							) : columnTasks.length === 0 ? (
-								<div style={emptyColumnStyle}>暂无任务</div>
-							) : (
-								columnTasks.map((task) => <KanbanCard key={task.id} task={task} />)
-							)}
-						</div>
-					</div>
-				);
-			})}
+					);
+				})
+			)}
 		</div>
 	);
 }
@@ -584,13 +400,6 @@ function deriveTaskCard(
 	};
 }
 
-function formatFreshnessLabel(status: string): string {
-	if (status === "fresh") return "数据新鲜";
-	if (status === "stale") return "数据滞后";
-	if (status === "failed") return "读取失败";
-	return status;
-}
-
 function getContainerStyle(isMobile: boolean): React.CSSProperties {
 	return {
 		height: "100%",
@@ -605,31 +414,6 @@ function getContainerStyle(isMobile: boolean): React.CSSProperties {
 		flexDirection: "column",
 	};
 }
-
-const headerStyle: React.CSSProperties = {
-	marginBottom: "1rem",
-};
-
-const headerTopRowStyle: React.CSSProperties = {
-	display: "flex",
-	alignItems: "flex-start",
-	justifyContent: "space-between",
-	gap: "1rem",
-	flexWrap: "wrap",
-};
-
-const titleStyle: React.CSSProperties = {
-	fontSize: "1.375rem",
-	fontWeight: 700,
-	color: "#1f2933",
-	margin: "0 0 0.25rem 0",
-};
-
-const subtitleStyle: React.CSSProperties = {
-	fontSize: "0.8125rem",
-	color: "#6b7280",
-	margin: 0,
-};
 
 const errorPanelStyle: React.CSSProperties = {
 	display: "flex",
@@ -655,27 +439,6 @@ const errorMessageStyle: React.CSSProperties = {
 	textAlign: "center",
 };
 
-const errorMetaStyle: React.CSSProperties = {
-	display: "flex",
-	flexDirection: "column",
-	gap: "0.25rem",
-	alignItems: "center",
-};
-
-const metaTextStyle: React.CSSProperties = {
-	margin: 0,
-	fontSize: "0.75rem",
-	color: "#6b7280",
-	fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace',
-};
-
-const hintTextStyle: React.CSSProperties = {
-	margin: 0,
-	fontSize: "0.8125rem",
-	color: "#6b7280",
-	textAlign: "center",
-};
-
 const retryButtonStyle: React.CSSProperties = {
 	padding: "0.5rem 1rem",
 	borderRadius: "0.5rem",
@@ -687,88 +450,10 @@ const retryButtonStyle: React.CSSProperties = {
 	cursor: "pointer",
 };
 
-const refreshButtonStyle: React.CSSProperties = {
-	...retryButtonStyle,
-	background: "#1f2933",
-	border: "1px solid #1f2933",
-	color: "#fff",
-};
-
-const requestCluesStyle: React.CSSProperties = {
+const emptyBoardAreaStyle: React.CSSProperties = {
+	gridColumn: "1 / -1",
 	display: "flex",
-	flexWrap: "wrap",
-	gap: "0.5rem 1rem",
-	marginBottom: "0.75rem",
-	padding: "0.75rem 1rem",
-	background: "#fff",
-	borderRadius: "0.5rem",
-	border: "1px solid #e5e7eb",
-};
-
-const requestClueTextStyle: React.CSSProperties = {
-	margin: 0,
-	fontSize: "0.75rem",
-	color: "#6b7280",
-	fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace',
-};
-
-function getStatusNoticeStyle(tone: "info" | "warning"): React.CSSProperties {
-	return {
-		display: "flex",
-		flexDirection: "column",
-		gap: "0.25rem",
-		marginBottom: "0.75rem",
-		padding: "0.75rem 1rem",
-		borderRadius: "0.5rem",
-		border: `1px solid ${tone === "warning" ? "#f59e0b" : "#cbd5e1"}`,
-		background: tone === "warning" ? "#fffbeb" : "#f8fafc",
-	};
-}
-
-const statusNoticeTitleStyle: React.CSSProperties = {
-	fontSize: "0.8125rem",
-	color: "#1f2933",
-};
-
-const statusNoticeDetailStyle: React.CSSProperties = {
-	margin: 0,
-	fontSize: "0.75rem",
-	lineHeight: 1.5,
-	color: "#6b7280",
-};
-
-function getSummaryStripStyle(isMobile: boolean): React.CSSProperties {
-	return {
-		display: "flex",
-		flexWrap: "wrap",
-		gap: "1rem",
-		marginBottom: "1rem",
-		padding: isMobile ? "0.5rem 0.75rem" : "0.5rem 1rem",
-		background: "#fff",
-		borderRadius: "0.5rem",
-		border: "1px solid #e5e7eb",
-		fontSize: "0.75rem",
-	};
-}
-
-const summaryItemStyle: React.CSSProperties = {
-	display: "flex",
-	flexDirection: "column",
-	gap: "0.125rem",
-};
-
-const summaryValueStyle: React.CSSProperties = {
-	fontSize: "0.8125rem",
-	fontWeight: 600,
-	color: "#1f2933",
-	lineHeight: 1.5,
-};
-
-const summaryLabelStyle: React.CSSProperties = {
-	fontSize: "0.6875rem",
-	color: "#9ca3af",
-	textTransform: "uppercase",
-	letterSpacing: "0.05em",
+	alignItems: "stretch",
 };
 
 function getBoardStyle(isMobile: boolean): React.CSSProperties {
@@ -1106,13 +791,6 @@ const emptyTitleStyle: React.CSSProperties = {
 	fontSize: "1rem",
 	fontWeight: 700,
 	color: "#1f2933",
-};
-
-const emptyHintStyle: React.CSSProperties = {
-	margin: 0,
-	fontSize: "0.875rem",
-	color: "#6b7280",
-	textAlign: "center",
 };
 
 const emptyLinkStyle: React.CSSProperties = {

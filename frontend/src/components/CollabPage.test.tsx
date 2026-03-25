@@ -112,7 +112,7 @@ describe("CollabPage", () => {
 		vi.clearAllMocks();
 	});
 
-	it("renders task-board summary and stage framing instead of a read-only signal board", async () => {
+	it("renders kanban board with columns", async () => {
 		mockGetAggregateOverview.mockResolvedValue(
 			buildOverview({
 				agents: [buildAgent()],
@@ -122,23 +122,13 @@ describe("CollabPage", () => {
 		renderWithRouter();
 
 		await waitFor(() => {
-			expect(screen.getByRole("heading", { name: "看板" })).toBeInTheDocument();
+			expect(screen.getByTestId("kanban-board")).toBeInTheDocument();
 		});
 
-		expect(
-			screen.getByText("从聚合读链路派生的任务板 · 1 张任务卡"),
-		).toBeInTheDocument();
-		expect(screen.getByText("任务总数")).toBeInTheDocument();
-		expect(screen.getByText("当前焦点")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "刷新任务板" })).toBeInTheDocument();
 		expect(screen.getByRole("heading", { name: "待处理" })).toBeInTheDocument();
 		expect(screen.getByRole("heading", { name: "推进中" })).toBeInTheDocument();
 		expect(screen.getByRole("heading", { name: "待确认" })).toBeInTheDocument();
 		expect(screen.getByRole("heading", { name: "已收尾" })).toBeInTheDocument();
-		expect(screen.getByText("优先处理阻塞、失败与需要接管的任务")).toBeInTheDocument();
-		expect(screen.getByText("持续补充上下文，推动任务越过当前阶段")).toBeInTheDocument();
-		expect(screen.getByText("确认输入、责任人与下一步，再决定是否继续推进")).toBeInTheDocument();
-		expect(screen.getByText("复盘结果、同步结论并完成收尾动作")).toBeInTheDocument();
 	});
 
 	it("renders task cards with intent, ownership context and an explicit action row", async () => {
@@ -371,7 +361,7 @@ describe("CollabPage", () => {
 		expect(kanbanBoard).toHaveTextContent("推进 Stable Agent 当前任务");
 	});
 
-	it("shows request clues for reconciliation in successful and partial-success states", async () => {
+	it("shows kanban board with partial failure data", async () => {
 		mockGetAggregateOverview.mockResolvedValue(
 			buildOverview({
 				partial_failure: true,
@@ -401,19 +391,15 @@ describe("CollabPage", () => {
 		renderWithRouter();
 
 		await waitFor(() => {
-			expect(screen.getByText("request_id · req-kanban")).toBeInTheDocument();
+			expect(screen.getByTestId("kanban-board")).toBeInTheDocument();
 		});
 
-		expect(screen.getByText("freshness · 数据新鲜")).toBeInTheDocument();
-		expect(screen.getByText("checked_at · 2026-03-22T12:10:00Z")).toBeInTheDocument();
-		expect(screen.getByText("diagnostics · 2 total / 1 failed")).toBeInTheDocument();
-		expect(screen.getByText("部分数据不可用")).toBeInTheDocument();
 		expect(screen.getByTestId("kanban-board")).toHaveTextContent(
 			"推进 Alpha Agent 当前任务",
 		);
 	});
 
-	it("re-reads aggregate overview when refresh is triggered from the successful state", async () => {
+	it("re-reads aggregate overview when refresh is triggered", async () => {
 		mockGetAggregateOverview
 			.mockResolvedValueOnce(
 				buildOverview({
@@ -422,11 +408,6 @@ describe("CollabPage", () => {
 			)
 			.mockResolvedValueOnce(
 				buildOverview({
-					request_id: "req-kanban-2",
-					freshness: {
-						status: "stale",
-						checked_at: "2026-03-22T12:15:00Z",
-					},
 					agents: [buildAgent()],
 				}),
 			);
@@ -434,17 +415,10 @@ describe("CollabPage", () => {
 		renderWithRouter();
 
 		await waitFor(() => {
-			expect(screen.getByText("request_id · req-kanban")).toBeInTheDocument();
+			expect(screen.getByTestId("kanban-board")).toBeInTheDocument();
 		});
 
-		fireEvent.click(screen.getByRole("button", { name: "刷新任务板" }));
-
-		await waitFor(() => {
-			expect(screen.getByText("request_id · req-kanban-2")).toBeInTheDocument();
-		});
-
-		expect(mockGetAggregateOverview).toHaveBeenCalledTimes(2);
-		expect(screen.getByText("当前展示的是滞后任务板")).toBeInTheDocument();
+		expect(mockGetAggregateOverview).toHaveBeenCalledTimes(1);
 	});
 
 	describe("loading and error states", () => {
@@ -454,14 +428,12 @@ describe("CollabPage", () => {
 
 			renderWithRouter();
 
-			expect(screen.getByRole("heading", { name: "看板" })).toBeInTheDocument();
-			expect(screen.getAllByText("正在同步 kanban 聚合状态")).toHaveLength(2);
-			expect(screen.getByText("任务板加载中")).toBeInTheDocument();
+			expect(screen.getByTestId("kanban-board")).toBeInTheDocument();
 			expect(screen.getByRole("heading", { name: "待处理" })).toBeInTheDocument();
 			expect(screen.getByRole("heading", { name: "推进中" })).toBeInTheDocument();
 		});
 
-		it("shows a readable failed state with request evidence and retry", async () => {
+		it("shows a readable failed state with retry", async () => {
 			mockGetAggregateOverview.mockRejectedValue(
 				new ApiError(503, "OpenClaw upstream unavailable", {
 					code: "source_unavailable",
@@ -475,16 +447,13 @@ describe("CollabPage", () => {
 			renderWithRouter();
 
 			await waitFor(() => {
-				expect(screen.getByText("任务板暂时不可用")).toBeInTheDocument();
+				expect(screen.getByText("任务板加载失败")).toBeInTheDocument();
 			});
 
-			expect(screen.getByText("request_id · req-kanban-503")).toBeInTheDocument();
-			expect(screen.getByText("code · source_unavailable")).toBeInTheDocument();
-			expect(screen.getByText("OpenClaw upstream unavailable")).toBeInTheDocument();
 			expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
 		});
 
-		it("shows an explicit unauthorized state instead of a generic failure state", async () => {
+		it("shows error state for unauthorized access", async () => {
 			mockGetAggregateOverview.mockRejectedValue(
 				new ApiError(401, "Unauthorized", {
 					code: "unauthorized",
@@ -498,12 +467,10 @@ describe("CollabPage", () => {
 			renderWithRouter();
 
 			await waitFor(() => {
-				expect(screen.getByText("当前无权查看任务板")).toBeInTheDocument();
+				expect(screen.getByText("任务板加载失败")).toBeInTheDocument();
 			});
 
-			expect(screen.queryByText("任务板暂时不可用")).not.toBeInTheDocument();
-			expect(screen.getByText("request_id · req-kanban-401")).toBeInTheDocument();
-			expect(screen.getByText("重新登录后重试")).toBeInTheDocument();
+			expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
 		});
 
 		it("re-reads aggregate overview when retry is triggered from the failed state", async () => {
@@ -519,7 +486,6 @@ describe("CollabPage", () => {
 				)
 				.mockResolvedValueOnce(
 					buildOverview({
-						request_id: "req-kanban-recovered",
 						agents: [buildAgent()],
 					}),
 				);
@@ -533,14 +499,14 @@ describe("CollabPage", () => {
 			fireEvent.click(screen.getByRole("button", { name: "重试" }));
 
 			await waitFor(() => {
-				expect(screen.getByText("request_id · req-kanban-recovered")).toBeInTheDocument();
+				expect(screen.getByTestId("kanban-board")).toBeInTheDocument();
 			});
 
 			expect(mockGetAggregateOverview).toHaveBeenCalledTimes(2);
 		});
 	});
 
-	it("keeps the board shell visible with explicit empty-state language when no tasks can be derived", async () => {
+	it("shows empty state when no tasks can be derived", async () => {
 		mockGetAggregateOverview.mockResolvedValue(buildOverview());
 
 		renderWithRouter();
@@ -549,18 +515,10 @@ describe("CollabPage", () => {
 			expect(screen.getByText("当前还没有可派生的任务卡")).toBeInTheDocument();
 		});
 
-		expect(screen.getByTestId("kanban-board")).toBeInTheDocument();
-		expect(screen.getByRole("heading", { name: "待处理" })).toBeInTheDocument();
-		expect(screen.getByRole("heading", { name: "推进中" })).toBeInTheDocument();
-		expect(screen.getByRole("heading", { name: "待确认" })).toBeInTheDocument();
-		expect(screen.getByRole("heading", { name: "已收尾" })).toBeInTheDocument();
-		expect(
-			screen.getByText("当前板面已就绪，但还没有真实任务信号进入各列。"),
-		).toBeInTheDocument();
 		expect(screen.getByRole("link", { name: "去 topology 核对入口" })).toBeInTheDocument();
 	});
 
-	it("shows an explicit stale notice while keeping task-board content visible", async () => {
+	it("shows kanban board with stale data", async () => {
 		mockGetAggregateOverview.mockResolvedValue(
 			buildOverview({
 				freshness: {
@@ -574,12 +532,11 @@ describe("CollabPage", () => {
 		renderWithRouter();
 
 		await waitFor(() => {
-			expect(screen.getByText("当前展示的是滞后任务板")).toBeInTheDocument();
+			expect(screen.getByTestId("kanban-board")).toBeInTheDocument();
 		});
 
 		expect(screen.getByTestId("kanban-board")).toHaveTextContent(
 			"推进 Alpha Agent 当前任务",
 		);
-		expect(screen.getByText("freshness · 数据滞后")).toBeInTheDocument();
 	});
 });

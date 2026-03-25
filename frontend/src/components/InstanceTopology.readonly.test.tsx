@@ -92,13 +92,12 @@ describe("InstanceTopology readonly mode", () => {
 		vi.clearAllMocks();
 	});
 
-	it("renders a routing-graph stage shell without sidebar or detail panels", async () => {
+	it("renders a canvas without sidebar or detail panels", async () => {
 		mockGetAggregateTopology.mockResolvedValue(aggregateTopologyFixture);
 
 		renderWithRouter();
 
 		await waitFor(() => {
-			expect(screen.getByTestId("topology-routing-stage")).toBeInTheDocument();
 			expect(screen.getByTestId("topology-graph-canvas")).toBeInTheDocument();
 		});
 
@@ -133,7 +132,7 @@ describe("InstanceTopology readonly mode", () => {
 		).toBeInTheDocument();
 	});
 
-	it("shows compact request clues instead of observer-only footer framing", async () => {
+	it("shows only the canvas without external panels", async () => {
 		mockGetAggregateTopology.mockResolvedValue(aggregateTopologyFixture);
 
 		renderWithRouter();
@@ -142,18 +141,8 @@ describe("InstanceTopology readonly mode", () => {
 			expect(screen.getByTestId("topology-graph-canvas")).toBeInTheDocument();
 		});
 
-		expect(screen.getByText("实例")).toBeInTheDocument();
-		expect(screen.getByText("智能体")).toBeInTheDocument();
-		expect(screen.getByText("会话")).toBeInTheDocument();
-		expect(screen.getByText("工具")).toBeInTheDocument();
-		expect(
-			screen.getByRole("heading", { name: "Routing Graph 主舞台" }),
-		).toBeInTheDocument();
-		expect(screen.getByText("请求线索")).toBeInTheDocument();
-		expect(
-			screen.getByText("聚合链路继续使用 getAggregateTopology，不引入旁路面板。"),
-		).toBeInTheDocument();
 		expect(screen.queryByTestId("topology-footer-summary")).not.toBeInTheDocument();
+		expect(screen.queryByText("请求线索")).not.toBeInTheDocument();
 	});
 
 	it("does not expose destructive or write-operation controls", async () => {

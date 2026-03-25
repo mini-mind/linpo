@@ -1,7 +1,6 @@
 import "@xyflow/react/dist/style.css";
 import {
 	Background,
-	Controls,
 	type Edge,
 	Handle,
 	type Node,
@@ -62,7 +61,9 @@ function getLayoutedElements(
 	nodes: Node<TopologyNodeData>[],
 	edges: Edge[],
 ): { nodes: Node<TopologyNodeData>[]; edges: Edge[] } {
-	const laneIndex = new Map(TOPOLOGY_LANES.map((lane, index) => [lane.key, index]));
+	const laneIndex = new Map(
+		TOPOLOGY_LANES.map((lane, index) => [lane.key, index]),
+	);
 	const laneNextY: Record<TopologyLane, number> = {
 		instance: 40,
 		agent: 40,
@@ -74,7 +75,8 @@ function getLayoutedElements(
 
 	const sortedNodes = [...nodes].sort((left, right) => {
 		const laneDelta =
-			(laneIndex.get(left.data.type) ?? 0) - (laneIndex.get(right.data.type) ?? 0);
+			(laneIndex.get(left.data.type) ?? 0) -
+			(laneIndex.get(right.data.type) ?? 0);
 		if (laneDelta !== 0) return laneDelta;
 		const parentDelta = (left.data.parentNodeId ?? "").localeCompare(
 			right.data.parentNodeId ?? "",
@@ -128,7 +130,9 @@ function CircleNodeFrame({
 			<div style={circleTypeLabelStyle}>{typeLabel}</div>
 			<div style={circleTitleStyle}>{data.label}</div>
 			{badge ? <div style={circleBadgeStyle}>{badge}</div> : null}
-			{data.updatedAt ? <div style={circleMetaStyle}>{data.updatedAt}</div> : null}
+			{data.updatedAt ? (
+				<div style={circleMetaStyle}>{data.updatedAt}</div>
+			) : null}
 			<NodeActionAffordance action={data.action} />
 			{children}
 			<Handle type="source" position={Position.Right} style={handleStyle} />
@@ -186,10 +190,16 @@ function ToolNode({ data }: { data: TopologyNodeData }): JSX.Element {
 	);
 }
 
-function NodeActionAffordance({ action }: { action: TopologyNodeAction }): JSX.Element {
+function NodeActionAffordance({
+	action,
+}: {
+	action: TopologyNodeAction;
+}): JSX.Element {
 	return (
 		<div style={nodeActionContainerStyle}>
-			<span style={getNodeActionBadgeStyle(action.kind)}>{action.statusLabel}</span>
+			<span style={getNodeActionBadgeStyle(action.kind)}>
+				{action.statusLabel}
+			</span>
 			<div style={nodeActionDetailStyle}>{action.detail}</div>
 			{action.href && action.actionLabel ? (
 				<Link to={action.href} style={nodeActionLinkStyle}>
@@ -293,12 +303,16 @@ const nodeTypes: NodeTypes = {
 };
 
 function TopologyCanvas(): JSX.Element {
-	const [topology, setTopology] = useState<AggregateTopologyResponse | null>(null);
+	const [topology, setTopology] = useState<AggregateTopologyResponse | null>(
+		null,
+	);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<Error | null>(null);
 	const { fitView } = useReactFlow();
 
-	const [nodes, setNodes, onNodesChange] = useNodesState<Node<TopologyNodeData>>([]);
+	const [nodes, setNodes, onNodesChange] = useNodesState<
+		Node<TopologyNodeData>
+	>([]);
 	const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
 	const loadTopology = useCallback(async (): Promise<void> => {
@@ -428,7 +442,10 @@ function TopologyCanvas(): JSX.Element {
 			});
 		}
 
-		const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(newNodes, newEdges);
+		const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
+			newNodes,
+			newEdges,
+		);
 		return { convertedNodes: layoutedNodes, convertedEdges: layoutedEdges };
 	}, [topology]);
 
@@ -437,144 +454,90 @@ function TopologyCanvas(): JSX.Element {
 		setEdges(convertedEdges);
 	}, [convertedNodes, convertedEdges, setNodes, setEdges]);
 
-	const handleFitView = useCallback(() => {
-		fitView({ padding: 0.2 });
-	}, [fitView]);
-
 	const handleReset = useCallback(() => {
 		void loadTopology();
 	}, [loadTopology]);
 
 	const envelope = error instanceof ApiError ? error.envelope : null;
 	const unauthorized = envelope?.code === "unauthorized";
-	const failedDiagnostics = topology?.diagnostics.filter((item) => item.status === "failed") ?? [];
-	const showPartialFailure = Boolean(
-		topology &&
-			(topology.partial_failure ||
-				(failedDiagnostics.length > 0 &&
-					failedDiagnostics.length < topology.diagnostics.length)),
-	);
-	const partialFailureDetail = failedDiagnostics.length
-		? `受影响实例：${failedDiagnostics.map((item) => item.instance_name).join("、")}`
-		: "部分实例聚合结果暂不可用，请结合 diagnostics 对账。";
 	const isEmptyTopology = Boolean(
 		topology && convertedNodes.length === 0 && convertedEdges.length === 0,
 	);
 
-	const requestClues = useMemo(
-		() => [
-			`request_id · ${topology?.request_id ?? envelope?.request_id ?? "--"}`,
-			`freshness · ${topology?.freshness.status ?? "unknown"}`,
-			`checked_at · ${topology?.freshness.checked_at ?? "--"}`,
-			`diagnostics · ${topology?.diagnostics.length ?? 0} sources`,
-		],
-		[topology, envelope],
-	);
-
 	return (
-		<div style={canvasContainerStyle} data-testid="topology-routing-stage">
-			<div style={canvasStageShellStyle}>
-				<div style={canvasHeaderStyle}>
-					<div style={canvasTitleBlockStyle}>
-						<span style={canvasEyebrowStyle}>TOPOLOGY / ROUTING GRAPH</span>
-						<h1 style={canvasTitleStyle}>Routing Graph 主舞台</h1>
-						<p style={canvasDescriptionStyle}>
-							保持单一满屏画布，沿真实聚合读链路查看当前路由关系。
+		<div style={canvasContainerStyle} data-testid="topology-graph-canvas">
+			<div style={canvasControlsOverlayStyle}>
+				<button
+					type="button"
+					style={controlButtonStyle}
+					onClick={() => fitView({ padding: 0.2 })}
+					aria-label="适配画布"
+				>
+					适配
+				</button>
+				<button
+					type="button"
+					style={controlButtonStyle}
+					onClick={handleReset}
+					aria-label="刷新"
+				>
+					刷新
+				</button>
+			</div>
+			{loading ? (
+				<div style={stateContainerStyle}>
+					<div style={emptyPanelStyle}>
+						<p style={stateTitleStyle}>加载拓扑数据...</p>
+						<p style={stateDetailStyle}>
+							正在通过 getAggregateTopology 同步当前路由关系。
 						</p>
 					</div>
-					<div style={canvasControlsColumnStyle}>
-						<div style={canvasControlsStyle}>
-							<button type="button" style={controlButtonStyle} onClick={handleFitView} aria-label="适配画布">
-								适配
-							</button>
-							<button type="button" style={controlButtonStyle} onClick={handleReset} aria-label="刷新拓扑">
-								刷新
-							</button>
-						</div>
-						<p style={canvasControlHintStyle}>聚合链路继续使用 getAggregateTopology，不引入旁路面板。</p>
-					</div>
 				</div>
-				<div style={requestCluesPanelStyle}>
-					<span style={requestCluesLabelStyle}>请求线索</span>
-					<div style={requestCluesListStyle}>
-						{requestClues.map((clue) => (
-							<span key={clue} style={requestClueBadgeStyle}>
-								{clue}
-							</span>
-						))}
-					</div>
-				</div>
-				{showPartialFailure ? (
-					<TopologyStatusNotice
-						tone="warning"
-						title="部分数据不可用"
-						detail={partialFailureDetail}
-					/>
-				) : null}
-				{topology?.freshness.status === "stale" ? (
-					<TopologyStatusNotice
-						tone="info"
-						title="当前展示的是滞后拓扑"
-						detail="展示内容仍可用于确认路由关系，但可能落后于实例最新状态。"
-					/>
-				) : null}
-				<div style={laneHeaderRowStyle}>
-					{TOPOLOGY_LANES.map((lane) => (
-						<span key={lane.key} style={laneHeaderBadgeStyle}>
-							{lane.label}
-						</span>
-					))}
-				</div>
-				<div style={graphWrapperStyle} data-testid="topology-graph-canvas">
-					{loading ? (
-						<div style={stateContainerStyle}>
-							<div style={emptyPanelStyle}>
-								<p style={stateTitleStyle}>加载拓扑数据...</p>
-								<p style={stateDetailStyle}>正在通过 getAggregateTopology 同步当前路由关系。</p>
-							</div>
-						</div>
-					) : error ? (
-						<div style={stateContainerStyle}>
-							<div style={errorPanelStyle}>
-								<h2 style={errorTitleStyle}>
-									{unauthorized ? "当前无权查看拓扑" : "拓扑暂时不可用"}
-								</h2>
-								<p style={errorTextStyle}>错误: {error.message}</p>
-								{envelope ? <EnvelopeErrorSummary envelope={envelope} /> : null}
-								<button type="button" style={retryButtonStyle} onClick={handleReset}>
-									重试
-								</button>
-							</div>
-						</div>
-					) : isEmptyTopology ? (
-						<div style={stateContainerStyle}>
-							<div style={emptyPanelStyle}>
-								<p style={stateTitleStyle}>当前没有可展示的拓扑关系</p>
-								<p style={stateDetailStyle}>聚合读取成功，但暂未返回实例、智能体、会话或工具节点。</p>
-							</div>
-						</div>
-					) : (
-						<ReactFlow
-							nodes={nodes}
-							edges={edges}
-							onNodesChange={onNodesChange}
-							onEdgesChange={onEdgesChange}
-							nodeTypes={nodeTypes}
-							nodesDraggable={false}
-							nodesConnectable={false}
-							elementsSelectable={false}
-							fitView
-							fitViewOptions={{ padding: 0.2 }}
-							minZoom={0.1}
-							maxZoom={2}
-							attributionPosition="bottom-left"
+			) : error ? (
+				<div style={stateContainerStyle}>
+					<div style={errorPanelStyle}>
+						<h2 style={errorTitleStyle}>
+							{unauthorized ? "当前无权查看拓扑" : "拓扑暂时不可用"}
+						</h2>
+						<p style={errorTextStyle}>错误: {error.message}</p>
+						{envelope ? <EnvelopeErrorSummary envelope={envelope} /> : null}
+						<button
+							type="button"
+							style={retryButtonStyle}
+							onClick={handleReset}
 						>
-							<Background color="#d7d2c8" gap={24} />
-							<Controls showInteractive={false} />
-						</ReactFlow>
-					)}
+							重试
+						</button>
+					</div>
 				</div>
-			</div>
+			) : isEmptyTopology ? (
+				<div style={stateContainerStyle}>
+					<div style={emptyPanelStyle}>
+						<p style={stateTitleStyle}>当前没有可展示的拓扑关系</p>
+						<p style={stateDetailStyle}>
+							聚合读取成功，但暂未返回实例、智能体、会话或工具节点。
+						</p>
+					</div>
+				</div>
+			) : (
+				<ReactFlow
+					nodes={nodes}
+					edges={edges}
+					onNodesChange={onNodesChange}
+					onEdgesChange={onEdgesChange}
+					nodeTypes={nodeTypes}
+					nodesDraggable={false}
+					nodesConnectable={false}
+					elementsSelectable={false}
+					fitView
+					fitViewOptions={{ padding: 0.2 }}
+					minZoom={0.1}
+					maxZoom={2}
+					attributionPosition="bottom-left"
+				>
+					<Background color="#d7d2c8" gap={24} />
+				</ReactFlow>
+			)}
 		</div>
 	);
 }
@@ -587,118 +550,44 @@ export function InstanceTopology(): JSX.Element {
 	);
 }
 
-function EnvelopeErrorSummary({ envelope }: { envelope: ErrorEnvelope }): JSX.Element {
+function EnvelopeErrorSummary({
+	envelope,
+}: {
+	envelope: ErrorEnvelope;
+}): JSX.Element {
 	return (
 		<div style={errorMetaListStyle}>
 			<p style={errorMetaStyle}>code · {envelope.code}</p>
 			<p style={errorMetaStyle}>request_id · {envelope.request_id}</p>
 			<p style={errorMetaStyle}>recoverable · {String(envelope.recoverable)}</p>
-			{envelope.next_step ? <p style={errorHintStyle}>{envelope.next_step}</p> : null}
-		</div>
-	);
-}
-
-function TopologyStatusNotice({
-	tone,
-	title,
-	detail,
-}: {
-	tone: "info" | "warning";
-	title: string;
-	detail: string;
-}): JSX.Element {
-	return (
-		<div style={getStatusNoticeStyle(tone)}>
-			<strong style={statusNoticeTitleStyle}>{title}</strong>
-			<p style={statusNoticeDetailStyle}>{detail}</p>
+			{envelope.next_step ? (
+				<p style={errorHintStyle}>{envelope.next_step}</p>
+			) : null}
 		</div>
 	);
 }
 
 const canvasContainerStyle: React.CSSProperties = {
+	width: "100%",
 	height: "100%",
+	minHeight: "100dvh",
 	display: "flex",
-	padding: "1rem",
-	background:
-		"radial-gradient(circle at top left, rgba(210, 179, 120, 0.18), transparent 32%), #f4f1ea",
+	flexDirection: "column",
+	position: "relative",
+	overflow: "hidden",
+	background: "#f4f1ea",
 	color: "#1f2933",
 	fontFamily:
 		'system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif',
 };
 
-const canvasStageShellStyle: React.CSSProperties = {
-	flex: 1,
-	minHeight: 0,
-	display: "flex",
-	flexDirection: "column",
-	gap: "0.875rem",
-	padding: "1rem",
-	borderRadius: "1.5rem",
-	border: "1px solid rgba(201, 152, 76, 0.24)",
-	background:
-		"linear-gradient(180deg, rgba(255, 255, 255, 0.9) 0%, rgba(249, 245, 236, 0.96) 100%)",
-	boxShadow: "0 18px 40px rgba(31, 41, 51, 0.08)",
-	overflow: "hidden",
-};
-
-const canvasHeaderStyle: React.CSSProperties = {
-	display: "flex",
-	justifyContent: "space-between",
-	alignItems: "flex-start",
-	gap: "1rem",
-	padding: "0.25rem 0.25rem 0 0.25rem",
-	flexShrink: 0,
-};
-
-const canvasTitleBlockStyle: React.CSSProperties = {
-	display: "flex",
-	flexDirection: "column",
-	gap: "0.35rem",
-	maxWidth: "42rem",
-};
-
-const canvasEyebrowStyle: React.CSSProperties = {
-	fontSize: "0.72rem",
-	fontWeight: 700,
-	letterSpacing: "0.16em",
-	color: "#9a6c29",
-	textTransform: "uppercase",
-};
-
-const canvasTitleStyle: React.CSSProperties = {
-	margin: 0,
-	fontSize: "1.7rem",
-	fontWeight: 700,
-	color: "#1f2933",
-};
-
-const canvasDescriptionStyle: React.CSSProperties = {
-	margin: 0,
-	fontSize: "0.95rem",
-	lineHeight: 1.6,
-	color: "#52606d",
-};
-
-const canvasControlsColumnStyle: React.CSSProperties = {
-	display: "flex",
-	flexDirection: "column",
-	alignItems: "flex-end",
-	gap: "0.6rem",
-};
-
-const canvasControlsStyle: React.CSSProperties = {
+const canvasControlsOverlayStyle: React.CSSProperties = {
+	position: "absolute",
+	top: "1rem",
+	right: "1rem",
 	display: "flex",
 	gap: "0.5rem",
-	flexWrap: "wrap",
-};
-
-const canvasControlHintStyle: React.CSSProperties = {
-	margin: 0,
-	fontSize: "0.75rem",
-	lineHeight: 1.5,
-	color: "#6b7280",
-	textAlign: "right",
-	maxWidth: "18rem",
+	zIndex: 10,
 };
 
 const controlButtonStyle: React.CSSProperties = {
@@ -715,117 +604,6 @@ const controlButtonStyle: React.CSSProperties = {
 	background: "rgba(255, 255, 255, 0.9)",
 	color: "#1f2933",
 	boxShadow: "0 6px 14px rgba(31, 41, 51, 0.06)",
-};
-
-const requestCluesPanelStyle: React.CSSProperties = {
-	display: "flex",
-	alignItems: "flex-start",
-	gap: "0.9rem",
-	padding: "0.9rem 1rem",
-	borderRadius: "1rem",
-	border: "1px solid rgba(201, 152, 76, 0.18)",
-	background: "rgba(255, 251, 245, 0.92)",
-	flexShrink: 0,
-};
-
-const requestCluesLabelStyle: React.CSSProperties = {
-	fontSize: "0.8rem",
-	fontWeight: 700,
-	letterSpacing: "0.08em",
-	textTransform: "uppercase",
-	color: "#9a6c29",
-	paddingTop: "0.25rem",
-	whiteSpace: "nowrap",
-};
-
-const requestCluesListStyle: React.CSSProperties = {
-	display: "flex",
-	flexWrap: "wrap",
-	gap: "0.5rem",
-};
-
-const requestClueBadgeStyle: React.CSSProperties = {
-	display: "inline-flex",
-	alignItems: "center",
-	padding: "0.4rem 0.65rem",
-	borderRadius: "999px",
-	background: "rgba(255, 255, 255, 0.9)",
-	border: "1px solid rgba(215, 210, 200, 0.9)",
-	fontSize: "0.75rem",
-	fontWeight: 600,
-	color: "#52606d",
-};
-
-const statusNoticeTitleStyle: React.CSSProperties = {
-	fontSize: "0.84rem",
-	fontWeight: 700,
-	color: "inherit",
-};
-
-const statusNoticeDetailStyle: React.CSSProperties = {
-	margin: 0,
-	fontSize: "0.8rem",
-	lineHeight: 1.55,
-	color: "inherit",
-};
-
-function getStatusNoticeStyle(tone: "info" | "warning"): React.CSSProperties {
-	if (tone === "warning") {
-		return {
-			display: "flex",
-			flexDirection: "column",
-			gap: "0.35rem",
-			padding: "0.85rem 1rem",
-			borderRadius: "1rem",
-			border: "1px solid rgba(245, 158, 11, 0.26)",
-			background: "rgba(255, 247, 237, 0.96)",
-			color: "#9a6c29",
-			flexShrink: 0,
-		};
-	}
-
-	return {
-		display: "flex",
-		flexDirection: "column",
-		gap: "0.35rem",
-		padding: "0.85rem 1rem",
-		borderRadius: "1rem",
-		border: "1px solid rgba(91, 141, 239, 0.24)",
-		background: "rgba(239, 245, 255, 0.96)",
-		color: "#355f9e",
-		flexShrink: 0,
-	};
-}
-
-const laneHeaderRowStyle: React.CSSProperties = {
-	display: "grid",
-	gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-	gap: "0.75rem",
-	flexShrink: 0,
-};
-
-const laneHeaderBadgeStyle: React.CSSProperties = {
-	display: "inline-flex",
-	alignItems: "center",
-	justifyContent: "center",
-	padding: "0.6rem 0.9rem",
-	borderRadius: "999px",
-	border: "1px solid rgba(201, 152, 76, 0.22)",
-	background: "rgba(255, 255, 255, 0.82)",
-	fontSize: "0.82rem",
-	fontWeight: 700,
-	letterSpacing: "0.06em",
-	color: "#6b4d1f",
-};
-
-const graphWrapperStyle: React.CSSProperties = {
-	flex: 1,
-	minHeight: 0,
-	borderRadius: "1.25rem",
-	overflow: "hidden",
-	border: "1px solid rgba(215, 210, 200, 0.92)",
-	background: "rgba(255, 255, 255, 0.72)",
-	boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.5)",
 };
 
 const stateContainerStyle: React.CSSProperties = {
@@ -919,7 +697,8 @@ const errorMetaStyle: React.CSSProperties = {
 	margin: 0,
 	fontSize: "0.75rem",
 	color: "#6b7280",
-	fontFamily: 'ui-monospace, SFMono-Regular, "SFMono-Regular", Consolas, monospace',
+	fontFamily:
+		'ui-monospace, SFMono-Regular, "SFMono-Regular", Consolas, monospace',
 };
 
 const errorHintStyle: React.CSSProperties = {
@@ -1006,22 +785,24 @@ const nodeActionLinkStyle: React.CSSProperties = {
 	textDecoration: "none",
 };
 
-function getNodeActionBadgeStyle(kind: TopologyNodeAction["kind"]): React.CSSProperties {
+function getNodeActionBadgeStyle(
+	kind: TopologyNodeAction["kind"],
+): React.CSSProperties {
 	const palette =
 		kind === "enter"
 			? {
-				background: "rgba(16, 185, 129, 0.14)",
-				color: "#0f766e",
-			  }
+					background: "rgba(16, 185, 129, 0.14)",
+					color: "#0f766e",
+				}
 			: kind === "fallback"
 				? {
-					background: "rgba(245, 158, 11, 0.16)",
-					color: "#9a6c29",
-				  }
+						background: "rgba(245, 158, 11, 0.16)",
+						color: "#9a6c29",
+					}
 				: {
-					background: "rgba(148, 163, 184, 0.16)",
-					color: "#64748b",
-				  };
+						background: "rgba(148, 163, 184, 0.16)",
+						color: "#64748b",
+					};
 
 	return {
 		display: "inline-flex",
