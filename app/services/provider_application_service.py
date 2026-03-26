@@ -243,6 +243,28 @@ class ProviderApplicationService:
             "message": payload.get("message"),
         }
 
+    def chat_history(
+        self,
+        *,
+        data_source: str | None,
+        execution_context: ProviderExecutionContext | None,
+        session_key: str,
+        limit: int,
+    ) -> dict[str, Any]:
+        result = self._adapter_for_openclaw(
+            data_source=data_source,
+            execution_context=execution_context,
+            unsupported_detail="chat.history is only available with the OpenClaw data source",
+        ).chat_history(
+            to_domain_request(
+                request_id=_provider_request_id(),
+                capability=DomainProviderCapability.SESSION_READ,
+            ),
+            session_key=session_key,
+            limit=limit,
+        )
+        return self._payload_or_raise(result)
+
     def _adapter_for_openclaw(
         self,
         *,

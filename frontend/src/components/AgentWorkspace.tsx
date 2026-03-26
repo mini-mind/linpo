@@ -6,9 +6,9 @@ import {
 	deleteSession,
 	getAgentDetail,
 	getDefaultObserverDataSource,
+	getSessionHistory,
 	listSessions,
 	pauseSession,
-	previewSessions,
 	resetSession,
 	sendChatMessage,
 } from "../api/client";
@@ -24,7 +24,6 @@ import {
 	type ErrorEnvelope,
 	type SessionListItem,
 	type SessionPreviewItem,
-	type SessionsPreviewResponse,
 	type TopologyNode,
 } from "../api/types";
 import { useIsMobile } from "../hooks/useIsMobile";
@@ -67,7 +66,7 @@ interface StartAgentDetailRealtimeOptions {
 const AGENT_DETAIL_REALTIME_DATA_SOURCE = getDefaultObserverDataSource();
 const SESSION_STALE_THRESHOLD_MS = 5 * 60 * 1000;
 const SESSION_READ_CHAIN_CLUE =
-	"getAgentDetail -> listSessions -> previewSessions (+ realtime after selection)";
+	"getAgentDetail -> listSessions -> chat.history (+ realtime after selection)";
 
 function withErrorMessage(error: unknown, fallback: string): string {
 	return error instanceof Error ? error.message : fallback;
@@ -92,7 +91,7 @@ function getErrorEnvelope(error: Error | null): ErrorEnvelope | null {
 }
 
 function describeReadStep(args: {
-	step: "getAgentDetail" | "listSessions" | "previewSessions";
+	step: "getAgentDetail" | "listSessions" | "chat.history";
 	error: Error | null;
 	loaded?: boolean;
 	count?: number;
@@ -130,12 +129,12 @@ function getFreshnessClue(
 	const ts = previewTs ?? sessionListTs;
 	if (ts === null) {
 		return {
-			label: "当前 endpoints 未返回 freshness；仅在 list/preview ts 可用时做推断",
+			label: "当前 endpoints 未返回 freshness；仅在 list/history ts 可用时做推断",
 			stale: false,
 		};
 	}
 
-	const source = previewTs !== null ? "previewSessions.ts" : "listSessions.ts";
+	const source = previewTs !== null ? "chatHistory.ts" : "listSessions.ts";
 	const stale = Date.now() - ts > SESSION_STALE_THRESHOLD_MS;
 	return {
 		label: `${stale ? "inferred stale" : "inferred fresh"} from ${source}`,
@@ -267,12 +266,11 @@ function buildChannelSummaries(sessions: SessionListItem[]): ChannelSummary[] {
 	);
 }
 
-export function getPreviewItemsForSession(
-	response: SessionsPreviewResponse,
-	sessionKey: string,
-): SessionPreviewItem[] {
-	const preview = response.previews.find((item) => item.key === sessionKey);
-	return preview?.status === "ok" ? preview.items : [];
+export function getHistoryItems(response: {
+	ts?: number;
+	items?: SessionPreviewItem[];
+}): SessionPreviewItem[] {
+	return Array.isArray(response.items) ? response.items : [];
 }
 
 export function mergeStreamingAssistantText(
@@ -593,11 +591,11 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 			setPreviewLoading(true);
 			setPreviewError(null);
 			try {
-				const response = await previewSessions([sessionKey], { instanceId });
+				const response = await getSessionHistory(sessionKey, { instanceId });
 				if (!cancelled) {
 					setPreviewTs(response.ts);
 					setPreviewError(null);
-					const nextItems = getPreviewItemsForSession(response, sessionKey);
+					const nextItems = getHistoryItems(response);
 					setPreviewItems((previousItems) =>
 						arePreviewItemsEqual(previousItems, nextItems)
 							? previousItems
@@ -609,7 +607,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 				}
 			} catch (error) {
 				if (!cancelled) {
-					setPreviewError(ensureError(error, "读取会话预览失败"));
+					setPreviewError(ensureError(error, "读取会话历史失败"));
 					setPreviewTs(null);
 					setPreviewItems((previousItems) =>
 						previousItems.length === 0 ? previousItems : [],
@@ -637,10 +635,10 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 			setPreviewLoading(true);
 			setPreviewError(null);
 			try {
-				const response = await previewSessions([sessionKey], { instanceId });
+				const response = await getSessionHistory(sessionKey, { instanceId });
 				setPreviewTs(response.ts);
 				setPreviewError(null);
-				const nextItems = getPreviewItemsForSession(response, sessionKey);
+				const nextItems = getHistoryItems(response);
 				setPreviewItems((previousItems) =>
 					arePreviewItemsEqual(previousItems, nextItems)
 						? previousItems
@@ -650,7 +648,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 					scrollToBottom();
 				}
 			} catch (error) {
-				setPreviewError(ensureError(error, "读取会话预览失败"));
+				setPreviewError(ensureError(error, "读取会话历史失败"));
 				setPreviewTs(null);
 				setPreviewItems((previousItems) =>
 					previousItems.length === 0 ? previousItems : [],
@@ -856,7 +854,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 			emptyLabel: "empty",
 		}),
 		describeReadStep({
-			step: "previewSessions",
+			step: "chat.history",
 			error: previewError,
 			loaded: previewTs !== null,
 			count:
@@ -944,10 +942,10 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 			<div style={getWorkspaceLayoutStyle(isMobile)}>
 				<div data-testid="session-left-sidebar" style={getLeftSidebarStyle(isMobile)}>
 					<div data-testid="session-channel-area" style={channelAreaStyle}>
-						<div style={sidebarSectionHeaderStyle}>
+						<div style={getSidebarSectionHeaderStyle(isMobile)}>
 							<span style={sectionLabelStyle}>渠道</span>
 						</div>
-						<div style={sidebarSectionBodyStyle}>
+						<div style={getSidebarSectionBodyStyle(isMobile)}>
 							{sessionsError ? (
 								<span style={sidebarErrorTextStyle}>
 									渠道汇总失败：{sessionsError.message}
@@ -955,7 +953,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 							) : channelSummaries.length === 0 ? (
 								<span style={placeholderTextStyle}>暂无渠道</span>
 							) : (
-								<div style={channelListStyle}>
+								<div style={getChannelListStyle(isMobile)}>
 									{channelSummaries.map((channel) => (
 										<span
 											key={channel.key}
@@ -970,10 +968,10 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 					</div>
 
 					<div data-testid="session-list-area" style={sessionListAreaStyle}>
-						<div style={sidebarSectionHeaderStyle}>
+						<div style={getSidebarSectionHeaderStyle(isMobile)}>
 							<span style={sectionLabelStyle}>会话</span>
 						</div>
-						<div style={sidebarSectionBodyStyle}>
+						<div style={getSidebarSectionBodyStyle(isMobile)}>
 							{sessionsError ? (
 								<span style={sidebarErrorTextStyle}>
 									会话列表读取失败：{sessionsError.message}
@@ -981,7 +979,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 							) : sessions.length === 0 ? (
 								<span style={placeholderTextStyle}>暂无会话</span>
 							) : (
-								<div style={sessionListStyle}>
+								<div style={getSessionListStyle(isMobile)}>
 									{sessions.map((session) => (
 										<button
 											key={session.key}
@@ -1002,10 +1000,10 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 					</div>
 
 					<div data-testid="session-actions-area" style={sessionActionsAreaStyle}>
-						<div style={sidebarSectionHeaderStyle}>
+						<div style={getSidebarSectionHeaderStyle(isMobile)}>
 							<span style={sectionLabelStyle}>操作</span>
 						</div>
-						<div style={sidebarSectionBodyStyle}>
+						<div style={getSidebarSectionBodyStyle(isMobile)}>
 							<SessionActions
 								sessionKey={selectedSessionKey}
 								onPause={handlePauseSession}
@@ -1025,7 +1023,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 							<p style={statusCardDetailStyle}>
 								{sessionsError
 									? `会话列表读取失败：${sessionsError.message}`
-									: `previewSessions 失败：${previewError?.message ?? "unknown error"}`}
+									: `chat.history 失败：${previewError?.message ?? "unknown error"}`}
 							</p>
 						</div>
 					) : null}
@@ -1044,7 +1042,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 						<div style={infoNoticeStyle}>
 							<strong style={statusCardTitleStyle}>当前展示的是推断滞后数据</strong>
 							<p style={statusCardDetailStyle}>
-								当前 session 没有 aggregate freshness；此处仅根据最近一次 list/preview ts 推断。
+								当前 session 没有 aggregate freshness；此处仅根据最近一次 list/history ts 推断。
 							</p>
 						</div>
 					) : null}
@@ -1068,9 +1066,9 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 								</div>
 							) : previewError ? (
 								<div style={statusCardStyle}>
-									<strong style={statusCardTitleStyle}>当前会话预览不可用</strong>
+									<strong style={statusCardTitleStyle}>当前会话历史不可用</strong>
 									<p style={statusCardDetailStyle}>
-										previewSessions 失败：{previewError.message}
+										chat.history 失败：{previewError.message}
 									</p>
 								</div>
 							) : displayedPreviewItems.length === 0 ? (
@@ -1082,7 +1080,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 									{displayedPreviewItems.map((item, index) => (
 										<div
 											key={`msg-${index}-${item.role}`}
-											style={getPreviewItemStyle(item.role)}
+											style={getPreviewItemStyle(item.role, isMobile)}
 										>
 										<span style={previewRoleStyle}>
 											{getRoleLabel(item.role)}
@@ -1108,7 +1106,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps): JSX.Element {
 								</span>
 							</div>
 						) : (
-							<div style={composerWrapStyle}>
+							<div style={getComposerWrapStyle(isMobile)}>
 								<label style={visuallyHiddenLabelStyle} htmlFor="session-message-input">
 									消息输入
 								</label>
@@ -1205,6 +1203,7 @@ function getWorkspaceLayoutStyle(isMobile: boolean): React.CSSProperties {
 		flexDirection: isMobile ? "column" : "row",
 		minHeight: 0,
 		overflow: "hidden",
+		background: isMobile ? "#f8fafc" : "#fff",
 	};
 }
 
@@ -1218,10 +1217,11 @@ function getLeftSidebarStyle(isMobile: boolean): React.CSSProperties {
 		flexShrink: 0,
 		display: "flex",
 		flexDirection: "column",
-		background: "#f4f6f8",
+		background: isMobile ? "#ffffff" : "#f4f6f8",
 		borderRight: isMobile ? "none" : "1px solid #e5e7eb",
 		borderBottom: isMobile ? "1px solid #e5e7eb" : "none",
-		overflow: "hidden",
+		maxHeight: isMobile ? "44dvh" : "none",
+		overflow: isMobile ? "auto" : "hidden",
 	};
 }
 
@@ -1260,13 +1260,17 @@ const requestClueTextStyle: React.CSSProperties = {
 	fontFamily: 'ui-monospace, SFMono-Regular, "SFMono-Regular", Consolas, monospace',
 };
 
-const sidebarSectionHeaderStyle: React.CSSProperties = {
-	padding: "0.75rem 0.75rem 0.375rem",
-};
+function getSidebarSectionHeaderStyle(isMobile: boolean): React.CSSProperties {
+	return {
+		padding: isMobile ? "0.625rem 0.625rem 0.25rem" : "0.75rem 0.75rem 0.375rem",
+	};
+}
 
-const sidebarSectionBodyStyle: React.CSSProperties = {
-	padding: "0 0.75rem 0.75rem",
-};
+function getSidebarSectionBodyStyle(isMobile: boolean): React.CSSProperties {
+	return {
+		padding: isMobile ? "0 0.625rem 0.625rem" : "0 0.75rem 0.75rem",
+	};
+}
 
 const placeholderTextStyle: React.CSSProperties = {
 	fontSize: "0.75rem",
@@ -1323,17 +1327,25 @@ const statusCardDetailStyle: React.CSSProperties = {
 	lineHeight: 1.5,
 };
 
-const sessionListStyle: React.CSSProperties = {
-	display: "flex",
-	flexDirection: "column",
-	gap: "0.25rem",
-};
+function getSessionListStyle(isMobile: boolean): React.CSSProperties {
+	return {
+		display: "flex",
+		flexDirection: isMobile ? "row" : "column",
+		gap: "0.25rem",
+		overflowX: isMobile ? "auto" : "visible",
+		overflowY: "visible",
+		paddingBottom: isMobile ? "0.125rem" : 0,
+	};
+}
 
-const channelListStyle: React.CSSProperties = {
-	display: "flex",
-	flexWrap: "wrap",
-	gap: "0.375rem",
-};
+function getChannelListStyle(isMobile: boolean): React.CSSProperties {
+	return {
+		display: "flex",
+		flexWrap: isMobile ? "nowrap" : "wrap",
+		gap: "0.375rem",
+		overflowX: isMobile ? "auto" : "visible",
+	};
+}
 
 function getChannelBadgeStyle(isSelected: boolean): React.CSSProperties {
 	return {
@@ -1366,14 +1378,14 @@ function getSessionItemStyle(isSelected: boolean): React.CSSProperties {
 	};
 }
 
-function getMainContentStyle(_isMobile: boolean): React.CSSProperties {
+function getMainContentStyle(isMobile: boolean): React.CSSProperties {
 	return {
 		flex: 1,
 		display: "flex",
 		flexDirection: "column",
 		minHeight: 0,
-		padding: 0,
-		gap: 0,
+		padding: isMobile ? "0.625rem 0.625rem 0" : 0,
+		gap: isMobile ? "0.5rem" : 0,
 		overflow: "hidden",
 	};
 }
@@ -1400,13 +1412,13 @@ function getMessagesContainerStyle(isMobile: boolean): React.CSSProperties {
 		display: "flex",
 		flexDirection: "column",
 		minHeight: 0,
-		background: "#fff",
+		background: isMobile ? "#f8fafc" : "#fff",
 		border: "none",
 		borderRadius: 0,
 		overflow: "hidden",
-		padding: 0,
-		paddingLeft: 0,
-		paddingRight: 0,
+		padding: isMobile ? "0.5rem" : 0,
+		paddingLeft: isMobile ? "0.5rem" : 0,
+		paddingRight: isMobile ? "0.5rem" : 0,
 	};
 }
 
@@ -1437,12 +1449,16 @@ function getInputShellStyle(isMobile: boolean): React.CSSProperties {
 		padding: 0,
 		paddingLeft: 0,
 		paddingRight: 0,
+		paddingBottom: isMobile ? "calc(0.5rem + env(safe-area-inset-bottom))" : 0,
 		background: "#fff",
 		border: "none",
-		borderTop: "none",
+		borderTop: isMobile ? "1px solid #e5e7eb" : "none",
 		borderRadius: 0,
-		boxShadow: "none",
+		boxShadow: isMobile ? "0 -8px 20px rgba(15, 23, 42, 0.06)" : "none",
 		textAlign: "left",
+		position: isMobile ? "sticky" : "static",
+		bottom: isMobile ? 0 : "auto",
+		zIndex: isMobile ? 2 : "auto",
 	};
 }
 
@@ -1458,12 +1474,14 @@ const visuallyHiddenLabelStyle: React.CSSProperties = {
 	border: 0,
 };
 
-const composerWrapStyle: React.CSSProperties = {
-	display: "flex",
-	alignItems: "flex-end",
-	gap: "0.5rem",
-	padding: "0.625rem 0.75rem",
-};
+function getComposerWrapStyle(isMobile: boolean): React.CSSProperties {
+	return {
+		display: "flex",
+		alignItems: "flex-end",
+		gap: "0.5rem",
+		padding: isMobile ? "0.625rem 0.25rem 0.25rem" : "0.625rem 0.75rem 0.25rem",
+	};
+}
 
 const composerInputStyle: React.CSSProperties = {
 	flex: 1,
@@ -1509,14 +1527,14 @@ const disclosureTextStyle: React.CSSProperties = {
 	color: "#6b7280",
 };
 
-function getPreviewItemStyle(role: string): React.CSSProperties {
+function getPreviewItemStyle(role: string, isMobile: boolean): React.CSSProperties {
 	const isUser = role === "user";
 	return {
 		padding: "0.625rem 0.875rem",
 		borderRadius: "18px",
 		background: isUser ? "#eff6ff" : "#fff",
 		marginBottom: "0.5rem",
-		maxWidth: "78%",
+		maxWidth: isMobile ? "92%" : "78%",
 		alignSelf: isUser ? "flex-end" : "flex-start",
 		border: "1px solid #e5e7eb",
 	};

@@ -292,9 +292,11 @@ export default function SessionPage(): JSX.Element {
 // === Mobile Styles ===
 const mobileContainerStyle: React.CSSProperties = {
 	height: "100%",
+	minHeight: 0,
 	display: "flex",
 	flexDirection: "column",
-	background: "#fff",
+	background: "#f8fafc",
+	overflow: "hidden",
 };
 
 const mobileHeaderStyle: React.CSSProperties = {
@@ -302,22 +304,30 @@ const mobileHeaderStyle: React.CSSProperties = {
 	alignItems: "center",
 	justifyContent: "space-between",
 	gap: "0.75rem",
-	padding: "0.625rem 0.875rem",
-	background: "#fff",
+	padding: "0.5rem 0.875rem",
+	background: "rgba(255, 255, 255, 0.94)",
 	borderBottom: "1px solid #e5e7eb",
 	flexShrink: 0,
+	position: "sticky",
+	top: 0,
+	zIndex: 2,
+	backdropFilter: "blur(8px)",
 };
 
 const mobileTitleStyle: React.CSSProperties = {
-	fontSize: "1.125rem",
-	fontWeight: 600,
-	color: "#111827",
+	fontSize: "1rem",
+	fontWeight: 700,
+	color: "#0f172a",
 	margin: 0,
 };
 
 const mobileStatusStyle: React.CSSProperties = {
 	fontSize: "0.75rem",
-	color: "#6b7280",
+	color: "#475569",
+	background: "#eef2ff",
+	border: "1px solid #dbeafe",
+	padding: "0.15rem 0.45rem",
+	borderRadius: "999px",
 };
 
 // === Desktop Styles ===

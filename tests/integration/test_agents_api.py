@@ -686,6 +686,51 @@ def test_preview_sessions_returns_message_previews(monkeypatch: Any) -> None:
     assert payload["previews"][0]["items"][0]["role"] == "user"
 
 
+def test_chat_history_requires_openclaw_data_source() -> None:
+    status_code, _, body = request("GET", "/chat/sessions/agent:main:main/history")
+    assert status_code == 503
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    _assert_error_envelope(
+        payload,
+        code="unsupported_data_source",
+        message="chat.history is only available with the OpenClaw data source",
+        recoverable=True,
+        next_step="切换到 openclaw data_source 后重试",
+    )
+
+
+def test_chat_history_returns_message_items(monkeypatch: Any) -> None:
+    from app.main import app as fastapi_app
+
+    class FakeProviderApplicationService:
+        def chat_history(self, **kwargs: Any) -> dict[str, Any]:
+            assert kwargs["session_key"] == "agent:main:main"
+            assert kwargs["limit"] == 200
+            return {
+                "messages": [
+                    {"role": "user", "text": "Write a Python script"},
+                    {"role": "assistant", "content": [{"type": "text", "text": "Here's a script"}]},
+                ]
+            }
+
+    monkeypatch.setattr(
+        fastapi_app.state,
+        "provider_application_service",
+        FakeProviderApplicationService(),
+    )
+
+    status_code, _, body = request(
+        "GET", "/chat/sessions/agent:main:main/history?data_source=openclaw"
+    )
+    assert status_code == 200
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert isinstance(payload["ts"], int) and payload["ts"] > 0
+    assert payload["items"] == [
+        {"role": "user", "text": "Write a Python script"},
+        {"role": "assistant", "text": "Here's a script"},
+    ]
+
+
 def test_openclaw_client_sessions_preview_uses_default_max_chars_2000(monkeypatch: Any) -> None:
     from app.services.openclaw_client import OpenClawClient
 
@@ -713,6 +758,32 @@ def test_openclaw_client_sessions_preview_uses_default_max_chars_2000(monkeypatc
     assert captured["keys"] == ["agent:main:main"]
     assert captured["limit"] == 20
     assert captured["max_chars"] == 2000
+
+
+def test_openclaw_client_chat_history_uses_default_limit_200(monkeypatch: Any) -> None:
+    from app.services.openclaw_client import OpenClawClient
+
+    client = OpenClawClient.__new__(OpenClawClient)
+    captured: dict[str, Any] = {}
+
+    def fake_build_chat_history_request(
+        *,
+        session_key: str,
+        limit: int,
+    ) -> dict[str, Any]:
+        captured["session_key"] = session_key
+        captured["limit"] = limit
+        return {"type": "req", "id": "test", "method": "chat.history", "params": {}}
+
+    monkeypatch.setattr(client, "_build_chat_history_request", fake_build_chat_history_request)
+    monkeypatch.setattr(client, "_send_control_request", lambda request: {"ok": True, "payload": {}})
+    monkeypatch.setattr(client, "_run_sync", lambda result: result)
+
+    result = client.chat_history(session_key="agent:main:main")
+
+    assert result == {"ok": True, "payload": {}}
+    assert captured["session_key"] == "agent:main:main"
+    assert captured["limit"] == 200
 
 
 def test_list_models_requires_openclaw_data_source() -> None:

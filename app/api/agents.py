@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from typing import cast
 from uuid import UUID, uuid4
 
@@ -18,6 +19,7 @@ from app.api.schemas import (
     ModelItem,
     ModelsListResponse,
     NodeDetailResponse,
+    SessionHistoryResponse,
     SessionListItem,
     SessionPatchRequest,
     SessionPatchResponse,
@@ -166,6 +168,27 @@ def _normalize_optional_session_key(session_key: str | None) -> str | None:
     if normalized == "":
         return None
     return normalized
+
+
+def _extract_history_item_text(item: dict[str, object]) -> str:
+    text = item.get("text")
+    if isinstance(text, str):
+        return text
+
+    content = item.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        text_parts: list[str] = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            block_text = block.get("text")
+            if isinstance(block_text, str):
+                text_parts.append(block_text)
+        return "\n".join(text_parts)
+
+    return ""
 
 
 # === Observer API ===
@@ -468,6 +491,37 @@ def preview_sessions(
             ts=payload.get("ts", 0),
             previews=previews,
         )
+    except HTTPException as exc:
+        return _http_exception_response(exc)
+
+
+@router.get("/chat/sessions/{key}/history", response_model=SessionHistoryResponse)
+def chat_history(
+    key: str,
+    limit: int = Query(default=200, ge=1, le=1000),
+    data_source: str | None = Query(default=None),
+    request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
+) -> SessionHistoryResponse | JSONResponse:
+    try:
+        payload = provider_application_service.chat_history(
+            data_source=data_source,
+            execution_context=request_context,
+            session_key=key,
+            limit=limit,
+        )
+        messages_raw = payload.get("messages", [])
+        items = [
+            SessionPreviewItem(
+                role=item.get("role", "other") if isinstance(item.get("role"), str) else "other",
+                text=_extract_history_item_text(item),
+            )
+            for item in messages_raw
+            if isinstance(item, dict)
+        ]
+        ts_raw = payload.get("ts")
+        ts = ts_raw if isinstance(ts_raw, int) else int(datetime.now(tz=UTC).timestamp() * 1000)
+        return SessionHistoryResponse(ts=ts, items=items)
     except HTTPException as exc:
         return _http_exception_response(exc)
 

@@ -96,6 +96,13 @@ class OpenClawClientProtocol(Protocol):
         session_key: str | None,
     ) -> dict[str, Any]: ...
 
+    def chat_history(
+        self,
+        *,
+        session_key: str,
+        limit: int,
+    ) -> dict[str, Any]: ...
+
 
 @dataclass(frozen=True)
 class OpenClawAdapter:
@@ -261,6 +268,22 @@ class OpenClawAdapter:
                 session_key=session_key,
             ),
             default_error_message="chat.abort failed",
+        )
+
+    def chat_history(
+        self,
+        request: DomainProviderRequest,
+        *,
+        session_key: str,
+        limit: int,
+    ) -> ProviderPayloadResult:
+        return self._execute_payload_call(
+            request,
+            lambda: self._client.chat_history(
+                session_key=session_key,
+                limit=limit,
+            ),
+            default_error_message="chat.history failed",
         )
 
     @property

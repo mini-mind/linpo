@@ -330,7 +330,7 @@ function getBarHeight(
 function getContainerStyle(isMobile: boolean): React.CSSProperties {
 	return {
 		height: "100%",
-		padding: isMobile ? "1rem" : "1.5rem",
+		padding: isMobile ? "0.75rem" : "1.5rem",
 		background: "#f4f1ea",
 		color: "#1f2933",
 		fontFamily:
@@ -347,7 +347,7 @@ function getMainLayoutStyle(isMobile: boolean): React.CSSProperties {
 	return {
 		display: "flex",
 		flexDirection: isMobile ? "column" : "row",
-		gap: "1rem",
+		gap: isMobile ? "0.875rem" : "1rem",
 		minHeight: 0,
 		flex: 1,
 	};
@@ -357,7 +357,7 @@ function getTokenGroupGridStyle(isMobile: boolean): React.CSSProperties {
 	return {
 		display: "grid",
 		gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fit, minmax(280px, 1fr))",
-		gap: "1rem",
+		gap: isMobile ? "0.75rem" : "1rem",
 	};
 }
 
@@ -372,6 +372,8 @@ function getEventsRailStyle(isMobile: boolean): React.CSSProperties {
 		display: "flex",
 		flexDirection: "column",
 		gap: "0.75rem",
+		maxHeight: isMobile ? "36vh" : undefined,
+		overflow: isMobile ? "auto" : undefined,
 	};
 }
 

@@ -1,7 +1,7 @@
 # OpenClaw WebSocket API 参考（v0.6 口径）
 
 > 用途：保留 OpenClaw 全量接口清单（含未接入项），并明确 Linpo v0.6 在后端适配层的真实接入状态。  
-> 口径日期：2026-03-25。  
+> 口径日期：2026-03-26。  
 > 判定依据：`app/adapters/openclaw_adapter.py`、`app/services/openclaw_client.py`、`app/services/provider_application_service.py`、`app/api/agents.py`、`app/services/observer_data.py`。
 
 本文档整理 OpenClaw Gateway 的 WebSocket RPC 与事件，并按 v0.6 实现状态标注，避免把“历史规划状态”误当作现状。
@@ -24,6 +24,7 @@
 - `sessions.delete`（并已对外：`DELETE /chat/sessions/{key}`）
 - `chat.send`（并已对外：`POST /chat/agents/{agent_id}/send`）
 - `chat.abort`（并已对外：`POST /chat/agents/{agent_id}/pause`，对外动作名为 pause）
+- `chat.history`（并已对外：`GET /chat/sessions/{key}/history`）
 
 ## 1. Chat 相关
 
@@ -31,7 +32,7 @@
 |---|---|---|---|
 | `chat.send` | 发送消息到 agent | ✅ 已接入（Adapter+HTTP） | 适配层已封装；HTTP：`POST /chat/agents/{agent_id}/send` |
 | `chat.abort` | 中断/停止 agent 运行 | ✅ 已接入（Adapter+HTTP） | 适配层以 `chat_pause` 暴露并映射到 RPC `chat.abort`；HTTP：`POST /chat/agents/{agent_id}/pause` |
-| `chat.history` | 获取会话历史消息 | ❌ 未接入 | 无对应实现 |
+| `chat.history` | 获取会话历史消息 | ✅ 已接入（Adapter+HTTP） | 适配层已封装；HTTP：`GET /chat/sessions/{key}/history` |
 | `chat.inject` | 注入消息到会话（不触发 agent） | ❌ 未接入 | 无对应实现 |
 
 兼容性说明：v0.6 未暴露 legacy 路由 `/chat/send`、`/chat/abort`，统一使用 `/chat/agents/{agent_id}/send|pause`。

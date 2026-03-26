@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   deleteSession,
   getAggregateOverview,
+  getSessionHistory,
   listAgents,
   pauseSession,
   patchSession,
@@ -71,6 +72,22 @@ describe('business API client instance context', () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       'http://localhost:8000/chat/sessions/preview?keys=session-a%2Csession-b&maxChars=2000&data_source=openclaw',
+      expect.objectContaining({ credentials: 'include' }),
+    );
+  });
+
+  it('calls session history endpoint for selected session', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: async () => ({ ts: 123, items: [] }),
+    });
+
+    await getSessionHistory('agent:main:main');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8000/chat/sessions/agent%3Amain%3Amain/history?limit=200&data_source=openclaw',
       expect.objectContaining({ credentials: 'include' }),
     );
   });

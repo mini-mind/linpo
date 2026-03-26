@@ -306,6 +306,11 @@ export interface SessionsPreviewResponse {
   previews: SessionPreview[];
 }
 
+export interface SessionHistoryResponse {
+  ts: number;
+  items: SessionPreviewItem[];
+}
+
 export type EventType =
   | 'agent_created'
   | 'subagent_created'

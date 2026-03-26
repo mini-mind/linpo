@@ -205,6 +205,24 @@ def test_list_sessions_rejects_non_openclaw_data_source() -> None:
     assert exc_info.value.detail == "sessions.list is only available with the OpenClaw data source"
 
 
+def test_chat_history_rejects_non_openclaw_data_source() -> None:
+    from app.services.provider_application_service import ProviderApplicationService, ProviderExecutionContext
+
+    service = ProviderApplicationService()
+    context = ProviderExecutionContext(adapter=cast(ProviderAdapter, object()), cache_key=("cache",))
+
+    with pytest.raises(HTTPException) as exc_info:
+        service.chat_history(
+            data_source="stub",
+            execution_context=context,
+            session_key="agent:main:main",
+            limit=200,
+        )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "chat.history is only available with the OpenClaw data source"
+
+
 def test_list_models_uses_registry_when_execution_context_is_absent() -> None:
     from app.services.provider_application_service import ProviderApplicationService
 
@@ -278,6 +296,48 @@ def test_send_chat_message_returns_normalized_payload() -> None:
         "agent_id": "main",
         "status": "accepted",
         "message": None,
+    }
+
+
+def test_chat_history_returns_payload() -> None:
+    from app.services.provider_application_service import ProviderApplicationService, ProviderExecutionContext
+
+    class FakeAdapter:
+        def chat_history(self, request: Any, **kwargs: Any) -> ProviderPayloadResult:
+            assert kwargs["session_key"] == "agent:main:main"
+            assert kwargs["limit"] == 200
+            diagnostic = to_domain_diagnostic(
+                instance_id="instance-alpha",
+                instance_name="Alpha",
+                status="ok",
+                freshness_status="fresh",
+                checked_at=None,
+            )
+            return ProviderPayloadResult(
+                response=to_domain_response(request=request, diagnostics=[diagnostic]),
+                payload={
+                    "sessionKey": "agent:main:main",
+                    "messages": [
+                        {"role": "user", "text": "hello"},
+                    ],
+                },
+            )
+
+    service = ProviderApplicationService()
+    context = ProviderExecutionContext(adapter=cast(ProviderAdapter, FakeAdapter()), cache_key=("cache",))
+
+    payload = service.chat_history(
+        data_source="openclaw",
+        execution_context=context,
+        session_key="agent:main:main",
+        limit=200,
+    )
+
+    assert payload == {
+        "sessionKey": "agent:main:main",
+        "messages": [
+            {"role": "user", "text": "hello"},
+        ],
     }
 
 

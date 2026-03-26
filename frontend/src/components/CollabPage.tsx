@@ -193,7 +193,7 @@ function KanbanBoard({
 	return (
 		<div data-testid="kanban-board" style={getBoardStyle(isMobile)}>
 			{isEmpty ? (
-				<div style={emptyBoardAreaStyle}>
+				<div style={getEmptyBoardAreaStyle(isMobile)}>
 					<EmptyKanbanState />
 				</div>
 			) : (
@@ -402,7 +402,8 @@ function deriveTaskCard(
 
 function getContainerStyle(isMobile: boolean): React.CSSProperties {
 	return {
-		height: "100%",
+		height: isMobile ? "auto" : "100%",
+		minHeight: isMobile ? "calc(100dvh - 132px)" : "100%",
 		padding: isMobile ? "0.75rem" : "1.5rem",
 		background: "#f8f7f4",
 		color: "#1f2933",
@@ -450,17 +451,33 @@ const retryButtonStyle: React.CSSProperties = {
 	cursor: "pointer",
 };
 
-const emptyBoardAreaStyle: React.CSSProperties = {
-	gridColumn: "1 / -1",
-	display: "flex",
-	alignItems: "stretch",
-};
+function getEmptyBoardAreaStyle(isMobile: boolean): React.CSSProperties {
+	return {
+		gridColumn: "1 / -1",
+		display: "flex",
+		alignItems: "stretch",
+		minWidth: isMobile ? "84vw" : undefined,
+	};
+}
 
 function getBoardStyle(isMobile: boolean): React.CSSProperties {
+	if (isMobile) {
+		return {
+			display: "flex",
+			gap: "0.75rem",
+			flex: 1,
+			minHeight: "min(68dvh, 36rem)",
+			overflowX: "auto",
+			overflowY: "hidden",
+			scrollSnapType: "x mandatory",
+			paddingBottom: "0.25rem",
+		};
+	}
+
 	return {
 		display: "grid",
-		gridTemplateColumns: isMobile ? "1fr" : "repeat(4, 1fr)",
-		gap: isMobile ? "1rem" : "1.25rem",
+		gridTemplateColumns: "repeat(4, 1fr)",
+		gap: "1.25rem",
 		flex: 1,
 		minHeight: 0,
 	};
@@ -470,7 +487,10 @@ function getColumnStyle(isMobile: boolean): React.CSSProperties {
 	return {
 		display: "flex",
 		flexDirection: "column",
-		minHeight: isMobile ? "auto" : "400px",
+		minHeight: isMobile ? "min(68dvh, 36rem)" : "400px",
+		minWidth: isMobile ? "84vw" : undefined,
+		maxWidth: isMobile ? "28rem" : undefined,
+		scrollSnapAlign: isMobile ? "start" : undefined,
 		background: "#fff",
 		borderRadius: "0.75rem",
 		border: "1px solid #e5e7eb",

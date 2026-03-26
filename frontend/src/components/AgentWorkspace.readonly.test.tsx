@@ -12,7 +12,7 @@ const mockRealtimeClient = {
 
 const mockGetAgentDetail = vi.fn();
 const mockListSessions = vi.fn();
-const mockPreviewSessions = vi.fn();
+const mockGetSessionHistory = vi.fn();
 const mockSendChatMessage = vi.fn();
 const mockPauseSession = vi.fn();
 const mockResetSession = vi.fn();
@@ -25,7 +25,7 @@ vi.mock("../api/client", async (importOriginal) => {
 		getAgentDetail: (...args: unknown[]) => mockGetAgentDetail(...args),
 		getDefaultObserverDataSource: vi.fn().mockReturnValue("openclaw"),
 		listSessions: (...args: unknown[]) => mockListSessions(...args),
-		previewSessions: (...args: unknown[]) => mockPreviewSessions(...args),
+		getSessionHistory: (...args: unknown[]) => mockGetSessionHistory(...args),
 		sendChatMessage: (...args: unknown[]) => mockSendChatMessage(...args),
 		pauseSession: (...args: unknown[]) => mockPauseSession(...args),
 		resetSession: (...args: unknown[]) => mockResetSession(...args),
@@ -100,9 +100,9 @@ describe("AgentWorkspace session workspace", () => {
 			],
 			defaults: { model: "gpt-4" },
 		});
-		mockPreviewSessions.mockResolvedValue({
+		mockGetSessionHistory.mockResolvedValue({
 			ts: Date.parse("2026-03-24T05:31:00Z"),
-			previews: [{ key: "session-1", status: "ok", items: [] }],
+			items: [],
 		});
 		mockSendChatMessage.mockResolvedValue({
 			request_id: "req-send-1",
@@ -221,15 +221,9 @@ describe("AgentWorkspace session workspace", () => {
 	});
 
 	it("targets a doubao-like layout with full-width shell but narrowed center conversation column", async () => {
-		mockPreviewSessions.mockResolvedValue({
+		mockGetSessionHistory.mockResolvedValue({
 			ts: Date.parse("2026-03-24T05:31:00Z"),
-			previews: [
-				{
-					key: "session-1",
-					status: "ok",
-					items: [{ role: "user", text: "doubao 样式约束" }],
-				},
-			],
+			items: [{ role: "user", text: "doubao 样式约束" }],
 		});
 
 		render(<AgentWorkspace />);
@@ -323,7 +317,7 @@ describe("AgentWorkspace session workspace", () => {
 
 	it("surfaces downstream preview failure with the selected session still visible", async () => {
 		const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
-		mockPreviewSessions.mockRejectedValueOnce(new Error("preview unavailable"));
+		mockGetSessionHistory.mockRejectedValueOnce(new Error("history unavailable"));
 
 		try {
 			render(<AgentWorkspace />);
@@ -335,12 +329,12 @@ describe("AgentWorkspace session workspace", () => {
 			expect(screen.getByRole("button", { name: "First Session" })).toBeInTheDocument();
 			expect(
 				within(screen.getByTestId("session-conversation-area")).getByText(
-					"当前会话预览不可用",
+					"当前会话历史不可用",
 				),
 			).toBeInTheDocument();
 			expect(
 				within(screen.getByTestId("session-conversation-area")).getByText(
-					"previewSessions 失败：preview unavailable",
+					"chat.history 失败：history unavailable",
 				),
 			).toBeInTheDocument();
 
@@ -353,7 +347,7 @@ describe("AgentWorkspace session workspace", () => {
 					typeof value === "object" && value !== null,
 				);
 			expect(
-				payloads.some((payload) => payload.diagnostics?.includes("previewSessions failed")),
+				payloads.some((payload) => payload.diagnostics?.includes("chat.history failed")),
 			).toBe(true);
 		} finally {
 			infoSpy.mockRestore();
@@ -443,9 +437,9 @@ describe("AgentWorkspace session workspace", () => {
 			],
 			defaults: { model: "gpt-4" },
 		});
-		mockPreviewSessions.mockResolvedValueOnce({
+		mockGetSessionHistory.mockResolvedValueOnce({
 			ts: Date.parse("2026-03-24T05:31:00Z"),
-			previews: [{ key: "session-1", status: "ok", items: [] }],
+			items: [],
 		});
 
 		try {
@@ -456,7 +450,7 @@ describe("AgentWorkspace session workspace", () => {
 			});
 
 			expect(
-				screen.getByText("当前 session 没有 aggregate freshness；此处仅根据最近一次 list/preview ts 推断。"),
+				screen.getByText("当前 session 没有 aggregate freshness；此处仅根据最近一次 list/history ts 推断。"),
 			).toBeInTheDocument();
 
 			await waitFor(() => {
@@ -468,7 +462,7 @@ describe("AgentWorkspace session workspace", () => {
 					typeof value === "object" && value !== null,
 				);
 			expect(
-				payloads.some((payload) => payload.freshness === "inferred stale from previewSessions.ts"),
+				payloads.some((payload) => payload.freshness === "inferred stale from chatHistory.ts"),
 			).toBe(true);
 		} finally {
 			dateNowSpy.mockRestore();

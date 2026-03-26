@@ -102,3 +102,11 @@ class ProviderAdapter(Protocol):
         agent_id: str,
         session_key: str | None,
     ) -> ProviderPayloadResult: ...
+
+    def chat_history(
+        self,
+        request: DomainProviderRequest,
+        *,
+        session_key: str,
+        limit: int,
+    ) -> ProviderPayloadResult: ...

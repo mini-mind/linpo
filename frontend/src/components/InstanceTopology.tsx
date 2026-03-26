@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, getAggregateTopology } from "../api/client";
 import type { AggregateTopologyResponse, ErrorEnvelope } from "../api/types";
+import { useIsMobile } from "../hooks/useIsMobile";
 import { buildSessionEntryPath } from "./SessionPage";
 
 type TopologyLane = "instance" | "agent" | "session" | "tool";
@@ -196,13 +197,13 @@ function NodeActionAffordance({
 	action: TopologyNodeAction;
 }): JSX.Element {
 	return (
-		<div style={nodeActionContainerStyle}>
+		<div style={nodeActionContainerStyle} className="nodrag nopan">
 			<span style={getNodeActionBadgeStyle(action.kind)}>
 				{action.statusLabel}
 			</span>
 			<div style={nodeActionDetailStyle}>{action.detail}</div>
 			{action.href && action.actionLabel ? (
-				<Link to={action.href} style={nodeActionLinkStyle}>
+				<Link to={action.href} style={nodeActionLinkStyle} className="nodrag nopan">
 					{action.actionLabel}
 				</Link>
 			) : null}
@@ -303,6 +304,7 @@ const nodeTypes: NodeTypes = {
 };
 
 function TopologyCanvas(): JSX.Element {
+	const isMobile = useIsMobile();
 	const [topology, setTopology] = useState<AggregateTopologyResponse | null>(
 		null,
 	);
@@ -465,7 +467,7 @@ function TopologyCanvas(): JSX.Element {
 	);
 
 	return (
-		<div style={canvasContainerStyle} data-testid="topology-graph-canvas">
+		<div style={getCanvasContainerStyle(isMobile)} data-testid="topology-graph-canvas">
 			<div style={canvasControlsOverlayStyle}>
 				<button
 					type="button"
@@ -567,19 +569,22 @@ function EnvelopeErrorSummary({
 	);
 }
 
-const canvasContainerStyle: React.CSSProperties = {
-	width: "100%",
-	height: "100%",
-	minHeight: "100dvh",
-	display: "flex",
-	flexDirection: "column",
-	position: "relative",
-	overflow: "hidden",
-	background: "#f4f1ea",
-	color: "#1f2933",
-	fontFamily:
-		'system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif',
-};
+function getCanvasContainerStyle(isMobile: boolean): React.CSSProperties {
+	return {
+		width: "100%",
+		height: "100%",
+		minHeight: isMobile ? "calc(100dvh - 132px)" : "calc(100dvh - 72px)",
+		display: "flex",
+		flexDirection: "column",
+		position: "relative",
+		overflow: "hidden",
+		isolation: "isolate",
+		background: "#f4f1ea",
+		color: "#1f2933",
+		fontFamily:
+			'system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif',
+	};
+}
 
 const canvasControlsOverlayStyle: React.CSSProperties = {
 	position: "absolute",
@@ -587,7 +592,7 @@ const canvasControlsOverlayStyle: React.CSSProperties = {
 	right: "1rem",
 	display: "flex",
 	gap: "0.5rem",
-	zIndex: 10,
+	zIndex: 20,
 };
 
 const controlButtonStyle: React.CSSProperties = {
@@ -604,6 +609,8 @@ const controlButtonStyle: React.CSSProperties = {
 	background: "rgba(255, 255, 255, 0.9)",
 	color: "#1f2933",
 	boxShadow: "0 6px 14px rgba(31, 41, 51, 0.06)",
+	position: "relative",
+	zIndex: 21,
 };
 
 const stateContainerStyle: React.CSSProperties = {
@@ -763,6 +770,7 @@ const nodeActionContainerStyle: React.CSSProperties = {
 	alignItems: "center",
 	gap: "0.18rem",
 	maxWidth: "100%",
+	pointerEvents: "all",
 };
 
 const nodeActionDetailStyle: React.CSSProperties = {
@@ -783,6 +791,7 @@ const nodeActionLinkStyle: React.CSSProperties = {
 	background: "#1f2933",
 	borderRadius: "999px",
 	textDecoration: "none",
+	pointerEvents: "all",
 };
 
 function getNodeActionBadgeStyle(
@@ -834,6 +843,7 @@ function getCircleNodeStyle(accent: string): React.CSSProperties {
 			"radial-gradient(circle at top, rgba(255, 255, 255, 0.98) 0%, rgba(246, 241, 232, 0.96) 100%)",
 		border: `2px solid ${accent}`,
 		boxShadow: "0 10px 24px rgba(31, 41, 51, 0.12)",
+		pointerEvents: "all",
 		fontFamily:
 			'system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif',
 	};

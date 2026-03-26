@@ -235,6 +235,49 @@ def test_openclaw_adapter_chat_send_maps_success_payload() -> None:
     }
 
 
+def test_openclaw_adapter_chat_history_maps_success_payload() -> None:
+    from app.adapters.openclaw_adapter import OpenClawAdapter
+
+    class FakeClient:
+        def chat_history(self, *, session_key: str, limit: int) -> dict[str, Any]:
+            assert session_key == "agent:main:main"
+            assert limit == 200
+            return {
+                "ok": True,
+                "payload": {
+                    "sessionKey": "agent:main:main",
+                    "messages": [
+                        {"role": "user", "text": "hello"},
+                        {"role": "assistant", "text": "world"},
+                    ],
+                },
+            }
+
+        def config_key(self) -> tuple[str | None, str | None, str]:
+            return ("ws://example.invalid/ws", "token-alpha", "http://example.invalid")
+
+    adapter = OpenClawAdapter(
+        client=FakeClient(),
+        instance_id="instance-alpha",
+        instance_name="Alpha",
+    )
+
+    result = adapter.chat_history(
+        _make_request(DomainProviderCapability.SESSION_READ),
+        session_key="agent:main:main",
+        limit=200,
+    )
+
+    assert result.response.error is None
+    assert result.payload == {
+        "sessionKey": "agent:main:main",
+        "messages": [
+            {"role": "user", "text": "hello"},
+            {"role": "assistant", "text": "world"},
+        ],
+    }
+
+
 @pytest.mark.parametrize(
     ("method_name", "default_error_message"),
     [

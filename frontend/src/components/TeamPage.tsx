@@ -150,7 +150,7 @@ export function TeamPage(): JSX.Element {
 								return (
 									<article
 										key={card.agentId}
-										style={getCardStyle(isEntryEnabled)}
+										style={getCardStyle(isEntryEnabled, isMobile)}
 										data-testid={`team-agent-card-${card.agentId}`}
 										role={isEntryEnabled ? "link" : undefined}
 										tabIndex={isEntryEnabled ? 0 : undefined}
@@ -589,10 +589,10 @@ function getAvatarTone(seed: string): AvatarTone {
 function getContainerStyle(isMobile: boolean): CSSProperties {
 	return {
 		minHeight: "100%",
-		padding: isMobile ? "1.25rem 1rem 5rem" : "2rem",
+		padding: isMobile ? "0.875rem" : "2rem",
 		display: "flex",
 		flexDirection: "column",
-		gap: "1.5rem",
+		gap: isMobile ? "1rem" : "1.5rem",
 		background: "#f4f1ea",
 		color: "#1f2933",
 		overflow: "auto",
@@ -606,7 +606,7 @@ function getCardGridStyle(isMobile: boolean): CSSProperties {
 		gridTemplateColumns: isMobile
 			? "1fr"
 			: "repeat(auto-fit, minmax(280px, 1fr))",
-		gap: "1rem",
+		gap: isMobile ? "0.75rem" : "1rem",
 	};
 }
 
@@ -664,14 +664,14 @@ const stageStyle: CSSProperties = {
 	gap: "1rem",
 };
 
-function getCardStyle(isClickable: boolean): CSSProperties {
+function getCardStyle(isClickable: boolean, isMobile: boolean): CSSProperties {
 	return {
 		display: "flex",
 		flexDirection: "column",
-		gap: "1rem",
-		minHeight: "18rem",
-		padding: "1.2rem",
-		borderRadius: "1.1rem",
+		gap: isMobile ? "0.875rem" : "1rem",
+		minHeight: isMobile ? "auto" : "18rem",
+		padding: isMobile ? "1rem" : "1.2rem",
+		borderRadius: isMobile ? "1rem" : "1.1rem",
 		background: "#fffdf8",
 		border: "1px solid #e6dccf",
 		boxShadow: "0 22px 40px -30px rgba(85, 56, 29, 0.35)",

@@ -11,6 +11,7 @@ import type {
 	ModelItem,
 	NodeDetailResponse,
 	SessionDeleteResponse,
+	SessionHistoryResponse,
 	SessionPauseRequest,
 	SessionPauseResponse,
 	SessionPatchRequest,
@@ -297,4 +298,25 @@ export async function previewSessions(
     throw new Error(`API error: ${response.status} ${response.statusText}`);
   }
   return response.json() as Promise<SessionsPreviewResponse>;
+}
+
+export async function getSessionHistory(
+  sessionKey: string,
+  options?: ObserverRequestOptions
+): Promise<SessionHistoryResponse> {
+  const normalizedSessionKey = sessionKey.trim();
+  if (!normalizedSessionKey) {
+    return {
+      ts: 0,
+      items: [],
+    };
+  }
+  const path = `/chat/sessions/${encodeURIComponent(normalizedSessionKey)}/history?limit=200`;
+  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, options)}`, {
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    throw await buildApiError(response);
+  }
+  return response.json() as Promise<SessionHistoryResponse>;
 }

@@ -1,7 +1,11 @@
 # 灵盘（Linpo）
 
 Linpo 当前是面向人类的多实例 agent 工作与协作入口。
-当前 IA：`overview / topology / kanban / team / session`
+当前主导航 IA：`topology / kanban / team / session`
+`overview` 保留为入口页（`/overview`）：
+- 桌面端通过品牌 icon 进入
+- 移动端通过 IA 内 icon 进入（不占用顶部栏空间）
+- 移动端用户信息入口作为 IA 最后一项，不使用悬浮入口
 ravin 测试服务域名：`linpo.duckdns.org`
 
 ## 文档目录

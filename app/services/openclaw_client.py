@@ -392,6 +392,22 @@ class OpenClawClient:
             },
         }
 
+    def _build_chat_history_request(
+        self,
+        *,
+        session_key: str,
+        limit: int,
+    ) -> dict[str, Any]:
+        return {
+            "type": "req",
+            "id": f"chat-history-{uuid4().hex[:8]}",
+            "method": "chat.history",
+            "params": {
+                "sessionKey": session_key,
+                "limit": limit,
+            },
+        }
+
     def _build_sessions_list_request(
         self,
         *,
@@ -544,6 +560,23 @@ class OpenClawClient:
         normalized_payload.setdefault("agent_id", agent_id)
         normalized_payload.setdefault("status", "accepted")
         return {"ok": True, "payload": normalized_payload}
+
+    def chat_history(
+        self,
+        *,
+        session_key: str,
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        normalized_session_key = session_key.strip()
+        if normalized_session_key == "":
+            raise HTTPException(status_code=400, detail="session_key is required")
+
+        bounded_limit = max(1, min(1000, limit))
+        request = self._build_chat_history_request(
+            session_key=normalized_session_key,
+            limit=bounded_limit,
+        )
+        return self._run_sync(self._send_control_request(request))
 
     def sessions_list(
         self,

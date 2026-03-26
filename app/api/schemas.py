@@ -101,6 +101,11 @@ class SessionPreview(BaseModel):
     items: list[SessionPreviewItem]
 
 
+class SessionHistoryResponse(BaseModel):
+    ts: int
+    items: list[SessionPreviewItem]
+
+
 # === Model API Schemas ===
 
 

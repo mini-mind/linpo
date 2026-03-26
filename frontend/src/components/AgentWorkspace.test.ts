@@ -85,37 +85,21 @@ describe("AgentWorkspace session selection helpers", () => {
 	});
 });
 
-describe("AgentWorkspace preview helpers", () => {
-	it("returns preview items for an ok response", () => {
-		const { getPreviewItemsForSession } = agentWorkspaceModule;
+describe("AgentWorkspace history helpers", () => {
+	it("returns history items when payload contains items", () => {
+		const { getHistoryItems } = agentWorkspaceModule;
 		expect(
-			getPreviewItemsForSession(
-				{
-					ts: 1,
-					previews: [
-						{
-							key: "session-1",
-							status: "ok",
-							items: [{ role: "assistant", text: "hello" }],
-						},
-					],
-				},
-				"session-1",
-			),
+			getHistoryItems({
+				ts: 1,
+				items: [{ role: "assistant", text: "hello" }],
+			}),
 		).toEqual([{ role: "assistant", text: "hello" }]);
 	});
 
-	it("returns an empty list for missing or empty previews", () => {
-		const { getPreviewItemsForSession } = agentWorkspaceModule;
-		expect(
-			getPreviewItemsForSession(
-				{
-					ts: 1,
-					previews: [{ key: "session-1", status: "missing", items: [] }],
-				},
-				"session-1",
-			),
-		).toEqual([]);
+	it("returns an empty list for missing or invalid items payload", () => {
+		const { getHistoryItems } = agentWorkspaceModule;
+		expect(getHistoryItems({ ts: 1, items: [] })).toEqual([]);
+		expect(getHistoryItems({ ts: 1 })).toEqual([]);
 	});
 });
 

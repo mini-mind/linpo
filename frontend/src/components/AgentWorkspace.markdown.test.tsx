@@ -10,7 +10,7 @@ const mockRealtimeClient = {
 
 const mockGetAgentDetail = vi.fn();
 const mockListSessions = vi.fn();
-const mockPreviewSessions = vi.fn();
+const mockGetSessionHistory = vi.fn();
 
 vi.mock("../api/client", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../api/client")>();
@@ -19,7 +19,7 @@ vi.mock("../api/client", async (importOriginal) => {
 		getAgentDetail: (...args: unknown[]) => mockGetAgentDetail(...args),
 		getDefaultObserverDataSource: vi.fn().mockReturnValue("openclaw"),
 		listSessions: (...args: unknown[]) => mockListSessions(...args),
-		previewSessions: (...args: unknown[]) => mockPreviewSessions(...args),
+		getSessionHistory: (...args: unknown[]) => mockGetSessionHistory(...args),
 	};
 });
 
@@ -82,18 +82,12 @@ describe("AgentWorkspace markdown rendering", () => {
 			],
 			defaults: { model: "gpt-4" },
 		});
-		mockPreviewSessions.mockResolvedValue({
+		mockGetSessionHistory.mockResolvedValue({
 			ts: Date.parse("2026-03-24T05:31:00Z"),
-			previews: [
+			items: [
 				{
-					key: "session-1",
-					status: "ok",
-					items: [
-						{
-							role: "assistant",
-							text: "Hello **world** <img src=x onerror=alert(1) />",
-						},
-					],
+					role: "assistant",
+					text: "Hello **world** <img src=x onerror=alert(1) />",
 				},
 			],
 		});

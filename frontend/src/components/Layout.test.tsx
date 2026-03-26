@@ -317,12 +317,14 @@ describe('Layout sidebar account area', () => {
 
     await screen.findByText('testuser');
 
+    const overviewEntry = screen.getByRole('link', { name: '进入总览' });
     const topologyLink = screen.getAllByRole('link', { name: /拓扑/ })[0];
+    expect(overviewEntry).toHaveAttribute('href', '/overview');
     expect(topologyLink).toHaveAttribute('href', '/topology');
     expect(screen.queryByRole('link', { name: /会话/ })).not.toBeInTheDocument();
   });
 
-  it('shows overview and topology as the only primary navigation entries', async () => {
+  it('shows topology/kanban/team as desktop primary navigation entries', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
       status: 200,
@@ -348,11 +350,14 @@ describe('Layout sidebar account area', () => {
 
     await screen.findByText('testuser');
 
-    const overviewLink = screen.getAllByRole('link', { name: /总览/ })[0];
     const topologyLink = screen.getAllByRole('link', { name: /拓扑/ })[0];
+    const kanbanLink = screen.getAllByRole('link', { name: /看板/ })[0];
+    const teamLink = screen.getAllByRole('link', { name: /团队/ })[0];
 
-    expect(overviewLink).toHaveAttribute('href', '/overview');
     expect(topologyLink).toHaveAttribute('href', '/topology');
+    expect(kanbanLink).toHaveAttribute('href', '/kanban');
+    expect(teamLink).toHaveAttribute('href', '/team');
+    expect(screen.queryByRole('link', { name: /^总览$/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /会话/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /协作/ })).not.toBeInTheDocument();
   });
