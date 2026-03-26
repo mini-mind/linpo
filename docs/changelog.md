@@ -5,6 +5,10 @@
 - 导航口径更新：移动端 `overview` 入口改为 IA 内 icon，移除顶部品牌栏占位；桌面端保留品牌 icon 入口。
 - 导航口径追加：移动端用户信息入口并入 IA 最后一项，移除悬浮账户入口。
 - PRD 补充“页面借鉴源（设计参考口径）”：明确 `overview/topology/kanban/team` 与跨页契约分别对应的 OpenClaw 参考仓库映射，统一后续设计与改造参考基线。
+- 测试资源文档新增“参考项目卖点与侵入性结论（精简）”表，统一 `openclaw` 相关 5 个参考仓库的使用边界认知。
+- PRD/Architecture 补充 Topology 对标约束：以 `openclaw-gateway-routing-graph` 为基线，要求骨架常显、链路高亮、业务视图与技术明细并存，并保持 Linpo 现有 realtime 链路。
+- PRD/Architecture 追加 Topology 交互与实时约束：默认全页面可交互画布（平移/缩放/fit），详情覆盖层承载；实时优先采用 observer 推送触发并由聚合接口回补。
+- PRD/Architecture 调整 Topology 交互约束：移除技术事件明细弹窗，改为 console 输出；顶部控制收敛为悬浮按钮展开；节点新增类型化详情弹窗与纵向拖拽（不持久化）。
 
 ## 2026-03-25
 

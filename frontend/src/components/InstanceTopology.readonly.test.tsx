@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildSessionEntryPath } from "./SessionPage";
@@ -15,6 +15,13 @@ vi.mock("../api/client", async (importOriginal) => {
 
 vi.mock("../hooks/useIsMobile", () => ({
 	useIsMobile: () => false,
+}));
+
+vi.mock("../api/realtimeClient", () => ({
+	createObserverRealtimeClient: () => ({
+		connect: vi.fn(),
+		close: vi.fn(),
+	}),
 }));
 
 import { InstanceTopology } from "./InstanceTopology";
@@ -87,6 +94,33 @@ function renderWithRouter(): ReturnType<typeof render> {
 	);
 }
 
+function getTopologyControlToggleButton(): HTMLButtonElement | null {
+	const toggles = screen.queryAllByRole("button").filter((button) => {
+		const name =
+			button.getAttribute("aria-label")?.trim() ?? button.textContent?.trim() ?? "";
+		return /(菜单|操作|控制|更多|展开)/.test(name);
+	});
+	return (toggles[0] as HTMLButtonElement | undefined) ?? null;
+}
+
+async function ensureTopologyControlVisible(name: RegExp): Promise<HTMLButtonElement> {
+	const directButton = screen.queryByRole("button", { name });
+	if (directButton) {
+		return directButton as HTMLButtonElement;
+	}
+
+	const toggleButton = getTopologyControlToggleButton();
+	if (toggleButton) {
+		fireEvent.click(toggleButton);
+	}
+
+	await waitFor(() => {
+		expect(screen.getByRole("button", { name })).toBeInTheDocument();
+	});
+
+	return screen.getByRole("button", { name }) as HTMLButtonElement;
+}
+
 describe("InstanceTopology readonly mode", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -104,7 +138,9 @@ describe("InstanceTopology readonly mode", () => {
 		expect(screen.queryByTestId("topology-sidebar")).not.toBeInTheDocument();
 		expect(screen.queryByTestId("topology-detail-panel")).not.toBeInTheDocument();
 		expect(screen.queryByTestId("topology-config-panel")).not.toBeInTheDocument();
-		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("dialog", { name: /技术事件明细|事件明细/i }),
+		).not.toBeInTheDocument();
 	});
 
 	it("shows explicit entry and disabled states without write controls", async () => {
@@ -118,7 +154,8 @@ describe("InstanceTopology readonly mode", () => {
 		const agentNode = screen.getByTestId("topology-node-agent-agent-1");
 		const instanceNode = screen.getByTestId("topology-node-instance-instance-1");
 
-		const entryLink = screen.getByRole("link", { name: "进入默认会话" });
+		const entryLink = within(agentNode).getByTestId("drilldown-link-agent-1");
+		expect(entryLink).toHaveTextContent("进入默认会话");
 		expect(entryLink).toHaveAttribute(
 			"href",
 			buildSessionEntryPath({
@@ -127,9 +164,12 @@ describe("InstanceTopology readonly mode", () => {
 			}),
 		);
 		expect(within(agentNode).getByText("可进入")).toBeInTheDocument();
+		expect(within(agentNode).getByText("默认会话")).toBeInTheDocument();
+		expect(within(agentNode).getByText("测试Agent")).toBeInTheDocument();
 		expect(
 			within(instanceNode).getByText("实例节点不提供会话入口"),
 		).toBeInTheDocument();
+		expect(within(instanceNode).getByText("测试实例1")).toBeInTheDocument();
 	});
 
 	it("shows only the canvas without external panels", async () => {
@@ -157,8 +197,34 @@ describe("InstanceTopology readonly mode", () => {
 		expect(screen.queryByText("SKILL")).not.toBeInTheDocument();
 		expect(screen.queryByText("ACP")).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /删除/i })).not.toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: /暂停/i })).not.toBeInTheDocument();
+		const pauseToggleButton = await ensureTopologyControlVisible(/暂停采集|恢复采集/i);
+		expect(pauseToggleButton).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /重置/i })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /发送/i })).not.toBeInTheDocument();
+	});
+
+	it("shows different node content after click for instance and agent", async () => {
+		mockGetAggregateTopology.mockResolvedValue(aggregateTopologyFixture);
+
+		renderWithRouter();
+
+		await waitFor(() => {
+			expect(screen.getByTestId("topology-node-instance-instance-1")).toBeInTheDocument();
+		});
+
+		const instanceNode = screen.getByTestId("topology-node-instance-instance-1");
+		const agentNode = screen.getByTestId("topology-node-agent-agent-1");
+
+		fireEvent.click(instanceNode);
+		expect(within(instanceNode).getByText("实例节点不提供会话入口")).toBeInTheDocument();
+		expect(
+			within(instanceNode).queryByRole("link", { name: "进入默认会话" }),
+		).not.toBeInTheDocument();
+
+		fireEvent.click(agentNode);
+		expect(within(agentNode).getByText("默认会话")).toBeInTheDocument();
+		expect(within(agentNode).getByTestId("drilldown-link-agent-1")).toHaveTextContent(
+			"进入默认会话",
+		);
 	});
 });

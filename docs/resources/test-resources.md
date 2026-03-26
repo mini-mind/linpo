@@ -80,3 +80,15 @@
 - **健康/状态与工具审批**：`health/status`、`doctor.memory.status`、`tools.catalog`、`exec.approvals.*`，以及 `update.run`、`usage.*`，可联动监控与执行策略。
 - **设备/节点与消息**：`node.*`、`device.*`、`send`、`channels.*`，保障边缘节点与设备的配对、通讯和日志订阅。
 - **事件与语音**：事件广播（`agent`、`chat`、`health`、`update.available` 等）、`tts.*`、`voicewake.*` 支持流式反馈与语音输入的状态感知。
+
+## 参考项目卖点与侵入性结论（精简）
+
+侵入性判定口径：是否直接改写 OpenClaw 本体代码，或直接写入 OpenClaw 运行态目录/agent workspace/token/session。
+
+| 项目 | 核心卖点（精简） | 对 OpenClaw 侵入性 |
+|---|---|---|
+| `openclaw` | OpenClaw 本体（Gateway+多渠道+Agent 运行时） | 不适用（本体） |
+| `openclaw-control-center` | 运营可观测控制台，默认安全（只读、禁 mutation） | 低 |
+| `openclaw-gateway-routing-graph` | 独立网关链路可视化与实时观测工具 | 极低 |
+| `openclaw-manager` | 一站式安装/配置/配对管理 | 中-高（涉及 `.openclaw` 状态目录管理/重置） |
+| `openclaw-mission-control` | 团队级编排、审批、网关治理平台 | 高（涉及 agent provisioning/template/token/session 操作） |

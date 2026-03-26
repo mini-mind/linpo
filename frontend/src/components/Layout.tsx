@@ -4,13 +4,20 @@ import { useIsMobile } from '../hooks/useIsMobile';
 import { ToastProvider, useToast } from '../hooks/useToast';
 import { AccountMenu } from './AccountMenu';
 
-const DESKTOP_PRIMARY_NAV_ITEMS = [
+type NavItem = {
+  to: string;
+  label: string;
+  icon: string;
+  mobileIconOnly?: boolean;
+};
+
+const DESKTOP_PRIMARY_NAV_ITEMS: NavItem[] = [
   { to: '/topology', label: '拓扑', icon: '◇' },
   { to: '/kanban', label: '看板', icon: '▤' },
   { to: '/team', label: '团队', icon: '◎' },
 ];
 
-const MOBILE_PRIMARY_NAV_ITEMS = [
+const MOBILE_PRIMARY_NAV_ITEMS: NavItem[] = [
   { to: '/overview', label: '总览', icon: '灵', mobileIconOnly: true },
   ...DESKTOP_PRIMARY_NAV_ITEMS,
 ];

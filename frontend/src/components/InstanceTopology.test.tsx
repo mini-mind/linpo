@@ -18,6 +18,13 @@ vi.mock("../hooks/useIsMobile", () => ({
 	useIsMobile: () => false,
 }));
 
+vi.mock("../api/realtimeClient", () => ({
+	createObserverRealtimeClient: () => ({
+		connect: vi.fn(),
+		close: vi.fn(),
+	}),
+}));
+
 import { InstanceTopology } from "./InstanceTopology";
 
 const aggregateTopologyFixture = {
@@ -196,6 +203,33 @@ function renderWithRouter(): ReturnType<typeof render> {
 	);
 }
 
+function getTopologyControlToggleButton(): HTMLButtonElement | null {
+	const toggles = screen.queryAllByRole("button").filter((button) => {
+		const name =
+			button.getAttribute("aria-label")?.trim() ?? button.textContent?.trim() ?? "";
+		return /(菜单|操作|控制|更多|展开)/.test(name);
+	});
+	return (toggles[0] as HTMLButtonElement | undefined) ?? null;
+}
+
+async function ensureTopologyControlVisible(name: RegExp): Promise<HTMLButtonElement> {
+	const directButton = screen.queryByRole("button", { name });
+	if (directButton) {
+		return directButton as HTMLButtonElement;
+	}
+
+	const toggleButton = getTopologyControlToggleButton();
+	if (toggleButton) {
+		fireEvent.click(toggleButton);
+	}
+
+	await waitFor(() => {
+		expect(screen.getByRole("button", { name })).toBeInTheDocument();
+	});
+
+	return screen.getByRole("button", { name }) as HTMLButtonElement;
+}
+
 function createDeferredPromise<T>(): {
 	promise: Promise<T>;
 	resolve: (value: T | PromiseLike<T>) => void;
@@ -254,9 +288,18 @@ describe("InstanceTopology", () => {
 				).toBeInTheDocument();
 			});
 
-			expect(screen.getByText("alpha-instance")).toBeInTheDocument();
 			expect(
 				screen.getByTestId("topology-node-instance-instance-empty"),
+			).toBeInTheDocument();
+			expect(
+				within(
+					screen.getByTestId("topology-node-instance-instance-alpha"),
+				).getByText("alpha-instance"),
+			).toBeInTheDocument();
+			expect(
+				within(
+					screen.getByTestId("topology-node-instance-instance-empty"),
+				).getByText("empty-instance"),
 			).toBeInTheDocument();
 		});
 
@@ -271,13 +314,15 @@ describe("InstanceTopology", () => {
 				).toBeInTheDocument();
 			});
 
-			expect(screen.getByText("Alpha Agent")).toBeInTheDocument();
 			const agentNode = screen.getByTestId("topology-node-agent-agent-alpha");
 			const sessionNode = screen.getByTestId(
 				"topology-node-session-agent:agent-alpha:main",
 			);
 
-			const agentEntryLink = screen.getByRole("link", { name: "进入默认会话" });
+			const agentEntryLink = within(agentNode).getByTestId(
+				"drilldown-link-agent-alpha",
+			);
+			expect(agentEntryLink).toHaveTextContent("进入默认会话");
 			expect(agentEntryLink).toHaveAttribute(
 				"href",
 				buildSessionEntryPath({
@@ -286,8 +331,11 @@ describe("InstanceTopology", () => {
 				}),
 			);
 			expect(within(agentNode).getByText("可进入")).toBeInTheDocument();
+			expect(within(agentNode).getByText("默认会话")).toBeInTheDocument();
 
-			const sessionEntryLink = screen.getByRole("link", { name: "进入对应会话" });
+			const sessionEntryLink = within(sessionNode).getByRole("link", {
+				name: "进入对应会话",
+			});
 			expect(sessionEntryLink).toHaveAttribute(
 				"href",
 				buildSessionEntryPath({
@@ -297,6 +345,10 @@ describe("InstanceTopology", () => {
 				}),
 			);
 			expect(within(sessionNode).getByText("精确会话")).toBeInTheDocument();
+			expect(within(agentNode).getByText("Alpha Agent")).toBeInTheDocument();
+			expect(
+				within(sessionNode).getByText("会话"),
+			).toBeInTheDocument();
 		});
 
 		it("renders session nodes when sessions exist", async () => {
@@ -337,16 +389,59 @@ describe("InstanceTopology", () => {
 					agentId: "agent-alpha",
 				}),
 			);
-			expect(within(toolNode).getByText("回退入口")).toBeInTheDocument();
+			expect(
+				within(toolNode).getByText("回退入口"),
+			).toBeInTheDocument();
 			expect(
 				within(instanceNode).getByText("实例节点不提供会话入口"),
 			).toBeInTheDocument();
 			expect(
 				within(orphanToolNode).getByText("缺少可回退上下文"),
 			).toBeInTheDocument();
+			expect(within(toolNode).getAllByText("read").length).toBeGreaterThan(0);
+			expect(within(orphanToolNode).getAllByText("orphan").length).toBeGreaterThan(0);
+			expect(within(instanceNode).getByText("alpha-instance")).toBeInTheDocument();
 			expect(
 				screen.queryByRole("link", { name: "进入实例会话" }),
 			).not.toBeInTheDocument();
+		});
+
+		it("opens node popups via click and shows different details by node type", async () => {
+			mockGetAggregateTopology.mockResolvedValue(topologyWithTools);
+
+			renderWithRouter();
+
+			await waitFor(() => {
+				expect(
+					screen.getByTestId("topology-node-instance-instance-alpha"),
+				).toBeInTheDocument();
+			});
+
+			const instanceNode = screen.getByTestId("topology-node-instance-instance-alpha");
+			const agentNode = screen.getByTestId("topology-node-agent-agent-alpha");
+			const toolNode = screen.getByTestId("topology-node-tool-read");
+
+			fireEvent.click(instanceNode);
+			expect(within(instanceNode).getByText("实例节点不提供会话入口")).toBeInTheDocument();
+			expect(
+				within(instanceNode).queryByRole("link", { name: "进入默认会话" }),
+			).not.toBeInTheDocument();
+
+			fireEvent.click(agentNode);
+			expect(within(agentNode).getByText("默认会话")).toBeInTheDocument();
+			expect(within(agentNode).getByTestId("drilldown-link-agent-alpha")).toHaveTextContent(
+				"进入默认会话",
+			);
+
+			fireEvent.click(toolNode);
+			expect(within(toolNode).getByText("回退入口")).toBeInTheDocument();
+			expect(within(toolNode).getByRole("link", { name: "回退到所属智能体" })).toHaveAttribute(
+				"href",
+				buildSessionEntryPath({
+					instanceId: "instance-alpha",
+					agentId: "agent-alpha",
+				}),
+			);
 		});
 
 		it("disables agent and session nodes when required context is missing", async () => {
@@ -355,11 +450,15 @@ describe("InstanceTopology", () => {
 			renderWithRouter();
 
 			await waitFor(() => {
-				expect(screen.getByText("Detached Agent")).toBeInTheDocument();
+				expect(screen.getByTestId("topology-node-agent-")).toBeInTheDocument();
 			});
 			const detachedAgentNode = screen.getByTestId("topology-node-agent-");
 			const missingSessionNode = screen.getByTestId("topology-node-session-");
 
+			expect(within(detachedAgentNode).getByText("Detached Agent")).toBeInTheDocument();
+			expect(
+				within(missingSessionNode).getByText("会话"),
+			).toBeInTheDocument();
 			expect(
 				within(detachedAgentNode).getByText("缺少进入上下文"),
 			).toBeInTheDocument();
@@ -537,7 +636,8 @@ describe("InstanceTopology", () => {
 				).toBeInTheDocument();
 			});
 
-			fireEvent.click(screen.getByRole("button", { name: "刷新" }));
+			const refreshButton = await ensureTopologyControlVisible(/刷新/i);
+			fireEvent.click(refreshButton);
 
 			await waitFor(() => {
 				expect(mockGetAggregateTopology).toHaveBeenCalledTimes(2);
