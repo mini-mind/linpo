@@ -1,5 +1,6 @@
 import type React from 'react';
 import { Link, Navigate, NavLink, Outlet } from 'react-router-dom';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
 import { AccountMenu } from './AccountMenu';
 
@@ -26,18 +27,20 @@ function ToastContainer(): JSX.Element {
 }
 
 export function Layout(): JSX.Element {
+  const isMobile = useIsMobile(960);
+
   return (
     <div style={shellStyle}>
       <style>{`${toastAnimationStyle}\n${navLinkHoverStyle}`}</style>
       <ToastContainer />
       <header style={toolbarStyle}>
         <div style={toolbarLeftStyle}>
-          <Link to="/landing" style={brandBlockStyle} aria-label="灵盘">
+          <Link to="/landing" style={isMobile ? brandBlockMobileStyle : brandBlockStyle} aria-label="灵盘">
             <img src="/assets/brand/linpo-flame-icon.svg" alt="" aria-hidden="true" style={brandIconStyle} />
             <div>
               <div style={brandTitleRowStyle}>
                 <p style={brandTitleStyle}>灵盘</p>
-                <span style={brandSloganStyle}>——让协作更顺，让结果更稳</span>
+                {!isMobile ? <span style={brandSloganStyle}>——让协作更顺，让结果更稳</span> : null}
               </div>
             </div>
           </Link>
@@ -75,7 +78,7 @@ const shellStyle: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   background:
-    'radial-gradient(circle at 18% 15%, rgba(16, 185, 129, 0.14), transparent 36%), radial-gradient(circle at 84% 10%, rgba(217, 119, 6, 0.18), transparent 42%), #f8f6f0',
+    'radial-gradient(1000px 700px at 10% -10%, rgba(16, 185, 129, 0.23), transparent 65%), radial-gradient(900px 700px at 95% 0%, rgba(14, 165, 233, 0.2), transparent 62%), linear-gradient(180deg, #f0f8fa 0%, #eef6f2 52%, #f6f8ef 100%)',
   color: '#10212f',
   fontFamily: '"IBM Plex Sans", "Noto Sans SC", "PingFang SC", sans-serif',
 };
@@ -87,9 +90,9 @@ const toolbarStyle: React.CSSProperties = {
   justifyContent: 'space-between',
   gap: '1rem',
   padding: '0 0.85rem',
-  borderBottom: '1px solid rgba(15, 23, 42, 0.1)',
-  backdropFilter: 'blur(8px)',
-  background: 'rgba(248, 246, 240, 0.86)',
+  borderBottom: '1px solid rgba(15, 23, 42, 0.08)',
+  backdropFilter: 'blur(10px)',
+  background: 'rgba(255, 255, 255, 0.36)',
 };
 
 const toolbarLeftStyle: React.CSSProperties = {
@@ -107,6 +110,12 @@ const brandBlockStyle: React.CSSProperties = {
   minWidth: '220px',
   textDecoration: 'none',
   color: 'inherit',
+};
+
+const brandBlockMobileStyle: React.CSSProperties = {
+  ...brandBlockStyle,
+  minWidth: 'auto',
+  gap: '0.4rem',
 };
 
 const brandIconStyle: React.CSSProperties = {
@@ -173,9 +182,14 @@ const toolbarRightStyle: React.CSSProperties = {
 
 const mainStyle: React.CSSProperties = {
   flex: 1,
+  minWidth: 0,
   minHeight: 0,
   display: 'flex',
   padding: '0.8rem',
+  background: 'transparent',
+  overflowX: 'hidden',
+  overflowY: 'auto',
+  WebkitOverflowScrolling: 'touch',
 };
 
 const toastContainerStyle: React.CSSProperties = {

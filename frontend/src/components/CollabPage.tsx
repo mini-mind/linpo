@@ -4,6 +4,7 @@ import { getAggregateOverview } from '../api/client';
 import type { AggregateOverviewAgentItem, AggregateOverviewResponse } from '../api/types';
 import type { BoardTask, BoardViewMode, TaskStatus } from './kanbanTypes';
 import { readFlowTasks, writeFlowTasks } from '../state/flowTaskStore';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 const STATUS_COLUMNS: Array<{ key: TaskStatus; title: string }> = [
   { key: 'queued', title: '待调度' },
@@ -14,6 +15,7 @@ const STATUS_COLUMNS: Array<{ key: TaskStatus; title: string }> = [
 ];
 
 export default function CollabPage(): JSX.Element {
+  const isMobile = useIsMobile(960);
   const [overview, setOverview] = useState<AggregateOverviewResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -234,15 +236,15 @@ export default function CollabPage(): JSX.Element {
         </div>
       ) : null}
 
-      <div style={boardViewportStyle} data-testid="kanban-board">
-        <div style={boardTrackStyle}>
+      <div style={isMobile ? mobileBoardViewportStyle : boardViewportStyle} data-testid="kanban-board">
+        <div style={isMobile ? mobileBoardTrackStyle : boardTrackStyle}>
           {Array.from(groupedColumns.entries()).map(([columnName, tasks]) => (
-            <article key={columnName} style={columnStyle}>
+            <article key={columnName} style={isMobile ? mobileColumnStyle : columnStyle}>
               <header style={columnHeaderStyle}>
                 <h3 style={columnTitleStyle}>{columnName}</h3>
                 <span style={columnCountStyle}>{tasks.length}</span>
               </header>
-              <div style={columnBodyStyle}>
+              <div style={isMobile ? mobileColumnBodyStyle : columnBodyStyle}>
                 {loading ? (
                   <p style={emptyTextStyle}>同步中...</p>
                 ) : tasks.length === 0 ? (
@@ -268,7 +270,7 @@ export default function CollabPage(): JSX.Element {
           ))}
 
           {viewMode === 'agent' ? (
-            <article style={addAgentColumnStyle}>
+            <article style={isMobile ? mobileAddAgentColumnStyle : addAgentColumnStyle}>
               <header style={columnHeaderStyle}>
                 <h3 style={columnTitleStyle}>新增 Agent</h3>
                 <button
@@ -280,8 +282,8 @@ export default function CollabPage(): JSX.Element {
                   + 新增
                 </button>
               </header>
-              <div style={addAgentBodyStyle}>
-                <p style={emptyTextStyle}>创建主 Agent 列，后续任务可直接投放。</p>
+              <div style={isMobile ? mobileAddAgentBodyStyle : addAgentBodyStyle}>
+                <p style={addAgentHintStyle}>创建主 Agent 列，后续任务可直接投放。</p>
               </div>
             </article>
           ) : null}
@@ -380,17 +382,21 @@ function findFirstNumber(values: unknown[]): number | null {
 }
 
 const pageStyle: React.CSSProperties = {
+  width: '100%',
+  minWidth: 0,
   flex: 1,
   minHeight: 0,
   display: 'flex',
   flexDirection: 'column',
   gap: '0.8rem',
+  background: 'transparent',
 };
 
 const flatToolbarStyle: React.CSSProperties = {
-  border: '1px solid rgba(15, 23, 42, 0.12)',
+  border: '1px solid rgba(15, 23, 42, 0.1)',
   borderRadius: '0.4rem',
-  background: 'rgba(255, 255, 255, 0.86)',
+  background: 'rgba(255, 255, 255, 0.44)',
+  backdropFilter: 'blur(8px)',
   padding: '0.55rem 0.65rem',
   display: 'flex',
   alignItems: 'center',
@@ -415,7 +421,7 @@ const toolbarStatsStyle: React.CSSProperties = {
 
 const statsItemStyle: React.CSSProperties = {
   border: '1px solid rgba(148, 163, 184, 0.35)',
-  background: 'rgba(248, 250, 252, 0.9)',
+  background: 'rgba(255, 255, 255, 0.6)',
   color: '#334155',
   borderRadius: '0.35rem',
   padding: '0.22rem 0.5rem',
@@ -424,8 +430,8 @@ const statsItemStyle: React.CSSProperties = {
 };
 
 const flatActionButtonStyle: React.CSSProperties = {
-  border: '1px solid rgba(15, 23, 42, 0.22)',
-  background: 'rgba(255, 255, 255, 0.9)',
+  border: '1px solid rgba(15, 23, 42, 0.16)',
+  background: 'rgba(255, 255, 255, 0.72)',
   color: '#1f2937',
   borderRadius: '0.35rem',
   padding: '0.4rem 0.68rem',
@@ -441,11 +447,11 @@ const modalLabelStyle: React.CSSProperties = {
 };
 
 const viewSelectStyle: React.CSSProperties = {
-  border: '1px solid rgba(15, 23, 42, 0.22)',
+  border: '1px solid rgba(15, 23, 42, 0.16)',
   borderRadius: '0.35rem',
   padding: '0.35rem 0.45rem',
   fontSize: '0.8rem',
-  background: 'rgba(255, 255, 255, 0.95)',
+  background: 'rgba(255, 255, 255, 0.72)',
 };
 
 const modalOverlayStyle: React.CSSProperties = {
@@ -461,7 +467,7 @@ const modalOverlayStyle: React.CSSProperties = {
 const modalCardStyle: React.CSSProperties = {
   width: 'min(520px, calc(100vw - 2rem))',
   borderRadius: '0.65rem',
-  background: '#fff',
+  background: 'rgba(255, 255, 255, 0.95)',
   border: '1px solid rgba(15, 23, 42, 0.2)',
   padding: '0.9rem',
   display: 'flex',
@@ -501,10 +507,22 @@ const modalActionStyle: React.CSSProperties = {
 };
 
 const boardViewportStyle: React.CSSProperties = {
+  width: '100%',
+  minWidth: 0,
   flex: 1,
   minHeight: 0,
   overflowX: 'auto',
   overflowY: 'hidden',
+  overscrollBehaviorX: 'contain',
+};
+
+const mobileBoardViewportStyle: React.CSSProperties = {
+  ...boardViewportStyle,
+  overflowX: 'auto',
+  overflowY: 'auto',
+  WebkitOverflowScrolling: 'touch',
+  touchAction: 'pan-x',
+  overscrollBehavior: 'contain',
 };
 
 const boardTrackStyle: React.CSSProperties = {
@@ -514,6 +532,14 @@ const boardTrackStyle: React.CSSProperties = {
   gap: '0.65rem',
 };
 
+const mobileBoardTrackStyle: React.CSSProperties = {
+  ...boardTrackStyle,
+  height: 'auto',
+  alignItems: 'flex-start',
+  paddingBottom: '0.25rem',
+  paddingRight: '0.25rem',
+};
+
 const columnStyle: React.CSSProperties = {
   width: '420px',
   flex: '0 0 420px',
@@ -521,15 +547,33 @@ const columnStyle: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   borderRadius: '0.65rem',
-  border: '1px solid rgba(15, 23, 42, 0.12)',
-  background: 'rgba(255, 255, 255, 0.84)',
+  border: '1px solid rgba(15, 23, 42, 0.1)',
+  background: 'linear-gradient(160deg, rgba(255, 255, 255, 0.62) 0%, rgba(240, 253, 250, 0.42) 100%)',
+  backdropFilter: 'blur(6px)',
+};
+
+const mobileColumnStyle: React.CSSProperties = {
+  ...columnStyle,
+  width: '86vw',
+  minWidth: '320px',
+  maxWidth: '560px',
+  flex: '0 0 86vw',
+  minHeight: 'auto',
+  alignSelf: 'flex-start',
 };
 
 const addAgentColumnStyle: React.CSSProperties = {
   ...columnStyle,
   borderStyle: 'dashed',
   borderColor: 'rgba(14, 116, 144, 0.35)',
-  background: 'rgba(240, 249, 255, 0.78)',
+  background: 'linear-gradient(155deg, rgba(224, 242, 254, 0.5) 0%, rgba(236, 253, 245, 0.45) 100%)',
+};
+
+const mobileAddAgentColumnStyle: React.CSSProperties = {
+  ...mobileColumnStyle,
+  borderStyle: 'dashed',
+  borderColor: 'rgba(14, 116, 144, 0.35)',
+  background: 'linear-gradient(155deg, rgba(224, 242, 254, 0.5) 0%, rgba(236, 253, 245, 0.45) 100%)',
 };
 
 const columnHeaderStyle: React.CSSProperties = {
@@ -570,15 +614,35 @@ const columnBodyStyle: React.CSSProperties = {
   padding: '0.58rem',
 };
 
+const mobileColumnBodyStyle: React.CSSProperties = {
+  ...columnBodyStyle,
+  overflowY: 'visible',
+  minHeight: 'auto',
+  flex: '0 0 auto',
+};
+
 const addAgentBodyStyle: React.CSSProperties = {
   flex: 1,
   minHeight: 0,
   padding: '0.58rem',
   display: 'flex',
   flexDirection: 'column',
-  justifyContent: 'center',
-  alignItems: 'flex-start',
+  justifyContent: 'flex-start',
+  alignItems: 'center',
   gap: '0.55rem',
+};
+
+const mobileAddAgentBodyStyle: React.CSSProperties = {
+  ...addAgentBodyStyle,
+  minHeight: 'auto',
+  paddingBottom: '0.9rem',
+};
+
+const addAgentHintStyle: React.CSSProperties = {
+  margin: '0.4rem 0 0',
+  fontSize: '0.75rem',
+  color: '#64748b',
+  textAlign: 'center',
 };
 
 const addAgentHeaderButtonStyle: React.CSSProperties = {
@@ -594,7 +658,7 @@ const addAgentHeaderButtonStyle: React.CSSProperties = {
 
 const taskCardStyle: React.CSSProperties = {
   border: '1px solid rgba(148, 163, 184, 0.28)',
-  background: 'rgba(255, 255, 255, 0.94)',
+  background: 'rgba(255, 255, 255, 0.76)',
   borderRadius: '0.55rem',
   padding: '0.55rem',
   display: 'flex',

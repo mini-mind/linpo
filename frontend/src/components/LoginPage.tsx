@@ -71,10 +71,13 @@ export function LoginPage(): JSX.Element {
 
   return (
     <div style={containerStyle}>
+      <div style={orbOneStyle} aria-hidden />
+      <div style={orbTwoStyle} aria-hidden />
       <div style={cardStyle}>
         <div style={headerStyle}>
-          <span style={logoStyle}>灵</span>
+          <img src="/assets/brand/linpo-flame-icon.svg" alt="" aria-hidden="true" style={logoStyle} />
           <h1 style={titleStyle}>{title}</h1>
+          <p style={subtitleStyle}>登录后进入看板与流程协作空间</p>
         </div>
 
         <form onSubmit={handleSubmit} style={formStyle}>
@@ -140,21 +143,52 @@ export function LoginPage(): JSX.Element {
 }
 
 const containerStyle: React.CSSProperties = {
-  minHeight: '100vh',
+  height: '100%',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-  background: '#f4f1ea',
+  position: 'relative',
+  overflow: 'hidden',
+  background:
+    'radial-gradient(1000px 700px at 10% -10%, rgba(16, 185, 129, 0.24), transparent 65%), radial-gradient(900px 700px at 95% 0%, rgba(14, 165, 233, 0.2), transparent 62%), linear-gradient(180deg, #f0f8fa 0%, #eef6f2 52%, #f6f8ef 100%)',
   padding: '1rem',
+};
+
+const orbOneStyle: React.CSSProperties = {
+  position: 'absolute',
+  top: '-14rem',
+  left: '-13rem',
+  width: '34rem',
+  height: '34rem',
+  borderRadius: '50%',
+  background: 'rgba(16, 185, 129, 0.18)',
+  filter: 'blur(56px)',
+  pointerEvents: 'none',
+};
+
+const orbTwoStyle: React.CSSProperties = {
+  position: 'absolute',
+  right: '-12rem',
+  top: '-10rem',
+  width: '30rem',
+  height: '30rem',
+  borderRadius: '50%',
+  background: 'rgba(14, 165, 233, 0.18)',
+  filter: 'blur(56px)',
+  pointerEvents: 'none',
 };
 
 const cardStyle: React.CSSProperties = {
   width: '100%',
-  maxWidth: '360px',
-  background: '#fff',
+  maxWidth: '390px',
+  background: 'linear-gradient(165deg, rgba(255, 255, 255, 0.82) 0%, rgba(240, 253, 250, 0.62) 100%)',
+  backdropFilter: 'blur(10px)',
+  border: '1px solid rgba(15, 23, 42, 0.1)',
   borderRadius: '1rem',
   padding: '2rem',
-  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+  boxShadow: '0 18px 38px rgba(15, 23, 42, 0.12)',
+  position: 'relative',
+  zIndex: 1,
 };
 
 const headerStyle: React.CSSProperties = {
@@ -163,18 +197,23 @@ const headerStyle: React.CSSProperties = {
 };
 
 const logoStyle: React.CSSProperties = {
-  fontSize: '2.5rem',
-  fontWeight: 700,
-  color: '#3b82f6',
+  width: '3rem',
+  height: '3rem',
   display: 'inline-block',
   marginBottom: '0.5rem',
 };
 
 const titleStyle: React.CSSProperties = {
   fontSize: '1.25rem',
-  fontWeight: 600,
-  color: '#1f2933',
+  fontWeight: 700,
+  color: '#0f172a',
   margin: 0,
+};
+
+const subtitleStyle: React.CSSProperties = {
+  margin: '0.45rem 0 0',
+  fontSize: '0.82rem',
+  color: '#52616f',
 };
 
 const formStyle: React.CSSProperties = {
@@ -191,24 +230,24 @@ const inputGroupStyle: React.CSSProperties = {
 
 const inputStyle: React.CSSProperties = {
   padding: '0.75rem 1rem',
-  border: '1px solid #e5e7eb',
+  border: '1px solid rgba(100, 116, 139, 0.28)',
   borderRadius: '0.5rem',
   fontSize: '0.875rem',
   fontFamily: 'system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif',
-  color: '#1f2933',
-  background: '#fff',
+  color: '#0f172a',
+  background: 'rgba(255, 255, 255, 0.82)',
   transition: 'border-color 0.2s, box-shadow 0.2s',
   outline: 'none',
 };
 
 const submitButtonStyle: React.CSSProperties = {
   padding: '0.75rem 1rem',
-  background: '#3b82f6',
+  background: 'linear-gradient(120deg, #0f766e 0%, #0284c7 100%)',
   color: '#fff',
-  border: 'none',
+  border: '1px solid rgba(14, 116, 144, 0.5)',
   borderRadius: '0.5rem',
   fontSize: '0.875rem',
-  fontWeight: 500,
+  fontWeight: 600,
   fontFamily: 'system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif',
   cursor: 'pointer',
   transition: 'background 0.2s, opacity 0.2s',
@@ -220,7 +259,7 @@ const toggleButtonStyle: React.CSSProperties = {
   padding: '0.5rem',
   background: 'transparent',
   border: 'none',
-  color: '#3b82f6',
+  color: '#0c4a6e',
   fontSize: '0.875rem',
   cursor: 'pointer',
   textDecoration: 'underline',

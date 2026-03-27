@@ -22,13 +22,13 @@ function App(): JSX.Element {
       <ToastProvider>
         <BrowserRouter>
           <Routes>
+            <Route path="/landing" element={<LandingPage />} />
             <Route element={<PublicRoute />}>
               <Route path="/login" element={<LoginPage />} />
             </Route>
             <Route element={<ProtectedRoute />}>
               <Route path="/" element={<Layout />}>
                 <Route index element={<RedirectToOverview />} />
-                <Route path="landing" element={<LandingPage />} />
                 <Route path="kanban" element={<CollabPage />} />
                 <Route path="flow" element={<FlowPage />} />
                 <Route path="*" element={<Navigate to="/kanban" replace />} />

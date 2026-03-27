@@ -370,6 +370,7 @@ const pageStyle: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   gap: '0.8rem',
+  background: 'transparent',
 };
 
 const headerStyle: React.CSSProperties = {
@@ -391,8 +392,9 @@ const headerActionsStyle: React.CSSProperties = {
 };
 
 const panelStyle: React.CSSProperties = {
-  border: '1px solid rgba(15, 23, 42, 0.12)',
-  background: 'rgba(255, 255, 255, 0.85)',
+  border: '1px solid rgba(15, 23, 42, 0.1)',
+  background: 'linear-gradient(160deg, rgba(255, 255, 255, 0.62) 0%, rgba(240, 253, 250, 0.42) 100%)',
+  backdropFilter: 'blur(6px)',
   borderRadius: '0.65rem',
   padding: '0.75rem',
   display: 'flex',
@@ -408,10 +410,11 @@ const fieldLabelStyle: React.CSSProperties = {
 const requirementInputStyle: React.CSSProperties = {
   width: '100%',
   minHeight: '100px',
-  border: '1px solid rgba(100, 116, 139, 0.35)',
+  border: '1px solid rgba(100, 116, 139, 0.3)',
   borderRadius: '0.45rem',
   padding: '0.65rem',
   fontSize: '0.88rem',
+  background: 'rgba(255, 255, 255, 0.72)',
   resize: 'vertical',
 };
 
@@ -427,8 +430,8 @@ const actionRowStyle: React.CSSProperties = {
 };
 
 const primaryButtonStyle: React.CSSProperties = {
-  border: '1px solid rgba(13, 148, 136, 0.52)',
-  background: '#0d9488',
+  border: '1px solid rgba(14, 116, 144, 0.5)',
+  background: 'linear-gradient(120deg, #0f766e 0%, #0284c7 100%)',
   color: '#f8fafc',
   borderRadius: '0.45rem',
   padding: '0.42rem 0.7rem',
@@ -438,8 +441,8 @@ const primaryButtonStyle: React.CSSProperties = {
 };
 
 const flatButtonStyle: React.CSSProperties = {
-  border: '1px solid rgba(15, 23, 42, 0.2)',
-  background: 'rgba(255, 255, 255, 0.88)',
+  border: '1px solid rgba(15, 23, 42, 0.15)',
+  background: 'rgba(255, 255, 255, 0.66)',
   color: '#1f2937',
   borderRadius: '0.45rem',
   padding: '0.42rem 0.7rem',
@@ -451,12 +454,13 @@ const flatButtonStyle: React.CSSProperties = {
 const flowEditorStyle: React.CSSProperties = {
   width: '100%',
   minHeight: '280px',
-  border: '1px solid rgba(100, 116, 139, 0.35)',
+  border: '1px solid rgba(100, 116, 139, 0.3)',
   borderRadius: '0.45rem',
   padding: '0.65rem',
   fontSize: '0.78rem',
   fontFamily: '"IBM Plex Mono", monospace',
   lineHeight: 1.4,
+  background: 'rgba(255, 255, 255, 0.72)',
   resize: 'vertical',
 };
 
