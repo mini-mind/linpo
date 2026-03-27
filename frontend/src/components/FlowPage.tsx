@@ -1,486 +1,616 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getAggregateOverview, sendChatMessage } from '../api/client';
-import type { AggregateOverviewResponse } from '../api/types';
-import type { BoardTask, TaskStatus } from './kanbanTypes';
-import { appendFlowTasks } from '../state/flowTaskStore';
+import { generateFlowFromRequirement, getAggregateOverview } from '../api/client';
+import type {
+  AggregateOverviewAgentItem,
+  AggregateOverviewResponse,
+  FlowCanvasEdge,
+  FlowCanvasNode,
+  FlowChatMessageItem,
+  FlowGenerateResponse,
+} from '../api/types';
 import { useToast } from '../hooks/useToast';
 
-interface FlowNodeDraft {
-  id: string;
-  title: string;
-  depends_on: string[];
-  sensitive?: boolean;
-  agent_id?: string;
-  notes?: string;
-}
+type SelectedAgentBundle = {
+  plannerAgentId: string;
+  managerAgentId: string;
+  executorAgentId: string;
+};
+
+const NODE_WIDTH = 224;
+const NODE_HEIGHT = 96;
 
 export function FlowPage(): JSX.Element {
   const navigate = useNavigate();
   const { addToast } = useToast();
   const [overview, setOverview] = useState<AggregateOverviewResponse | null>(null);
-
   const [requirement, setRequirement] = useState('');
-  const [flowText, setFlowText] = useState('[]');
-  const [layerPreview, setLayerPreview] = useState<string[]>([]);
-  const [generatedByOpenClaw, setGeneratedByOpenClaw] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [flowNodes, setFlowNodes] = useState<FlowCanvasNode[]>([]);
+  const [flowEdges, setFlowEdges] = useState<FlowCanvasEdge[]>([]);
+  const [messages, setMessages] = useState<FlowChatMessageItem[]>([]);
+  const [lastResponse, setLastResponse] = useState<FlowGenerateResponse | null>(null);
+  const [selectedAgents, setSelectedAgents] = useState<SelectedAgentBundle>({
+    plannerAgentId: '',
+    managerAgentId: '',
+    executorAgentId: '',
+  });
 
-  const agentMap = useMemo(
-    () => new Map((overview?.agents ?? []).map((item) => [item.agent_id, item.agent_name])),
-    [overview?.agents]
-  );
+  const uniqueAgents = useMemo(() => {
+    const map = new Map<string, AggregateOverviewAgentItem>();
+    for (const agent of overview?.agents ?? []) {
+      if (!map.has(agent.agent_id)) {
+        map.set(agent.agent_id, agent);
+      }
+    }
+    return Array.from(map.values());
+  }, [overview?.agents]);
+
+  const agentMap = useMemo(() => {
+    return new Map(uniqueAgents.map((agent) => [agent.agent_id, agent]));
+  }, [uniqueAgents]);
 
   useEffect(() => {
-    void getAggregateOverview().then(setOverview).catch(() => {
-      setOverview(null);
-    });
+    let active = true;
+    void getAggregateOverview()
+      .then((data) => {
+        if (!active) return;
+        setOverview(data);
+        const fallback = data.agents[0]?.agent_id ?? '';
+        setSelectedAgents((current) => ({
+          plannerAgentId: current.plannerAgentId || fallback,
+          managerAgentId: current.managerAgentId || fallback,
+          executorAgentId: current.executorAgentId || fallback,
+        }));
+      })
+      .catch(() => {
+        if (!active) return;
+        setOverview(null);
+      });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
-  const handleGenerateFlow = useCallback(async () => {
-    const sentence = requirement.trim();
-    if (!sentence) {
-      addToast('请先输入一句话需求', 'warning');
+  const canvasSize = useMemo(() => {
+    if (flowNodes.length === 0) {
+      return { width: 1400, height: 760 };
+    }
+
+    let maxX = 0;
+    let maxY = 0;
+    for (const node of flowNodes) {
+      maxX = Math.max(maxX, node.x + NODE_WIDTH);
+      maxY = Math.max(maxY, node.y + NODE_HEIGHT);
+    }
+    return {
+      width: Math.max(1400, Math.ceil(maxX + 180)),
+      height: Math.max(760, Math.ceil(maxY + 180)),
+    };
+  }, [flowNodes]);
+
+  const nodePositionMap = useMemo(() => {
+    const map = new Map<string, { x: number; y: number }>();
+    for (const node of flowNodes) {
+      map.set(node.id, { x: node.x, y: node.y });
+    }
+    return map;
+  }, [flowNodes]);
+
+  const canSubmit = requirement.trim().length > 0 && selectedAgents.executorAgentId.trim().length > 0;
+
+  const pushMessage = useCallback((message: FlowChatMessageItem) => {
+    setMessages((prev) => [...prev, message]);
+  }, []);
+
+  const handleGenerate = useCallback(async () => {
+    const requirementText = requirement.trim();
+    if (!requirementText) {
+      addToast('请先输入需求', 'warning');
       return;
     }
 
-    const fallbackAgent = overview?.agents[0] ?? null;
-
-    if (fallbackAgent) {
-      try {
-        await sendChatMessage({
-          agentId: fallbackAgent.agent_id,
-          sessionKey: '__new__',
-          message: `请将以下需求拆分为可并行执行的流程节点，并标注依赖。需求：${sentence}`,
-        });
-        setGeneratedByOpenClaw(true);
-      } catch (error) {
-        setGeneratedByOpenClaw(false);
-        const message = error instanceof Error ? error.message : 'OpenClaw 调用失败';
-        addToast(`OpenClaw 生成请求失败：${message}`, 'warning');
-      }
-    } else {
-      setGeneratedByOpenClaw(false);
-      addToast('当前没有可用 agent，已使用本地规则生成草图', 'info');
+    const executor = agentMap.get(selectedAgents.executorAgentId);
+    if (!executor) {
+      addToast('请先选择可用执行 Agent', 'warning');
+      return;
     }
 
-    const draft = buildDefaultFlowDraft(sentence, fallbackAgent?.agent_id ?? null);
-    setFlowText(JSON.stringify(draft, null, 2));
-    addToast('流程草图已生成，可继续手动编辑', 'success');
-  }, [addToast, overview?.agents, requirement]);
+    setIsGenerating(true);
+    pushMessage({
+      role: 'user',
+      content: requirementText,
+      created_at: new Date().toISOString(),
+    });
 
-  const handleParseAndAppend = useCallback(() => {
     try {
-      const nodes = parseFlowDraft(flowText);
-      const layers = resolveDagLayers(nodes);
+      const response = await generateFlowFromRequirement(
+        {
+          requirement: requirementText,
+          instance_id: executor.instance_id,
+          executor_agent_id: selectedAgents.executorAgentId,
+          planner_agent_id: selectedAgents.plannerAgentId || selectedAgents.executorAgentId,
+          manager_agent_id: selectedAgents.managerAgentId || selectedAgents.executorAgentId,
+        },
+        { instanceId: executor.instance_id },
+        'default'
+      );
 
-      const tasks = toBoardTasks(nodes, layers, agentMap);
-      appendFlowTasks(tasks);
-      setLayerPreview(layers.map((layer, index) => `L${index + 1}: ${layer.join(', ')}`));
-      addToast(`流程已入看板：新增 ${tasks.length} 个任务`, 'success');
-      navigate('/kanban');
+      setFlowNodes(response.nodes);
+      setFlowEdges(response.edges);
+      setMessages(response.messages);
+      setLastResponse(response);
+      addToast(`流程拆解完成：${response.created_task_ids.length} 个任务已入看板`, 'success');
     } catch (error) {
-      const message = error instanceof Error ? error.message : '流程解析失败';
+      const message = error instanceof Error ? error.message : '流程生成失败';
+      pushMessage({
+        role: 'system',
+        content: `流程生成失败：${message}`,
+        created_at: new Date().toISOString(),
+      });
       addToast(message, 'error');
+    } finally {
+      setIsGenerating(false);
     }
-  }, [addToast, agentMap, flowText, navigate]);
+  }, [addToast, agentMap, pushMessage, requirement, selectedAgents]);
+
+  const handleClearCanvas = useCallback(() => {
+    setFlowNodes([]);
+    setFlowEdges([]);
+    setLastResponse(null);
+    addToast('画布已清空', 'info');
+  }, [addToast]);
 
   return (
     <section style={pageStyle} aria-label="flow-page">
       <header style={headerStyle}>
-        <h2 style={titleStyle}>创建流程</h2>
-        <div style={headerActionsStyle}>
+        <div style={headerTitleGroupStyle}>
+          <h2 style={titleStyle}>流程画布</h2>
+          <p style={subtitleStyle}>全页面编排视图（Flow Canvas）</p>
+        </div>
+        <div style={headerActionRowStyle}>
+          <button type="button" style={flatButtonStyle} onClick={handleClearCanvas}>
+            清空画布
+          </button>
           <button type="button" style={flatButtonStyle} onClick={() => navigate('/kanban')}>
             返回看板
           </button>
         </div>
       </header>
 
-      <div style={panelStyle}>
-        <label htmlFor="flow-requirement" style={fieldLabelStyle}>一句话需求</label>
-        <textarea
-          id="flow-requirement"
-          value={requirement}
-          onChange={(event) => setRequirement(event.target.value)}
-          placeholder="例如：上线一个新品活动，从素材生成到渠道投放并审批敏感动作。"
-          style={requirementInputStyle}
-        />
-        <div style={statusTextStyle}>
-          OpenClaw 调用状态：{generatedByOpenClaw ? '已触发（claw1 或当前实例）' : '未确认调用成功'}
-        </div>
-        <div style={actionRowStyle}>
-          <button type="button" style={primaryButtonStyle} onClick={handleGenerateFlow}>
-            生成流程图草稿
-          </button>
-          <button type="button" style={flatButtonStyle} onClick={handleParseAndAppend}>
-            解析并加入看板
-          </button>
+      <div style={canvasViewportStyle}>
+        <div style={{ ...canvasContentStyle, width: `${canvasSize.width}px`, height: `${canvasSize.height}px` }}>
+          <svg width={canvasSize.width} height={canvasSize.height} style={edgeSvgStyle} aria-hidden="true">
+            <defs>
+              <marker id="flow-arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#0f766e" />
+              </marker>
+            </defs>
+            {flowEdges.map((edge) => {
+              const source = nodePositionMap.get(edge.source);
+              const target = nodePositionMap.get(edge.target);
+              if (!source || !target) {
+                return null;
+              }
+              const x1 = source.x + NODE_WIDTH;
+              const y1 = source.y + NODE_HEIGHT / 2;
+              const x2 = target.x;
+              const y2 = target.y + NODE_HEIGHT / 2;
+              const controlX1 = x1 + 80;
+              const controlX2 = x2 - 80;
+              const path = `M ${x1} ${y1} C ${controlX1} ${y1}, ${controlX2} ${y2}, ${x2} ${y2}`;
+              return <path key={edge.id} d={path} stroke="#0f766e" strokeWidth="2" fill="none" markerEnd="url(#flow-arrow)" />;
+            })}
+          </svg>
+
+          {flowNodes.length === 0 ? (
+            <div style={emptyCanvasHintStyle}>
+              <p style={emptyCanvasTextStyle}>提交需求后，OpenClaw 专用会话将生成并更新流程图。</p>
+            </div>
+          ) : (
+            flowNodes.map((node) => (
+              <article
+                key={node.id}
+                style={{
+                  ...flowNodeCardStyle,
+                  left: `${node.x}px`,
+                  top: `${node.y}px`,
+                  borderColor: node.sensitive ? 'rgba(180, 83, 9, 0.42)' : 'rgba(15, 118, 110, 0.3)',
+                  background: node.sensitive
+                    ? 'linear-gradient(160deg, rgba(255, 247, 237, 0.94), rgba(255, 251, 235, 0.9))'
+                    : 'linear-gradient(160deg, rgba(240, 253, 250, 0.92), rgba(236, 253, 245, 0.88))',
+                }}
+              >
+                <div style={nodeHeaderStyle}>
+                  <span style={nodeLayerBadgeStyle}>L{node.layer}</span>
+                  <span style={nodeStatusTextStyle}>{node.status}</span>
+                </div>
+                <h3 style={nodeTitleStyle}>{node.title}</h3>
+                <p style={nodeMetaStyle}>Agent：{node.agent_id ?? '待分配'}</p>
+              </article>
+            ))
+          )}
         </div>
       </div>
 
-      <div style={panelStyle}>
-        <label htmlFor="flow-json" style={fieldLabelStyle}>流程定义（JSON）</label>
-        <textarea
-          id="flow-json"
-          value={flowText}
-          onChange={(event) => setFlowText(event.target.value)}
-          style={flowEditorStyle}
-          spellCheck={false}
-        />
-        <p style={hintStyle}>支持编辑 `depends_on` 依赖；标记 `"sensitive": true` 会生成待审批任务。</p>
-      </div>
+      <section style={chatDockStyle} aria-label="flow-chat-dock">
+        <div style={chatStreamStyle}>
+          {messages.length === 0 ? (
+            <p style={chatEmptyTextStyle}>消息流为空，提交需求后将展示规划与调度记录。</p>
+          ) : (
+            messages.map((item, index) => (
+              <article
+                key={`${item.created_at}-${index}`}
+                style={{
+                  ...chatItemStyle,
+                  borderColor:
+                    item.role === 'user'
+                      ? 'rgba(14, 116, 144, 0.28)'
+                      : item.role === 'assistant'
+                        ? 'rgba(15, 118, 110, 0.28)'
+                        : 'rgba(148, 163, 184, 0.35)',
+                }}
+              >
+                <div style={chatItemHeaderStyle}>
+                  <span style={chatRoleStyle}>{item.role}</span>
+                  <span style={chatTimeStyle}>{new Date(item.created_at).toLocaleTimeString('zh-CN')}</span>
+                </div>
+                <p style={chatContentStyle}>{item.content}</p>
+              </article>
+            ))
+          )}
+        </div>
 
-      <div style={panelStyle}>
-        <h3 style={previewTitleStyle}>并行层预览</h3>
-        {layerPreview.length === 0 ? (
-          <p style={hintStyle}>解析后会显示 DAG 并行层。</p>
-        ) : (
-          <ul style={layerListStyle}>
-            {layerPreview.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        )}
-      </div>
+        <div style={chatControlStyle}>
+          <div style={agentSelectRowStyle}>
+            <label style={agentSelectLabelStyle}>
+              规划 Agent
+              <select
+                value={selectedAgents.plannerAgentId}
+                onChange={(event) => setSelectedAgents((prev) => ({ ...prev, plannerAgentId: event.target.value }))}
+                style={agentSelectStyle}
+              >
+                {uniqueAgents.map((agent) => (
+                  <option key={`planner-${agent.agent_id}`} value={agent.agent_id}>
+                    {agent.agent_name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={agentSelectLabelStyle}>
+              管理 Agent
+              <select
+                value={selectedAgents.managerAgentId}
+                onChange={(event) => setSelectedAgents((prev) => ({ ...prev, managerAgentId: event.target.value }))}
+                style={agentSelectStyle}
+              >
+                {uniqueAgents.map((agent) => (
+                  <option key={`manager-${agent.agent_id}`} value={agent.agent_id}>
+                    {agent.agent_name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={agentSelectLabelStyle}>
+              执行 Agent
+              <select
+                value={selectedAgents.executorAgentId}
+                onChange={(event) => setSelectedAgents((prev) => ({ ...prev, executorAgentId: event.target.value }))}
+                style={agentSelectStyle}
+              >
+                {uniqueAgents.map((agent) => (
+                  <option key={`executor-${agent.agent_id}`} value={agent.agent_id}>
+                    {agent.agent_name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <textarea
+            value={requirement}
+            onChange={(event) => setRequirement(event.target.value)}
+            placeholder="输入需求，生成流程并自动拆解任务入看板..."
+            style={requirementInputStyle}
+          />
+
+          {lastResponse ? (
+            <div style={sessionMetaStyle}>
+              <span>planner session: {lastResponse.planner_session_key}</span>
+              <span>manager session: {lastResponse.manager_session_key}</span>
+              <span>execution prefix: {lastResponse.execution_session_prefix}</span>
+            </div>
+          ) : null}
+
+          <div style={chatActionRowStyle}>
+            <button type="button" style={primaryButtonStyle} onClick={() => void handleGenerate()} disabled={!canSubmit || isGenerating}>
+              {isGenerating ? '生成中...' : '提交需求并生成流程'}
+            </button>
+            <button type="button" style={flatButtonStyle} onClick={() => navigate('/kanban')}>
+              查看看板结果
+            </button>
+          </div>
+        </div>
+      </section>
     </section>
   );
 }
 
-function toBoardTasks(
-  nodes: FlowNodeDraft[],
-  layers: string[][],
-  agentMap: Map<string, string>
-): BoardTask[] {
-  const now = Date.now();
-  const tasks: BoardTask[] = [];
-
-  layers.forEach((layer, layerIndex) => {
-    for (const nodeId of layer) {
-      const node = nodes.find((item) => item.id === nodeId);
-      if (!node) continue;
-
-      const status: TaskStatus = node.sensitive ? 'blocked_by_approval' : 'queued';
-      const agentName = node.agent_id ? agentMap.get(node.agent_id) ?? `Agent ${node.agent_id}` : '待分配';
-
-      tasks.push({
-        id: `flow-${now}-${node.id}`,
-        title: node.title,
-        summary: node.notes?.trim() || `由流程节点 ${node.id} 派生`,
-        status,
-        source: 'flow',
-        agentId: node.agent_id ?? null,
-        agentName,
-        artifacts: [
-          `流程层级：L${layerIndex + 1}`,
-          `依赖节点：${node.depends_on.length > 0 ? node.depends_on.join(', ') : '无'}`,
-        ],
-        extras: {
-          flow_node: node.id,
-          layer: `L${layerIndex + 1}`,
-          dependencies: node.depends_on.join(', ') || 'none',
-        },
-      });
-    }
-  });
-
-  return tasks;
-}
-
-function buildDefaultFlowDraft(sentence: string, fallbackAgentId: string | null): FlowNodeDraft[] {
-  const fragments = sentence
-    .split(/[，,。；;]+/)
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
-
-  const steps = fragments.length > 0 ? fragments : [sentence.trim()];
-  const normalized = steps.slice(0, 6);
-
-  const drafts: FlowNodeDraft[] = normalized.map((title, index) => {
-    const id = `node_${index + 1}`;
-    const dependsOn: string[] = [];
-
-    if (index === 1 || index === 2) {
-      dependsOn.push('node_1');
-    } else if (index > 2) {
-      dependsOn.push(`node_${index}`);
-    }
-
-    return {
-      id,
-      title,
-      depends_on: dependsOn,
-      sensitive: index === normalized.length - 1,
-      agent_id: fallbackAgentId ?? undefined,
-      notes: index === 0 ? '流程入口节点' : undefined,
-    };
-  });
-
-  if (drafts.length === 1) {
-    drafts.push(
-      {
-        id: 'node_2',
-        title: '执行主任务',
-        depends_on: ['node_1'],
-        agent_id: fallbackAgentId ?? undefined,
-      },
-      {
-        id: 'node_3',
-        title: '提交审批与收尾',
-        depends_on: ['node_2'],
-        sensitive: true,
-        agent_id: fallbackAgentId ?? undefined,
-      }
-    );
-  }
-
-  return drafts;
-}
-
-function parseFlowDraft(rawText: string): FlowNodeDraft[] {
-  let parsed: unknown;
-
-  try {
-    parsed = JSON.parse(rawText);
-  } catch {
-    throw new Error('流程 JSON 格式错误，请检查后重试');
-  }
-
-  if (!Array.isArray(parsed)) {
-    throw new Error('流程草稿必须是数组格式');
-  }
-
-  const seen = new Set<string>();
-  const nodes: FlowNodeDraft[] = parsed.map((item, index) => {
-    if (!item || typeof item !== 'object') {
-      throw new Error(`第 ${index + 1} 个节点不是对象`);
-    }
-
-    const id = typeof (item as { id?: unknown }).id === 'string' ? (item as { id: string }).id.trim() : '';
-    const title =
-      typeof (item as { title?: unknown }).title === 'string' ? (item as { title: string }).title.trim() : '';
-
-    if (!id || !title) {
-      throw new Error(`第 ${index + 1} 个节点缺少 id 或 title`);
-    }
-
-    if (seen.has(id)) {
-      throw new Error(`节点 id 重复：${id}`);
-    }
-    seen.add(id);
-
-    const dependsRaw = (item as { depends_on?: unknown }).depends_on;
-    const dependsOn = Array.isArray(dependsRaw)
-      ? dependsRaw.filter((dep): dep is string => typeof dep === 'string' && dep.trim().length > 0)
-      : [];
-
-    const sensitive = Boolean((item as { sensitive?: unknown }).sensitive);
-    const agentId =
-      typeof (item as { agent_id?: unknown }).agent_id === 'string'
-        ? (item as { agent_id: string }).agent_id.trim() || undefined
-        : undefined;
-    const notes =
-      typeof (item as { notes?: unknown }).notes === 'string'
-        ? (item as { notes: string }).notes.trim() || undefined
-        : undefined;
-
-    return {
-      id,
-      title,
-      depends_on: dependsOn,
-      sensitive,
-      agent_id: agentId,
-      notes,
-    };
-  });
-
-  const idSet = new Set(nodes.map((node) => node.id));
-  for (const node of nodes) {
-    for (const dependency of node.depends_on) {
-      if (!idSet.has(dependency)) {
-        throw new Error(`节点 ${node.id} 依赖不存在：${dependency}`);
-      }
-    }
-  }
-
-  return nodes;
-}
-
-function resolveDagLayers(nodes: FlowNodeDraft[]): string[][] {
-  const indegree = new Map<string, number>();
-  const graph = new Map<string, string[]>();
-  const levels = new Map<string, number>();
-
-  for (const node of nodes) {
-    indegree.set(node.id, node.depends_on.length);
-    graph.set(node.id, []);
-    levels.set(node.id, 0);
-  }
-
-  for (const node of nodes) {
-    for (const dependency of node.depends_on) {
-      graph.get(dependency)?.push(node.id);
-    }
-  }
-
-  const queue: string[] = [];
-  for (const [id, degree] of indegree.entries()) {
-    if (degree === 0) {
-      queue.push(id);
-    }
-  }
-
-  const ordered: string[] = [];
-  while (queue.length > 0) {
-    const current = queue.shift();
-    if (!current) continue;
-    ordered.push(current);
-
-    const currentLevel = levels.get(current) ?? 0;
-    const neighbors = graph.get(current) ?? [];
-
-    for (const next of neighbors) {
-      const nextLevel = Math.max(levels.get(next) ?? 0, currentLevel + 1);
-      levels.set(next, nextLevel);
-      indegree.set(next, (indegree.get(next) ?? 0) - 1);
-      if ((indegree.get(next) ?? 0) === 0) {
-        queue.push(next);
-      }
-    }
-  }
-
-  if (ordered.length !== nodes.length) {
-    throw new Error('流程存在循环依赖，无法解析为并行任务');
-  }
-
-  const layers: string[][] = [];
-  for (const nodeId of ordered) {
-    const level = levels.get(nodeId) ?? 0;
-    if (!layers[level]) {
-      layers[level] = [];
-    }
-    layers[level].push(nodeId);
-  }
-
-  return layers;
-}
-
 const pageStyle: React.CSSProperties = {
+  position: 'relative',
   flex: 1,
   minHeight: 0,
   display: 'flex',
   flexDirection: 'column',
-  gap: '0.8rem',
-  background: 'transparent',
+  gap: '0.6rem',
+  overflow: 'hidden',
 };
 
 const headerStyle: React.CSSProperties = {
   display: 'flex',
-  justifyContent: 'space-between',
   alignItems: 'center',
+  justifyContent: 'space-between',
   gap: '0.8rem',
+};
+
+const headerTitleGroupStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.2rem',
 };
 
 const titleStyle: React.CSSProperties = {
   margin: 0,
   fontSize: '1.02rem',
   fontWeight: 700,
+  color: '#0f172a',
 };
 
-const headerActionsStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-};
-
-const panelStyle: React.CSSProperties = {
-  border: '1px solid rgba(15, 23, 42, 0.1)',
-  background: 'linear-gradient(160deg, rgba(255, 255, 255, 0.62) 0%, rgba(240, 253, 250, 0.42) 100%)',
-  backdropFilter: 'blur(6px)',
-  borderRadius: '0.65rem',
-  padding: '0.75rem',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '0.55rem',
-};
-
-const fieldLabelStyle: React.CSSProperties = {
-  fontSize: '0.82rem',
-  fontWeight: 600,
-};
-
-const requirementInputStyle: React.CSSProperties = {
-  width: '100%',
-  minHeight: '100px',
-  border: '1px solid rgba(100, 116, 139, 0.3)',
-  borderRadius: '0.45rem',
-  padding: '0.65rem',
-  fontSize: '0.88rem',
-  background: 'rgba(255, 255, 255, 0.72)',
-  resize: 'vertical',
-};
-
-const statusTextStyle: React.CSSProperties = {
+const subtitleStyle: React.CSSProperties = {
+  margin: 0,
   fontSize: '0.75rem',
   color: '#475569',
 };
 
-const actionRowStyle: React.CSSProperties = {
+const headerActionRowStyle: React.CSSProperties = {
   display: 'flex',
-  gap: '0.55rem',
+  alignItems: 'center',
+  gap: '0.45rem',
+};
+
+const canvasViewportStyle: React.CSSProperties = {
+  position: 'relative',
+  flex: 1,
+  minHeight: 0,
+  overflow: 'auto',
+  border: '1px solid rgba(15, 23, 42, 0.1)',
+  borderRadius: '0.65rem',
+  background:
+    'radial-gradient(circle at 30px 30px, rgba(15, 118, 110, 0.08) 1px, transparent 1px), radial-gradient(circle at 30px 30px, rgba(148, 163, 184, 0.07) 0.5px, transparent 0.5px), linear-gradient(160deg, rgba(255, 255, 255, 0.72), rgba(240, 253, 250, 0.6))',
+  backgroundSize: '38px 38px, 19px 19px, cover',
+};
+
+const canvasContentStyle: React.CSSProperties = {
+  position: 'relative',
+  minWidth: '100%',
+  minHeight: '100%',
+};
+
+const edgeSvgStyle: React.CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  pointerEvents: 'none',
+};
+
+const flowNodeCardStyle: React.CSSProperties = {
+  position: 'absolute',
+  width: `${NODE_WIDTH}px`,
+  minHeight: `${NODE_HEIGHT}px`,
+  border: '1px solid rgba(15, 118, 110, 0.3)',
+  borderRadius: '0.6rem',
+  padding: '0.55rem',
+  boxShadow: '0 10px 30px -24px rgba(15, 23, 42, 0.7)',
+  backdropFilter: 'blur(4px)',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.35rem',
+};
+
+const nodeHeaderStyle: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  gap: '0.3rem',
+};
+
+const nodeLayerBadgeStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  borderRadius: '999px',
+  border: '1px solid rgba(15, 118, 110, 0.28)',
+  padding: '0.08rem 0.45rem',
+  fontSize: '0.68rem',
+  color: '#0f766e',
+  fontWeight: 700,
+};
+
+const nodeStatusTextStyle: React.CSSProperties = {
+  fontSize: '0.68rem',
+  color: '#334155',
+  fontWeight: 600,
+};
+
+const nodeTitleStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.8rem',
+  fontWeight: 700,
+  color: '#0f172a',
+};
+
+const nodeMetaStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.68rem',
+  color: '#64748b',
+};
+
+const emptyCanvasHintStyle: React.CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+};
+
+const emptyCanvasTextStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.85rem',
+  color: '#64748b',
+};
+
+const chatDockStyle: React.CSSProperties = {
+  position: 'absolute',
+  left: '50%',
+  bottom: '1rem',
+  transform: 'translateX(-50%)',
+  width: 'min(980px, calc(100vw - 2.2rem))',
+  maxHeight: 'min(48vh, 430px)',
+  display: 'grid',
+  gridTemplateRows: 'minmax(120px, 1fr) auto',
+  border: '1px solid rgba(15, 23, 42, 0.12)',
+  borderRadius: '0.7rem',
+  background: 'rgba(255, 255, 255, 0.9)',
+  backdropFilter: 'blur(10px)',
+  boxShadow: '0 22px 40px -28px rgba(15, 23, 42, 0.8)',
+  zIndex: 30,
+  overflow: 'hidden',
+};
+
+const chatStreamStyle: React.CSSProperties = {
+  padding: '0.6rem',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.4rem',
+  overflowY: 'auto',
+  borderBottom: '1px solid rgba(148, 163, 184, 0.24)',
+};
+
+const chatEmptyTextStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.78rem',
+  color: '#64748b',
+};
+
+const chatItemStyle: React.CSSProperties = {
+  border: '1px solid rgba(148, 163, 184, 0.35)',
+  borderRadius: '0.55rem',
+  padding: '0.44rem 0.5rem',
+  background: 'rgba(255, 255, 255, 0.85)',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.22rem',
+};
+
+const chatItemHeaderStyle: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+};
+
+const chatRoleStyle: React.CSSProperties = {
+  fontSize: '0.65rem',
+  fontWeight: 700,
+  color: '#0f766e',
+};
+
+const chatTimeStyle: React.CSSProperties = {
+  fontSize: '0.64rem',
+  color: '#64748b',
+};
+
+const chatContentStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.74rem',
+  color: '#334155',
+  lineHeight: 1.38,
+};
+
+const chatControlStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.5rem',
+  padding: '0.6rem',
+};
+
+const agentSelectRowStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+  gap: '0.45rem',
+};
+
+const agentSelectLabelStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.2rem',
+  fontSize: '0.7rem',
+  color: '#334155',
+  fontWeight: 600,
+};
+
+const agentSelectStyle: React.CSSProperties = {
+  border: '1px solid rgba(15, 23, 42, 0.16)',
+  borderRadius: '0.38rem',
+  padding: '0.28rem 0.34rem',
+  fontSize: '0.74rem',
+  background: 'rgba(255, 255, 255, 0.94)',
+};
+
+const requirementInputStyle: React.CSSProperties = {
+  width: '100%',
+  minHeight: '72px',
+  border: '1px solid rgba(15, 23, 42, 0.16)',
+  borderRadius: '0.42rem',
+  padding: '0.48rem 0.56rem',
+  fontSize: '0.8rem',
+  resize: 'vertical',
+  background: 'rgba(255, 255, 255, 0.94)',
+};
+
+const sessionMetaStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: '0.2rem',
+  fontSize: '0.68rem',
+  color: '#475569',
+};
+
+const chatActionRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '0.45rem',
   flexWrap: 'wrap',
 };
 
 const primaryButtonStyle: React.CSSProperties = {
-  border: '1px solid rgba(14, 116, 144, 0.5)',
+  border: '1px solid rgba(14, 116, 144, 0.52)',
   background: 'linear-gradient(120deg, #0f766e 0%, #0284c7 100%)',
   color: '#f8fafc',
   borderRadius: '0.45rem',
-  padding: '0.42rem 0.7rem',
+  padding: '0.42rem 0.75rem',
   fontSize: '0.8rem',
-  fontWeight: 600,
+  fontWeight: 700,
   cursor: 'pointer',
 };
 
 const flatButtonStyle: React.CSSProperties = {
-  border: '1px solid rgba(15, 23, 42, 0.15)',
-  background: 'rgba(255, 255, 255, 0.66)',
+  border: '1px solid rgba(15, 23, 42, 0.16)',
+  background: 'rgba(255, 255, 255, 0.8)',
   color: '#1f2937',
   borderRadius: '0.45rem',
-  padding: '0.42rem 0.7rem',
+  padding: '0.42rem 0.72rem',
   fontSize: '0.8rem',
   fontWeight: 600,
   cursor: 'pointer',
-};
-
-const flowEditorStyle: React.CSSProperties = {
-  width: '100%',
-  minHeight: '280px',
-  border: '1px solid rgba(100, 116, 139, 0.3)',
-  borderRadius: '0.45rem',
-  padding: '0.65rem',
-  fontSize: '0.78rem',
-  fontFamily: '"IBM Plex Mono", monospace',
-  lineHeight: 1.4,
-  background: 'rgba(255, 255, 255, 0.72)',
-  resize: 'vertical',
-};
-
-const hintStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: '0.74rem',
-  color: '#475569',
-};
-
-const previewTitleStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: '0.86rem',
-  fontWeight: 700,
-};
-
-const layerListStyle: React.CSSProperties = {
-  margin: 0,
-  paddingLeft: '1rem',
-  fontSize: '0.76rem',
-  color: '#334155',
-  display: 'grid',
-  gap: '0.2rem',
 };

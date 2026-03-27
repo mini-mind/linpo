@@ -8,6 +8,10 @@ import type {
 	ChatSendResponse,
 	ErrorEnvelope,
 	ErrorResponse,
+	FlowGenerateRequest,
+	FlowGenerateResponse,
+	KanbanTaskCreateRequest,
+	KanbanTaskItem,
 	ModelItem,
 	NodeDetailResponse,
 	SessionDeleteResponse,
@@ -25,9 +29,15 @@ const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
 const inferredApiBaseUrl = `${window.location.protocol}//${window.location.hostname}:8000`;
 const API_BASE_URL = configuredApiBaseUrl || inferredApiBaseUrl;
 const DEFAULT_OBSERVER_DATA_SOURCE = 'openclaw';
+const DEFAULT_BOARD_ID = 'default';
 
 export interface ObserverRequestOptions {
   instanceId?: string | null;
+}
+
+function resolveBoardId(boardId?: string | null): string {
+  const normalized = (boardId ?? '').trim();
+  return normalized || DEFAULT_BOARD_ID;
 }
 
 function withDefaultDataSource(path: string): string {
@@ -122,6 +132,48 @@ export async function getAggregateTopology(
   options?: ObserverRequestOptions
 ): Promise<AggregateTopologyResponse> {
   return fetchApi<AggregateTopologyResponse>('/aggregate/topology', undefined, options);
+}
+
+export async function listKanbanTasks(
+  options?: ObserverRequestOptions,
+  boardId?: string | null
+): Promise<KanbanTaskItem[]> {
+  const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
+  return fetchApi<KanbanTaskItem[]>(`/api/v1/boards/${encodedBoardId}/tasks`, undefined, options);
+}
+
+export async function createKanbanTask(
+  payload: KanbanTaskCreateRequest,
+  options?: ObserverRequestOptions,
+  boardId?: string | null
+): Promise<KanbanTaskItem> {
+  const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
+  return fetchApi<KanbanTaskItem>(
+    `/api/v1/boards/${encodedBoardId}/tasks`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+    options
+  );
+}
+
+export async function generateFlowFromRequirement(
+  payload: FlowGenerateRequest,
+  options?: ObserverRequestOptions,
+  boardId?: string | null
+): Promise<FlowGenerateResponse> {
+  const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
+  return fetchApi<FlowGenerateResponse>(
+    `/api/v1/boards/${encodedBoardId}/tasks/flow/generate`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+    options
+  );
 }
 
 export async function getAgentDetail(

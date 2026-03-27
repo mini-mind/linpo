@@ -85,6 +85,8 @@ const shellStyle: React.CSSProperties = {
 
 const toolbarStyle: React.CSSProperties = {
   height: '56px',
+  position: 'relative',
+  zIndex: 80,
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
@@ -93,6 +95,7 @@ const toolbarStyle: React.CSSProperties = {
   borderBottom: '1px solid rgba(15, 23, 42, 0.08)',
   backdropFilter: 'blur(10px)',
   background: 'rgba(255, 255, 255, 0.36)',
+  overflow: 'visible',
 };
 
 const toolbarLeftStyle: React.CSSProperties = {

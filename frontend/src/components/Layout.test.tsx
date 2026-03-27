@@ -36,6 +36,7 @@ describe('Layout', () => {
     expect(screen.getByRole('link', { name: '灵盘' })).toHaveAttribute('href', '/landing');
     expect(screen.getByRole('link', { name: '看板' })).toHaveAttribute('href', '/kanban');
     expect(screen.getByRole('navigation', { name: '主导航' })).toBeInTheDocument();
+    expect(screen.getByRole('banner')).toHaveStyle({ position: 'relative', zIndex: '80', overflow: 'visible' });
     expect(screen.getByTestId('layout-main-shell')).toHaveTextContent('看板内容');
   });
 

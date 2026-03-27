@@ -7,8 +7,10 @@ import type { AggregateOverviewResponse } from '../api/types';
 import { ToastProvider } from '../hooks/useToast';
 import CollabPage from './CollabPage';
 
-const { mockGetAggregateOverview } = vi.hoisted(() => ({
+const { mockGetAggregateOverview, mockListKanbanTasks, mockCreateKanbanTask } = vi.hoisted(() => ({
   mockGetAggregateOverview: vi.fn(),
+  mockListKanbanTasks: vi.fn(),
+  mockCreateKanbanTask: vi.fn(),
 }));
 
 vi.mock('../api/client', async () => {
@@ -16,6 +18,8 @@ vi.mock('../api/client', async () => {
   return {
     ...actual,
     getAggregateOverview: mockGetAggregateOverview,
+    listKanbanTasks: mockListKanbanTasks,
+    createKanbanTask: mockCreateKanbanTask,
   };
 });
 
@@ -62,9 +66,25 @@ describe('CollabPage mobile scroll', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.removeItem('linpo.v07.flow_tasks');
+    mockListKanbanTasks.mockResolvedValue([]);
+    mockCreateKanbanTask.mockResolvedValue({
+      id: 'task-alpha',
+      board_id: 'default',
+      title: '任务 Alpha',
+      summary: '由后端任务实体返回',
+      status: 'queued',
+      source: 'flow',
+      agent_id: 'agent-alpha',
+      agent_name: 'Alpha Agent',
+      artifacts: ['创建时间：2026-03-27T00:00:00Z'],
+      extras: {},
+      instance_id: 'instance-alpha',
+      created_at: '2026-03-27T00:00:00Z',
+      updated_at: '2026-03-27T00:00:00Z',
+    });
   });
 
-  it('keeps kanban viewport scrollable on both axes for touch devices', async () => {
+  it('keeps kanban viewport scrollable with horizontal touch-pan for mobile', async () => {
     mockGetAggregateOverview.mockResolvedValue(buildOverview());
 
     renderPage();

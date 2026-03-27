@@ -65,6 +65,16 @@
 - 扩展字段：`extras: Record<string, unknown>`。
 - 产出字段：`artifacts[]`（文本、结构化片段、文件引用）。
 
+### 6.1 v0.7 任务 API 最小契约
+
+- `GET /api/v1/boards/{board_id}/tasks`：返回当前登录用户在指定看板可见任务列表，作为看板主数据源。
+- `POST /api/v1/boards/{board_id}/tasks`：创建任务并记录指派信息，创建成功后由应用层触发 OpenClaw `chat.send`。
+- `POST /api/v1/boards/{board_id}/tasks/flow/generate`：根据需求生成流程图节点/边，并写入任务队列。
+- v0.7 默认单看板，前端默认使用 `board_id=default`。
+- 任务状态机最小集遵循 `queued/running/blocked_by_approval/failed/completed`。
+- `session` 不作为任务主键来源，任务标识由 Linpo 侧生成并持久化。
+- `flow.generate` 为流程页面分配专用 session：`planner`、`manager`、`execution` 前缀，用于流程拆解和任务调度链路。
+
 ## 7. 后端分层冻结
 
 唯一调用链：

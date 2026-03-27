@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, Uuid
+from sqlalchemy import JSON, DateTime, ForeignKey, String, Text, Uuid
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -43,3 +43,26 @@ class AuthSession(Base):
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class Task(Base):
+    __tablename__ = "tasks"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    instance_id: Mapped[UUID | None] = mapped_column(ForeignKey("instances.id"), index=True, nullable=True)
+    title: Mapped[str] = mapped_column(String(240))
+    summary: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(32), default="queued")
+    source: Mapped[str] = mapped_column(String(32), default="flow")
+    agent_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    agent_name: Mapped[str] = mapped_column(String(128), default="待分配")
+    artifacts: Mapped[list[str]] = mapped_column(JSON, default=list)
+    extras: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=_utc_now,
+        onupdate=_utc_now,
+        index=True,
+    )

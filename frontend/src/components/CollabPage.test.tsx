@@ -1,15 +1,17 @@
 import '@testing-library/jest-dom';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AggregateOverviewAgentItem, AggregateOverviewResponse } from '../api/types';
+import type { AggregateOverviewAgentItem, AggregateOverviewResponse, KanbanTaskItem } from '../api/types';
 import { ToastProvider } from '../hooks/useToast';
 import CollabPage from './CollabPage';
 
-const { mockGetAggregateOverview } = vi.hoisted(() => ({
+const { mockGetAggregateOverview, mockListKanbanTasks, mockCreateKanbanTask } = vi.hoisted(() => ({
   mockGetAggregateOverview: vi.fn(),
+  mockListKanbanTasks: vi.fn(),
+  mockCreateKanbanTask: vi.fn(),
 }));
 
 vi.mock('../api/client', async () => {
@@ -17,8 +19,33 @@ vi.mock('../api/client', async () => {
   return {
     ...actual,
     getAggregateOverview: mockGetAggregateOverview,
+    listKanbanTasks: mockListKanbanTasks,
+    createKanbanTask: mockCreateKanbanTask,
   };
 });
+
+function buildKanbanTask(overrides: Partial<KanbanTaskItem> = {}): KanbanTaskItem {
+  return {
+    id: 'task-alpha',
+    board_id: 'default',
+    title: '任务 Alpha',
+    summary: '由后端任务实体返回',
+    status: 'queued',
+    source: 'flow',
+    agent_id: 'agent-alpha',
+    agent_name: 'Alpha Agent',
+    artifacts: ['创建时间：2026-03-27T00:00:00Z'],
+    extras: {
+      created_from: 'kanban_quick_create',
+      instance_id: 'instance-alpha',
+      dispatch_status: 'accepted',
+    },
+    instance_id: 'instance-alpha',
+    created_at: '2026-03-27T00:00:00Z',
+    updated_at: '2026-03-27T00:00:00Z',
+    ...overrides,
+  };
+}
 
 function buildAgent(overrides: Partial<AggregateOverviewAgentItem> = {}): AggregateOverviewAgentItem {
   return {
@@ -73,6 +100,8 @@ describe('CollabPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.removeItem('linpo.v07.flow_tasks');
+    mockListKanbanTasks.mockResolvedValue([]);
+    mockCreateKanbanTask.mockResolvedValue(buildKanbanTask());
   });
 
   it('renders flat toolbar with + action and keeps view mode select', async () => {
@@ -89,7 +118,7 @@ describe('CollabPage', () => {
     expect(screen.getByText('OpenClaw 内存 --')).toBeInTheDocument();
     expect(screen.getByText('今日 Token --')).toBeInTheDocument();
     expect(screen.queryByText('分列方式')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '创建流程' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '创建流程' })).toBeInTheDocument();
     expect(screen.getByTestId('kanban-board')).toHaveStyle({ overflowX: 'auto' });
   });
 
@@ -138,14 +167,18 @@ describe('CollabPage', () => {
     expect(screen.getByText('Flow')).toBeInTheDocument();
   });
 
-  it('opens modal from +, validates empty input, and creates queued flow task in 待分配 with localStorage persisted', async () => {
-    mockGetAggregateOverview.mockResolvedValue(buildOverview());
+  it('opens modal from + and creates backend task with assigned agent', async () => {
+    mockGetAggregateOverview.mockResolvedValue(buildOverview({ agents: [buildAgent()] }));
+    mockListKanbanTasks
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([buildKanbanTask({ title: '新增一个回归测试任务' })]);
 
     renderPage();
 
     await userEvent.click(screen.getByRole('button', { name: '新增任务' }));
     expect(screen.getByRole('dialog', { name: '创建 flow 任务' })).toBeInTheDocument();
     expect(screen.getByLabelText('需求')).toBeInTheDocument();
+    expect(screen.getByLabelText('指派 Agent')).toBeInTheDocument();
 
     const confirmButton = screen.getByRole('button', { name: '确定' });
     expect(confirmButton).toBeDisabled();
@@ -154,25 +187,52 @@ describe('CollabPage', () => {
     expect(confirmButton).toBeEnabled();
     await userEvent.click(confirmButton);
 
+    await waitFor(() => {
+      expect(mockCreateKanbanTask).toHaveBeenCalledWith(
+        {
+          requirement: '新增一个回归测试任务',
+          agent_id: 'agent-alpha',
+          agent_name: 'Alpha Agent',
+          instance_id: 'instance-alpha',
+        },
+        { instanceId: 'instance-alpha' }
+      );
+    });
+
     expect(screen.queryByRole('dialog', { name: '创建 flow 任务' })).not.toBeInTheDocument();
     expect(await screen.findByText('新增一个回归测试任务')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '待调度', level: 3 })).toBeInTheDocument();
     expect(screen.getByText('queued')).toBeInTheDocument();
+  });
 
-    const persisted = JSON.parse(window.localStorage.getItem('linpo.v07.flow_tasks') ?? '[]') as Array<{
-      title: string;
-      status: string;
-      source: string;
-      agentName: string;
-    }>;
+  it('opens task detail dialog when clicking a task card', async () => {
+    mockGetAggregateOverview.mockResolvedValue(buildOverview({ agents: [buildAgent()] }));
+    mockListKanbanTasks.mockResolvedValue([
+      buildKanbanTask({
+        title: '详情任务',
+        summary: '这是一条用于弹窗详情的任务摘要',
+        status: 'running',
+        artifacts: ['artifact-1', 'artifact-2'],
+        extras: {
+          board_id: 'default',
+          trace_id: 'trace-001',
+        },
+      }),
+    ]);
 
-    expect(persisted).toHaveLength(1);
-    expect(persisted[0]).toMatchObject({
-      title: '新增一个回归测试任务',
-      status: 'queued',
-      source: 'flow',
-      agentName: '待分配',
-    });
+    renderPage();
+
+    await screen.findByText('详情任务');
+    await userEvent.click(screen.getByRole('button', { name: '查看任务 详情任务' }));
+
+    const detailDialog = screen.getByRole('dialog', { name: '任务详情' });
+    expect(detailDialog).toBeInTheDocument();
+    expect(within(detailDialog).getByText('这是一条用于弹窗详情的任务摘要')).toBeInTheDocument();
+    expect(within(detailDialog).getByText('artifact-1')).toBeInTheDocument();
+    expect(within(detailDialog).getByText('trace-001')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '关闭' }));
+    expect(screen.queryByRole('dialog', { name: '任务详情' })).not.toBeInTheDocument();
   });
 
   it('keeps one column for each main agent in agent mode', async () => {

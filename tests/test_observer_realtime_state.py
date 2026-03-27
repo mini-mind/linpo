@@ -553,6 +553,85 @@ def test_openclaw_client_connect_operator_sends_control_ui_handshake_shape(
     assert "device" not in params
 
 
+def test_openclaw_client_connect_operator_retries_loopback_origin_when_public_origin_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client_cls = getattr(openclaw_client, "OpenClawClient", None)
+    assert client_cls is not None, "OpenClawClient should exist"
+
+    class FakeWs:
+        def __init__(self, *, origin: str) -> None:
+            self._origin = origin
+            self._incoming = [json.dumps({"type": "event", "event": "connect.challenge"})]
+
+        async def recv(self) -> str:
+            if not self._incoming:
+                raise AssertionError(f"unexpected recv for origin {self._origin}")
+            return self._incoming.pop(0)
+
+        async def send(self, payload: str) -> None:
+            del payload
+            if self._origin == "http://175.178.213.10:18789":
+                self._incoming.append(
+                    json.dumps(
+                        {
+                            "type": "res",
+                            "id": "connect-1",
+                            "ok": False,
+                            "error": {
+                                "message": "origin not allowed (open the Control UI from the gateway host or allow it in gateway.controlUi.allowedOrigins)"
+                            },
+                        }
+                    )
+                )
+                return
+
+            if self._origin == "http://127.0.0.1:18789":
+                self._incoming.append(
+                    json.dumps(
+                        {
+                            "type": "res",
+                            "id": "connect-1",
+                            "ok": True,
+                            "payload": {"type": "hello-ok", "sessionId": "operator-session"},
+                        }
+                    )
+                )
+                return
+
+            raise AssertionError(f"unexpected origin {self._origin}")
+
+    class FakeConnectContext:
+        def __init__(self, ws: FakeWs) -> None:
+            self._ws = ws
+
+        async def __aenter__(self) -> FakeWs:
+            return self._ws
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            del exc_type, exc, tb
+
+    call_origins: list[str] = []
+
+    def fake_connect(url: str, *, origin: object) -> FakeConnectContext:
+        assert url == "ws://175.178.213.10:18789"
+        assert isinstance(origin, str)
+        call_origins.append(origin)
+        return FakeConnectContext(FakeWs(origin=origin))
+
+    monkeypatch.setattr(openclaw_client.websockets, "connect", fake_connect)
+
+    client = client_cls.__new__(client_cls)
+    client._token = "test-token"
+    client._base_url = "ws://175.178.213.10:18789"
+    client._origin = "http://175.178.213.10:18789"
+
+    hello_payload = client.connect_operator()
+
+    assert hello_payload["type"] == "hello-ok"
+    assert call_origins[:2] == ["http://175.178.213.10:18789", "http://127.0.0.1:18789"]
+
+
 def test_openclaw_client_send_operator_action_sends_control_ui_handshake_and_pause_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

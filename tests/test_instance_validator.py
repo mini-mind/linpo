@@ -294,6 +294,67 @@ def test_openclaw_probe_maps_origin_rejection_to_protocol_failed(
         probe.validate(endpoint="http://93.184.216.34:28789", gateway_token="valid-token")
 
 
+def test_openclaw_probe_retries_loopback_origin_when_public_origin_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeWs:
+        def __init__(self, *, origin: str) -> None:
+            self._origin = origin
+            self._incoming = ['{"type": "event", "event": "connect.challenge"}']
+
+        async def recv(self) -> str:
+            if not self._incoming:
+                raise AssertionError(f"unexpected recv for origin {self._origin}")
+            return self._incoming.pop(0)
+
+        async def send(self, payload: str) -> None:
+            del payload
+            if self._origin == "http://93.184.216.34:28789":
+                self._incoming.append(
+                    (
+                        '{"type": "res", "id": "connect-1", "ok": false, '
+                        '"error": {"code": "INVALID_REQUEST", '
+                        '"message": "origin not allowed (open the Control UI from the gateway host or allow it in gateway.controlUi.allowedOrigins)"}}'
+                    )
+                )
+                return
+
+            if self._origin == "http://127.0.0.1:28789":
+                self._incoming.append(
+                    '{"type": "res", "id": "connect-1", "ok": true, "payload": {"type": "hello-ok"}}'
+                )
+                return
+
+            raise AssertionError(f"unexpected origin {self._origin}")
+
+    class FakeConnectContext:
+        def __init__(self, ws: FakeWs) -> None:
+            self._ws = ws
+
+        async def __aenter__(self) -> FakeWs:
+            return self._ws
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            del exc_type, exc, tb
+
+    call_origins: list[str] = []
+
+    def fake_connect(url: str, *, origin: object) -> FakeConnectContext:
+        assert url == "ws://93.184.216.34:28789"
+        assert isinstance(origin, str)
+        call_origins.append(origin)
+        return FakeConnectContext(FakeWs(origin=origin))
+
+    monkeypatch.setattr(instance_validator.websockets, "connect", fake_connect)
+
+    probe = instance_validator.OpenClawInstanceValidationProbe()
+    result = probe.validate(endpoint="http://93.184.216.34:28789", gateway_token="valid-token")
+
+    assert result.status == "active"
+    assert result.message == "连接成功"
+    assert call_origins[:2] == ["http://93.184.216.34:28789", "http://127.0.0.1:28789"]
+
+
 @pytest.mark.parametrize(
     ("error", "code"),
     [

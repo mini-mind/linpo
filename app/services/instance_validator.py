@@ -195,6 +195,78 @@ def normalize_instance_endpoint(endpoint: str) -> tuple[str, str]:
     return websocket_url, origin
 
 
+def _build_origin_candidates(*, websocket_url: str, preferred_origin: str) -> list[str]:
+    parsed_websocket = urlparse(websocket_url)
+    origin_scheme = "https" if parsed_websocket.scheme == "wss" else "http"
+    websocket_host = parsed_websocket.hostname
+    websocket_port = parsed_websocket.port
+    candidates: list[str] = []
+
+    def add_candidate(origin: str | None) -> None:
+        if isinstance(origin, str) and origin and origin not in candidates:
+            candidates.append(origin)
+
+    add_candidate(preferred_origin)
+
+    if websocket_host:
+        add_candidate(
+            urlunparse(
+                (
+                    origin_scheme,
+                    _format_netloc(websocket_host, websocket_port),
+                    "",
+                    "",
+                    "",
+                    "",
+                )
+            )
+        )
+
+    origin_override = _get_origin_override()
+    if origin_override is not None and websocket_port is not None:
+        override_scheme, override_host = origin_override
+        add_candidate(
+            urlunparse(
+                (
+                    override_scheme,
+                    _format_netloc(override_host, websocket_port),
+                    "",
+                    "",
+                    "",
+                    "",
+                )
+            )
+        )
+
+    if websocket_port is not None:
+        add_candidate(
+            urlunparse(
+                (
+                    origin_scheme,
+                    _format_netloc("127.0.0.1", websocket_port),
+                    "",
+                    "",
+                    "",
+                    "",
+                )
+            )
+        )
+        add_candidate(
+            urlunparse(
+                (
+                    origin_scheme,
+                    _format_netloc("localhost", websocket_port),
+                    "",
+                    "",
+                    "",
+                    "",
+                )
+            )
+        )
+
+    return candidates
+
+
 class OpenClawInstanceValidationProbe:
     def __init__(self, *, timeout_seconds: float = 5.0) -> None:
         self._timeout_seconds = timeout_seconds
@@ -239,6 +311,42 @@ class OpenClawInstanceValidationProbe:
         origin: str,
         gateway_token: str,
     ) -> InstanceValidationProbeResult:
+        origins = _build_origin_candidates(websocket_url=websocket_url, preferred_origin=origin)
+        origin_rejected = False
+
+        for candidate_origin in origins:
+            hello = await self._validate_with_origin(
+                websocket_url=websocket_url,
+                origin=candidate_origin,
+                gateway_token=gateway_token,
+            )
+
+            if hello.get("type") != "res" or hello.get("id") != "connect-1":
+                raise InstanceValidationProbeProtocolError(_PROTOCOL_FAILED_MESSAGE)
+
+            if hello.get("ok") is not True:
+                if self._is_origin_not_allowed(hello):
+                    origin_rejected = True
+                    continue
+                self._raise_failed_handshake(hello)
+
+            payload = hello.get("payload")
+            if not isinstance(payload, dict) or payload.get("type") != "hello-ok":
+                raise InstanceValidationProbeProtocolError(_PROTOCOL_FAILED_MESSAGE)
+
+            return InstanceValidationProbeResult(status="active", message=_SUCCESS_MESSAGE)
+
+        if origin_rejected:
+            raise InstanceValidationProbeProtocolError(_PROTOCOL_FAILED_MESSAGE)
+        raise InstanceValidationProbeConnectError(_CONNECT_FAILED_MESSAGE)
+
+    async def _validate_with_origin(
+        self,
+        *,
+        websocket_url: str,
+        origin: str,
+        gateway_token: str,
+    ) -> dict[str, Any]:
         try:
             async with websockets.connect(websocket_url, origin=cast(Origin, origin)) as ws:
                 challenge = await self._receive_message(ws)
@@ -246,25 +354,13 @@ class OpenClawInstanceValidationProbe:
                     raise InstanceValidationProbeProtocolError(_PROTOCOL_FAILED_MESSAGE)
 
                 await ws.send(json.dumps(self._build_connect_request(gateway_token=gateway_token)))
-                hello = await self._receive_message(ws)
+                return await self._receive_message(ws)
         except InstanceValidationProbeError:
             raise
         except TimeoutError as exc:
             raise InstanceValidationProbeConnectError(_CONNECT_FAILED_MESSAGE) from exc
         except Exception as exc:
             raise InstanceValidationProbeConnectError(_CONNECT_FAILED_MESSAGE) from exc
-
-        if hello.get("type") != "res" or hello.get("id") != "connect-1":
-            raise InstanceValidationProbeProtocolError(_PROTOCOL_FAILED_MESSAGE)
-
-        if hello.get("ok") is not True:
-            self._raise_failed_handshake(hello)
-
-        payload = hello.get("payload")
-        if not isinstance(payload, dict) or payload.get("type") != "hello-ok":
-            raise InstanceValidationProbeProtocolError(_PROTOCOL_FAILED_MESSAGE)
-
-        return InstanceValidationProbeResult(status="active", message=_SUCCESS_MESSAGE)
 
     def _raise_failed_handshake(self, hello: dict[str, Any]) -> None:
         error = hello.get("error")
@@ -283,6 +379,14 @@ class OpenClawInstanceValidationProbe:
                 raise InstanceValidationProbeAuthError(_AUTH_FAILED_MESSAGE)
 
         raise InstanceValidationProbeProtocolError(_PROTOCOL_FAILED_MESSAGE)
+
+    def _is_origin_not_allowed(self, hello: dict[str, Any]) -> bool:
+        error = hello.get("error")
+        if not isinstance(error, dict):
+            return False
+
+        message = str(error.get("message", "")).lower()
+        return "origin not allowed" in message or "allowedorigins" in message
 
     async def _receive_message(self, ws: websockets.ClientConnection) -> dict[str, Any]:
         raw = await asyncio.wait_for(ws.recv(), timeout=self._timeout_seconds)

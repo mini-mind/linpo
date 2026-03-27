@@ -259,6 +259,76 @@ export interface ChatSendResponse {
   message?: string;
 }
 
+export type TaskStatus = 'queued' | 'running' | 'blocked_by_approval' | 'failed' | 'completed';
+export type TaskSource = 'provider' | 'flow';
+
+export interface KanbanTaskItem {
+  id: string;
+  board_id: string;
+  title: string;
+  summary: string;
+  status: TaskStatus;
+  source: TaskSource;
+  agent_id: string | null;
+  agent_name: string;
+  artifacts: string[];
+  extras: Record<string, string>;
+  instance_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KanbanTaskCreateRequest {
+  requirement: string;
+  agent_id: string;
+  agent_name: string;
+  instance_id: string;
+}
+
+export type FlowChatRole = 'user' | 'assistant' | 'system';
+
+export interface FlowChatMessageItem {
+  role: FlowChatRole;
+  content: string;
+  created_at: string;
+}
+
+export interface FlowCanvasNode {
+  id: string;
+  title: string;
+  x: number;
+  y: number;
+  layer: number;
+  sensitive: boolean;
+  status: TaskStatus;
+  agent_id: string | null;
+}
+
+export interface FlowCanvasEdge {
+  id: string;
+  source: string;
+  target: string;
+}
+
+export interface FlowGenerateRequest {
+  requirement: string;
+  instance_id: string;
+  executor_agent_id: string;
+  planner_agent_id?: string | null;
+  manager_agent_id?: string | null;
+}
+
+export interface FlowGenerateResponse {
+  board_id: string;
+  planner_session_key: string;
+  manager_session_key: string;
+  execution_session_prefix: string;
+  nodes: FlowCanvasNode[];
+  edges: FlowCanvasEdge[];
+  messages: FlowChatMessageItem[];
+  created_task_ids: string[];
+}
+
 /**
  * Session list item - used in GET /chat/sessions response
  */

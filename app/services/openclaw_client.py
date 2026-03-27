@@ -7,6 +7,7 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from threading import Thread
 from typing import Any, TypeVar, cast
+from urllib.parse import urlparse, urlunparse
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -130,53 +131,84 @@ class OpenClawClient:
         return result_box[0]
 
     async def _fetch_snapshot(self) -> OpenClawSnapshot:
-        try:
-            async with websockets.connect(cast(str, self._base_url), origin=cast(Origin, self._origin)) as ws:
-                payload = await self._perform_handshake(ws)
-        except HTTPException:
-            raise
-        except Exception as exc:  # pragma: no cover - exercised via integration tests
-            raise HTTPException(status_code=503, detail=f"OpenClaw connection failed: {exc}") from exc
+        origin_rejected = False
+        for origin in self._origin_candidates():
+            try:
+                async with websockets.connect(cast(str, self._base_url), origin=cast(Origin, origin)) as ws:
+                    payload = await self._perform_handshake(ws)
+                    snapshot = payload.get("snapshot")
+                    if not isinstance(snapshot, dict):
+                        raise HTTPException(
+                            status_code=503,
+                            detail="OpenClaw handshake failed: missing snapshot payload",
+                        )
+                    return OpenClawSnapshot(hello=payload, snapshot=snapshot)
+            except HTTPException as exc:
+                if self._is_origin_not_allowed_error(exc):
+                    origin_rejected = True
+                    continue
+                raise
+            except Exception as exc:  # pragma: no cover - exercised via integration tests
+                raise HTTPException(status_code=503, detail=f"OpenClaw connection failed: {exc}") from exc
 
-        snapshot = payload.get("snapshot")
-        if not isinstance(snapshot, dict):
-            raise HTTPException(status_code=503, detail="OpenClaw handshake failed: missing snapshot payload")
-
-        return OpenClawSnapshot(hello=payload, snapshot=snapshot)
+        if origin_rejected:
+            raise HTTPException(status_code=503, detail="OpenClaw handshake failed: origin not allowed")
+        raise HTTPException(status_code=503, detail="OpenClaw connection failed: no origin candidates")
 
     async def _stream_agent_events(
         self,
         on_message: Callable[[dict[str, Any]], None],
     ) -> None:
-        try:
-            async with websockets.connect(cast(str, self._base_url), origin=cast(Origin, self._origin)) as ws:
-                await self._perform_handshake(ws)
-                while True:
-                    try:
-                        on_message(await self._receive_message(ws))
-                    except TimeoutError:
-                        return
-        except HTTPException:
-            raise
-        except Exception as exc:  # pragma: no cover - exercised via integration tests
-            raise HTTPException(status_code=503, detail=f"OpenClaw realtime failed: {exc}") from exc
+        origin_rejected = False
+        for origin in self._origin_candidates():
+            try:
+                async with websockets.connect(cast(str, self._base_url), origin=cast(Origin, origin)) as ws:
+                    await self._perform_handshake(ws)
+                    while True:
+                        try:
+                            on_message(await self._receive_message(ws))
+                        except TimeoutError:
+                            return
+            except HTTPException as exc:
+                if self._is_origin_not_allowed_error(exc):
+                    origin_rejected = True
+                    continue
+                raise
+            except Exception as exc:  # pragma: no cover - exercised via integration tests
+                raise HTTPException(status_code=503, detail=f"OpenClaw realtime failed: {exc}") from exc
+
+        if origin_rejected:
+            raise HTTPException(status_code=503, detail="OpenClaw handshake failed: origin not allowed")
+        raise HTTPException(status_code=503, detail="OpenClaw realtime failed: no origin candidates")
 
     async def _connect_operator(self) -> dict[str, Any]:
-        try:
-            async with websockets.connect(cast(str, self._base_url), origin=cast(Origin, self._origin)) as ws:
-                return await self._perform_handshake(
-                    ws,
-                    client_id="openclaw-control-ui",
-                    display_name="linpo-operator",
-                    mode="webchat",
-                    role="operator",
-                    scopes=["operator.admin", "operator.approvals", "operator.pairing"],
-                    device=None,
-                )
-        except HTTPException:
-            raise
-        except Exception as exc:  # pragma: no cover - exercised via integration tests
-            raise HTTPException(status_code=503, detail=f"OpenClaw operator connection failed: {exc}") from exc
+        origin_rejected = False
+        for origin in self._origin_candidates():
+            try:
+                async with websockets.connect(cast(str, self._base_url), origin=cast(Origin, origin)) as ws:
+                    return await self._perform_handshake(
+                        ws,
+                        client_id="openclaw-control-ui",
+                        display_name="linpo-operator",
+                        mode="webchat",
+                        role="operator",
+                        scopes=["operator.admin", "operator.approvals", "operator.pairing"],
+                        device=None,
+                    )
+            except HTTPException as exc:
+                if self._is_origin_not_allowed_error(exc):
+                    origin_rejected = True
+                    continue
+                raise
+            except Exception as exc:  # pragma: no cover - exercised via integration tests
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"OpenClaw operator connection failed: {exc}",
+                ) from exc
+
+        if origin_rejected:
+            raise HTTPException(status_code=503, detail="OpenClaw handshake failed: origin not allowed")
+        raise HTTPException(status_code=503, detail="OpenClaw operator connection failed: no origin candidates")
 
     async def _send_operator_action(
         self,
@@ -191,46 +223,64 @@ class OpenClawClient:
             request_id=request_id,
         )
 
-        try:
-            async with websockets.connect(cast(str, self._base_url), origin=cast(Origin, self._origin)) as ws:
-                await self._perform_handshake(
-                    ws,
-                    client_id="openclaw-control-ui",
-                    display_name="linpo-operator",
-                    mode="webchat",
-                    role="operator",
-                    scopes=["operator.admin", "operator.approvals", "operator.pairing"],
-                    device=None,
-                )
-                await ws.send(json.dumps(request))
-                return await self._expect_control_response_by_id(ws, expected_id=request["id"])
-        except TimeoutError:
-            raise
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(status_code=503, detail=f"OpenClaw operator control failed: {exc}") from exc
+        origin_rejected = False
+        for origin in self._origin_candidates():
+            try:
+                async with websockets.connect(cast(str, self._base_url), origin=cast(Origin, origin)) as ws:
+                    await self._perform_handshake(
+                        ws,
+                        client_id="openclaw-control-ui",
+                        display_name="linpo-operator",
+                        mode="webchat",
+                        role="operator",
+                        scopes=["operator.admin", "operator.approvals", "operator.pairing"],
+                        device=None,
+                    )
+                    await ws.send(json.dumps(request))
+                    return await self._expect_control_response_by_id(ws, expected_id=request["id"])
+            except TimeoutError:
+                raise
+            except HTTPException as exc:
+                if self._is_origin_not_allowed_error(exc):
+                    origin_rejected = True
+                    continue
+                raise
+            except Exception as exc:
+                raise HTTPException(status_code=503, detail=f"OpenClaw operator control failed: {exc}") from exc
+
+        if origin_rejected:
+            raise HTTPException(status_code=503, detail="OpenClaw handshake failed: origin not allowed")
+        raise HTTPException(status_code=503, detail="OpenClaw operator control failed: no origin candidates")
 
     async def _send_control_request(self, request: dict[str, Any]) -> dict[str, Any]:
-        try:
-            async with websockets.connect(cast(str, self._base_url), origin=cast(Origin, self._origin)) as ws:
-                await self._perform_handshake(
-                    ws,
-                    client_id="openclaw-control-ui",
-                    display_name="linpo-operator",
-                    mode="webchat",
-                    role="operator",
-                    scopes=["operator.admin", "operator.approvals", "operator.pairing"],
-                    device=None,
-                )
-                await ws.send(json.dumps(request))
-                return await self._expect_control_response_by_id(ws, expected_id=request["id"])
-        except TimeoutError:
-            raise
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(status_code=503, detail=f"OpenClaw operator control failed: {exc}") from exc
+        origin_rejected = False
+        for origin in self._origin_candidates():
+            try:
+                async with websockets.connect(cast(str, self._base_url), origin=cast(Origin, origin)) as ws:
+                    await self._perform_handshake(
+                        ws,
+                        client_id="openclaw-control-ui",
+                        display_name="linpo-operator",
+                        mode="webchat",
+                        role="operator",
+                        scopes=["operator.admin", "operator.approvals", "operator.pairing"],
+                        device=None,
+                    )
+                    await ws.send(json.dumps(request))
+                    return await self._expect_control_response_by_id(ws, expected_id=request["id"])
+            except TimeoutError:
+                raise
+            except HTTPException as exc:
+                if self._is_origin_not_allowed_error(exc):
+                    origin_rejected = True
+                    continue
+                raise
+            except Exception as exc:
+                raise HTTPException(status_code=503, detail=f"OpenClaw operator control failed: {exc}") from exc
+
+        if origin_rejected:
+            raise HTTPException(status_code=503, detail="OpenClaw handshake failed: origin not allowed")
+        raise HTTPException(status_code=503, detail="OpenClaw operator control failed: no origin candidates")
 
     async def _perform_handshake(
         self,
@@ -348,6 +398,89 @@ class OpenClawClient:
             "method": "connect",
             "params": params,
         }
+
+    def _origin_candidates(self) -> list[str]:
+        candidates: list[str] = []
+
+        def add_candidate(origin: str | None) -> None:
+            if isinstance(origin, str) and origin and origin not in candidates:
+                candidates.append(origin)
+
+        add_candidate(self._origin)
+
+        parsed_base_url = urlparse(cast(str, self._base_url))
+        origin_scheme = "https" if parsed_base_url.scheme == "wss" else "http"
+        websocket_port = parsed_base_url.port
+        if parsed_base_url.hostname and websocket_port is not None:
+            add_candidate(
+                urlunparse(
+                    (
+                        origin_scheme,
+                        self._format_netloc(parsed_base_url.hostname, websocket_port),
+                        "",
+                        "",
+                        "",
+                        "",
+                    )
+                )
+            )
+
+            configured_origin = os.getenv("OPENCLAW_ORIGIN", "").strip()
+            if configured_origin:
+                parsed_configured_origin = urlparse(configured_origin)
+                if (
+                    parsed_configured_origin.scheme in {"http", "https"}
+                    and parsed_configured_origin.hostname
+                ):
+                    add_candidate(
+                        urlunparse(
+                            (
+                                parsed_configured_origin.scheme,
+                                self._format_netloc(parsed_configured_origin.hostname, websocket_port),
+                                "",
+                                "",
+                                "",
+                                "",
+                            )
+                        )
+                    )
+
+            add_candidate(
+                urlunparse(
+                    (
+                        origin_scheme,
+                        self._format_netloc("127.0.0.1", websocket_port),
+                        "",
+                        "",
+                        "",
+                        "",
+                    )
+                )
+            )
+            add_candidate(
+                urlunparse(
+                    (
+                        origin_scheme,
+                        self._format_netloc("localhost", websocket_port),
+                        "",
+                        "",
+                        "",
+                        "",
+                    )
+                )
+            )
+
+        return candidates
+
+    def _is_origin_not_allowed_error(self, exc: HTTPException) -> bool:
+        message = str(exc.detail).lower()
+        return "origin not allowed" in message or "allowedorigins" in message
+
+    def _format_netloc(self, hostname: str, port: int | None) -> str:
+        host = hostname if ":" not in hostname else f"[{hostname}]"
+        if port is None:
+            return host
+        return f"{host}:{port}"
 
     def _build_operator_device(self) -> dict[str, Any]:
         return {

@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -334,3 +334,75 @@ class AggregateTopologyResponse(BaseModel):
     sessions: list[AggregateTopologySessionItem]
     tools: list[AggregateTopologyToolItem]
     edges: list[AggregateTopologyEdgeItem]
+
+
+TaskStatus = Literal["queued", "running", "blocked_by_approval", "failed", "completed"]
+TaskSource = Literal["provider", "flow"]
+
+
+class TaskItem(BaseModel):
+    id: str
+    board_id: str
+    title: str
+    summary: str
+    status: TaskStatus
+    source: TaskSource
+    agent_id: str | None
+    agent_name: str
+    artifacts: list[str]
+    extras: dict[str, str]
+    instance_id: str | None
+    created_at: str
+    updated_at: str
+
+
+class TaskCreateRequest(BaseModel):
+    requirement: str = Field(min_length=1, max_length=4000)
+    agent_id: str = Field(min_length=1, max_length=128)
+    agent_name: str = Field(min_length=1, max_length=128)
+    instance_id: str = Field(min_length=1)
+
+
+class FlowGenerateRequest(BaseModel):
+    requirement: str = Field(min_length=1, max_length=4000)
+    instance_id: str = Field(min_length=1)
+    executor_agent_id: str = Field(min_length=1, max_length=128)
+    planner_agent_id: str | None = Field(default=None, max_length=128)
+    manager_agent_id: str | None = Field(default=None, max_length=128)
+
+
+FlowChatRole = Literal["user", "assistant", "system"]
+
+
+class FlowChatMessageItem(BaseModel):
+    role: FlowChatRole
+    content: str
+    created_at: str
+
+
+class FlowCanvasNode(BaseModel):
+    id: str
+    title: str
+    x: float
+    y: float
+    layer: int
+    sensitive: bool
+    status: TaskStatus
+    agent_id: str | None
+
+
+class FlowCanvasEdge(BaseModel):
+    id: str
+    source: str
+    target: str
+
+
+class FlowGenerateResponse(BaseModel):
+    board_id: str
+    planner_session_key: str
+    manager_session_key: str
+    execution_session_prefix: str
+    nodes: list[FlowCanvasNode]
+    edges: list[FlowCanvasEdge]
+    messages: list[FlowChatMessageItem]
+    created_task_ids: list[str]

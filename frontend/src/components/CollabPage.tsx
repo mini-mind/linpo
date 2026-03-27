@@ -1,10 +1,15 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { getAggregateOverview } from '../api/client';
-import type { AggregateOverviewAgentItem, AggregateOverviewResponse } from '../api/types';
+import { useNavigate } from 'react-router-dom';
+import { createKanbanTask, getAggregateOverview, listKanbanTasks } from '../api/client';
+import type {
+  AggregateOverviewResponse,
+  KanbanTaskItem,
+} from '../api/types';
 import type { BoardTask, BoardViewMode, TaskStatus } from './kanbanTypes';
-import { readFlowTasks, writeFlowTasks } from '../state/flowTaskStore';
+import { readFlowTasks } from '../state/flowTaskStore';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { useToast } from '../hooks/useToast';
 
 const STATUS_COLUMNS: Array<{ key: TaskStatus; title: string }> = [
   { key: 'queued', title: '待调度' },
@@ -15,16 +20,21 @@ const STATUS_COLUMNS: Array<{ key: TaskStatus; title: string }> = [
 ];
 
 export default function CollabPage(): JSX.Element {
+  const navigate = useNavigate();
   const isMobile = useIsMobile(960);
+  const { addToast } = useToast();
   const [overview, setOverview] = useState<AggregateOverviewResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [taskRecords, setTaskRecords] = useState<BoardTask[]>([]);
 
   const [viewMode, setViewMode] = useState<BoardViewMode>('status');
   const [flowTasks, setFlowTasks] = useState<BoardTask[]>([]);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [requirementInput, setRequirementInput] = useState('');
+  const [selectedAgentId, setSelectedAgentId] = useState('');
   const [isAddAgentModalOpen, setIsAddAgentModalOpen] = useState(false);
+  const [selectedTask, setSelectedTask] = useState<BoardTask | null>(null);
   const [newAgentName, setNewAgentName] = useState('');
   const [customAgentNames, setCustomAgentNames] = useState<string[]>([]);
 
@@ -32,8 +42,15 @@ export default function CollabPage(): JSX.Element {
     try {
       setLoading(true);
       setLoadError(null);
-      const data = await getAggregateOverview();
+      const [data, tasks] = await Promise.all([getAggregateOverview(), listKanbanTasks()]);
       setOverview(data);
+      setTaskRecords(tasks.map(toBoardTaskFromKanbanTask));
+      setSelectedAgentId((current) => {
+        if (current && data.agents.some((agent) => agent.agent_id === current)) {
+          return current;
+        }
+        return data.agents[0]?.agent_id ?? '';
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : '获取看板数据失败';
       setLoadError(message);
@@ -47,8 +64,14 @@ export default function CollabPage(): JSX.Element {
     setFlowTasks(readFlowTasks());
   }, [loadOverview]);
 
-  const providerTasks = useMemo(() => deriveProviderTasks(overview), [overview]);
-  const allTasks = useMemo(() => [...flowTasks, ...providerTasks], [flowTasks, providerTasks]);
+  const allTasks = useMemo(() => [...flowTasks, ...taskRecords], [flowTasks, taskRecords]);
+  const assignableAgents = useMemo(
+    () =>
+      (overview?.agents ?? []).filter(
+        (agent, index, source) => source.findIndex((item) => item.agent_id === agent.agent_id) === index
+      ),
+    [overview?.agents]
+  );
   const primaryAgentNames = useMemo(() => {
     const nameSet = new Set<string>();
     for (const item of overview?.agents ?? []) {
@@ -89,38 +112,35 @@ export default function CollabPage(): JSX.Element {
     return grouped;
   }, [allTasks, allAgentNames, viewMode]);
 
-  const canSubmitFlowTask = requirementInput.trim().length > 0;
+  const canSubmitFlowTask = requirementInput.trim().length > 0 && selectedAgentId.trim().length > 0;
   const canSubmitAgent = newAgentName.trim().length > 0;
 
-  const handleConfirmCreateTask = useCallback(() => {
+  const handleConfirmCreateTask = useCallback(async () => {
     const requirement = requirementInput.trim();
-    if (!requirement) {
+    const targetAgent = assignableAgents.find((agent) => agent.agent_id === selectedAgentId);
+    if (!requirement || !targetAgent) {
       return;
     }
 
-    const now = Date.now();
-    const newTask: BoardTask = {
-      id: `flow-quick-${now}`,
-      title: requirement,
-      summary: '由看板快捷创建',
-      status: 'queued',
-      source: 'flow',
-      agentId: null,
-      agentName: '待分配',
-      artifacts: [`创建时间：${new Date(now).toISOString()}`],
-      extras: {
-        created_from: 'kanban_quick_create',
-      },
-    };
-
-    setFlowTasks((prev) => {
-      const next = [newTask, ...prev];
-      writeFlowTasks(next);
-      return next;
-    });
-    setRequirementInput('');
-    setIsCreateModalOpen(false);
-  }, [requirementInput]);
+    try {
+      await createKanbanTask(
+        {
+          requirement,
+          agent_id: targetAgent.agent_id,
+          agent_name: targetAgent.agent_name,
+          instance_id: targetAgent.instance_id,
+        },
+        { instanceId: targetAgent.instance_id }
+      );
+      setRequirementInput('');
+      setIsCreateModalOpen(false);
+      addToast(`已投放到 ${targetAgent.agent_name}`, 'success');
+      await loadOverview();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '新增任务投放失败';
+      addToast(message, 'error');
+    }
+  }, [addToast, assignableAgents, loadOverview, requirementInput, selectedAgentId]);
 
   const handleConfirmCreateAgent = useCallback(() => {
     const name = newAgentName.trim();
@@ -141,8 +161,24 @@ export default function CollabPage(): JSX.Element {
           <span style={statsItemStyle}>今日 Token {openClawLoad.todayTokens}</span>
         </div>
         <div style={toolbarGroupStyle}>
-          <button type="button" style={flatActionButtonStyle} onClick={() => setIsCreateModalOpen(true)} aria-label="新增任务">
+          <button
+            type="button"
+            style={flatActionButtonStyle}
+            onClick={() => {
+              setIsCreateModalOpen(true);
+              setSelectedAgentId((current) => current || assignableAgents[0]?.agent_id || '');
+            }}
+            aria-label="新增任务"
+          >
             + 新增任务
+          </button>
+          <button
+            type="button"
+            style={flatActionButtonStyle}
+            onClick={() => navigate('/flow')}
+            aria-label="创建流程"
+          >
+            创建流程
           </button>
           <select
             id="view-mode"
@@ -160,7 +196,7 @@ export default function CollabPage(): JSX.Element {
       {isCreateModalOpen ? (
         <div style={modalOverlayStyle} role="dialog" aria-modal="true" aria-label="创建 flow 任务">
           <div style={modalCardStyle}>
-            <h3 style={modalTitleStyle}>新增 flow 任务</h3>
+            <h3 style={modalTitleStyle}>新增任务</h3>
             <label htmlFor="quick-flow-requirement" style={modalLabelStyle}>
               需求
             </label>
@@ -171,11 +207,30 @@ export default function CollabPage(): JSX.Element {
               placeholder="请输入需求"
               style={modalInputStyle}
             />
+            <label htmlFor="quick-flow-agent" style={modalLabelStyle}>
+              指派 Agent
+            </label>
+            <select
+              id="quick-flow-agent"
+              value={selectedAgentId}
+              onChange={(event) => setSelectedAgentId(event.target.value)}
+              style={modalSelectStyle}
+              disabled={assignableAgents.length === 0}
+            >
+              <option value="" disabled>
+                {assignableAgents.length === 0 ? '暂无可用 Agent' : '请选择 Agent'}
+              </option>
+              {assignableAgents.map((agent) => (
+                <option key={agent.agent_id} value={agent.agent_id}>
+                  {agent.agent_name}
+                </option>
+              ))}
+            </select>
             <div style={modalActionStyle}>
               <button
                 type="button"
                 style={flatActionButtonStyle}
-                onClick={handleConfirmCreateTask}
+                onClick={() => void handleConfirmCreateTask()}
                 disabled={!canSubmitFlowTask}
               >
                 确定
@@ -229,6 +284,59 @@ export default function CollabPage(): JSX.Element {
         </div>
       ) : null}
 
+      {selectedTask ? (
+        <div style={modalOverlayStyle} role="dialog" aria-modal="true" aria-label="任务详情">
+          <div style={taskDetailCardStyle}>
+            <h3 style={modalTitleStyle}>任务详情</h3>
+            <p style={taskDetailTitleStyle}>{selectedTask.title}</p>
+            <div style={taskDetailMetaGridStyle}>
+              <p style={taskDetailMetaTextStyle}>状态：{selectedTask.status}</p>
+              <p style={taskDetailMetaTextStyle}>来源：{selectedTask.source === 'flow' ? 'Flow' : 'Provider'}</p>
+              <p style={taskDetailMetaTextStyle}>Agent：{selectedTask.agentName || '待分配'}</p>
+              <p style={taskDetailMetaTextStyle}>Agent ID：{selectedTask.agentId ?? 'n/a'}</p>
+            </div>
+            <div style={taskDetailSectionStyle}>
+              <p style={taskDetailSectionTitleStyle}>摘要</p>
+              <p style={taskDetailSummaryStyle}>{selectedTask.summary || '暂无摘要'}</p>
+            </div>
+            <div style={taskDetailSectionStyle}>
+              <p style={taskDetailSectionTitleStyle}>产出</p>
+              {selectedTask.artifacts.length > 0 ? (
+                <ul style={taskDetailListStyle}>
+                  {selectedTask.artifacts.map((artifact, index) => (
+                    <li key={`${selectedTask.id}-artifact-${index}`} style={taskDetailListItemStyle}>
+                      {artifact}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p style={taskDetailSummaryStyle}>暂无产出</p>
+              )}
+            </div>
+            <div style={taskDetailSectionStyle}>
+              <p style={taskDetailSectionTitleStyle}>扩展字段</p>
+              {Object.keys(selectedTask.extras).length > 0 ? (
+                <ul style={taskDetailListStyle}>
+                  {Object.entries(selectedTask.extras).map(([key, value]) => (
+                    <li key={`${selectedTask.id}-extra-${key}`} style={taskDetailListItemStyle}>
+                      <span style={taskDetailExtraKeyStyle}>{key}：</span>
+                      <span style={taskDetailExtraValueStyle}>{value}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p style={taskDetailSummaryStyle}>暂无扩展字段</p>
+              )}
+            </div>
+            <div style={modalActionStyle}>
+              <button type="button" style={flatActionButtonStyle} onClick={() => setSelectedTask(null)}>
+                关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {loadError ? (
         <div style={errorPanelStyle}>
           <p style={errorTitleStyle}>看板数据加载失败</p>
@@ -252,16 +360,23 @@ export default function CollabPage(): JSX.Element {
                 ) : (
                   tasks.map((task) => (
                     <article key={task.id} style={taskCardStyle}>
-                      <div style={taskCardHeaderStyle}>
-                        <span style={taskSourceTagStyle}>{task.source === 'flow' ? 'Flow' : 'Provider'}</span>
-                        <span style={taskStatusTextStyle}>{task.status}</span>
-                      </div>
-                      <h4 style={taskTitleStyle}>{task.title}</h4>
-                      <p style={taskSummaryStyle}>{task.summary}</p>
-                      <p style={taskMetaStyle}>Agent：{task.agentName}</p>
-                      {task.artifacts.length > 0 ? (
-                        <p style={taskArtifactStyle}>{task.artifacts[0]}</p>
-                      ) : null}
+                      <button
+                        type="button"
+                        style={taskCardButtonStyle}
+                        onClick={() => setSelectedTask(task)}
+                        aria-label={`查看任务 ${task.title}`}
+                      >
+                        <div style={taskCardHeaderStyle}>
+                          <span style={taskSourceTagStyle}>{task.source === 'flow' ? 'Flow' : 'Provider'}</span>
+                          <span style={taskStatusTextStyle}>{task.status}</span>
+                        </div>
+                        <h4 style={taskTitleStyle}>{task.title}</h4>
+                        <p style={taskSummaryStyle}>{task.summary}</p>
+                        <p style={taskMetaStyle}>Agent：{task.agentName}</p>
+                        {task.artifacts.length > 0 ? (
+                          <p style={taskArtifactStyle}>{task.artifacts[0]}</p>
+                        ) : null}
+                      </button>
                     </article>
                   ))
                 )}
@@ -293,35 +408,25 @@ export default function CollabPage(): JSX.Element {
   );
 }
 
-function deriveProviderTasks(overview: AggregateOverviewResponse | null): BoardTask[] {
-  const agents = overview?.agents ?? [];
-
-  return agents.map((agent) => {
-    const status = toBoardStatus(agent);
-    return {
-      id: `provider-${agent.instance_id}-${agent.agent_id}`,
-      title: agent.agent_name,
-      summary: `来自聚合数据的实时任务映射（实例：${agent.instance_name}）`,
-      status,
-      source: 'provider',
-      agentId: agent.agent_id,
-      agentName: agent.agent_name,
-      artifacts: [
-        `drilldown: ${agent.drilldown_path}`,
-        `last_active_at: ${agent.last_active_at ?? 'n/a'}`,
-      ],
-      extras: {
-        instance_id: agent.instance_id,
-        instance_name: agent.instance_name,
-      },
-    };
-  });
+function toBoardTaskFromKanbanTask(task: KanbanTaskItem): BoardTask {
+  return {
+    id: task.id,
+    title: task.title,
+    summary: task.summary,
+    status: normalizeTaskStatus(task.status),
+    source: task.source === 'provider' ? 'provider' : 'flow',
+    agentId: task.agent_id,
+    agentName: task.agent_name || '待分配',
+    artifacts: task.artifacts,
+    extras: task.extras,
+  };
 }
 
-function toBoardStatus(agent: AggregateOverviewAgentItem): TaskStatus {
-  if (agent.status === 'error') return 'failed';
-  if (agent.status === 'finished') return 'completed';
-  if (agent.status === 'running' && agent.is_active) return 'running';
+function normalizeTaskStatus(status: string): TaskStatus {
+  if (status === 'running') return 'running';
+  if (status === 'blocked_by_approval') return 'blocked_by_approval';
+  if (status === 'failed') return 'failed';
+  if (status === 'completed') return 'completed';
   return 'queued';
 }
 
@@ -461,7 +566,7 @@ const modalOverlayStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-  zIndex: 40,
+  zIndex: 140,
 };
 
 const modalCardStyle: React.CSSProperties = {
@@ -500,10 +605,88 @@ const modalInputTextStyle: React.CSSProperties = {
   fontSize: '0.85rem',
 };
 
+const modalSelectStyle: React.CSSProperties = {
+  ...modalInputTextStyle,
+  background: 'rgba(255, 255, 255, 0.92)',
+};
+
 const modalActionStyle: React.CSSProperties = {
   display: 'flex',
   gap: '0.45rem',
   justifyContent: 'flex-end',
+};
+
+const taskDetailCardStyle: React.CSSProperties = {
+  ...modalCardStyle,
+  width: 'min(680px, calc(100vw - 2rem))',
+  maxHeight: 'calc(100vh - 3rem)',
+  overflowY: 'auto',
+};
+
+const taskDetailTitleStyle: React.CSSProperties = {
+  margin: '0',
+  fontSize: '0.98rem',
+  fontWeight: 700,
+  color: '#0f172a',
+};
+
+const taskDetailMetaGridStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+  gap: '0.35rem 0.65rem',
+  padding: '0.5rem',
+  borderRadius: '0.5rem',
+  border: '1px solid rgba(148, 163, 184, 0.25)',
+  background: 'rgba(248, 250, 252, 0.82)',
+};
+
+const taskDetailMetaTextStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.76rem',
+  color: '#334155',
+};
+
+const taskDetailSectionStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.35rem',
+};
+
+const taskDetailSectionTitleStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.8rem',
+  fontWeight: 700,
+  color: '#1e293b',
+};
+
+const taskDetailSummaryStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.76rem',
+  color: '#475569',
+  lineHeight: 1.45,
+};
+
+const taskDetailListStyle: React.CSSProperties = {
+  margin: 0,
+  paddingInlineStart: '1.05rem',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.24rem',
+};
+
+const taskDetailListItemStyle: React.CSSProperties = {
+  fontSize: '0.75rem',
+  color: '#334155',
+  lineHeight: 1.4,
+};
+
+const taskDetailExtraKeyStyle: React.CSSProperties = {
+  fontWeight: 700,
+  color: '#0f172a',
+};
+
+const taskDetailExtraValueStyle: React.CSSProperties = {
+  color: '#334155',
 };
 
 const boardViewportStyle: React.CSSProperties = {
@@ -660,10 +843,22 @@ const taskCardStyle: React.CSSProperties = {
   border: '1px solid rgba(148, 163, 184, 0.28)',
   background: 'rgba(255, 255, 255, 0.76)',
   borderRadius: '0.55rem',
+  padding: 0,
+  display: 'flex',
+  flexDirection: 'column',
+};
+
+const taskCardButtonStyle: React.CSSProperties = {
+  width: '100%',
+  border: 'none',
+  background: 'transparent',
+  borderRadius: '0.55rem',
   padding: '0.55rem',
   display: 'flex',
   flexDirection: 'column',
   gap: '0.32rem',
+  textAlign: 'left',
+  cursor: 'pointer',
 };
 
 const taskCardHeaderStyle: React.CSSProperties = {

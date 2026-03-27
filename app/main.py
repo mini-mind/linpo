@@ -10,6 +10,7 @@ from app.api.agents import router as agents_router
 from app.api.auth import router as auth_router
 from app.api.instances import router as instances_router
 from app.api.realtime import router as realtime_router
+from app.api.tasks import router as tasks_router
 from app.db.session import init_db
 from app.services.aggregate_service import AggregateService
 from app.services.provider_application_service import ProviderApplicationService
@@ -90,6 +91,7 @@ app.include_router(agents_router)
 app.include_router(auth_router)
 app.include_router(instances_router)
 app.include_router(realtime_router)
+app.include_router(tasks_router)
 
 
 @app.get("/health")

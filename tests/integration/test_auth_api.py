@@ -120,7 +120,7 @@ def test_auth_me_route_can_boot_with_explicit_db_bootstrap(
     assert payload == {"detail": "Unauthorized"}
 
     inspector = inspect(create_engine(database_url))
-    assert sorted(inspector.get_table_names()) == ["auth_sessions", "instances", "users"]
+    assert sorted(inspector.get_table_names()) == ["auth_sessions", "instances", "tasks", "users"]
 
 
 def test_auth_db_bootstrap_uses_isolated_database_path(
@@ -135,7 +135,7 @@ def test_auth_db_bootstrap_uses_isolated_database_path(
 
     assert test_db_path.exists()
     inspector = inspect(create_engine(database_url))
-    assert sorted(inspector.get_table_names()) == ["auth_sessions", "instances", "users"]
+    assert sorted(inspector.get_table_names()) == ["auth_sessions", "instances", "tasks", "users"]
 
 
 def test_password_hash_is_persisted_without_plaintext(db_handle: Session) -> None:
@@ -237,7 +237,7 @@ def test_stored_session_survives_auth_service_reload(isolated_database_url: str)
 
     from app.services import auth_service
 
-    session_state = auth_service.create_session(uuid4(), now=datetime(2026, 3, 18, tzinfo=timezone.utc))
+    session_state = auth_service.create_session(uuid4(), now=datetime.now(timezone.utc) - timedelta(days=1))
     auth_service.store_session(session_state)
 
     reloaded_auth_service = _reload_auth_service_bindings()
