@@ -154,7 +154,9 @@ describe("InstanceTopology readonly mode", () => {
 		const agentNode = screen.getByTestId("topology-node-agent-agent-1");
 		const instanceNode = screen.getByTestId("topology-node-instance-instance-1");
 
-		const entryLink = within(agentNode).getByTestId("drilldown-link-agent-1");
+		fireEvent.click(agentNode);
+		const detailDialog = screen.getByTestId("topology-node-detail-dialog");
+		const entryLink = within(detailDialog).getByTestId("drilldown-link-agent-1");
 		expect(entryLink).toHaveTextContent("进入默认会话");
 		expect(entryLink).toHaveAttribute(
 			"href",
@@ -163,13 +165,14 @@ describe("InstanceTopology readonly mode", () => {
 				agentId: "agent-1",
 			}),
 		);
-		expect(within(agentNode).getByText("可进入")).toBeInTheDocument();
-		expect(within(agentNode).getByText("默认会话")).toBeInTheDocument();
-		expect(within(agentNode).getByText("测试Agent")).toBeInTheDocument();
+		expect(within(detailDialog).getByText("可进入 · 默认会话")).toBeInTheDocument();
 		expect(
-			within(instanceNode).getByText("实例节点不提供会话入口"),
+			within(detailDialog).getByRole("heading", { name: "测试Agent" }),
 		).toBeInTheDocument();
-		expect(within(instanceNode).getByText("测试实例1")).toBeInTheDocument();
+
+		fireEvent.click(instanceNode);
+		expect(within(detailDialog).getByText("已禁用 · 实例节点不提供会话入口")).toBeInTheDocument();
+		expect(within(detailDialog).getByText("测试实例1")).toBeInTheDocument();
 	});
 
 	it("shows only the canvas without external panels", async () => {
@@ -216,14 +219,13 @@ describe("InstanceTopology readonly mode", () => {
 		const agentNode = screen.getByTestId("topology-node-agent-agent-1");
 
 		fireEvent.click(instanceNode);
-		expect(within(instanceNode).getByText("实例节点不提供会话入口")).toBeInTheDocument();
-		expect(
-			within(instanceNode).queryByRole("link", { name: "进入默认会话" }),
-		).not.toBeInTheDocument();
+		const detailDialog = screen.getByTestId("topology-node-detail-dialog");
+		expect(within(detailDialog).getByText("已禁用 · 实例节点不提供会话入口")).toBeInTheDocument();
+		expect(within(detailDialog).queryByRole("link", { name: "进入默认会话" })).not.toBeInTheDocument();
 
 		fireEvent.click(agentNode);
-		expect(within(agentNode).getByText("默认会话")).toBeInTheDocument();
-		expect(within(agentNode).getByTestId("drilldown-link-agent-1")).toHaveTextContent(
+		expect(within(detailDialog).getByText("可进入 · 默认会话")).toBeInTheDocument();
+		expect(within(detailDialog).getByTestId("drilldown-link-agent-1")).toHaveTextContent(
 			"进入默认会话",
 		);
 	});

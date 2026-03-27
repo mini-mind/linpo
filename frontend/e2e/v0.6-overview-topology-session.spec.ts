@@ -383,11 +383,13 @@ test.describe("v0.6 browser acceptance", () => {
 			).toHaveCount(0);
 			const topologyAgentNode = page.getByTestId("topology-node-agent-main");
 			await expect(topologyAgentNode).toBeVisible();
+			await topologyAgentNode.click();
+			const topologyNodeDetailDialog = page.getByTestId("topology-node-detail-dialog");
+			await expect(topologyNodeDetailDialog).toBeVisible();
+			await expect(topologyNodeDetailDialog.getByText("可进入 · 默认会话")).toBeVisible();
 			const topologyAgentDrilldownLink =
-				topologyAgentNode.getByTestId("drilldown-link-main");
-			await expect(
-				topologyAgentDrilldownLink,
-			).toBeVisible();
+				topologyNodeDetailDialog.getByTestId("drilldown-link-main");
+			await expect(topologyAgentDrilldownLink).toBeVisible();
 			await expect(topologyAgentDrilldownLink).toHaveAttribute(
 				"href",
 				`/session/main/__none__/__new__?instanceId=${instance.id}`,
@@ -452,8 +454,12 @@ test.describe("v0.6 browser acceptance", () => {
 		await expect(page.getByTestId("topology-node-instance-instance-failing")).toBeVisible();
 		const degradedAgentNode = page.getByTestId("topology-node-agent-agent-healthy");
 		await expect(degradedAgentNode).toBeVisible();
+		await degradedAgentNode.click();
+		const degradedNodeDetailDialog = page.getByTestId("topology-node-detail-dialog");
+		await expect(degradedNodeDetailDialog).toBeVisible();
+		await expect(degradedNodeDetailDialog.getByText("可进入 · 默认会话")).toBeVisible();
 		await expect(
-			degradedAgentNode.getByTestId("drilldown-link-agent-healthy"),
+			degradedNodeDetailDialog.getByTestId("drilldown-link-agent-healthy"),
 		).toHaveAttribute(
 			"href",
 			"/session/agent-healthy/__none__/__new__?instanceId=instance-healthy",

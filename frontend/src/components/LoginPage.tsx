@@ -17,7 +17,7 @@ export function LoginPage(): JSX.Element {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
-  const from = (location.state as { from?: { pathname?: string } })?.from?.pathname || '/overview';
+  const from = (location.state as { from?: { pathname?: string } })?.from?.pathname || '/kanban';
 
   const handleModeToggle = useCallback(() => {
     setMode((prev) => (prev === 'login' ? 'register' : 'login'));

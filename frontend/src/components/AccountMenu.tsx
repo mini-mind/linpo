@@ -99,7 +99,7 @@ export function AccountMenu({
         ref={triggerButtonRef}
       >
         {triggerVariant === 'icon' ? (
-          <span aria-hidden="true" style={iconGlyphStyle}>人</span>
+          <span aria-hidden="true" style={iconGlyphStyle}>{getAvatarText(user.username)}</span>
         ) : (
           <span style={usernameStyle}>{user.username}</span>
         )}
@@ -123,6 +123,19 @@ export function AccountMenu({
       )}
     </div>
   );
+}
+
+function getAvatarText(username: string | null | undefined): string {
+  const normalized = username?.trim() ?? '';
+  if (!normalized) {
+    return 'U';
+  }
+
+  if (/^[\u3400-\u9fff]/.test(normalized)) {
+    return normalized.charAt(0);
+  }
+
+  return normalized.slice(0, 2).toUpperCase();
 }
 
 function getContainerStyle(compact: boolean): React.CSSProperties {

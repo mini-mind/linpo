@@ -319,9 +319,9 @@ describe("InstanceTopology", () => {
 				"topology-node-session-agent:agent-alpha:main",
 			);
 
-			const agentEntryLink = within(agentNode).getByTestId(
-				"drilldown-link-agent-alpha",
-			);
+			fireEvent.click(agentNode);
+			const detailDialog = screen.getByTestId("topology-node-detail-dialog");
+			const agentEntryLink = within(detailDialog).getByTestId("drilldown-link-agent-alpha");
 			expect(agentEntryLink).toHaveTextContent("进入默认会话");
 			expect(agentEntryLink).toHaveAttribute(
 				"href",
@@ -330,10 +330,13 @@ describe("InstanceTopology", () => {
 					agentId: "agent-alpha",
 				}),
 			);
-			expect(within(agentNode).getByText("可进入")).toBeInTheDocument();
-			expect(within(agentNode).getByText("默认会话")).toBeInTheDocument();
+			expect(within(detailDialog).getByText("可进入 · 默认会话")).toBeInTheDocument();
+			expect(
+				within(detailDialog).getByRole("heading", { name: "Alpha Agent" }),
+			).toBeInTheDocument();
 
-			const sessionEntryLink = within(sessionNode).getByRole("link", {
+			fireEvent.click(sessionNode);
+			const sessionEntryLink = within(detailDialog).getByRole("link", {
 				name: "进入对应会话",
 			});
 			expect(sessionEntryLink).toHaveAttribute(
@@ -344,11 +347,8 @@ describe("InstanceTopology", () => {
 					preferredSessionKey: "agent:agent-alpha:main",
 				}),
 			);
-			expect(within(sessionNode).getByText("精确会话")).toBeInTheDocument();
-			expect(within(agentNode).getByText("Alpha Agent")).toBeInTheDocument();
-			expect(
-				within(sessionNode).getByText("会话"),
-			).toBeInTheDocument();
+			expect(within(detailDialog).getByText("可进入 · 精确会话")).toBeInTheDocument();
+			expect(within(detailDialog).getByText("会话节点")).toBeInTheDocument();
 		});
 
 		it("renders session nodes when sessions exist", async () => {
@@ -379,7 +379,9 @@ describe("InstanceTopology", () => {
 			const orphanToolNode = screen.getByTestId("topology-node-tool-orphan");
 			const instanceNode = screen.getByTestId("topology-node-instance-instance-alpha");
 
-			const toolFallbackLink = screen.getByRole("link", {
+			fireEvent.click(toolNode);
+			const detailDialog = screen.getByTestId("topology-node-detail-dialog");
+			const toolFallbackLink = within(detailDialog).getByRole("link", {
 				name: "回退到所属智能体",
 			});
 			expect(toolFallbackLink).toHaveAttribute(
@@ -389,21 +391,17 @@ describe("InstanceTopology", () => {
 					agentId: "agent-alpha",
 				}),
 			);
-			expect(
-				within(toolNode).getByText("回退入口"),
-			).toBeInTheDocument();
-			expect(
-				within(instanceNode).getByText("实例节点不提供会话入口"),
-			).toBeInTheDocument();
-			expect(
-				within(orphanToolNode).getByText("缺少可回退上下文"),
-			).toBeInTheDocument();
+			expect(within(detailDialog).getByText("回退入口 · 回退到所属智能体")).toBeInTheDocument();
+
+			fireEvent.click(instanceNode);
+			expect(within(detailDialog).getByText("已禁用 · 实例节点不提供会话入口")).toBeInTheDocument();
+
+			fireEvent.click(orphanToolNode);
+			expect(within(detailDialog).getByText("已禁用 · 缺少可回退上下文")).toBeInTheDocument();
 			expect(within(toolNode).getAllByText("read").length).toBeGreaterThan(0);
 			expect(within(orphanToolNode).getAllByText("orphan").length).toBeGreaterThan(0);
 			expect(within(instanceNode).getByText("alpha-instance")).toBeInTheDocument();
-			expect(
-				screen.queryByRole("link", { name: "进入实例会话" }),
-			).not.toBeInTheDocument();
+			expect(within(detailDialog).queryByRole("link", { name: "进入实例会话" })).not.toBeInTheDocument();
 		});
 
 		it("opens node popups via click and shows different details by node type", async () => {
@@ -422,20 +420,19 @@ describe("InstanceTopology", () => {
 			const toolNode = screen.getByTestId("topology-node-tool-read");
 
 			fireEvent.click(instanceNode);
-			expect(within(instanceNode).getByText("实例节点不提供会话入口")).toBeInTheDocument();
-			expect(
-				within(instanceNode).queryByRole("link", { name: "进入默认会话" }),
-			).not.toBeInTheDocument();
+			const detailDialog = screen.getByTestId("topology-node-detail-dialog");
+			expect(within(detailDialog).getByText("已禁用 · 实例节点不提供会话入口")).toBeInTheDocument();
+			expect(within(detailDialog).queryByRole("link", { name: "进入默认会话" })).not.toBeInTheDocument();
 
 			fireEvent.click(agentNode);
-			expect(within(agentNode).getByText("默认会话")).toBeInTheDocument();
-			expect(within(agentNode).getByTestId("drilldown-link-agent-alpha")).toHaveTextContent(
+			expect(within(detailDialog).getByText("可进入 · 默认会话")).toBeInTheDocument();
+			expect(within(detailDialog).getByTestId("drilldown-link-agent-alpha")).toHaveTextContent(
 				"进入默认会话",
 			);
 
 			fireEvent.click(toolNode);
-			expect(within(toolNode).getByText("回退入口")).toBeInTheDocument();
-			expect(within(toolNode).getByRole("link", { name: "回退到所属智能体" })).toHaveAttribute(
+			expect(within(detailDialog).getByText("回退入口 · 回退到所属智能体")).toBeInTheDocument();
+			expect(within(detailDialog).getByRole("link", { name: "回退到所属智能体" })).toHaveAttribute(
 				"href",
 				buildSessionEntryPath({
 					instanceId: "instance-alpha",
@@ -455,16 +452,16 @@ describe("InstanceTopology", () => {
 			const detachedAgentNode = screen.getByTestId("topology-node-agent-");
 			const missingSessionNode = screen.getByTestId("topology-node-session-");
 
-			expect(within(detachedAgentNode).getByText("Detached Agent")).toBeInTheDocument();
+			fireEvent.click(detachedAgentNode);
+			const detailDialog = screen.getByTestId("topology-node-detail-dialog");
 			expect(
-				within(missingSessionNode).getByText("会话"),
+				within(detailDialog).getByRole("heading", { name: "Detached Agent" }),
 			).toBeInTheDocument();
-			expect(
-				within(detachedAgentNode).getByText("缺少进入上下文"),
-			).toBeInTheDocument();
-			expect(
-				within(missingSessionNode).getByText("缺少 session key"),
-			).toBeInTheDocument();
+			expect(within(detailDialog).getByText("已禁用 · 缺少进入上下文")).toBeInTheDocument();
+
+			fireEvent.click(missingSessionNode);
+			expect(within(detailDialog).getByText("会话节点")).toBeInTheDocument();
+			expect(within(detailDialog).getByText("已禁用 · 缺少 session key")).toBeInTheDocument();
 		});
 
 		it("does not render legacy skill or ACP nodes", async () => {

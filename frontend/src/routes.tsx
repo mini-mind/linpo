@@ -7,7 +7,7 @@ export function ProtectedRoute(): JSX.Element {
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center', color: '#6b7280' }}>
+      <div style={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center', color: '#4b5563' }}>
         加载中...
       </div>
     );
@@ -26,14 +26,14 @@ export function PublicRoute(): JSX.Element {
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', color: '#6b7280' }}>
+      <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', color: '#4b5563' }}>
         加载中...
       </div>
     );
   }
 
   if (user) {
-    const from = (location.state as { from?: { pathname?: string } })?.from?.pathname || '/overview';
+    const from = (location.state as { from?: { pathname?: string } })?.from?.pathname || '/kanban';
     return <Navigate to={from} replace />;
   }
 

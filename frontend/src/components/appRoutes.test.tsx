@@ -1,120 +1,107 @@
-import "@testing-library/jest-dom";
-import { act, cleanup, screen, waitFor } from "@testing-library/react";
-import { Outlet } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import '@testing-library/jest-dom';
+import { act, cleanup, screen, waitFor } from '@testing-library/react';
+import { Outlet } from 'react-router-dom';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock("../hooks/useAuth", () => ({
-	AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+vi.mock('../hooks/useAuth', () => ({
+  AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
-vi.mock("../hooks/useToast", () => ({
-	ToastProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+vi.mock('../hooks/useToast', () => ({
+  ToastProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
-vi.mock("../routes", () => ({
-	ProtectedRoute: () => <Outlet />,
-	PublicRoute: () => <Outlet />,
+vi.mock('../routes', () => ({
+  ProtectedRoute: () => <Outlet />,
+  PublicRoute: () => <Outlet />,
 }));
 
-vi.mock("./Layout", () => ({
-	Layout: () => <Outlet />,
-	RedirectToOverview: () => <div>redirect-overview</div>,
+vi.mock('./Layout', () => ({
+  Layout: () => <Outlet />,
+  RedirectToOverview: () => <div>redirect-kanban</div>,
 }));
 
-vi.mock("./CollabPage", () => ({
-	default: () => <div>kanban-page</div>,
+vi.mock('./CollabPage', () => ({
+  default: () => <div>kanban-page</div>,
 }));
 
-vi.mock("./LoginPage", () => ({
-	LoginPage: () => <div>login-page</div>,
+vi.mock('./FlowPage', () => ({
+  FlowPage: () => <div>flow-page</div>,
 }));
 
-vi.mock("./OverviewPage", () => ({
-	OverviewPage: () => <div>overview-page</div>,
+vi.mock('./LandingPage', () => ({
+  LandingPage: () => <div>landing-page</div>,
 }));
 
-vi.mock("./TopologyPage", () => ({
-	TopologyPage: () => <div>topology-page</div>,
+vi.mock('./LoginPage', () => ({
+  LoginPage: () => <div>login-page</div>,
 }));
 
-vi.mock("./SessionPage", () => ({
-	default: () => <div>session-page</div>,
-}));
+describe('app routes', () => {
+  afterEach(() => {
+    cleanup();
+    vi.resetModules();
+    document.body.innerHTML = '';
+    window.history.pushState({}, '', '/');
+  });
 
-vi.mock(
-	"./TeamPage",
-	() => ({
-		TeamPage: () => <div>team-page</div>,
-	}),
-);
+  it('redirects unknown path to /kanban in authenticated app shell', async () => {
+    document.body.innerHTML = '<div id="root"></div>';
+    window.history.pushState({}, '', '/unknown');
 
-describe("app routes", () => {
-	afterEach(() => {
-		cleanup();
-		vi.resetModules();
-		document.body.innerHTML = "";
-		window.history.pushState({}, "", "/");
-	});
+    await act(async () => {
+      await import('../main');
+    });
 
-	it("does not preserve /collab as a live app route", async () => {
-		document.body.innerHTML = '<div id="root"></div>';
-		window.history.pushState({}, "", "/collab");
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/kanban');
+    });
 
-		await act(async () => {
-			await import("../main");
-		});
+    expect(screen.getByText('kanban-page')).toBeInTheDocument();
+  });
 
-		await waitFor(() => {
-			expect(window.location.pathname).toBe("/login");
-		});
+  it('renders /kanban as first-class app route', async () => {
+    document.body.innerHTML = '<div id="root"></div>';
+    window.history.pushState({}, '', '/kanban');
 
-		expect(screen.getByText("login-page")).toBeInTheDocument();
-		expect(screen.queryByText("kanban-page")).not.toBeInTheDocument();
-	});
+    await act(async () => {
+      await import('../main');
+    });
 
-	it("renders /team as a first-class app route", async () => {
-		document.body.innerHTML = '<div id="root"></div>';
-		window.history.pushState({}, "", "/team");
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/kanban');
+    });
 
-		await act(async () => {
-			await import("../main");
-		});
+    expect(screen.getByText('kanban-page')).toBeInTheDocument();
+  });
 
-		await waitFor(() => {
-			expect(window.location.pathname).toBe("/team");
-		});
+  it('renders /flow as first-class app route', async () => {
+    document.body.innerHTML = '<div id="root"></div>';
+    window.history.pushState({}, '', '/flow');
 
-		expect(screen.getByText("team-page")).toBeInTheDocument();
-	});
+    await act(async () => {
+      await import('../main');
+    });
 
-	it("does not preserve legacy /session/:instanceId app entrypoints", async () => {
-		document.body.innerHTML = '<div id="root"></div>';
-		window.history.pushState({}, "", "/session/inst-2");
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/flow');
+    });
 
-		await act(async () => {
-			await import("../main");
-		});
+    expect(screen.getByText('flow-page')).toBeInTheDocument();
+  });
 
-		await waitFor(() => {
-			expect(window.location.pathname).toBe("/login");
-		});
+  it('renders /landing as first-class app route', async () => {
+    document.body.innerHTML = '<div id="root"></div>';
+    window.history.pushState({}, '', '/landing');
 
-		expect(screen.getByText("login-page")).toBeInTheDocument();
-		expect(screen.queryByText("session-page")).not.toBeInTheDocument();
-	});
+    await act(async () => {
+      await import('../main');
+    });
 
-	it("renders canonical /session/:agentId/:channelKey/:sessionKey route", async () => {
-		document.body.innerHTML = '<div id="root"></div>';
-		window.history.pushState({}, "", "/session/main/__none__/__new__");
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/landing');
+    });
 
-		await act(async () => {
-			await import("../main");
-		});
-
-		await waitFor(() => {
-			expect(window.location.pathname).toBe("/session/main/__none__/__new__");
-		});
-
-		expect(screen.getByText("session-page")).toBeInTheDocument();
-	});
+    expect(screen.getByText('landing-page')).toBeInTheDocument();
+  });
 });

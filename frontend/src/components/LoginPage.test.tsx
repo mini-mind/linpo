@@ -25,7 +25,7 @@ function renderLoginPageWithMemoryRouter(initialEntry = '/login') {
           <LocationDisplay />
           <Routes>
             <Route path="/login" element={<LoginPage />} />
-            <Route path="/overview" element={<div>overview-page</div>} />
+            <Route path="/kanban" element={<div>kanban-page</div>} />
           </Routes>
         </AuthProvider>
       </ToastProvider>
@@ -85,7 +85,7 @@ describe('LoginPage auth flow', () => {
     expect(await screen.findByText('登录到灵盘')).toBeInTheDocument();
   });
 
-  it('calls login API and redirects to /overview on valid credentials', async () => {
+  it('calls login API and redirects to /kanban on valid credentials', async () => {
     window.localStorage.setItem('linpo.currentInstanceId', 'stale-instance');
     mockFetch
       .mockResolvedValueOnce({
@@ -125,11 +125,11 @@ describe('LoginPage auth flow', () => {
     expect(window.localStorage.getItem('linpo.currentInstanceId')).toBeNull();
 
     await waitFor(() => {
-      expect(screen.getByTestId('location-display')).toHaveTextContent('/overview');
+      expect(screen.getByTestId('location-display')).toHaveTextContent('/kanban');
     });
   });
 
-  it('calls register API and redirects to /overview on valid input', async () => {
+  it('calls register API and redirects to /kanban on valid input', async () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: false,
@@ -169,7 +169,7 @@ describe('LoginPage auth flow', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId('location-display')).toHaveTextContent('/overview');
+      expect(screen.getByTestId('location-display')).toHaveTextContent('/kanban');
     });
   });
 
@@ -310,7 +310,7 @@ describe('Route guarding', () => {
     expect(await screen.findByText('欢迎, alice')).toBeInTheDocument();
   });
 
-  it('redirects authenticated users from /login to /overview by default', async () => {
+  it('redirects authenticated users from /login to /kanban by default', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
       status: 200,
@@ -327,7 +327,7 @@ describe('Route guarding', () => {
                 <Route element={<PublicRoute />}>
                   <Route path="/login" element={<LoginPage />} />
                 </Route>
-                <Route path="/overview" element={<div>总览页内容</div>} />
+                <Route path="/kanban" element={<div>看板页内容</div>} />
               </Routes>
             </MemoryRouter>
           </AuthProvider>
@@ -337,7 +337,7 @@ describe('Route guarding', () => {
 
     render(<App />);
 
-    expect(await screen.findByText('总览页内容')).toBeInTheDocument();
-    expect(screen.getByTestId('location-display')).toHaveTextContent('/overview');
+    expect(await screen.findByText('看板页内容')).toBeInTheDocument();
+    expect(screen.getByTestId('location-display')).toHaveTextContent('/kanban');
   });
 });

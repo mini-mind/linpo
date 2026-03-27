@@ -4,8 +4,8 @@
 
 ## 1. 项目定位
 
-Linpo 当前定位：面向人类的多实例 agent 工作与协作入口。  
-当前冻结 IA：`overview / topology / kanban / team / session`。
+Linpo 当前定位：位于 OpenClaw 与人之间的人机协作编排交互层。  
+Linpo v0.7 冻结主界面：`kanban + toolbar`（不再维护多页 IA）。
 
 ## 2. 所有权与语言
 
@@ -46,28 +46,26 @@ Linpo 当前定位：面向人类的多实例 agent 工作与协作入口。
 ### 4.1 文档边界
 
 - `README.md`：文档目录入口
-- `docs/prd/v0.6.md`：产品范围、IA、路由与成功标准
-- `docs/architecture/v0.6.md`：架构边界、分层、契约与迁移纪律
-- `docs/resources/test-resources.md`：测试/联调资源与 OpenClaw 参考
-- `docs/resources/openclaw-api-catalog.md`：OpenClaw 全量接口清单（含 v0.6 接入状态与未接入项）
+- `docs/prd.md`：产品范围、交互主线、路由与成功标准
+- `docs/architecture.md`：架构边界、分层、契约与迁移纪律
+- `docs/test-resources.md`：测试/联调资源与 OpenClaw 参考
+- `docs/openclaw-api-catalog.md`：OpenClaw 全量接口清单（含当前接入状态与未接入项）
 - `docs/changelog.md`：文档结构与治理口径变更记录
 
 ### 4.2 按需读取（不全读）
 
 - 默认先读：`README.md`。
-- 功能/交互变更：读 `docs/prd/v0.6.md`。
-- 技术实现/边界变更：读 `docs/architecture/v0.6.md`。
-- 测试、部署、联调或外部协议细节：读 `docs/resources/test-resources.md`。
-- 需要查未接入接口或 v0.6 接入状态：读 `docs/resources/openclaw-api-catalog.md`。
+- 功能/交互变更：读 `docs/prd.md`。
+- 技术实现/边界变更：读 `docs/architecture.md`。
+- 测试、部署、联调或外部协议细节：读 `docs/test-resources.md`。
+- 需要查未接入接口或当前接入状态：读 `docs/openclaw-api-catalog.md`。
 
-## 5. 需求拆分与 Subagent 协作
+## 5. 需求拆分与协作
 
 - 非微小任务默认先做需求拆分，再进入实现。
-- 需求拆分后，默认使用 subagents 并行推进子任务。
-- subagent 默认模型为 `gpt-5.3-codex`，除非用户明确指定其他模型，或存在明确的降级/替换理由。
 - 每个子任务需明确：边界、目标、输入输出、验收标准。
 - 主 agent 负责拆解、顺序控制、结果核验与集成。
-- 若 subagent 产出与文档冲突，以文档约束为准。
+- 若并行产出与文档冲突，以文档约束为准。
 
 ## 6. 目录协作规则
 

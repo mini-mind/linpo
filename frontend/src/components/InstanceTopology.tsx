@@ -82,11 +82,17 @@ type GraphEdge = {
 
 type RealtimeState = "connecting" | "realtime" | "disconnected" | "error" | "paused";
 
-type GraphViewBox = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
+type GraphCamera = {
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+};
+
+type GraphSceneBounds = {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
 };
 
 type NodeDetailRow = {
@@ -102,16 +108,19 @@ type NodeDetailState = {
   linkTestId?: string;
 };
 
-const GRAPH_W = 1260;
-const GRAPH_H = 660;
+const GRAPH_W = 1920;
+const GRAPH_H = 1080;
 const GRAPH_PAD = 40;
 const GRAPH_HIGHLIGHT_MS = 7000;
 const EDGE_LIMIT = 120;
 const POLL_INTERVAL_MS = 5000;
 const REALTIME_REFRESH_THROTTLE_MS = 750;
-const DEFAULT_GRAPH_VIEW_BOX: GraphViewBox = { x: 0, y: 0, width: GRAPH_W, height: GRAPH_H };
-const MIN_VIEW_BOX_WIDTH = 380;
-const MAX_VIEW_BOX_WIDTH = GRAPH_W * 4;
+const DEFAULT_GRAPH_CAMERA: GraphCamera = { scale: 1, offsetX: 0, offsetY: 0 };
+const MIN_GRAPH_SCALE = 0.12;
+const MAX_GRAPH_SCALE = 8;
+const NODE_DRAG_EXTRA_X = GRAPH_W * 4;
+const NODE_DRAG_EXTRA_Y = GRAPH_H * 4;
+const WHEEL_ZOOM_SPEED = 1.1;
 
 const WINDOW_OPTIONS: ReadonlyArray<{ value: number; label: string }> = [
   { value: 2, label: "2 分钟" },
@@ -121,15 +130,15 @@ const WINDOW_OPTIONS: ReadonlyArray<{ value: number; label: string }> = [
 ];
 
 const GRAPH_X_BY_GROUP: Record<string, number> = {
-  client: 90,
-  gateway: 210,
-  rpc: 380,
-  agent: 560,
-  tool: 680,
-  session: 860,
-  channel: 1080,
-  node: 1190,
-  other: 1080,
+  client: 240,
+  gateway: 420,
+  rpc: 620,
+  agent: 920,
+  tool: 1220,
+  session: 1540,
+  channel: 1740,
+  node: 1820,
+  other: 1740,
 };
 
 const GRAPH_Y_RANGES_BY_GROUP: Record<string, { top: number; bottom: number }> = {
@@ -153,6 +162,12 @@ function safeString(value: unknown): string {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function buildEdgeCurvePath(from: { x: number; y: number }, to: { x: number; y: number }): string {
+  const horizontal = Math.abs(to.x - from.x);
+  const curveX = Math.max(72, horizontal * 0.42);
+  return `M ${from.x} ${from.y} C ${from.x + curveX} ${from.y}, ${to.x - curveX} ${to.y}, ${to.x} ${to.y}`;
 }
 
 function parseIsoTimestamp(value: string | null | undefined, fallback: number): number {
@@ -196,6 +211,49 @@ function nodeKey(node: GatewayTraceNode): string {
   return `${safeString(node.kind)}:${safeString(node.id)}`;
 }
 
+function inferGatewayAddress(): string {
+  if (typeof window === "undefined") return "127.0.0.1";
+  const host = window.location.hostname?.trim();
+  if (!host || host === "localhost") return "127.0.0.1";
+  return host;
+}
+
+function stableNodeRef(primary: string | null | undefined, fallback: string | null | undefined): string {
+  const normalizedPrimary = safeString(primary).trim();
+  if (normalizedPrimary) return normalizedPrimary;
+  return safeString(fallback).trim();
+}
+
+function iconPathForNodeKind(kind: string): string {
+  if (kind === "client") return "/assets/openclaw-icon.png";
+  if (kind === "gateway") return "/assets/topology-icons/gateway.svg";
+  if (kind === "rpc") return "/assets/topology-icons/rpc.svg";
+  if (kind === "agent") return "/assets/topology-icons/agent.svg";
+  if (kind === "tool") return "/assets/topology-icons/tool.svg";
+  if (kind === "session") return "/assets/topology-icons/session.svg";
+  if (kind === "channel") return "/assets/topology-icons/channel.svg";
+  if (kind === "node") return "/assets/topology-icons/node.svg";
+  return "/assets/topology-icons/other.svg";
+}
+
+function isLikelyTrackpadWheel(event: { deltaMode: number; deltaX: number; deltaY: number }): boolean {
+  if (event.deltaMode !== 0) return false;
+  const absX = Math.abs(event.deltaX);
+  const absY = Math.abs(event.deltaY);
+  if (absX > 0 && absY > 0) return true;
+  return absX < 40 && absY < 40;
+}
+
+function normalizeWheelDelta(deltaY: number, deltaMode: number, shellHeight: number): number {
+  if (deltaMode === 1) {
+    return deltaY * 16;
+  }
+  if (deltaMode === 2) {
+    return deltaY * shellHeight;
+  }
+  return deltaY;
+}
+
 function isRpcKind(kind: string): boolean {
   return kind.startsWith("rpc.");
 }
@@ -206,6 +264,10 @@ function isMessageKind(kind: string): boolean {
 
 function isToolKind(kind: string): boolean {
   return kind.startsWith("tool.");
+}
+
+function isBusinessNodeKind(kind: string): boolean {
+  return kind === "client" || kind === "agent" || kind === "session" || kind === "tool";
 }
 
 function shouldAnimateEventKind(kind: string): boolean {
@@ -232,10 +294,6 @@ function resolveNodeGroup(kind: string): string {
   if (kind === "tool") return "tool";
   if (kind === "node") return "node";
   return "other";
-}
-
-function yRangeForKind(kind: string): { top: number; bottom: number } {
-  return GRAPH_Y_RANGES_BY_GROUP[resolveNodeGroup(kind)] ?? { top: GRAPH_PAD, bottom: GRAPH_H - GRAPH_PAD };
 }
 
 function layoutNodes(nodes: Array<Omit<GraphNode, "x" | "y">>): Map<string, { x: number; y: number }> {
@@ -268,6 +326,9 @@ function buildGraph(events: GatewayTraceEvent[], now: number): { nodes: GraphNod
   const edges = new Map<string, GraphEdge>();
 
   for (const evt of events) {
+    if (!isBusinessNodeKind(safeString(evt.from.kind)) || !isBusinessNodeKind(safeString(evt.to.kind))) {
+      continue;
+    }
     const kind = safeString(evt.kind).trim() || "event";
     const ts = typeof evt.ts === "number" && Number.isFinite(evt.ts) ? evt.ts : now;
     const shouldAnimate = shouldAnimateEventKind(kind);
@@ -371,9 +432,10 @@ function strokeForNodeKind(kind: string): string {
 }
 
 function graphLabelLimitByKind(kind: string): number {
+  if (kind === "gateway") return 20;
   if (kind === "session") return 10;
-  if (kind === "channel") return 16;
-  return 18;
+  if (kind === "channel") return 14;
+  return 16;
 }
 
 function truncateLabel(value: string, max: number): string {
@@ -480,11 +542,12 @@ function topologyToTraceEvents(topology: AggregateTopologyResponse, now: number)
 
   for (const instance of topology.instances) {
     const ts = normalizeSnapshotTs(instance.last_check_at);
+    const instanceRef = stableNodeRef(instance.node_id, instance.instance_id);
     events.push({
       id: `rpc-health:${instance.instance_id}:${ts}`,
       ts,
       kind: "rpc.health",
-      from: { kind: "client", id: instance.instance_id, label: instance.name },
+      from: { kind: "client", id: instanceRef, label: instance.name },
       to: { kind: "gateway", id: "gateway", label: "gateway" },
       label: instance.status,
       data: {
@@ -501,12 +564,14 @@ function topologyToTraceEvents(topology: AggregateTopologyResponse, now: number)
       const agent = agentByNode.get(edge.target);
       const ts = normalizeSnapshotTs(agent?.last_active_at ?? instance?.last_check_at ?? null);
       if (!instance || !agent) continue;
+      const instanceRef = stableNodeRef(instance.node_id, instance.instance_id);
+      const agentRef = stableNodeRef(agent.node_id, agent.agent_id);
       events.push({
         id: `edge:${edge.kind}:${edge.source}:${edge.target}:${ts}`,
         ts,
         kind: "message.in",
-        from: { kind: "client", id: instance.instance_id, label: instance.name },
-        to: { kind: "agent", id: agent.agent_id, label: agent.agent_name },
+        from: { kind: "client", id: instanceRef, label: instance.name },
+        to: { kind: "agent", id: agentRef, label: agent.agent_name },
         label: agent.status,
         runId: agent.agent_id,
         data: { edgeKind: edge.kind },
@@ -519,12 +584,14 @@ function topologyToTraceEvents(topology: AggregateTopologyResponse, now: number)
       const session = sessionByNode.get(edge.target);
       const ts = normalizeSnapshotTs(session?.updated_at ?? agent?.last_active_at ?? null);
       if (!agent || !session) continue;
+      const agentRef = stableNodeRef(agent.node_id, agent.agent_id);
+      const sessionRef = stableNodeRef(session.node_id, session.session_key);
       events.push({
         id: `edge:${edge.kind}:${edge.source}:${edge.target}:${ts}`,
         ts,
         kind: "message.out",
-        from: { kind: "agent", id: agent.agent_id, label: agent.agent_name },
-        to: { kind: "session", id: session.session_key, label: session.label },
+        from: { kind: "agent", id: agentRef, label: agent.agent_name },
+        to: { kind: "session", id: sessionRef, label: session.label },
         label: session.label,
         sessionKey: session.session_key,
         runId: agent.agent_id,
@@ -538,12 +605,14 @@ function topologyToTraceEvents(topology: AggregateTopologyResponse, now: number)
       const tool = toolByNode.get(edge.target);
       const ts = normalizeSnapshotTs(agent?.last_active_at ?? null);
       if (!agent || !tool) continue;
+      const agentRef = stableNodeRef(agent.node_id, agent.agent_id);
+      const toolRef = stableNodeRef(tool.node_id, tool.tool_id || tool.name);
       events.push({
         id: `edge:${edge.kind}:${edge.source}:${edge.target}:${ts}`,
         ts,
         kind: "tool.invoke",
-        from: { kind: "agent", id: agent.agent_id, label: agent.agent_name },
-        to: { kind: "tool", id: tool.tool_id, label: tool.name },
+        from: { kind: "agent", id: agentRef, label: agent.agent_name },
+        to: { kind: "tool", id: toolRef, label: tool.name },
         label: tool.name,
         runId: agent.agent_id,
         data: { edgeKind: edge.kind },
@@ -610,35 +679,87 @@ function nodeEventsToTraceEvents(agentId: string, nodeId: string, events: EventR
   });
 }
 
-function computeFitViewBox(nodes: GraphNode[], shellWidth: number, shellHeight: number): GraphViewBox {
+function computeSceneBounds(nodes: GraphNode[]): GraphSceneBounds {
   if (nodes.length === 0) {
-    return DEFAULT_GRAPH_VIEW_BOX;
+    return {
+      minX: -GRAPH_W * 0.2,
+      maxX: GRAPH_W * 1.2,
+      minY: -GRAPH_H * 0.2,
+      maxY: GRAPH_H * 1.2,
+    };
   }
-  const all = nodes;
-  const minX = Math.min(...all.map((item) => item.x)) - 120;
-  const maxX = Math.max(...all.map((item) => item.x)) + 120;
-  const minY = Math.min(...all.map((item) => item.y)) - 100;
-  const maxY = Math.max(...all.map((item) => item.y)) + 100;
-
-  let width = Math.max(360, maxX - minX);
-  let height = Math.max(220, maxY - minY);
-  const targetRatio = shellWidth > 0 && shellHeight > 0 ? shellWidth / shellHeight : GRAPH_W / GRAPH_H;
-  const currentRatio = width / height;
-  if (currentRatio > targetRatio) {
-    height = width / targetRatio;
-  } else {
-    width = height * targetRatio;
-  }
-
-  const centerX = (minX + maxX) / 2;
-  const centerY = (minY + maxY) / 2;
-  const clampedWidth = clamp(width, MIN_VIEW_BOX_WIDTH, MAX_VIEW_BOX_WIDTH);
-  const clampedHeight = clamp(clampedWidth / targetRatio, MIN_VIEW_BOX_WIDTH / targetRatio, MAX_VIEW_BOX_WIDTH / targetRatio);
   return {
-    x: centerX - clampedWidth / 2,
-    y: centerY - clampedHeight / 2,
-    width: clampedWidth,
-    height: clampedHeight,
+    minX: Math.min(...nodes.map((item) => item.x)) - 220,
+    maxX: Math.max(...nodes.map((item) => item.x)) + 220,
+    minY: Math.min(...nodes.map((item) => item.y)) - 180,
+    maxY: Math.max(...nodes.map((item) => item.y)) + 240,
+  };
+}
+
+function clampCameraToScene(camera: GraphCamera, scene: GraphSceneBounds, viewportWidth: number, viewportHeight: number): GraphCamera {
+  const safeViewportWidth = Math.max(1, viewportWidth);
+  const safeViewportHeight = Math.max(1, viewportHeight);
+  const scale = clamp(camera.scale, MIN_GRAPH_SCALE, MAX_GRAPH_SCALE);
+  const viewportWorldWidth = safeViewportWidth / scale;
+  const viewportWorldHeight = safeViewportHeight / scale;
+  const sceneWidth = Math.max(1, scene.maxX - scene.minX);
+  const sceneHeight = Math.max(1, scene.maxY - scene.minY);
+  const marginX = Math.max(220, sceneWidth * 0.08);
+  const marginY = Math.max(160, sceneHeight * 0.08);
+
+  let worldLeft = -camera.offsetX;
+  let worldTop = -camera.offsetY;
+
+  if (sceneWidth <= viewportWorldWidth) {
+    worldLeft = scene.minX + sceneWidth * 0.5 - viewportWorldWidth * 0.5;
+  } else {
+    worldLeft = clamp(worldLeft, scene.minX - marginX, scene.maxX + marginX - viewportWorldWidth);
+  }
+
+  if (sceneHeight <= viewportWorldHeight) {
+    worldTop = scene.minY + sceneHeight * 0.5 - viewportWorldHeight * 0.5;
+  } else {
+    worldTop = clamp(worldTop, scene.minY - marginY, scene.maxY + marginY - viewportWorldHeight);
+  }
+
+  const nextOffsetX = -worldLeft;
+  const nextOffsetY = -worldTop;
+  if (
+    Math.abs(scale - camera.scale) < 0.0001
+    && Math.abs(nextOffsetX - camera.offsetX) < 0.001
+    && Math.abs(nextOffsetY - camera.offsetY) < 0.001
+  ) {
+    return camera;
+  }
+  return {
+    scale,
+    offsetX: nextOffsetX,
+    offsetY: nextOffsetY,
+  };
+}
+
+function buildFitCamera(nodes: GraphNode[], viewportWidth: number, viewportHeight: number): GraphCamera {
+  if (nodes.length === 0) {
+    return DEFAULT_GRAPH_CAMERA;
+  }
+  const safeViewportWidth = Math.max(1, viewportWidth);
+  const safeViewportHeight = Math.max(1, viewportHeight);
+  const minX = Math.min(...nodes.map((item) => item.x)) - 160;
+  const maxX = Math.max(...nodes.map((item) => item.x)) + 160;
+  const minY = Math.min(...nodes.map((item) => item.y)) - 140;
+  const maxY = Math.max(...nodes.map((item) => item.y)) + 220;
+  const contentWidth = Math.max(1, maxX - minX);
+  const contentHeight = Math.max(1, maxY - minY);
+  const fitScale = Math.min(safeViewportWidth / contentWidth, safeViewportHeight / contentHeight) * 0.94;
+  const scale = clamp(fitScale, MIN_GRAPH_SCALE, MAX_GRAPH_SCALE);
+  const viewportWorldWidth = safeViewportWidth / scale;
+  const viewportWorldHeight = safeViewportHeight / scale;
+  const centerX = (minX + maxX) * 0.5;
+  const centerY = (minY + maxY) * 0.5;
+  return {
+    scale,
+    offsetX: -centerX + viewportWorldWidth * 0.5,
+    offsetY: -centerY + viewportWorldHeight * 0.5,
   };
 }
 
@@ -664,14 +785,19 @@ function TopologyCanvas(): JSX.Element {
     pointerId: number;
     startClientX: number;
     startClientY: number;
-    origin: GraphViewBox;
+    originOffsetX: number;
+    originOffsetY: number;
+    originScale: number;
   } | null>(null);
   const nodeDraggingRef = useRef<{
     pointerId: number;
     nodeKey: string;
+    startClientX: number;
     startClientY: number;
+    baseX: number;
     baseY: number;
-    originOffset: number;
+    originOffsetX: number;
+    originOffsetY: number;
     moved: boolean;
   } | null>(null);
   const suppressNodeClickRef = useRef(false);
@@ -689,10 +815,10 @@ function TopologyCanvas(): JSX.Element {
   const [topologyEvents, setTopologyEvents] = useState<GatewayTraceEvent[]>([]);
   const [realtimeNodeEvents, setRealtimeNodeEvents] = useState<GatewayTraceEvent[]>([]);
   const [now, setNow] = useState(() => Date.now());
-  const [viewBox, setViewBox] = useState<GraphViewBox>(DEFAULT_GRAPH_VIEW_BOX);
+  const [camera, setCamera] = useState<GraphCamera>(DEFAULT_GRAPH_CAMERA);
   const [controlsOpen, setControlsOpen] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
-  const [nodeYOffsetByKey, setNodeYOffsetByKey] = useState<Record<string, number>>({});
+  const [nodeOffsetByKey, setNodeOffsetByKey] = useState<Record<string, { x: number; y: number }>>({});
   const [selectedNodeKey, setSelectedNodeKey] = useState<string | null>(null);
 
   const appendTopologyEvents = useCallback((payload: AggregateTopologyResponse): void => {
@@ -929,7 +1055,8 @@ function TopologyCanvas(): JSX.Element {
 
     for (const instance of topology.instances) {
       const instanceId = instance.instance_id ?? "";
-      map.set(`client:${instanceId}`, {
+      const instanceRef = stableNodeRef(instance.node_id, instance.instance_id);
+      map.set(`client:${instanceRef}`, {
         testId: `topology-node-instance-${instanceId}`,
         action: buildNodeSessionAction({
           type: "instance",
@@ -940,7 +1067,8 @@ function TopologyCanvas(): JSX.Element {
 
     for (const agent of topology.agents) {
       const agentId = agent.agent_id ?? "";
-      map.set(`agent:${agentId}`, {
+      const agentRef = stableNodeRef(agent.node_id, agent.agent_id);
+      map.set(`agent:${agentRef}`, {
         testId: `topology-node-agent-${agentId}`,
         action: buildNodeSessionAction({
           type: "agent",
@@ -953,7 +1081,8 @@ function TopologyCanvas(): JSX.Element {
 
     for (const session of topology.sessions) {
       const sessionKey = session.session_key ?? "";
-      map.set(`session:${sessionKey}`, {
+      const sessionRef = stableNodeRef(session.node_id, session.session_key);
+      map.set(`session:${sessionRef}`, {
         testId: `topology-node-session-${sessionKey}`,
         action: buildNodeSessionAction({
           type: "session",
@@ -965,7 +1094,7 @@ function TopologyCanvas(): JSX.Element {
     }
 
     for (const tool of topology.tools) {
-      const toolId = tool.tool_id ?? "";
+      const toolRef = stableNodeRef(tool.node_id, tool.tool_id || tool.name);
       const toolName = tool.name ?? "";
       const meta = {
         testId: `topology-node-tool-${toolName}`,
@@ -975,10 +1104,7 @@ function TopologyCanvas(): JSX.Element {
           agentId: tool.agent_id || undefined,
         }),
       };
-      map.set(`tool:${toolId}`, meta);
-      if (toolName && toolName !== toolId) {
-        map.set(`tool:${toolName}`, meta);
-      }
+      map.set(`tool:${toolRef}`, meta);
     }
 
     return map;
@@ -987,13 +1113,22 @@ function TopologyCanvas(): JSX.Element {
   const instanceById = useMemo(() => {
     return new Map((topology?.instances ?? []).map((item) => [item.instance_id, item]));
   }, [topology?.instances]);
+  const instanceByNodeId = useMemo(() => {
+    return new Map((topology?.instances ?? []).map((item) => [item.node_id, item]));
+  }, [topology?.instances]);
 
   const agentById = useMemo(() => {
     return new Map((topology?.agents ?? []).map((item) => [item.agent_id, item]));
   }, [topology?.agents]);
+  const agentByNodeId = useMemo(() => {
+    return new Map((topology?.agents ?? []).map((item) => [item.node_id, item]));
+  }, [topology?.agents]);
 
   const sessionByKey = useMemo(() => {
     return new Map((topology?.sessions ?? []).map((item) => [item.session_key, item]));
+  }, [topology?.sessions]);
+  const sessionByNodeId = useMemo(() => {
+    return new Map((topology?.sessions ?? []).map((item) => [item.node_id, item]));
   }, [topology?.sessions]);
 
   const toolById = useMemo(() => {
@@ -1007,6 +1142,9 @@ function TopologyCanvas(): JSX.Element {
       }
     }
     return map;
+  }, [topology?.tools]);
+  const toolByNodeId = useMemo(() => {
+    return new Map((topology?.tools ?? []).map((item) => [item.node_id, item]));
   }, [topology?.tools]);
 
   const displayNodes = useMemo<GraphNode[]>(() => {
@@ -1039,23 +1177,23 @@ function TopologyCanvas(): JSX.Element {
     };
 
     for (const instance of topology.instances) {
-      const instanceId = instance.instance_id ?? "";
-      ensureNode(`client:${instanceId}`, "client", instanceId, instance.name || instanceId || "instance");
+      const instanceRef = stableNodeRef(instance.node_id, instance.instance_id);
+      ensureNode(`client:${instanceRef}`, "client", instanceRef, instance.name || instance.instance_id || "instance");
     }
 
     for (const agent of topology.agents) {
-      const agentId = agent.agent_id ?? "";
-      ensureNode(`agent:${agentId}`, "agent", agentId, agent.agent_name || agentId || "agent");
+      const agentRef = stableNodeRef(agent.node_id, agent.agent_id);
+      ensureNode(`agent:${agentRef}`, "agent", agentRef, agent.agent_name || agent.agent_id || "agent");
     }
 
     for (const session of topology.sessions) {
-      const sessionKey = session.session_key ?? "";
-      ensureNode(`session:${sessionKey}`, "session", sessionKey, session.label || sessionKey || "session");
+      const sessionRef = stableNodeRef(session.node_id, session.session_key);
+      ensureNode(`session:${sessionRef}`, "session", sessionRef, session.label || session.session_key || "session");
     }
 
     for (const tool of topology.tools) {
-      const toolId = tool.tool_id || tool.name || "";
-      ensureNode(`tool:${toolId}`, "tool", toolId, tool.name || tool.tool_id || "tool");
+      const toolRef = stableNodeRef(tool.node_id, tool.tool_id || tool.name);
+      ensureNode(`tool:${toolRef}`, "tool", toolRef, tool.name || tool.tool_id || "tool");
     }
 
     const nodeList = [...nodes.values()].sort((a, b) => b.lastTs - a.lastTs);
@@ -1075,18 +1213,20 @@ function TopologyCanvas(): JSX.Element {
   const renderNodes = useMemo<GraphNode[]>(() => {
     return displayNodes.map((node) => ({
       ...node,
-      y: node.y + (nodeYOffsetByKey[node.key] ?? 0),
+      x: node.x + (nodeOffsetByKey[node.key]?.x ?? 0),
+      y: node.y + (nodeOffsetByKey[node.key]?.y ?? 0),
     }));
-  }, [displayNodes, nodeYOffsetByKey]);
+  }, [displayNodes, nodeOffsetByKey]);
 
   const renderNodeByKey = useMemo(() => {
     return new Map(renderNodes.map((node) => [node.key, node]));
   }, [renderNodes]);
+  const sceneBounds = useMemo(() => computeSceneBounds(renderNodes), [renderNodes]);
 
   useEffect(() => {
     const keySet = new Set(displayNodes.map((node) => node.key));
-    setNodeYOffsetByKey((prev) => {
-      const next: Record<string, number> = {};
+    setNodeOffsetByKey((prev) => {
+      const next: Record<string, { x: number; y: number }> = {};
       let changed = false;
       for (const [key, offset] of Object.entries(prev)) {
         if (keySet.has(key)) {
@@ -1110,21 +1250,19 @@ function TopologyCanvas(): JSX.Element {
     void loadTopology("manual");
   }, [loadTopology]);
 
-  const fitViewBox = useCallback(() => {
+  const fitCamera = useCallback(() => {
     const shell = graphShellRef.current;
-    if (!shell) {
-      setViewBox(DEFAULT_GRAPH_VIEW_BOX);
-      return;
-    }
-    const rect = shell.getBoundingClientRect();
-    setViewBox(computeFitViewBox(renderNodes, rect.width, rect.height));
-  }, [renderNodes]);
+    const viewportWidth = shell?.clientWidth || GRAPH_W;
+    const viewportHeight = shell?.clientHeight || GRAPH_H;
+    const fitted = buildFitCamera(renderNodes, viewportWidth, viewportHeight);
+    setCamera(clampCameraToScene(fitted, sceneBounds, viewportWidth, viewportHeight));
+  }, [renderNodes, sceneBounds]);
 
   const handleFit = useCallback(() => {
     hasManualViewportRef.current = false;
     hasAutoFittedRef.current = true;
-    fitViewBox();
-  }, [fitViewBox]);
+    fitCamera();
+  }, [fitCamera]);
 
   useEffect(() => {
     if (loading || error) return;
@@ -1135,8 +1273,15 @@ function TopologyCanvas(): JSX.Element {
     }
     if (hasAutoFittedRef.current) return;
     hasAutoFittedRef.current = true;
-    fitViewBox();
-  }, [error, fitViewBox, loading, renderNodes.length]);
+    fitCamera();
+  }, [error, fitCamera, loading, renderNodes.length]);
+
+  useEffect(() => {
+    const shell = graphShellRef.current;
+    const viewportWidth = shell?.clientWidth || GRAPH_W;
+    const viewportHeight = shell?.clientHeight || GRAPH_H;
+    setCamera((prev) => clampCameraToScene(prev, sceneBounds, viewportWidth, viewportHeight));
+  }, [sceneBounds]);
 
   const handleCanvasWheel = useCallback((event: ReactWheelEvent<SVGSVGElement>) => {
     event.preventDefault();
@@ -1145,24 +1290,38 @@ function TopologyCanvas(): JSX.Element {
     const rect = shell.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return;
     hasManualViewportRef.current = true;
+    const pointerCanvasX = event.clientX - rect.left;
+    const pointerCanvasY = event.clientY - rect.top;
+    const deltaY = normalizeWheelDelta(event.deltaY, event.deltaMode, rect.height);
+    const trackpad = isLikelyTrackpadWheel(event);
 
-    const pointerRatioX = (event.clientX - rect.left) / rect.width;
-    const pointerRatioY = (event.clientY - rect.top) / rect.height;
-    const nextScaleRatio = event.deltaY < 0 ? 0.9 : 1.1;
+    setCamera((prev) => {
+      const prevScale = prev.scale;
+      let nextScale = prevScale;
 
-    setViewBox((prev) => {
-      const nextWidth = clamp(prev.width * nextScaleRatio, MIN_VIEW_BOX_WIDTH, MAX_VIEW_BOX_WIDTH);
-      const nextHeight = (nextWidth * prev.height) / prev.width;
-      const anchorX = prev.x + pointerRatioX * prev.width;
-      const anchorY = prev.y + pointerRatioY * prev.height;
-      return {
-        x: anchorX - pointerRatioX * nextWidth,
-        y: anchorY - pointerRatioY * nextHeight,
-        width: nextWidth,
-        height: nextHeight,
-      };
+      if (trackpad) {
+        nextScale = prevScale * (1 + deltaY * (1 - WHEEL_ZOOM_SPEED) * 0.18);
+      } else if (deltaY < 0) {
+        nextScale = prevScale * WHEEL_ZOOM_SPEED;
+      } else if (deltaY > 0) {
+        nextScale = prevScale / WHEEL_ZOOM_SPEED;
+      }
+
+      nextScale = clamp(nextScale, MIN_GRAPH_SCALE, MAX_GRAPH_SCALE);
+      if (Math.abs(nextScale - prevScale) < 0.00001) return prev;
+
+      const worldX = pointerCanvasX / prevScale - prev.offsetX;
+      const worldY = pointerCanvasY / prevScale - prev.offsetY;
+      const nextOffsetX = pointerCanvasX / nextScale - worldX;
+      const nextOffsetY = pointerCanvasY / nextScale - worldY;
+      return clampCameraToScene(
+        { scale: nextScale, offsetX: nextOffsetX, offsetY: nextOffsetY },
+        sceneBounds,
+        rect.width,
+        rect.height,
+      );
     });
-  }, []);
+  }, [sceneBounds]);
 
   const handleCanvasPointerDown = useCallback((event: ReactPointerEvent<SVGSVGElement>) => {
     if (event.button !== 0) return;
@@ -1172,11 +1331,13 @@ function TopologyCanvas(): JSX.Element {
       pointerId: event.pointerId,
       startClientX: event.clientX,
       startClientY: event.clientY,
-      origin: viewBox,
+      originOffsetX: camera.offsetX,
+      originOffsetY: camera.offsetY,
+      originScale: camera.scale,
     };
     hasManualViewportRef.current = true;
     setIsPanning(true);
-  }, [viewBox]);
+  }, [camera.offsetX, camera.offsetY, camera.scale]);
 
   const handleCanvasPointerMove = useCallback((event: ReactPointerEvent<SVGSVGElement>) => {
     const drag = draggingRef.current;
@@ -1184,15 +1345,15 @@ function TopologyCanvas(): JSX.Element {
     if (!drag || drag.pointerId !== event.pointerId || !shell) return;
     const rect = shell.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return;
-    const deltaX = ((event.clientX - drag.startClientX) / rect.width) * drag.origin.width;
-    const deltaY = ((event.clientY - drag.startClientY) / rect.height) * drag.origin.height;
-    setViewBox({
-      x: drag.origin.x - deltaX,
-      y: drag.origin.y - deltaY,
-      width: drag.origin.width,
-      height: drag.origin.height,
-    });
-  }, []);
+    const scale = drag.originScale || 1;
+    const deltaWorldX = (event.clientX - drag.startClientX) / scale;
+    const deltaWorldY = (event.clientY - drag.startClientY) / scale;
+    setCamera(clampCameraToScene({
+      scale: drag.originScale,
+      offsetX: drag.originOffsetX + deltaWorldX,
+      offsetY: drag.originOffsetY + deltaWorldY,
+    }, sceneBounds, rect.width, rect.height));
+  }, [sceneBounds]);
 
   const handleCanvasPointerUp = useCallback((event: ReactPointerEvent<SVGSVGElement>) => {
     const drag = draggingRef.current;
@@ -1218,14 +1379,17 @@ function TopologyCanvas(): JSX.Element {
       nodeDraggingRef.current = {
         pointerId: event.pointerId,
         nodeKey,
+        startClientX: event.clientX,
         startClientY: event.clientY,
+        baseX: baseNode.x,
         baseY: baseNode.y,
-        originOffset: nodeYOffsetByKey[nodeKey] ?? 0,
+        originOffsetX: nodeOffsetByKey[nodeKey]?.x ?? 0,
+        originOffsetY: nodeOffsetByKey[nodeKey]?.y ?? 0,
         moved: false,
       };
       suppressNodeClickRef.current = false;
     },
-    [baseDisplayNodeByKey, nodeYOffsetByKey],
+    [baseDisplayNodeByKey, nodeOffsetByKey],
   );
 
   const handleNodePointerMove = useCallback(
@@ -1241,21 +1405,33 @@ function TopologyCanvas(): JSX.Element {
 
       const baseNode = baseDisplayNodeByKey.get(drag.nodeKey);
       if (!baseNode) return;
-      const deltaY = ((event.clientY - drag.startClientY) / rect.height) * viewBox.height;
-      if (Math.abs(event.clientY - drag.startClientY) >= 2) {
+      const scale = Math.max(0.0001, camera.scale);
+      const deltaX = (event.clientX - drag.startClientX) / scale;
+      const deltaY = (event.clientY - drag.startClientY) / scale;
+      if (
+        Math.abs(event.clientX - drag.startClientX) >= 2
+        || Math.abs(event.clientY - drag.startClientY) >= 2
+      ) {
         drag.moved = true;
       }
-      const range = yRangeForKind(baseNode.kind);
-      const currentY = drag.baseY + drag.originOffset + deltaY;
-      const clampedY = clamp(currentY, range.top, range.bottom);
-      const nextOffset = clampedY - drag.baseY;
-      setNodeYOffsetByKey((prev) => {
-        const current = prev[drag.nodeKey] ?? 0;
-        if (Math.abs(current - nextOffset) < 0.001) return prev;
-        return { ...prev, [drag.nodeKey]: nextOffset };
+      const currentX = drag.baseX + drag.originOffsetX + deltaX;
+      const currentY = drag.baseY + drag.originOffsetY + deltaY;
+      const clampedX = clamp(currentX, sceneBounds.minX - NODE_DRAG_EXTRA_X, sceneBounds.maxX + NODE_DRAG_EXTRA_X);
+      const clampedY = clamp(currentY, sceneBounds.minY - NODE_DRAG_EXTRA_Y, sceneBounds.maxY + NODE_DRAG_EXTRA_Y);
+      const nextOffsetX = clampedX - drag.baseX;
+      const nextOffsetY = clampedY - drag.baseY;
+      setNodeOffsetByKey((prev) => {
+        const current = prev[drag.nodeKey] ?? { x: 0, y: 0 };
+        if (
+          Math.abs(current.x - nextOffsetX) < 0.001
+          && Math.abs(current.y - nextOffsetY) < 0.001
+        ) {
+          return prev;
+        }
+        return { ...prev, [drag.nodeKey]: { x: nextOffsetX, y: nextOffsetY } };
       });
     },
-    [baseDisplayNodeByKey, viewBox.height],
+    [baseDisplayNodeByKey, camera.scale, sceneBounds.maxX, sceneBounds.maxY, sceneBounds.minX, sceneBounds.minY],
   );
 
   const handleNodePointerUp = useCallback((event: ReactPointerEvent<SVGGElement>) => {
@@ -1300,20 +1476,21 @@ function TopologyCanvas(): JSX.Element {
 
   const visualLabelByNodeKey = useMemo(() => {
     const map = new Map<string, string>();
-    for (const [instanceId, instance] of instanceById.entries()) {
-      map.set(`client:${instanceId}`, instance.name || "实例");
+    for (const [instanceNodeId, instance] of instanceByNodeId.entries()) {
+      map.set(`client:${instanceNodeId}`, instance.name || "实例");
     }
-    for (const [agentId, agent] of agentById.entries()) {
-      map.set(`agent:${agentId}`, agent.agent_name || "智能体");
+    for (const [agentNodeId, agent] of agentByNodeId.entries()) {
+      map.set(`agent:${agentNodeId}`, agent.agent_name || "智能体");
     }
-    for (const [sessionKey] of sessionByKey.entries()) {
-      map.set(`session:${sessionKey}`, "会话");
+    for (const [sessionNodeId] of sessionByNodeId.entries()) {
+      map.set(`session:${sessionNodeId}`, "会话");
     }
-    for (const [toolId, tool] of toolById.entries()) {
-      map.set(`tool:${toolId}`, tool.name || "工具");
+    for (const [toolNodeId, tool] of toolByNodeId.entries()) {
+      map.set(`tool:${toolNodeId}`, tool.name || "工具");
     }
     return map;
-  }, [agentById, instanceById, sessionByKey, toolById]);
+  }, [agentByNodeId, instanceByNodeId, sessionByNodeId, toolByNodeId]);
+  const gatewayAddress = useMemo(() => inferGatewayAddress(), []);
 
   const selectedNodeDetail = useMemo<NodeDetailState | null>(() => {
     if (!selectedNodeKey) return null;
@@ -1324,7 +1501,7 @@ function TopologyCanvas(): JSX.Element {
     const linkTestId = actionMeta?.linkTestId;
 
     if (node.kind === "client") {
-      const item = instanceById.get(node.id);
+      const item = instanceByNodeId.get(node.id) ?? instanceById.get(node.id);
       return {
         title: item?.name || node.label,
         subtitle: "实例节点",
@@ -1340,7 +1517,7 @@ function TopologyCanvas(): JSX.Element {
     }
 
     if (node.kind === "agent") {
-      const item = agentById.get(node.id);
+      const item = agentByNodeId.get(node.id) ?? agentById.get(node.id);
       return {
         title: item?.agent_name || node.label,
         subtitle: "智能体节点",
@@ -1357,7 +1534,7 @@ function TopologyCanvas(): JSX.Element {
     }
 
     if (node.kind === "session") {
-      const item = sessionByKey.get(node.id);
+      const item = sessionByNodeId.get(node.id) ?? sessionByKey.get(node.id);
       return {
         title: item?.label || node.label,
         subtitle: "会话节点",
@@ -1372,7 +1549,7 @@ function TopologyCanvas(): JSX.Element {
     }
 
     if (node.kind === "tool") {
-      const item = toolById.get(node.id);
+      const item = toolByNodeId.get(node.id) ?? toolById.get(node.id);
       return {
         title: item?.name || node.label,
         subtitle: "工具节点",
@@ -1399,12 +1576,16 @@ function TopologyCanvas(): JSX.Element {
     };
   }, [
     agentById,
+    agentByNodeId,
     businessNodeActions,
     instanceById,
+    instanceByNodeId,
     renderNodeByKey,
     selectedNodeKey,
     sessionByKey,
+    sessionByNodeId,
     toolById,
+    toolByNodeId,
   ]);
 
   useEffect(() => {
@@ -1428,6 +1609,10 @@ function TopologyCanvas(): JSX.Element {
     return "实时异常";
   }, [realtimeState]);
   const hasRenderableNodes = renderNodes.length > 0;
+  const worldTransform = useMemo(
+    () => `translate(${camera.offsetX * camera.scale} ${camera.offsetY * camera.scale}) scale(${camera.scale})`,
+    [camera.offsetX, camera.offsetY, camera.scale],
+  );
 
   return (
     <div style={getCanvasContainerStyle(isMobile)} data-testid="topology-graph-canvas">
@@ -1540,7 +1725,7 @@ function TopologyCanvas(): JSX.Element {
           <div ref={graphShellRef} style={graphShellStyle}>
             <svg
               style={getGraphSvgStyle(isPanning)}
-              viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`}
+              viewBox={`0 0 ${GRAPH_W} ${GRAPH_H}`}
               xmlns="http://www.w3.org/2000/svg"
               role="img"
               aria-label="Linpo Topology 实时链路图"
@@ -1551,6 +1736,7 @@ function TopologyCanvas(): JSX.Element {
               onPointerLeave={handleCanvasPointerUp}
               onDoubleClick={handleFit}
             >
+              <g transform={worldTransform}>
                 {graphData.edges.map((edge) => {
                   const from = renderNodeByKey.get(edge.fromKey);
                   const to = renderNodeByKey.get(edge.toKey);
@@ -1558,16 +1744,13 @@ function TopologyCanvas(): JSX.Element {
 
                   return (
                     <g key={edge.key}>
-                      <line
-                        x1={from.x}
-                        y1={from.y}
-                        x2={to.x}
-                        y2={to.y}
+                      <path
+                        d={buildEdgeCurvePath(from, to)}
                         stroke="#94a3b8"
                         strokeWidth={1.8}
-                        strokeOpacity={0.78}
+                        strokeOpacity={0.82}
                         strokeLinecap="round"
-                        strokeDasharray="7 7"
+                        fill="none"
                       />
                     </g>
                   );
@@ -1577,7 +1760,14 @@ function TopologyCanvas(): JSX.Element {
                   const highlighted = node.lastAnimatedTs != null && now - node.lastAnimatedTs <= GRAPH_HIGHLIGHT_MS;
                   const radius = clamp(15 + Math.log2(node.activity + 1) * 4, 15, 26);
                   const actionMeta = businessNodeActions.get(node.key);
-                  const visualLabel = visualLabelByNodeKey.get(node.key) ?? friendlyNodeKind(node.kind);
+                  const visualLabel = visualLabelByNodeKey.get(node.key)
+                    ?? (node.kind === "gateway"
+                      ? gatewayAddress
+                      : node.kind === "session"
+                        ? "会话"
+                        : friendlyNodeKind(node.kind));
+                  const iconPath = iconPathForNodeKind(node.kind);
+                  const iconSize = Math.max(radius * 1.08, 17);
                   return (
                     <g
                       key={node.key}
@@ -1613,34 +1803,22 @@ function TopologyCanvas(): JSX.Element {
                         strokeWidth={highlighted ? 3.2 : 2.4}
                         opacity={highlighted ? 0.96 : 0.9}
                       />
-                      <text style={graphNodeLabelStyle} textAnchor="middle" y={-2}>
+                      <image
+                        href={iconPath}
+                        x={-iconSize / 2}
+                        y={-iconSize / 2}
+                        width={iconSize}
+                        height={iconSize}
+                        preserveAspectRatio="xMidYMid meet"
+                        opacity={0.95}
+                      />
+                      <text style={graphNodeLabelStyle} textAnchor="middle" y={radius + 14}>
                         {truncateLabel(visualLabel, graphLabelLimitByKind(node.kind))}
                       </text>
-                      {actionMeta ? (
-                        <>
-                          <text style={graphNodeActionStatusStyle} textAnchor="middle" y={radius + 12}>
-                            {actionMeta.action.statusLabel}
-                          </text>
-                          <text style={graphNodeActionDetailStyle} textAnchor="middle" y={radius + 24}>
-                            {actionMeta.action.detail}
-                          </text>
-                          {actionMeta.action.href && actionMeta.action.actionLabel ? (
-                            <a
-                              href={actionMeta.action.href}
-                              data-testid={node.kind === "agent" ? actionMeta.linkTestId : undefined}
-                              onPointerDown={(event) => event.stopPropagation()}
-                              onClick={(event) => event.stopPropagation()}
-                            >
-                              <text style={graphNodeActionLinkStyle} textAnchor="middle" y={radius + 36}>
-                                {actionMeta.action.actionLabel}
-                              </text>
-                            </a>
-                          ) : null}
-                        </>
-                      ) : null}
                     </g>
                   );
                 })}
+              </g>
             </svg>
             {!hasRenderableNodes ? (
               <div style={graphEmptyOverlayStyle}>
@@ -1711,23 +1889,32 @@ function getCanvasContainerStyle(isMobile: boolean): CSSProperties {
     minHeight: isMobile ? "calc(100dvh - 132px)" : "calc(100dvh - 72px)",
     display: "flex",
     flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
     position: "relative",
     overflow: "hidden",
     isolation: "isolate",
-    background: "#f4f1ea",
+    background: "#eef1f5",
     color: "#1f2933",
     fontFamily: 'system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif',
   };
 }
 
 function getGraphSvgStyle(isPanning: boolean): CSSProperties {
+  const cursor = isPanning ? "grabbing" : "grab";
   return {
     width: "100%",
     height: "100%",
-    minHeight: "300px",
-    background: "linear-gradient(180deg, #f8fafc 0%, #fefefe 100%)",
+    backgroundColor: "#f8fafc",
+    backgroundImage: [
+      "linear-gradient(rgba(148,163,184,0.16) 1px, transparent 1px)",
+      "linear-gradient(90deg, rgba(148,163,184,0.16) 1px, transparent 1px)",
+      "linear-gradient(rgba(148,163,184,0.09) 1px, transparent 1px)",
+      "linear-gradient(90deg, rgba(148,163,184,0.09) 1px, transparent 1px)",
+    ].join(", "),
+    backgroundSize: "64px 64px, 64px 64px, 16px 16px, 16px 16px",
     borderRadius: 0,
-    cursor: isPanning ? "grabbing" : "grab",
+    cursor,
     userSelect: "none",
   };
 }
@@ -1850,11 +2037,16 @@ const contentRootStyle: CSSProperties = {
   flex: 1,
   display: "flex",
   flexDirection: "column",
+  alignItems: "center",
+  justifyContent: "center",
 };
 
 const graphShellStyle: CSSProperties = {
-  minHeight: 0,
-  flex: 1,
+  width: `${GRAPH_W}px`,
+  height: `${GRAPH_H}px`,
+  maxWidth: "100%",
+  maxHeight: "100%",
+  aspectRatio: `${GRAPH_W} / ${GRAPH_H}`,
   position: "relative",
   overflow: "hidden",
   touchAction: "none",
@@ -1862,8 +2054,11 @@ const graphShellStyle: CSSProperties = {
 
 const graphNodeLabelStyle: CSSProperties = {
   fill: "#0f172a",
-  fontSize: "10px",
+  fontSize: "9px",
   fontWeight: 600,
+  stroke: "rgba(248, 250, 252, 0.92)",
+  strokeWidth: 2.2,
+  paintOrder: "stroke",
 };
 
 const graphEmptyOverlayStyle: CSSProperties = {
@@ -1888,25 +2083,6 @@ const graphEmptyDetailStyle: CSSProperties = {
   margin: 0,
   fontSize: "0.78rem",
   color: "#64748b",
-};
-
-const graphNodeActionStatusStyle: CSSProperties = {
-  fill: "#065f46",
-  fontSize: "9px",
-  fontWeight: 700,
-};
-
-const graphNodeActionDetailStyle: CSSProperties = {
-  fill: "#475569",
-  fontSize: "8px",
-};
-
-const graphNodeActionLinkStyle: CSSProperties = {
-  fill: "#1d4ed8",
-  fontSize: "8px",
-  fontWeight: 700,
-  textDecoration: "underline",
-  cursor: "pointer",
 };
 
 const graphNodeGroupStyle: CSSProperties = {

@@ -1,0 +1,46 @@
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <rect width="128" height="128" fill="none"/>
+
+  <!-- 3D octagonal wood plate (bagua base) -->
+  <polygon points="24,74 40,61 64,56 88,61 104,74 88,87 64,92 40,87" fill="#b78755"/>
+  <polygon points="24,74 24,82 40,95 64,100 88,95 104,82 104,74 88,87 64,92 40,87" fill="#7e4e2d"/>
+  <polygon points="24,74 40,87 40,95 24,82" fill="#6a3f24"/>
+  <polygon points="104,74 88,87 88,95 104,82" fill="#6a3f24"/>
+  <polygon points="40,61 64,56 88,61 104,74 88,87 64,92 40,87 24,74" fill="none" stroke="#4f2d19" stroke-width="2"/>
+
+  <!-- bagua ring -->
+  <polygon points="34,74 45,66 64,62 83,66 94,74 83,82 64,86 45,82" fill="#d6b07f"/>
+  <polygon points="34,74 45,82 64,86 83,82 94,74 83,66 64,62 45,66" fill="none" stroke="#8d5f38" stroke-width="1.6"/>
+
+  <!-- trigrams as tiny low-poly bars -->
+  <g fill="#4d2d1b">
+    <rect x="61" y="64" width="6" height="1.8"/>
+    <rect x="61" y="66.8" width="2.3" height="1.8"/>
+    <rect x="64.7" y="66.8" width="2.3" height="1.8"/>
+    <rect x="61" y="69.6" width="6" height="1.8"/>
+
+    <rect x="76.5" y="70" width="5.2" height="1.6" transform="rotate(24 79 71)"/>
+    <rect x="75.4" y="72.8" width="2.1" height="1.6" transform="rotate(24 76.5 73.6)"/>
+    <rect x="78.4" y="74.1" width="2.1" height="1.6" transform="rotate(24 79.4 74.9)"/>
+    <rect x="77.2" y="76.6" width="5.2" height="1.6" transform="rotate(24 79.8 77.4)"/>
+
+    <rect x="47" y="70" width="5.2" height="1.6" transform="rotate(-24 49.6 70.8)"/>
+    <rect x="48.2" y="72.8" width="2.1" height="1.6" transform="rotate(-24 49.2 73.6)"/>
+    <rect x="45.2" y="74.1" width="2.1" height="1.6" transform="rotate(-24 46.2 74.9)"/>
+    <rect x="46.4" y="76.6" width="5.2" height="1.6" transform="rotate(-24 49 77.4)"/>
+  </g>
+
+  <!-- split flames -->
+  <polygon points="64,24 73,34 78,49 74,64 64,76 54,64 50,49 55,34" fill="#c6411f"/>
+  <polygon points="64,30 70,38 73,49 70,60 64,68 58,60 55,49 58,38" fill="#ff7d2b"/>
+  <polygon points="64,37 67,43 69,49 67,55 64,59 61,55 59,49 61,43" fill="#ffe27a"/>
+
+  <polygon points="52,40 57,47 59,57 56,65 50,71 44,65 43,56 46,47" fill="#b8381a"/>
+  <polygon points="51,46 54,51 55,57 54,63 50,67 47,63 46,57 47,51" fill="#ff6a2b"/>
+
+  <polygon points="76,40 82,47 85,56 84,65 78,71 72,65 69,57 71,47" fill="#b8381a"/>
+  <polygon points="77,46 80,51 82,57 81,63 78,67 75,63 74,57 75,51" fill="#ff6a2b"/>
+
+  <!-- flame base shadow on plate -->
+  <polygon points="50,74 64,70 78,74 64,78" fill="rgba(90,40,20,0.45)"/>
+</svg>
