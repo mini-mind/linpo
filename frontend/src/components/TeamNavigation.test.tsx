@@ -35,6 +35,7 @@ describe('navigation entries', () => {
 
     const kanbanLink = screen.getByRole('link', { name: '看板' });
     expect(kanbanLink).toHaveAttribute('href', '/kanban');
+    expect(screen.getByRole('link', { name: '流程' })).toHaveAttribute('href', '/flow');
   });
 
   it('hides legacy menu trigger in navigation', () => {

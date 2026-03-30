@@ -338,6 +338,7 @@ class AggregateTopologyResponse(BaseModel):
 
 TaskStatus = Literal["queued", "running", "blocked_by_approval", "failed", "completed"]
 TaskSource = Literal["provider", "flow"]
+TaskRunEventType = Literal["started", "heartbeat", "progress", "need_approval", "completed", "failed"]
 
 
 class TaskItem(BaseModel):
@@ -371,6 +372,17 @@ class FlowGenerateRequest(BaseModel):
     manager_agent_id: str | None = Field(default=None, max_length=128)
 
 
+class FlowConfirmRequest(BaseModel):
+    instance_id: str = Field(min_length=1)
+    executor_agent_id: str = Field(min_length=1, max_length=128)
+    manager_agent_id: str | None = Field(default=None, max_length=128)
+    requirement_title: str | None = Field(default=None, max_length=4000)
+    planner_session_key: str | None = Field(default=None, max_length=256)
+    execution_session_prefix: str | None = Field(default=None, max_length=256)
+    nodes: list["FlowCanvasNode"]
+    edges: list["FlowCanvasEdge"]
+
+
 FlowChatRole = Literal["user", "assistant", "system"]
 
 
@@ -383,6 +395,7 @@ class FlowChatMessageItem(BaseModel):
 class FlowCanvasNode(BaseModel):
     id: str
     title: str
+    description: str | None = Field(default=None, max_length=16000)
     x: float
     y: float
     layer: int
@@ -406,3 +419,57 @@ class FlowGenerateResponse(BaseModel):
     edges: list[FlowCanvasEdge]
     messages: list[FlowChatMessageItem]
     created_task_ids: list[str]
+
+
+class FlowConfirmResponse(BaseModel):
+    board_id: str
+    planner_session_key: str
+    manager_session_key: str
+    execution_session_prefix: str
+    nodes: list[FlowCanvasNode]
+    edges: list[FlowCanvasEdge]
+    messages: list[FlowChatMessageItem]
+    created_task_ids: list[str]
+    dispatched_task_ids: list[str]
+
+
+class TaskRunEventRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    event_type: TaskRunEventType = Field(alias="eventType")
+    callback_token: str = Field(min_length=1, max_length=128, alias="callbackToken")
+    idempotency_key: str | None = Field(default=None, max_length=128, alias="idempotencyKey")
+    request_id: str | None = Field(default=None, max_length=128, alias="requestId")
+    message: str | None = Field(default=None, max_length=4000)
+    artifact: str | None = Field(default=None, max_length=4000)
+    occurred_at: str | None = Field(default=None, max_length=64, alias="occurredAt")
+
+
+class TaskRunEventResponse(BaseModel):
+    accepted: bool
+    task_id: str
+    run_id: str
+    status: TaskStatus
+    dispatched_task_ids: list[str]
+
+
+class TaskDeleteResponse(BaseModel):
+    deleted: bool
+    deleted_task_ids: list[str]
+    requirement_id: str | None = None
+
+
+class FlowRequirementRenameRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+
+
+class FlowRequirementRenameResponse(BaseModel):
+    requirement_id: str
+    requirement_title: str
+    updated_task_ids: list[str]
+
+
+class FlowRequirementStopResponse(BaseModel):
+    requirement_id: str
+    stopped_task_ids: list[str]
+    running_task_ids: list[str]

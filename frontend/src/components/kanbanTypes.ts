@@ -1,4 +1,4 @@
-export type BoardViewMode = 'status' | 'agent';
+export type BoardViewMode = 'status' | 'agent' | 'requirement';
 
 export type TaskStatus =
   | 'queued'

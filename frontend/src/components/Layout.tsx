@@ -1,5 +1,5 @@
 import type React from 'react';
-import { Link, Navigate, NavLink, Outlet } from 'react-router-dom';
+import { Link, Navigate, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
 import { AccountMenu } from './AccountMenu';
@@ -28,6 +28,8 @@ function ToastContainer(): JSX.Element {
 
 export function Layout(): JSX.Element {
   const isMobile = useIsMobile(960);
+  const location = useLocation();
+  const isFlowRoute = location.pathname.startsWith('/flow');
 
   return (
     <div style={shellStyle}>
@@ -49,6 +51,10 @@ export function Layout(): JSX.Element {
             <NavLink to="/kanban" className="linpo-nav-link" style={({ isActive }) => getNavTextLinkStyle(isActive)}>
               看板
             </NavLink>
+            <span aria-hidden="true" style={toolbarNavDividerStyle} data-testid="toolbar-nav-divider" />
+            <NavLink to="/flow" className="linpo-nav-link" style={({ isActive }) => getNavTextLinkStyle(isActive)}>
+              流程
+            </NavLink>
           </nav>
         </div>
 
@@ -57,7 +63,7 @@ export function Layout(): JSX.Element {
         </div>
       </header>
 
-      <main style={mainStyle} data-testid="layout-main-shell">
+      <main style={getMainStyle(isFlowRoute)} data-testid="layout-main-shell">
         <Outlet />
       </main>
     </div>
@@ -153,12 +159,19 @@ const brandSloganStyle: React.CSSProperties = {
 const toolbarNavStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'stretch',
-  gap: '0.65rem',
+  gap: '0.18rem',
   justifyContent: 'flex-start',
   alignSelf: 'stretch',
   borderLeft: '1px solid rgba(148, 163, 184, 0.35)',
   borderRight: '1px solid rgba(148, 163, 184, 0.35)',
   padding: '0 0.55rem',
+};
+
+const toolbarNavDividerStyle: React.CSSProperties = {
+  width: '1px',
+  alignSelf: 'center',
+  height: '58%',
+  background: 'rgba(148, 163, 184, 0.38)',
 };
 
 function getNavTextLinkStyle(isActive: boolean): React.CSSProperties {
@@ -183,17 +196,19 @@ const toolbarRightStyle: React.CSSProperties = {
   justifyContent: 'flex-end',
 };
 
-const mainStyle: React.CSSProperties = {
+function getMainStyle(isFlowRoute: boolean): React.CSSProperties {
+  return {
   flex: 1,
   minWidth: 0,
   minHeight: 0,
   display: 'flex',
-  padding: '0.8rem',
+  padding: isFlowRoute ? 0 : '0.8rem',
   background: 'transparent',
   overflowX: 'hidden',
   overflowY: 'auto',
   WebkitOverflowScrolling: 'touch',
-};
+  };
+}
 
 const toastContainerStyle: React.CSSProperties = {
   position: 'fixed',

@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import CollabPage from './components/CollabPage';
+import { FlowListPage } from './components/FlowListPage';
 import { FlowPage } from './components/FlowPage';
 import { LandingPage } from './components/LandingPage';
 import { Layout, RedirectToOverview } from './components/Layout';
@@ -30,7 +31,8 @@ function App(): JSX.Element {
               <Route path="/" element={<Layout />}>
                 <Route index element={<RedirectToOverview />} />
                 <Route path="kanban" element={<CollabPage />} />
-                <Route path="flow" element={<FlowPage />} />
+                <Route path="flow" element={<FlowListPage />} />
+                <Route path="flow/edit/:flowId" element={<FlowPage />} />
                 <Route path="*" element={<Navigate to="/kanban" replace />} />
               </Route>
             </Route>

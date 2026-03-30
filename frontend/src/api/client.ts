@@ -8,8 +8,13 @@ import type {
 	ChatSendResponse,
 	ErrorEnvelope,
 	ErrorResponse,
+	FlowConfirmRequest,
+	FlowConfirmResponse,
 	FlowGenerateRequest,
 	FlowGenerateResponse,
+	FlowRequirementRenameRequest,
+	FlowRequirementRenameResponse,
+	FlowRequirementStopResponse,
 	KanbanTaskCreateRequest,
 	KanbanTaskItem,
 	ModelItem,
@@ -23,6 +28,7 @@ import type {
 	SessionResetResponse,
 	SessionsListResponse,
 	SessionsPreviewResponse,
+	TaskDeleteResponse,
 } from './types';
 
 const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
@@ -159,6 +165,66 @@ export async function createKanbanTask(
   );
 }
 
+export async function deleteKanbanTask(
+  taskId: string,
+  options?: ObserverRequestOptions,
+  boardId?: string | null
+): Promise<TaskDeleteResponse> {
+  const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
+  const encodedTaskId = encodeURIComponent(taskId);
+  const path = `/api/v1/boards/${encodedBoardId}/tasks/${encodedTaskId}`;
+  try {
+    return await fetchApi<TaskDeleteResponse>(
+      path,
+      {
+        method: 'DELETE',
+      },
+      options
+    );
+  } catch (error) {
+    if (error instanceof TypeError) {
+      return fetchApi<TaskDeleteResponse>(
+        `${path}/delete`,
+        {
+          method: 'POST',
+        },
+        options
+      );
+    }
+    throw error;
+  }
+}
+
+export async function deleteKanbanRequirementTasks(
+  requirementId: string,
+  options?: ObserverRequestOptions,
+  boardId?: string | null
+): Promise<TaskDeleteResponse> {
+  const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
+  const encodedRequirementId = encodeURIComponent(requirementId);
+  const path = `/api/v1/boards/${encodedBoardId}/tasks/requirements/${encodedRequirementId}`;
+  try {
+    return await fetchApi<TaskDeleteResponse>(
+      path,
+      {
+        method: 'DELETE',
+      },
+      options
+    );
+  } catch (error) {
+    if (error instanceof TypeError) {
+      return fetchApi<TaskDeleteResponse>(
+        `${path}/delete`,
+        {
+          method: 'POST',
+        },
+        options
+      );
+    }
+    throw error;
+  }
+}
+
 export async function generateFlowFromRequirement(
   payload: FlowGenerateRequest,
   options?: ObserverRequestOptions,
@@ -171,6 +237,58 @@ export async function generateFlowFromRequirement(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+    },
+    options
+  );
+}
+
+export async function confirmFlowToKanban(
+  payload: FlowConfirmRequest,
+  options?: ObserverRequestOptions,
+  boardId?: string | null
+): Promise<FlowConfirmResponse> {
+  const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
+  return fetchApi<FlowConfirmResponse>(
+    `/api/v1/boards/${encodedBoardId}/tasks/flow/confirm`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+    options
+  );
+}
+
+export async function renameFlowRequirement(
+  requirementId: string,
+  payload: FlowRequirementRenameRequest,
+  options?: ObserverRequestOptions,
+  boardId?: string | null
+): Promise<FlowRequirementRenameResponse> {
+  const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
+  const encodedRequirementId = encodeURIComponent(requirementId);
+  return fetchApi<FlowRequirementRenameResponse>(
+    `/api/v1/boards/${encodedBoardId}/tasks/requirements/${encodedRequirementId}/rename`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+    options
+  );
+}
+
+export async function stopFlowRequirement(
+  requirementId: string,
+  options?: ObserverRequestOptions,
+  boardId?: string | null
+): Promise<FlowRequirementStopResponse> {
+  const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
+  const encodedRequirementId = encodeURIComponent(requirementId);
+  return fetchApi<FlowRequirementStopResponse>(
+    `/api/v1/boards/${encodedBoardId}/tasks/requirements/${encodedRequirementId}/stop`,
+    {
+      method: 'POST',
     },
     options
   );

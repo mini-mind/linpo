@@ -18,6 +18,7 @@
 - 本地开发为前端 + 后端进程本机运行，分别监听 5173 / 8000；数据库通过 Docker（宿主机端口 40193）。
 - OpenClaw 联调实例通常运行于 Docker 容器（如 `claw1` / `claw2` / `claw3`）。
 - v0.7 联调默认实例：`claw1`。
+- v0.7 流程拆解服务默认实例：`claw3`（后端服务化拆解）。
 
 ## 角色分工
 
@@ -64,6 +65,13 @@
 | `OPENCLAW_BASE_URL` | OpenClaw 网关地址（v0.7 默认指向 claw1） |
 | `OPENCLAW_GATEWAY_TOKEN` | OpenClaw 网关令牌 |
 | `OPENCLAW_ORIGIN` | OpenClaw 请求来源标识 |
+| `FLOW_DECOMPOSITION_OPENCLAW_BASE_URL` | 流程拆解服务网关地址（默认 claw3） |
+| `FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN` | 流程拆解服务网关令牌 |
+| `FLOW_DECOMPOSITION_OPENCLAW_ORIGIN` | 流程拆解服务 Origin |
+| `FLOW_DECOMPOSITION_AGENT_ID` | 流程拆解服务使用的 agentId（默认 `main`） |
+| `LINPO_TASK_EVENT_CALLBACK_BASE_URL` | 任务事件回调地址基座；留空时按实例 endpoint host 自动推导公网 callback URL |
+| `LINPO_TASK_EVENT_CALLBACK_PORT` | 自动推导 callback URL 时使用的端口（默认 `8000`） |
+| `LINPO_TASK_RUN_STALE_SECONDS` | `running` 任务无 heartbeat 的超时阈值（秒） |
 
 ## OpenClaw 参考
 

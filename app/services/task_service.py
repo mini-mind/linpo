@@ -67,6 +67,32 @@ class TaskService:
         db_session.refresh(task)
         return task
 
+    def list_tasks_for_board(
+        self,
+        db_session: Session,
+        *,
+        board_id: str,
+    ) -> list[Task]:
+        statement = select(Task).order_by(Task.created_at.desc(), Task.id.desc())
+        tasks = list(db_session.execute(statement).scalars().all())
+        filtered: list[Task] = []
+        for task in tasks:
+            extras = task.extras if isinstance(task.extras, dict) else {}
+            task_board_id = extras.get("board_id", "default")
+            if task_board_id == board_id:
+                filtered.append(task)
+        return filtered
+
+    def get_task(
+        self,
+        db_session: Session,
+        *,
+        user_id: UUID,
+        task_id: UUID,
+    ) -> Task | None:
+        statement = select(Task).where(Task.id == task_id, Task.user_id == user_id)
+        return db_session.execute(statement).scalar_one_or_none()
+
     def update_task_extras(
         self,
         db_session: Session,
@@ -78,3 +104,40 @@ class TaskService:
         db_session.commit()
         db_session.refresh(task)
         return task
+
+    def update_task_status(
+        self,
+        db_session: Session,
+        *,
+        task: Task,
+        status: TaskStatus,
+        extras: dict[str, str] | None = None,
+    ) -> Task:
+        task.status = status
+        if extras is not None:
+            task.extras = extras
+        db_session.commit()
+        db_session.refresh(task)
+        return task
+
+    def get_task_by_run_id(
+        self,
+        db_session: Session,
+        *,
+        board_id: str,
+        run_id: str,
+    ) -> Task | None:
+        for task in self.list_tasks_for_board(db_session, board_id=board_id):
+            extras = task.extras if isinstance(task.extras, dict) else {}
+            if str(extras.get("dispatch_run_id", "")).strip() == run_id:
+                return task
+        return None
+
+    def delete_task(
+        self,
+        db_session: Session,
+        *,
+        task: Task,
+    ) -> None:
+        db_session.delete(task)
+        db_session.commit()

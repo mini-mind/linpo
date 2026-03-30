@@ -296,6 +296,7 @@ export interface FlowChatMessageItem {
 export interface FlowCanvasNode {
   id: string;
   title: string;
+  description?: string | null;
   x: number;
   y: number;
   layer: number;
@@ -327,6 +328,51 @@ export interface FlowGenerateResponse {
   edges: FlowCanvasEdge[];
   messages: FlowChatMessageItem[];
   created_task_ids: string[];
+}
+
+export interface FlowConfirmRequest {
+  instance_id: string;
+  executor_agent_id: string;
+  manager_agent_id?: string | null;
+  requirement_title?: string | null;
+  planner_session_key?: string | null;
+  execution_session_prefix?: string | null;
+  nodes: FlowCanvasNode[];
+  edges: FlowCanvasEdge[];
+}
+
+export interface FlowConfirmResponse {
+  board_id: string;
+  planner_session_key: string;
+  manager_session_key: string;
+  execution_session_prefix: string;
+  nodes: FlowCanvasNode[];
+  edges: FlowCanvasEdge[];
+  messages: FlowChatMessageItem[];
+  created_task_ids: string[];
+  dispatched_task_ids: string[];
+}
+
+export interface FlowRequirementRenameRequest {
+  name: string;
+}
+
+export interface FlowRequirementRenameResponse {
+  requirement_id: string;
+  requirement_title: string;
+  updated_task_ids: string[];
+}
+
+export interface FlowRequirementStopResponse {
+  requirement_id: string;
+  stopped_task_ids: string[];
+  running_task_ids: string[];
+}
+
+export interface TaskDeleteResponse {
+  deleted: boolean;
+  deleted_task_ids: string[];
+  requirement_id?: string | null;
 }
 
 /**

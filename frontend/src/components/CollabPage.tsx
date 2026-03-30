@@ -1,13 +1,18 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { createKanbanTask, getAggregateOverview, listKanbanTasks } from '../api/client';
+import {
+  createKanbanTask,
+  deleteKanbanRequirementTasks,
+  deleteKanbanTask,
+  getAggregateOverview,
+  listKanbanTasks,
+} from '../api/client';
 import type {
   AggregateOverviewResponse,
   KanbanTaskItem,
 } from '../api/types';
 import type { BoardTask, BoardViewMode, TaskStatus } from './kanbanTypes';
-import { readFlowTasks } from '../state/flowTaskStore';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
 
@@ -18,6 +23,20 @@ const STATUS_COLUMNS: Array<{ key: TaskStatus; title: string }> = [
   { key: 'failed', title: '失败' },
   { key: 'completed', title: '完成' },
 ];
+type AssignableAgent = {
+  key: string;
+  agentId: string;
+  agentName: string;
+  instanceId: string;
+  instanceName: string;
+};
+
+type BoardColumn = {
+  id: string;
+  title: string;
+  tasks: BoardTask[];
+  requirementId?: string;
+};
 
 export default function CollabPage(): JSX.Element {
   const navigate = useNavigate();
@@ -29,10 +48,9 @@ export default function CollabPage(): JSX.Element {
   const [taskRecords, setTaskRecords] = useState<BoardTask[]>([]);
 
   const [viewMode, setViewMode] = useState<BoardViewMode>('status');
-  const [flowTasks, setFlowTasks] = useState<BoardTask[]>([]);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [requirementInput, setRequirementInput] = useState('');
-  const [selectedAgentId, setSelectedAgentId] = useState('');
+  const [selectedAgentKey, setSelectedAgentKey] = useState('');
   const [isAddAgentModalOpen, setIsAddAgentModalOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<BoardTask | null>(null);
   const [newAgentName, setNewAgentName] = useState('');
@@ -45,12 +63,6 @@ export default function CollabPage(): JSX.Element {
       const [data, tasks] = await Promise.all([getAggregateOverview(), listKanbanTasks()]);
       setOverview(data);
       setTaskRecords(tasks.map(toBoardTaskFromKanbanTask));
-      setSelectedAgentId((current) => {
-        if (current && data.agents.some((agent) => agent.agent_id === current)) {
-          return current;
-        }
-        return data.agents[0]?.agent_id ?? '';
-      });
     } catch (error) {
       const message = error instanceof Error ? error.message : '获取看板数据失败';
       setLoadError(message);
@@ -61,17 +73,31 @@ export default function CollabPage(): JSX.Element {
 
   useEffect(() => {
     void loadOverview();
-    setFlowTasks(readFlowTasks());
   }, [loadOverview]);
 
-  const allTasks = useMemo(() => [...flowTasks, ...taskRecords], [flowTasks, taskRecords]);
-  const assignableAgents = useMemo(
-    () =>
-      (overview?.agents ?? []).filter(
-        (agent, index, source) => source.findIndex((item) => item.agent_id === agent.agent_id) === index
-      ),
-    [overview?.agents]
-  );
+  const allTasks = useMemo(() => taskRecords, [taskRecords]);
+  const assignableAgents = useMemo<AssignableAgent[]>(() => {
+    const agentsByKey = new Map<string, AssignableAgent>();
+    for (const item of overview?.agents ?? []) {
+      const agentId = item.agent_id.trim();
+      const instanceId = item.instance_id.trim();
+      if (!agentId || !instanceId) {
+        continue;
+      }
+      const key = `${instanceId}::${agentId}`;
+      if (agentsByKey.has(key)) {
+        continue;
+      }
+      agentsByKey.set(key, {
+        key,
+        agentId,
+        agentName: item.agent_name.trim() || agentId,
+        instanceId,
+        instanceName: item.instance_name.trim() || instanceId,
+      });
+    }
+    return Array.from(agentsByKey.values());
+  }, [overview?.agents]);
   const primaryAgentNames = useMemo(() => {
     const nameSet = new Set<string>();
     for (const item of overview?.agents ?? []) {
@@ -86,16 +112,45 @@ export default function CollabPage(): JSX.Element {
     const unique = new Set([...primaryAgentNames, ...customAgentNames]);
     return Array.from(unique);
   }, [customAgentNames, primaryAgentNames]);
+  const requirementCount = useMemo(() => {
+    const ids = new Set<string>();
+    for (const task of allTasks) {
+      ids.add(getRequirementId(task));
+    }
+    return ids.size;
+  }, [allTasks]);
 
-  const openClawLoad = useMemo(() => getOpenClawLoad(overview), [overview]);
+  useEffect(() => {
+    if (selectedAgentKey && assignableAgents.some((item) => item.key === selectedAgentKey)) {
+      return;
+    }
+    setSelectedAgentKey(assignableAgents[0]?.key ?? '');
+  }, [assignableAgents, selectedAgentKey]);
 
-  const groupedColumns = useMemo(() => {
+  const columns = useMemo<BoardColumn[]>(() => {
     if (viewMode === 'status') {
-      const grouped = new Map<string, BoardTask[]>();
-      for (const column of STATUS_COLUMNS) {
-        grouped.set(column.title, allTasks.filter((task) => task.status === column.key));
+      return STATUS_COLUMNS.map((column) => ({
+        id: `status:${column.key}`,
+        title: column.title,
+        tasks: allTasks.filter((task) => task.status === column.key),
+      }));
+    }
+
+    if (viewMode === 'requirement') {
+      const grouped = new Map<string, BoardColumn>();
+      for (const task of allTasks) {
+        const requirementId = getRequirementId(task);
+        if (!grouped.has(requirementId)) {
+          grouped.set(requirementId, {
+            id: `requirement:${requirementId}`,
+            title: getRequirementTitle(task, requirementId),
+            requirementId,
+            tasks: [],
+          });
+        }
+        grouped.get(requirementId)?.tasks.push(task);
       }
-      return grouped;
+      return Array.from(grouped.values());
     }
 
     const grouped = new Map<string, BoardTask[]>();
@@ -109,38 +164,20 @@ export default function CollabPage(): JSX.Element {
       }
       grouped.get(key)?.push(task);
     }
-    return grouped;
-  }, [allTasks, allAgentNames, viewMode]);
+    return Array.from(grouped.entries()).map(([agentName, tasks]) => ({
+      id: `agent:${agentName}`,
+      title: agentName,
+      tasks,
+    }));
+  }, [allAgentNames, allTasks, viewMode]);
 
-  const canSubmitFlowTask = requirementInput.trim().length > 0 && selectedAgentId.trim().length > 0;
+  const selectedAgent = useMemo(
+    () => assignableAgents.find((item) => item.key === selectedAgentKey) ?? null,
+    [assignableAgents, selectedAgentKey]
+  );
+  const canCreateTask = requirementInput.trim().length > 0 && selectedAgent !== null;
+
   const canSubmitAgent = newAgentName.trim().length > 0;
-
-  const handleConfirmCreateTask = useCallback(async () => {
-    const requirement = requirementInput.trim();
-    const targetAgent = assignableAgents.find((agent) => agent.agent_id === selectedAgentId);
-    if (!requirement || !targetAgent) {
-      return;
-    }
-
-    try {
-      await createKanbanTask(
-        {
-          requirement,
-          agent_id: targetAgent.agent_id,
-          agent_name: targetAgent.agent_name,
-          instance_id: targetAgent.instance_id,
-        },
-        { instanceId: targetAgent.instance_id }
-      );
-      setRequirementInput('');
-      setIsCreateModalOpen(false);
-      addToast(`已投放到 ${targetAgent.agent_name}`, 'success');
-      await loadOverview();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '新增任务投放失败';
-      addToast(message, 'error');
-    }
-  }, [addToast, assignableAgents, loadOverview, requirementInput, selectedAgentId]);
 
   const handleConfirmCreateAgent = useCallback(() => {
     const name = newAgentName.trim();
@@ -152,33 +189,106 @@ export default function CollabPage(): JSX.Element {
     setIsAddAgentModalOpen(false);
   }, [newAgentName]);
 
+  const handleCreateTask = useCallback(async () => {
+    const requirement = requirementInput.trim();
+    if (!requirement) {
+      addToast('请先输入需求', 'warning');
+      return;
+    }
+    if (!selectedAgent) {
+      addToast('请先指派 Agent', 'warning');
+      return;
+    }
+
+    try {
+      await createKanbanTask(
+        {
+          requirement,
+          agent_id: selectedAgent.agentId,
+          agent_name: selectedAgent.agentName,
+          instance_id: selectedAgent.instanceId,
+        },
+        { instanceId: selectedAgent.instanceId },
+        'default'
+      );
+      setIsCreateModalOpen(false);
+      setRequirementInput('');
+      addToast('已创建任务并进入队列', 'success');
+      await loadOverview();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '创建任务失败';
+      addToast(message, 'error');
+    }
+  }, [addToast, loadOverview, requirementInput, selectedAgent]);
+
+  const handleCreateFlow = useCallback(() => {
+    const requirement = requirementInput.trim();
+    const draftExecutorAgentId = selectedAgent?.agentId ?? '';
+    const draftFlowName = requirement ? (requirement.length <= 8 ? requirement : `${requirement.slice(0, 8)}...`) : '';
+    setIsCreateModalOpen(false);
+    setRequirementInput('');
+    navigate('/flow', {
+      state: {
+        open_create_modal: true,
+        draft_requirement: requirement || undefined,
+        draft_flow_name: draftFlowName || undefined,
+        draft_executor_agent_id: draftExecutorAgentId || undefined,
+      },
+    });
+  }, [navigate, requirementInput, selectedAgent?.agentId]);
+
+  const handleDeleteTaskNode = useCallback(async (task: BoardTask) => {
+    const confirmed = window.confirm(`确认删除节点「${task.title}」吗？`);
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await deleteKanbanTask(task.id);
+      if (selectedTask?.id === task.id) {
+        setSelectedTask(null);
+      }
+      addToast('已删除需求节点', 'success');
+      await loadOverview();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '删除需求节点失败';
+      addToast(message, 'error');
+    }
+  }, [addToast, loadOverview, selectedTask?.id]);
+
+  const handleDeleteRequirement = useCallback(async (targetRequirementId: string, targetTitle: string) => {
+    const confirmed = window.confirm(`确认删除需求「${targetTitle}」下的全部节点吗？`);
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await deleteKanbanRequirementTasks(targetRequirementId);
+      if (selectedTask && getRequirementId(selectedTask) === targetRequirementId) {
+        setSelectedTask(null);
+      }
+      addToast('已删除该需求下的全部节点', 'success');
+      await loadOverview();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '删除需求失败';
+      addToast(message, 'error');
+    }
+  }, [addToast, loadOverview, selectedTask]);
+
   return (
     <section style={pageStyle} aria-label="kanban-workbench">
       <header style={flatToolbarStyle}>
         <div style={toolbarStatsStyle} aria-label="看板统计">
-          <span style={statsItemStyle}>OpenClaw CPU {openClawLoad.cpuPercent}</span>
-          <span style={statsItemStyle}>OpenClaw 内存 {openClawLoad.memoryUsage}</span>
-          <span style={statsItemStyle}>今日 Token {openClawLoad.todayTokens}</span>
+          <span style={statsItemStyle}>需求数量 {requirementCount}</span>
         </div>
         <div style={toolbarGroupStyle}>
           <button
             type="button"
             style={flatActionButtonStyle}
-            onClick={() => {
-              setIsCreateModalOpen(true);
-              setSelectedAgentId((current) => current || assignableAgents[0]?.agent_id || '');
-            }}
-            aria-label="新增任务"
+            onClick={() => setIsCreateModalOpen(true)}
+            aria-label="➕任务"
           >
-            + 新增任务
-          </button>
-          <button
-            type="button"
-            style={flatActionButtonStyle}
-            onClick={() => navigate('/flow')}
-            aria-label="创建流程"
-          >
-            创建流程
+            ➕任务
           </button>
           <select
             id="view-mode"
@@ -189,51 +299,51 @@ export default function CollabPage(): JSX.Element {
           >
             <option value="status">按状态分列</option>
             <option value="agent">按 Agent 分列</option>
+            <option value="requirement">按需求分列</option>
           </select>
         </div>
       </header>
 
       {isCreateModalOpen ? (
-        <div style={modalOverlayStyle} role="dialog" aria-modal="true" aria-label="创建 flow 任务">
+        <div style={modalOverlayStyle} role="dialog" aria-modal="true" aria-label="创建任务入口">
           <div style={modalCardStyle}>
-            <h3 style={modalTitleStyle}>新增任务</h3>
-            <label htmlFor="quick-flow-requirement" style={modalLabelStyle}>
+            <h3 style={modalTitleStyle}>创建任务</h3>
+            <label htmlFor="quick-create-requirement" style={modalLabelStyle}>
               需求
             </label>
             <textarea
-              id="quick-flow-requirement"
+              id="quick-create-requirement"
               value={requirementInput}
               onChange={(event) => setRequirementInput(event.target.value)}
-              placeholder="请输入需求"
-              style={modalInputStyle}
+              placeholder="输入需求描述..."
+              style={modalTextareaStyle}
             />
-            <label htmlFor="quick-flow-agent" style={modalLabelStyle}>
+            <label htmlFor="quick-create-agent" style={modalLabelStyle}>
               指派 Agent
             </label>
             <select
-              id="quick-flow-agent"
-              value={selectedAgentId}
-              onChange={(event) => setSelectedAgentId(event.target.value)}
-              style={modalSelectStyle}
+              id="quick-create-agent"
+              value={selectedAgentKey}
+              onChange={(event) => setSelectedAgentKey(event.target.value)}
+              style={viewSelectStyle}
               disabled={assignableAgents.length === 0}
             >
-              <option value="" disabled>
-                {assignableAgents.length === 0 ? '暂无可用 Agent' : '请选择 Agent'}
-              </option>
-              {assignableAgents.map((agent) => (
-                <option key={agent.agent_id} value={agent.agent_id}>
-                  {agent.agent_name}
-                </option>
-              ))}
+              {assignableAgents.length === 0 ? (
+                <option value="">暂无可用 Agent</option>
+              ) : (
+                assignableAgents.map((agent) => (
+                  <option key={agent.key} value={agent.key}>
+                    {agent.agentName} ({agent.instanceName})
+                  </option>
+                ))
+              )}
             </select>
             <div style={modalActionStyle}>
-              <button
-                type="button"
-                style={flatActionButtonStyle}
-                onClick={() => void handleConfirmCreateTask()}
-                disabled={!canSubmitFlowTask}
-              >
-                确定
+              <button type="button" style={flatActionButtonStyle} onClick={() => void handleCreateTask()} disabled={!canCreateTask}>
+                创建任务
+              </button>
+              <button type="button" style={flatActionButtonStyle} onClick={handleCreateFlow}>
+                创建流程
               </button>
               <button
                 type="button"
@@ -346,19 +456,31 @@ export default function CollabPage(): JSX.Element {
 
       <div style={isMobile ? mobileBoardViewportStyle : boardViewportStyle} data-testid="kanban-board">
         <div style={isMobile ? mobileBoardTrackStyle : boardTrackStyle}>
-          {Array.from(groupedColumns.entries()).map(([columnName, tasks]) => (
-            <article key={columnName} style={isMobile ? mobileColumnStyle : columnStyle}>
+          {columns.map((column) => (
+            <article key={column.id} style={isMobile ? mobileColumnStyle : columnStyle}>
               <header style={columnHeaderStyle}>
-                <h3 style={columnTitleStyle}>{columnName}</h3>
-                <span style={columnCountStyle}>{tasks.length}</span>
+                <h3 style={columnTitleStyle}>{column.title}</h3>
+                <div style={columnHeaderActionStyle}>
+                  <span style={columnCountStyle}>{column.tasks.length}</span>
+                  {viewMode === 'requirement' && column.requirementId ? (
+                    <button
+                      type="button"
+                      style={deleteRequirementButtonStyle}
+                      aria-label={`删除需求 ${column.title}`}
+                      onClick={() => void handleDeleteRequirement(column.requirementId as string, column.title)}
+                    >
+                      删除需求
+                    </button>
+                  ) : null}
+                </div>
               </header>
               <div style={isMobile ? mobileColumnBodyStyle : columnBodyStyle}>
                 {loading ? (
                   <p style={emptyTextStyle}>同步中...</p>
-                ) : tasks.length === 0 ? (
+                ) : column.tasks.length === 0 ? (
                   <p style={emptyTextStyle}>暂无任务</p>
                 ) : (
-                  tasks.map((task) => (
+                  column.tasks.map((task) => (
                     <article key={task.id} style={taskCardStyle}>
                       <button
                         type="button"
@@ -377,6 +499,16 @@ export default function CollabPage(): JSX.Element {
                           <p style={taskArtifactStyle}>{task.artifacts[0]}</p>
                         ) : null}
                       </button>
+                      <div style={taskCardActionRowStyle}>
+                        <button
+                          type="button"
+                          style={taskCardDeleteButtonStyle}
+                          aria-label={`删除节点 ${task.title}`}
+                          onClick={() => void handleDeleteTaskNode(task)}
+                        >
+                          删除节点
+                        </button>
+                      </div>
                     </article>
                   ))
                 )}
@@ -430,60 +562,39 @@ function normalizeTaskStatus(status: string): TaskStatus {
   return 'queued';
 }
 
-function getOpenClawLoad(overview: AggregateOverviewResponse | null): {
-  cpuPercent: string;
-  memoryUsage: string;
-  todayTokens: string;
-} {
-  if (!overview) {
-    return {
-      cpuPercent: '--',
-      memoryUsage: '--',
-      todayTokens: '--',
-    };
+function getRequirementId(task: BoardTask): string {
+  const requirementId = task.extras.requirement_id?.trim();
+  if (requirementId) {
+    return requirementId;
   }
-
-  const overviewUnknown = overview as unknown as Record<string, unknown>;
-  const statsUnknown = overview.stats as unknown as Record<string, unknown>;
-
-  const cpu = findFirstNumber([
-    statsUnknown.cpu_percent,
-    statsUnknown.cpu_usage,
-    statsUnknown.openclaw_cpu_percent,
-    overviewUnknown.cpu_percent,
-    overviewUnknown.cpu_usage,
-  ]);
-
-  const memoryMb = findFirstNumber([
-    statsUnknown.memory_mb,
-    statsUnknown.memory_usage_mb,
-    statsUnknown.openclaw_memory_mb,
-    overviewUnknown.memory_mb,
-    overviewUnknown.memory_usage_mb,
-  ]);
-
-  const todayTokens = findFirstNumber([
-    statsUnknown.today_tokens,
-    statsUnknown.daily_tokens,
-    statsUnknown.token_today,
-    statsUnknown.total_tokens,
-    overview.stats.total_tokens,
-  ]);
-
-  return {
-    cpuPercent: cpu === null ? '--' : `${cpu.toFixed(1)}%`,
-    memoryUsage: memoryMb === null ? '--' : `${Math.round(memoryMb)} MB`,
-    todayTokens: todayTokens === null ? '--' : todayTokens.toLocaleString('zh-CN'),
-  };
+  const flowId = task.extras.flow_id?.trim();
+  if (flowId) {
+    return flowId;
+  }
+  const plannerSessionKey = task.extras.planner_session_key?.trim();
+  if (plannerSessionKey) {
+    return plannerSessionKey;
+  }
+  const managerSessionKey = task.extras.manager_session_key?.trim();
+  if (managerSessionKey) {
+    return managerSessionKey;
+  }
+  return task.id;
 }
 
-function findFirstNumber(values: unknown[]): number | null {
-  for (const value of values) {
-    if (typeof value === 'number' && Number.isFinite(value)) {
-      return value;
-    }
+function getRequirementTitle(task: BoardTask, requirementId: string): string {
+  const requirementTitle = task.extras.requirement_title?.trim();
+  if (requirementTitle) {
+    return requirementTitle;
   }
-  return null;
+  const requirementText = task.extras.requirement?.trim();
+  if (requirementText) {
+    return requirementText;
+  }
+  if (task.extras.flow_id) {
+    return `需求 ${requirementId.slice(0, 8)}`;
+  }
+  return task.title;
 }
 
 const pageStyle: React.CSSProperties = {
@@ -498,6 +609,9 @@ const pageStyle: React.CSSProperties = {
 };
 
 const flatToolbarStyle: React.CSSProperties = {
+  position: 'sticky',
+  top: 0,
+  zIndex: 50,
   border: '1px solid rgba(15, 23, 42, 0.1)',
   borderRadius: '0.4rem',
   background: 'rgba(255, 255, 255, 0.44)',
@@ -507,6 +621,7 @@ const flatToolbarStyle: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'space-between',
   gap: '0.65rem',
+  flexWrap: 'wrap',
 };
 
 const toolbarGroupStyle: React.CSSProperties = {
@@ -587,16 +702,6 @@ const modalTitleStyle: React.CSSProperties = {
   color: '#0f172a',
 };
 
-const modalInputStyle: React.CSSProperties = {
-  width: '100%',
-  minHeight: '7rem',
-  border: '1px solid rgba(15, 23, 42, 0.2)',
-  borderRadius: '0.5rem',
-  padding: '0.55rem 0.65rem',
-  fontSize: '0.85rem',
-  resize: 'vertical',
-};
-
 const modalInputTextStyle: React.CSSProperties = {
   width: '100%',
   border: '1px solid rgba(15, 23, 42, 0.2)',
@@ -605,9 +710,14 @@ const modalInputTextStyle: React.CSSProperties = {
   fontSize: '0.85rem',
 };
 
-const modalSelectStyle: React.CSSProperties = {
-  ...modalInputTextStyle,
-  background: 'rgba(255, 255, 255, 0.92)',
+const modalTextareaStyle: React.CSSProperties = {
+  width: '100%',
+  minHeight: '5.6rem',
+  border: '1px solid rgba(15, 23, 42, 0.2)',
+  borderRadius: '0.5rem',
+  padding: '0.55rem 0.65rem',
+  fontSize: '0.85rem',
+  resize: 'vertical',
 };
 
 const modalActionStyle: React.CSSProperties = {
@@ -786,6 +896,23 @@ const columnCountStyle: React.CSSProperties = {
   fontWeight: 700,
 };
 
+const columnHeaderActionStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '0.42rem',
+};
+
+const deleteRequirementButtonStyle: React.CSSProperties = {
+  border: '1px solid rgba(185, 28, 28, 0.28)',
+  background: 'rgba(254, 242, 242, 0.92)',
+  color: '#991b1b',
+  borderRadius: '0.32rem',
+  padding: '0.16rem 0.44rem',
+  fontSize: '0.67rem',
+  fontWeight: 700,
+  cursor: 'pointer',
+};
+
 const columnBodyStyle: React.CSSProperties = {
   flex: 1,
   minHeight: 0,
@@ -858,6 +985,23 @@ const taskCardButtonStyle: React.CSSProperties = {
   flexDirection: 'column',
   gap: '0.32rem',
   textAlign: 'left',
+  cursor: 'pointer',
+};
+
+const taskCardActionRowStyle: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'flex-end',
+  padding: '0 0.55rem 0.45rem',
+};
+
+const taskCardDeleteButtonStyle: React.CSSProperties = {
+  border: '1px solid rgba(185, 28, 28, 0.26)',
+  background: 'rgba(254, 242, 242, 0.92)',
+  color: '#991b1b',
+  borderRadius: '0.3rem',
+  padding: '0.2rem 0.46rem',
+  fontSize: '0.68rem',
+  fontWeight: 700,
   cursor: 'pointer',
 };
 
