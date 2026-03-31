@@ -499,7 +499,6 @@ def test_flow_generate_creates_canvas_and_tasks(
                 ),
             ],
             planner_session_key="linpo:flow:default:planner:claw3",
-            raw_assistant_message='{"nodes":[{"id":"node_1"}]}',
         ),
     )
 

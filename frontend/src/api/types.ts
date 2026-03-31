@@ -213,15 +213,6 @@ export interface AggregateTopologyResponse {
 
 export type AgentStatus = 'idle' | 'running' | 'finished' | 'error';
 
-/**
- * Model item - used in GET /chat/models response
- */
-export interface ModelItem {
-  id: string;
-  name: string;
-  provider: string;
-}
-
 export interface SessionPatchResponse {
   updated: boolean;
 }
@@ -546,19 +537,6 @@ export interface EventRecord {
   description: string;
 }
 
-/**
- * Node detail response - GET /agents/{agent_id}/nodes/{node_id}
- */
-export interface NodeDetailResponse {
-  id: string;
-  name: string;
-  status: AgentStatus;
-  is_active: boolean;
-  last_active_started_at: string | null;
-  events: EventRecord[];
-}
-
-
 export interface RealtimeTopologyNode extends TopologyNode {
   agent_id: string;
   last_active_started_at: string | null;
@@ -675,7 +653,7 @@ export function buildSessionMessagesChannel(sessionKey: string): `session:${stri
   return `session:${sessionKey}:messages`;
 }
 
-export function isObserverChannel(value: string): value is RealtimeObserverChannel {
+function isObserverChannel(value: string): value is RealtimeObserverChannel {
   if (value === 'agents:list') {
     return true;
   }

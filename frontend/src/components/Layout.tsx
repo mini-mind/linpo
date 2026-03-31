@@ -89,7 +89,7 @@ export function Layout(): JSX.Element {
   );
 }
 
-export function RedirectToKanban(): JSX.Element {
+function RedirectToKanban(): JSX.Element {
   return <Navigate to="/kanban" replace />;
 }
 

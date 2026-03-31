@@ -17,11 +17,7 @@ export interface Credentials {
   password: string;
 }
 
-export interface RegisterCredentials extends Credentials {
-  confirmPassword: string;
-}
-
-export type AuthErrorCode = 
+type AuthErrorCode = 
   | 'unauthorized' 
   | 'conflict' 
   | 'network_error' 

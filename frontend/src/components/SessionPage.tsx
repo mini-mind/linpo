@@ -21,7 +21,7 @@ function normalizeSearch(search: string): string {
 	return search.startsWith("?") ? search.slice(1) : search;
 }
 
-export function getPreferredSessionKeyFromSearch(search: string): string | null {
+function getPreferredSessionKeyFromSearch(search: string): string | null {
 	const params = new URLSearchParams(normalizeSearch(search));
 	return params.get(PREFERRED_SESSION_QUERY_KEY);
 }

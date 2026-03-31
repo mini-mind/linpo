@@ -482,12 +482,6 @@ class OpenClawClient:
             return host
         return f"{host}:{port}"
 
-    def _build_operator_device(self) -> dict[str, Any]:
-        return {
-            "id": os.getenv("OPENCLAW_OPERATOR_DEVICE_ID", "linpo-operator-device"),
-            "displayName": os.getenv("OPENCLAW_OPERATOR_DEVICE_NAME", "Linpo Operator"),
-        }
-
     def _build_control_request(
         self,
         *,

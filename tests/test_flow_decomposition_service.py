@@ -13,14 +13,12 @@ def test_decompose_returns_nodes_from_claw3_history_payload() -> None:
     class FakeProviderApplicationService:
         def __init__(self) -> None:
             self.send_calls: list[dict[str, Any]] = []
-            self.history_calls = 0
 
         def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
             self.send_calls.append(kwargs)
             return {"request_id": "req-1", "status": "accepted", "agent_id": kwargs["agent_id"]}
 
         def chat_history(self, **kwargs: Any) -> dict[str, Any]:
-            self.history_calls += 1
             return {
                 "messages": [
                     {"role": "user", "text": "input"},

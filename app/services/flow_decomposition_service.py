@@ -41,7 +41,6 @@ class FlowNodeDraft:
 class FlowDecompositionResult:
     nodes: list[FlowNodeDraft]
     planner_session_key: str
-    raw_assistant_message: str
 
 
 class FlowDecompositionService:
@@ -102,7 +101,6 @@ class FlowDecompositionService:
         return FlowDecompositionResult(
             nodes=nodes,
             planner_session_key=normalized_planner_session_key,
-            raw_assistant_message=assistant_message,
         )
 
     def _build_claw3_execution_context(self) -> ProviderExecutionContext:

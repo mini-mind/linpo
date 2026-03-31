@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
-export const CURRENT_INSTANCE_STORAGE_KEY = 'linpo.currentInstanceId';
+const CURRENT_INSTANCE_STORAGE_KEY = 'linpo.currentInstanceId';
 
 const CURRENT_INSTANCE_EVENT = 'linpo:current-instance-changed';
 

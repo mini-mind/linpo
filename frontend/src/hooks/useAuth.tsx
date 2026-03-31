@@ -147,13 +147,3 @@ export function useAuth(): AuthState {
   }
   return context;
 }
-
-/**
- * Hook for protected route guarding
- * Returns true if user is authenticated, false otherwise
- * Can be used to redirect unauthenticated users
- */
-export function useRequireAuth(): { authenticated: boolean; loading: boolean } {
-  const { user, loading } = useAuth();
-  return { authenticated: !!user, loading };
-}

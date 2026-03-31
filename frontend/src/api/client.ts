@@ -20,8 +20,6 @@ import type {
 	FlowRequirementStopResponse,
 	KanbanTaskCreateRequest,
 	KanbanTaskItem,
-	ModelItem,
-	NodeDetailResponse,
 	SessionDeleteResponse,
 	SessionHistoryResponse,
 	SessionPauseRequest,
@@ -43,7 +41,7 @@ const API_BASE_URL = configuredApiBaseUrl || inferredApiBaseUrl;
 const DEFAULT_OBSERVER_DATA_SOURCE = 'openclaw';
 const DEFAULT_BOARD_ID = 'default';
 
-export interface ObserverRequestOptions {
+interface ObserverRequestOptions {
   instanceId?: string | null;
 }
 
@@ -431,25 +429,6 @@ export async function getAgentDetail(
   options?: ObserverRequestOptions
 ): Promise<AgentDetailResponse> {
   return fetchApi<AgentDetailResponse>(`/agents/${agentId}`, undefined, options);
-}
-
-export async function getNodeDetail(
-  agentId: string,
-  nodeId: string,
-  options?: ObserverRequestOptions
-): Promise<NodeDetailResponse> {
-  return fetchApi<NodeDetailResponse>(`/agents/${agentId}/nodes/${nodeId}`, undefined, options);
-}
-
-export async function listModels(options?: ObserverRequestOptions): Promise<ModelItem[]> {
-	const response = await fetch(`${API_BASE_URL}${withBusinessContext('/chat/models', options)}`, {
-		credentials: 'include',
-	});
-	if (!response.ok) {
-		throw new Error(`API error: ${response.status} ${response.statusText}`);
-	}
-	const data = await response.json();
-	return data.models ?? [];
 }
 
 export async function sendChatMessage(

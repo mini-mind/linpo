@@ -128,7 +128,6 @@ class _FlowNodeDraft:
 @dataclass(frozen=True)
 class _DispatchResult:
     task_id: str
-    final_status: TaskStatus
     run_id: str | None
 
 
@@ -759,7 +758,7 @@ def _dispatch_next_queued_task(
             status="failed",
             extras=extras,
         )
-        return _DispatchResult(task_id=str(candidate.id), final_status="failed", run_id=None)
+        return _DispatchResult(task_id=str(candidate.id), run_id=None)
 
     session_key = str(extras.get("execution_session_key", "__new__")).strip() or "__new__"
     run_id = uuid4().hex
@@ -808,7 +807,7 @@ def _dispatch_next_queued_task(
             status="failed",
             extras=extras,
         )
-        return _DispatchResult(task_id=str(candidate.id), final_status="failed", run_id=run_id)
+        return _DispatchResult(task_id=str(candidate.id), run_id=run_id)
 
     extras["dispatch_status"] = str(send_result.get("status", "accepted"))
     request_id = send_result.get("request_id")
@@ -820,7 +819,7 @@ def _dispatch_next_queued_task(
         status="running",
         extras=extras,
     )
-    return _DispatchResult(task_id=str(candidate.id), final_status="running", run_id=run_id)
+    return _DispatchResult(task_id=str(candidate.id), run_id=run_id)
 
 
 def _reconcile_stale_running_tasks(
