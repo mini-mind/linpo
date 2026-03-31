@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,6 +17,7 @@ const {
   mockStopFlowRequirement,
   mockContinueFlowRequirement,
   mockSyncFlowRequirement,
+  mockCreateBoardTasksRealtimeClient,
 } = vi.hoisted(() => ({
   mockGetAggregateOverview: vi.fn(),
   mockGenerateFlowFromRequirement: vi.fn(),
@@ -26,6 +27,7 @@ const {
   mockStopFlowRequirement: vi.fn(),
   mockContinueFlowRequirement: vi.fn(),
   mockSyncFlowRequirement: vi.fn(),
+  mockCreateBoardTasksRealtimeClient: vi.fn(),
 }));
 
 vi.mock('../api/client', async () => {
@@ -40,6 +42,14 @@ vi.mock('../api/client', async () => {
     stopFlowRequirement: mockStopFlowRequirement,
     continueFlowRequirement: mockContinueFlowRequirement,
     syncFlowRequirement: mockSyncFlowRequirement,
+  };
+});
+
+vi.mock('../api/realtimeClient', async () => {
+  const actual = await vi.importActual<typeof import('../api/realtimeClient')>('../api/realtimeClient');
+  return {
+    ...actual,
+    createBoardTasksRealtimeClient: mockCreateBoardTasksRealtimeClient,
   };
 });
 
@@ -197,6 +207,10 @@ describe('FlowPage', () => {
       created_task_ids: [],
       deleted_task_ids: [],
     });
+    mockCreateBoardTasksRealtimeClient.mockImplementation(() => ({
+      connect: vi.fn(),
+      close: vi.fn(),
+    }));
   });
 
   it('supports canvas double-click create node with modal', async () => {
@@ -399,6 +413,57 @@ describe('FlowPage', () => {
 
     await waitFor(() => {
       expect(mockRenameFlowRequirement).toHaveBeenCalledWith('req-flow-a', { name: '新流程名' }, undefined, 'default');
+    });
+  });
+
+  it('updates flow node status in editor via board realtime websocket events', async () => {
+    mockListKanbanTasks.mockResolvedValue([
+      buildKanbanTask({
+        id: 'task-realtime-node',
+        status: 'queued',
+        extras: {
+          requirement_id: 'req-flow-a',
+          requirement_title: '流程A',
+          flow_node: 'node_1',
+          dependencies: 'none',
+          sensitive: 'false',
+        },
+      }),
+    ]);
+
+    renderFlowPage('/flow/edit/req-flow-a');
+
+    await screen.findByRole('button', { name: '流程节点-拆解需求' });
+    expect(screen.getByText('queued')).toBeInTheDocument();
+
+    const realtimeOptions = mockCreateBoardTasksRealtimeClient.mock.calls[0]?.[0];
+    expect(realtimeOptions).toBeDefined();
+
+    act(() => {
+      realtimeOptions.onMessage({
+        type: 'tasks_changed',
+        channel: 'board:default:tasks',
+        seq: 2,
+        timestamp: '2026-03-31T00:00:00Z',
+        payload: {
+          action: 'upsert',
+          task: buildKanbanTask({
+            id: 'task-realtime-node',
+            status: 'completed',
+            extras: {
+              requirement_id: 'req-flow-a',
+              requirement_title: '流程A',
+              flow_node: 'node_1',
+              dependencies: 'none',
+              sensitive: 'false',
+            },
+          }),
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('completed')).toBeInTheDocument();
     });
   });
 });

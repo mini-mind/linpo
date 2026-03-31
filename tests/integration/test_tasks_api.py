@@ -10,11 +10,15 @@ from urllib.parse import quote
 import pytest
 from cryptography.fernet import Fernet
 from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.db import session as db_session
+from app.db.models import User
 from app.main import app
+from app.services.board_task_realtime import get_board_task_realtime_hub
 from app.services.instance_validator import InstanceValidationResult
-from tests.integration._asgi import request
+from tests.integration._asgi import request, websocket
 
 DEFAULT_TASKS_PATH = "/api/v1/boards/default/tasks"
 DEFAULT_FLOW_GENERATE_PATH = "/api/v1/boards/default/tasks/flow/generate"
@@ -272,6 +276,59 @@ def test_task_list_is_isolated_by_user(
     assert list_b_status == 200
     list_b_payload = cast(list[dict[str, Any]], json.loads(list_b_body.decode("utf-8")))
     assert [item["title"] for item in list_b_payload] == ["B 的任务"]
+
+
+def test_board_tasks_websocket_pushes_task_updates(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_url = isolated_database_url
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("ws-board-user")
+    with Session(db_session.get_engine(database_url)) as session:
+        current_user = session.execute(
+            select(User).where(User.username == "ws-board-user")
+        ).scalar_one()
+
+    outbound = websocket(
+        "/ws/boards/default/tasks",
+        headers={"cookie": auth_cookie},
+        idle_hooks=[
+            lambda: get_board_task_realtime_hub().publish_task_upserted(
+                user_id=current_user.id,
+                board_id="default",
+                task={
+                    "id": "task-ws-1",
+                    "board_id": "default",
+                    "title": "websocket任务",
+                    "summary": "来自实时推送",
+                    "status": "queued",
+                    "source": "flow",
+                    "agent_id": "agent-ws",
+                    "agent_name": "Agent WS",
+                    "artifacts": [],
+                    "extras": {"board_id": "default"},
+                    "instance_id": None,
+                    "created_at": "2026-03-31T00:00:00Z",
+                    "updated_at": "2026-03-31T00:00:00Z",
+                },
+            )
+        ],
+    )
+
+    send_messages = [
+        cast(dict[str, Any], json.loads(cast(str, message.get("text"))))
+        for message in outbound
+        if message["type"] == "websocket.send" and isinstance(message.get("text"), str)
+    ]
+    assert any(message.get("type") == "snapshot_ready" for message in send_messages)
+    assert any(
+        message.get("type") == "tasks_changed"
+        and cast(dict[str, Any], message.get("payload", {})).get("action") == "upsert"
+        and cast(dict[str, Any], cast(dict[str, Any], message.get("payload", {})).get("task", {})).get("title")
+        == "websocket任务"
+        for message in send_messages
+    )
 
 
 def test_create_task_keeps_task_when_dispatch_fails(

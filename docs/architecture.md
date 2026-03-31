@@ -30,6 +30,7 @@
 - `FlowListPage`：所有流程列表页（我的流程目录），承接“工具栏筛选/排序 + 新建流程弹窗 + 卡片级编辑动作（重命名/删除）+ 需求拆解等待态”。
 - `FlowListPage` 新建流程时，需求拆解 Agent 固定为 `claw3`（通过配置项可调整，不在 UI 暴露选择器）。
 - `FlowEditorPanel`：编辑流程页，承接泳道画布编排、流程状态按钮（`运行/中断/继续`）、重命名交互与底部悬浮指令对话框（增量改图）。
+- `FlowEditorPanel`：编辑流程页需订阅 board realtime 任务事件并增量更新 `flowTasks`，由任务快照反向投影节点状态到画布。
 - `KanbanShell` 在“按流程分列”模式下，列头需展示流程状态并提供主动作（`中断流程/继续流程/运行流程`）与删除动作。
 - `Layout`：维护流程导航入口缓存（`linpo.lastFlowEntryPath`），用于“点击导航栏流程时回到上次访问的编辑页”。
 - `PairingPage`：OpenClaw 实例页，承接“左侧实例列表 + 右侧主工作区”；右侧支持实例详情区块与新建配对双标签（Token/配对码）。
@@ -95,6 +96,7 @@
 - 产出字段：`artifacts[]`（文本、结构化片段、文件引用）。
 - 需求分组字段：`extras.requirement_id`、`extras.requirement_title`（支持按需求分列、筛选、批量删除）。
 - 详情弹窗字段：采用三标签页结构（`基本信息 / 执行流程 / 任务产出`）；消息流按“每节点一个 session”原则，仅使用 `execution_session_key`：先读 `chat.history`，再订阅 `session:{key}:messages` 实时增量。
+- 看板任务列表通过独立 board realtime 通道接收任务增量事件（新增/更新/删除），用于同步卡片状态与弹窗基础信息，避免全页轮询。
 - 任务详情弹窗默认进入 `基本信息` 标签页；任务进入终态后不自动切换标签页。
 - `基本信息`页任务控制按钮按状态渲染：`running` 节点展示 `中断`，`blocked_by_approval` 节点展示 `继续`，其余状态按可用动作渲染或不渲染控制按钮。
 - 任务产出契约：
@@ -106,6 +108,7 @@
 ### 6.1 v0.7 任务 API 最小契约
 
 - `GET /api/v1/boards/{board_id}/tasks`：返回当前登录用户在指定看板可见任务列表，作为看板主数据源。
+- `WS /ws/boards/{board_id}/tasks`：看板任务实时事件通道（按当前登录用户隔离），推送 `tasks_changed` 增量事件；前端据此增量更新本地任务列表。
 - `POST /api/v1/boards/{board_id}/tasks`：创建任务并记录指派信息，创建成功后由应用层触发 OpenClaw `chat.send`。
 - `POST /api/v1/boards/{board_id}/tasks/flow/generate`：根据需求生成流程图节点/边草稿，不落看板任务；支持可选 `current_nodes/current_edges/planner_session_key` 以在已有流程上增量改图。
 - `POST /api/v1/boards/{board_id}/tasks/flow/confirm`：确认草稿后创建 `queued` 任务并触发队列调度。

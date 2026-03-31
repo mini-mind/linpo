@@ -2,6 +2,8 @@
 
 ## 2026-03-31
 
+- PRD/Architecture 补充看板任务 realtime 契约：新增 `WS /ws/boards/{board_id}/tasks` 通道，任务列表与弹窗基础信息改为事件驱动增量同步，减少手动刷新依赖。
+- PRD/Architecture 补充流程编辑页节点状态同步口径：编辑页订阅 board realtime，节点状态随任务事件实时更新。
 - PRD/Architecture 补充看板“按流程分列”列头交互：展示流程状态并提供主动作（`中断流程/继续流程/运行流程`），删除流程仍遵循“先中断后删除”。
 - PRD/Architecture 补充实例页详情口径：已配对实例需展示 `实例 -> Agent -> Session` 树形拓扑，并定义空态/失败态提示与刷新交互。
 

@@ -1,5 +1,6 @@
 import { resolveCurrentInstanceId } from '../hooks/useCurrentInstance';
 import {
+  type KanbanTaskItem,
   type RealtimeObserverChannel,
   type ObserverRealtimeMessage,
   type ObserverSubscribeMessage,
@@ -31,7 +32,59 @@ export interface ObserverRealtimeClient {
   close: () => void;
 }
 
+export interface BoardTasksChangedPayload {
+  action: 'upsert' | 'delete';
+  task?: KanbanTaskItem;
+  task_id?: string;
+}
+
+export interface BoardRealtimeSnapshotPayload {
+  status: 'ok';
+}
+
+export interface BoardRealtimeErrorPayload {
+  detail: string;
+}
+
+export type BoardRealtimeMessage =
+  | {
+      type: 'snapshot_ready';
+      channel: `board:${string}:tasks`;
+      seq: number;
+      timestamp: string;
+      payload: BoardRealtimeSnapshotPayload;
+    }
+  | {
+      type: 'tasks_changed';
+      channel: `board:${string}:tasks`;
+      seq: number;
+      timestamp: string;
+      payload: BoardTasksChangedPayload;
+    }
+  | {
+      type: 'error';
+      channel: `board:${string}:tasks`;
+      seq: number;
+      timestamp: string;
+      payload: BoardRealtimeErrorPayload;
+    };
+
+export interface BoardRealtimeClientOptions {
+  baseUrl?: string;
+  boardId: string;
+  onMessage: (message: BoardRealtimeMessage) => void;
+  onParseError?: (raw: string, error: Error) => void;
+  onDisconnected?: () => void;
+  createWebSocket?: (url: string) => WebSocketLike;
+}
+
+export interface BoardRealtimeClient {
+  connect: () => void;
+  close: () => void;
+}
+
 const OBSERVER_WS_PATH = '/ws/observer';
+const BOARD_TASKS_WS_PREFIX = '/ws/boards/';
 
 function resolveApiBaseUrl(overrideBaseUrl?: string): string {
   if (overrideBaseUrl) {
@@ -62,6 +115,15 @@ function toWebSocketUrl(
   if (resolvedInstanceId) {
     url.searchParams.set('instanceId', resolvedInstanceId);
   }
+  return url.toString();
+}
+
+function toBoardTasksWebSocketUrl(apiBaseUrl: string, boardId: string): string {
+  const normalizedBoardId = boardId.trim() || 'default';
+  const encodedBoardId = encodeURIComponent(normalizedBoardId);
+  const path = `${BOARD_TASKS_WS_PREFIX}${encodedBoardId}/tasks`;
+  const url = new URL(path, apiBaseUrl);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   return url.toString();
 }
 
@@ -142,6 +204,211 @@ export function createObserverRealtimeClient(
         options.onParseError?.(
           raw,
           error instanceof Error ? error : new Error('Failed to parse realtime message')
+        );
+      }
+    });
+
+    ws.addEventListener('close', () => {
+      if (socket === ws) {
+        socket = null;
+      }
+      if (manuallyClosed) {
+        return;
+      }
+      options.onDisconnected?.();
+    });
+  };
+
+  const close = (): void => {
+    if (!socket) {
+      return;
+    }
+    manuallyClosed = true;
+    if (!opened) {
+      closedBeforeOpen = true;
+      socket = null;
+      return;
+    }
+    socket.close();
+    socket = null;
+  };
+
+  return {
+    connect,
+    close,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isKanbanTaskItem(value: unknown): value is KanbanTaskItem {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    typeof value.id === 'string' &&
+    typeof value.board_id === 'string' &&
+    typeof value.title === 'string' &&
+    typeof value.summary === 'string' &&
+    typeof value.status === 'string' &&
+    typeof value.source === 'string' &&
+    Array.isArray(value.artifacts) &&
+    isRecord(value.extras) &&
+    typeof value.created_at === 'string' &&
+    typeof value.updated_at === 'string'
+  );
+}
+
+function isBoardChannel(value: unknown): value is `board:${string}:tasks` {
+  return typeof value === 'string' && value.startsWith('board:') && value.endsWith(':tasks');
+}
+
+function parseBoardRealtimeMessage(raw: string): BoardRealtimeMessage {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('Invalid board realtime message: malformed JSON');
+  }
+  if (!isRecord(parsed)) {
+    throw new Error('Invalid board realtime message');
+  }
+  const { type, channel, seq, timestamp, payload } = parsed;
+  if (typeof type !== 'string') {
+    throw new Error('Invalid board realtime message');
+  }
+  if (!isBoardChannel(channel)) {
+    throw new Error('Invalid board realtime message');
+  }
+  if (typeof seq !== 'number' || !Number.isInteger(seq) || seq < 0) {
+    throw new Error('Invalid board realtime message');
+  }
+  if (typeof timestamp !== 'string') {
+    throw new Error('Invalid board realtime message');
+  }
+  if (!isRecord(payload)) {
+    throw new Error('Invalid board realtime message');
+  }
+
+  if (type === 'snapshot_ready') {
+    if (payload.status !== 'ok') {
+      throw new Error('Invalid board realtime message');
+    }
+    return {
+      type,
+      channel,
+      seq,
+      timestamp,
+      payload: { status: 'ok' },
+    };
+  }
+
+  if (type === 'tasks_changed') {
+    const action = payload.action;
+    if (action !== 'upsert' && action !== 'delete') {
+      throw new Error('Invalid board realtime message');
+    }
+    if (action === 'upsert') {
+      if (!isKanbanTaskItem(payload.task)) {
+        throw new Error('Invalid board realtime message');
+      }
+      return {
+        type,
+        channel,
+        seq,
+        timestamp,
+        payload: {
+          action: 'upsert',
+          task: payload.task,
+        },
+      };
+    }
+    if (typeof payload.task_id !== 'string' || payload.task_id.trim() === '') {
+      throw new Error('Invalid board realtime message');
+    }
+    return {
+      type,
+      channel,
+      seq,
+      timestamp,
+      payload: {
+        action: 'delete',
+        task_id: payload.task_id,
+      },
+    };
+  }
+
+  if (type === 'error') {
+    if (typeof payload.detail !== 'string') {
+      throw new Error('Invalid board realtime message');
+    }
+    return {
+      type,
+      channel,
+      seq,
+      timestamp,
+      payload: {
+        detail: payload.detail,
+      },
+    };
+  }
+
+  throw new Error('Invalid board realtime message');
+}
+
+export function createBoardTasksRealtimeClient(
+  options: BoardRealtimeClientOptions
+): BoardRealtimeClient {
+  if (!options.boardId.trim()) {
+    throw new Error('Realtime boardId is required');
+  }
+  const apiBaseUrl = resolveApiBaseUrl(options.baseUrl);
+  const createWebSocket =
+    options.createWebSocket ?? ((url: string): WebSocketLike => new WebSocket(url));
+
+  let socket: WebSocketLike | null = null;
+  let manuallyClosed = false;
+  let opened = false;
+  let closedBeforeOpen = false;
+
+  const connect = (): void => {
+    if (socket) {
+      return;
+    }
+
+    manuallyClosed = false;
+    opened = false;
+    closedBeforeOpen = false;
+    const ws = createWebSocket(toBoardTasksWebSocketUrl(apiBaseUrl, options.boardId));
+    socket = ws;
+
+    ws.addEventListener('open', () => {
+      if (socket !== ws) {
+        return;
+      }
+      opened = true;
+      if (closedBeforeOpen) {
+        socket = null;
+        ws.close();
+      }
+    });
+
+    ws.addEventListener('message', (event) => {
+      const raw =
+        typeof event === 'object' && event !== null && 'data' in event
+          ? (event as { data?: unknown }).data
+          : undefined;
+      if (typeof raw !== 'string') {
+        return;
+      }
+      try {
+        options.onMessage(parseBoardRealtimeMessage(raw));
+      } catch (error) {
+        options.onParseError?.(
+          raw,
+          error instanceof Error ? error : new Error('Failed to parse board realtime message')
         );
       }
     });

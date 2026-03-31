@@ -18,7 +18,10 @@ import {
   stopFlowRequirement,
 } from '../api/client';
 import {
+  createBoardTasksRealtimeClient,
   createObserverRealtimeClient,
+  type BoardRealtimeClient,
+  type BoardRealtimeMessage,
   type ObserverRealtimeClient,
 } from '../api/realtimeClient';
 import type {
@@ -78,6 +81,7 @@ type TaskDependencyEntry = {
 type TaskDetailTab = 'info' | 'stream' | 'output';
 
 const TASK_SESSION_REALTIME_DATA_SOURCE = getDefaultObserverDataSource();
+const KANBAN_BOARD_REALTIME_ID = 'default';
 
 export default function CollabPage(): JSX.Element {
   const navigate = useNavigate();
@@ -105,6 +109,7 @@ export default function CollabPage(): JSX.Element {
   const [taskDetailTab, setTaskDetailTab] = useState<TaskDetailTab>('info');
   const taskSessionRealtimeRef = useRef<ObserverRealtimeClient | null>(null);
   const taskSessionFallbackPollRef = useRef<number | null>(null);
+  const boardRealtimeRef = useRef<BoardRealtimeClient | null>(null);
   const taskSessionListRef = useRef<HTMLDivElement | null>(null);
   const [selectedOutputEntryId, setSelectedOutputEntryId] = useState<string | null>(null);
   const [outputPreview, setOutputPreview] = useState<TaskOutputPreviewResponse | null>(null);
@@ -131,6 +136,90 @@ export default function CollabPage(): JSX.Element {
   useEffect(() => {
     void loadOverview();
   }, [loadOverview]);
+
+  const applyBoardRealtimeUpdate = useCallback((message: BoardRealtimeMessage) => {
+    if (message.type === 'error') {
+      setLoadError(message.payload.detail || '看板实时同步失败');
+      return;
+    }
+    if (message.type !== 'tasks_changed') {
+      return;
+    }
+
+    if (message.payload.action === 'upsert' && message.payload.task) {
+      const nextTask = toBoardTaskFromKanbanTask(message.payload.task);
+      setTaskRecords((current) => {
+        const index = current.findIndex((item) => item.id === nextTask.id);
+        if (index < 0) {
+          return [nextTask, ...current];
+        }
+        const merged = [...current];
+        merged[index] = nextTask;
+        return merged;
+      });
+      return;
+    }
+
+    if (message.payload.action === 'delete' && message.payload.task_id) {
+      const targetId = message.payload.task_id;
+      setTaskRecords((current) => current.filter((item) => item.id !== targetId));
+      setSelectedTask((current) => (current?.id === targetId ? null : current));
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let reconnectAttempts = 0;
+    let reconnectTimerId: number | null = null;
+
+    const clearReconnectTimer = () => {
+      if (reconnectTimerId !== null) {
+        window.clearTimeout(reconnectTimerId);
+        reconnectTimerId = null;
+      }
+    };
+
+    const connectRealtime = () => {
+      if (cancelled) {
+        return;
+      }
+      const client = createBoardTasksRealtimeClient({
+        boardId: KANBAN_BOARD_REALTIME_ID,
+        onMessage: (message) => {
+          if (cancelled) {
+            return;
+          }
+          reconnectAttempts = 0;
+          applyBoardRealtimeUpdate(message);
+        },
+        onDisconnected: () => {
+          if (cancelled) {
+            return;
+          }
+          if (reconnectTimerId !== null) {
+            return;
+          }
+          const delay = Math.min(4000, 400 * Math.max(1, 2 ** reconnectAttempts));
+          reconnectAttempts += 1;
+          reconnectTimerId = window.setTimeout(() => {
+            reconnectTimerId = null;
+            connectRealtime();
+          }, delay);
+        },
+      });
+      client.connect();
+      boardRealtimeRef.current = client;
+    };
+
+    connectRealtime();
+
+    return () => {
+      cancelled = true;
+      clearReconnectTimer();
+      boardRealtimeRef.current?.close();
+      boardRealtimeRef.current = null;
+    };
+  }, [applyBoardRealtimeUpdate]);
 
   const allTasks = useMemo(() => taskRecords, [taskRecords]);
   const assignableAgents = useMemo<AssignableAgent[]>(() => {

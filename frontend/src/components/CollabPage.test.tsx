@@ -19,6 +19,7 @@ const {
   mockInterruptKanbanTask,
   mockStopFlowRequirement,
   mockGetSessionHistory,
+  mockCreateBoardTasksRealtimeClient,
   mockCreateObserverRealtimeClient,
   mockPreviewKanbanTaskOutput,
 } = vi.hoisted(() => ({
@@ -32,6 +33,7 @@ const {
   mockInterruptKanbanTask: vi.fn(),
   mockStopFlowRequirement: vi.fn(),
   mockGetSessionHistory: vi.fn(),
+  mockCreateBoardTasksRealtimeClient: vi.fn(),
   mockCreateObserverRealtimeClient: vi.fn(),
   mockPreviewKanbanTaskOutput: vi.fn(),
 }));
@@ -58,6 +60,7 @@ vi.mock('../api/realtimeClient', async () => {
   const actual = await vi.importActual<typeof import('../api/realtimeClient')>('../api/realtimeClient');
   return {
     ...actual,
+    createBoardTasksRealtimeClient: mockCreateBoardTasksRealtimeClient,
     createObserverRealtimeClient: mockCreateObserverRealtimeClient,
   };
 });
@@ -169,6 +172,10 @@ describe('CollabPage', () => {
       message: null,
     });
     mockGetSessionHistory.mockResolvedValue({ ts: 1, items: [] });
+    mockCreateBoardTasksRealtimeClient.mockImplementation(() => ({
+      connect: vi.fn(),
+      close: vi.fn(),
+    }));
     mockPreviewKanbanTaskOutput.mockResolvedValue({
       path: '/tmp/linpo/default/output.md',
       kind: 'text',
@@ -602,6 +609,45 @@ describe('CollabPage', () => {
 
     await waitFor(() => {
       expect(screen.getByText('已开始执行任务，正在写入产出')).toBeInTheDocument();
+    });
+  });
+
+  it('applies board realtime upsert event to update task card without manual refresh', async () => {
+    mockGetAggregateOverview.mockResolvedValue(buildOverview({ agents: [buildAgent()] }));
+    mockListKanbanTasks.mockResolvedValue([
+      buildKanbanTask({
+        id: 'task-realtime-upsert',
+        title: '实时任务',
+        status: 'queued',
+      }),
+    ]);
+
+    renderPage();
+
+    await screen.findByText('实时任务');
+    expect(screen.getByText('queued')).toBeInTheDocument();
+
+    const realtimeOptions = mockCreateBoardTasksRealtimeClient.mock.calls[0]?.[0];
+    expect(realtimeOptions).toBeDefined();
+    act(() => {
+      realtimeOptions.onMessage({
+        type: 'tasks_changed',
+        channel: 'board:default:tasks',
+        seq: 1,
+        timestamp: '2026-03-31T00:00:00Z',
+        payload: {
+          action: 'upsert',
+          task: buildKanbanTask({
+            id: 'task-realtime-upsert',
+            title: '实时任务',
+            status: 'running',
+          }),
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('running')).toBeInTheDocument();
     });
   });
 

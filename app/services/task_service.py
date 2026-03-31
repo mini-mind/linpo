@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC
+from typing import Any
 from typing import Literal
 from uuid import UUID
 
@@ -8,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import Task
+from app.services.board_task_realtime import get_board_task_realtime_hub
 
 TaskStatus = Literal["queued", "running", "blocked_by_approval", "failed", "completed"]
 TaskSource = Literal["provider", "flow"]
@@ -65,6 +68,7 @@ class TaskService:
         db_session.add(task)
         db_session.commit()
         db_session.refresh(task)
+        self._publish_task_upserted(task)
         return task
 
     def list_tasks_for_board(
@@ -103,6 +107,7 @@ class TaskService:
         task.extras = extras
         db_session.commit()
         db_session.refresh(task)
+        self._publish_task_upserted(task)
         return task
 
     def update_task_status(
@@ -118,6 +123,7 @@ class TaskService:
             task.extras = extras
         db_session.commit()
         db_session.refresh(task)
+        self._publish_task_upserted(task)
         return task
 
     def get_task_by_run_id(
@@ -139,5 +145,72 @@ class TaskService:
         *,
         task: Task,
     ) -> None:
+        task_id = str(task.id)
+        user_id = task.user_id
+        board_id = self._board_id_from_task(task)
         db_session.delete(task)
         db_session.commit()
+        self._publish_task_deleted(
+            user_id=user_id,
+            board_id=board_id,
+            task_id=task_id,
+        )
+
+    def _publish_task_upserted(self, task: Task) -> None:
+        try:
+            get_board_task_realtime_hub().publish_task_upserted(
+                user_id=task.user_id,
+                board_id=self._board_id_from_task(task),
+                task=self._to_task_payload(task),
+            )
+        except Exception:
+            return
+
+    def _publish_task_deleted(
+        self,
+        *,
+        user_id: UUID,
+        board_id: str,
+        task_id: str,
+    ) -> None:
+        try:
+            get_board_task_realtime_hub().publish_task_deleted(
+                user_id=user_id,
+                board_id=board_id,
+                task_id=task_id,
+            )
+        except Exception:
+            return
+
+    def _board_id_from_task(self, task: Task) -> str:
+        extras = task.extras if isinstance(task.extras, dict) else {}
+        board_id = str(extras.get("board_id", "default")).strip()
+        return board_id or "default"
+
+    def _to_task_payload(self, task: Task) -> dict[str, Any]:
+        extras = task.extras if isinstance(task.extras, dict) else {}
+        created_at = (
+            task.created_at.astimezone(UTC)
+            if task.created_at.tzinfo is not None
+            else task.created_at.replace(tzinfo=UTC)
+        )
+        updated_at = (
+            task.updated_at.astimezone(UTC)
+            if task.updated_at.tzinfo is not None
+            else task.updated_at.replace(tzinfo=UTC)
+        )
+        return {
+            "id": str(task.id),
+            "board_id": self._board_id_from_task(task),
+            "title": task.title,
+            "summary": task.summary,
+            "status": task.status,
+            "source": task.source,
+            "agent_id": task.agent_id,
+            "agent_name": task.agent_name,
+            "artifacts": [item for item in task.artifacts if isinstance(item, str)],
+            "extras": {str(key): str(value) for key, value in extras.items()},
+            "instance_id": None if task.instance_id is None else str(task.instance_id),
+            "created_at": created_at.isoformat(),
+            "updated_at": updated_at.isoformat(),
+        }

@@ -2,6 +2,11 @@ import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
+  createBoardTasksRealtimeClient,
+  type BoardRealtimeClient,
+  type BoardRealtimeMessage,
+} from '../api/realtimeClient';
+import {
   continueFlowRequirement,
   confirmFlowToKanban,
   generateFlowFromRequirement,
@@ -136,6 +141,7 @@ const LANE_SIDE_PADDING = 22;
 const NODE_DEFAULT_MARGIN = 24;
 const NODE_VERTICAL_GAP = 160;
 const FIXED_FLOW_PLANNER_AGENT_ID = 'claw3';
+const FLOW_BOARD_REALTIME_ID = 'default';
 
 type FlowRuntimeState = 'idle' | 'running' | 'blocked';
 
@@ -199,6 +205,7 @@ export function FlowPage(): JSX.Element {
   const generatedDraftIdRef = useRef('');
   const blockedSyncSignatureRef = useRef('');
   const blockedSyncTimerRef = useRef<number | null>(null);
+  const boardRealtimeRef = useRef<BoardRealtimeClient | null>(null);
 
   const routeState = useMemo<FlowRouteState | null>(() => {
     const value = location.state as FlowRouteState | null;
@@ -234,6 +241,29 @@ export function FlowPage(): JSX.Element {
     return tasks;
   }, []);
 
+  const applyBoardRealtimeUpdate = useCallback((message: BoardRealtimeMessage) => {
+    if (message.type !== 'tasks_changed') {
+      return;
+    }
+    if (message.payload.action === 'upsert' && message.payload.task) {
+      const nextTask = message.payload.task;
+      setFlowTasks((current) => {
+        const index = current.findIndex((item) => item.id === nextTask.id);
+        if (index < 0) {
+          return [nextTask, ...current];
+        }
+        const merged = [...current];
+        merged[index] = nextTask;
+        return merged;
+      });
+      return;
+    }
+    if (message.payload.action === 'delete' && message.payload.task_id) {
+      const taskId = message.payload.task_id;
+      setFlowTasks((current) => current.filter((item) => item.id !== taskId));
+    }
+  }, []);
+
   useEffect(() => {
     let active = true;
     void Promise.all([getAggregateOverview(), refreshFlowTasks()])
@@ -258,6 +288,58 @@ export function FlowPage(): JSX.Element {
       active = false;
     };
   }, [addToast, refreshFlowTasks]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let reconnectAttempts = 0;
+    let reconnectTimerId: number | null = null;
+
+    const clearReconnectTimer = () => {
+      if (reconnectTimerId !== null) {
+        window.clearTimeout(reconnectTimerId);
+        reconnectTimerId = null;
+      }
+    };
+
+    const connectRealtime = () => {
+      if (cancelled) {
+        return;
+      }
+      const client = createBoardTasksRealtimeClient({
+        boardId: FLOW_BOARD_REALTIME_ID,
+        onMessage: (message) => {
+          if (cancelled) {
+            return;
+          }
+          reconnectAttempts = 0;
+          applyBoardRealtimeUpdate(message);
+        },
+        onDisconnected: () => {
+          if (cancelled || reconnectTimerId !== null) {
+            return;
+          }
+          const delay = Math.min(4000, 400 * Math.max(1, 2 ** reconnectAttempts));
+          reconnectAttempts += 1;
+          reconnectTimerId = window.setTimeout(() => {
+            reconnectTimerId = null;
+            void refreshFlowTasks().finally(() => {
+              connectRealtime();
+            });
+          }, delay);
+        },
+      });
+      client.connect();
+      boardRealtimeRef.current = client;
+    };
+
+    connectRealtime();
+    return () => {
+      cancelled = true;
+      clearReconnectTimer();
+      boardRealtimeRef.current?.close();
+      boardRealtimeRef.current = null;
+    };
+  }, [applyBoardRealtimeUpdate, refreshFlowTasks]);
 
   useEffect(() => {
     if (selectedExecutorAgentId && uniqueAgents.some((item) => item.agent_id === selectedExecutorAgentId)) {

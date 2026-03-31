@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createObserverRealtimeClient, type WebSocketLike } from './realtimeClient';
+import {
+  createBoardTasksRealtimeClient,
+  createObserverRealtimeClient,
+  type WebSocketLike,
+} from './realtimeClient';
 import {
   buildAgentDetailChannel,
   type ObserverRealtimeMessage,
@@ -282,5 +286,78 @@ describe('observer realtime client', () => {
     client.close();
 
     expect(fakeSocket.closeCalled).toBe(false);
+  });
+});
+
+describe('board realtime client', () => {
+  it('builds board task websocket url without subscribe payload', () => {
+    const fakeSocket = new FakeWebSocket();
+    const socketFactory = vi.fn(() => fakeSocket);
+    const onMessage = vi.fn();
+
+    const client = createBoardTasksRealtimeClient({
+      baseUrl: 'http://linpo.test:8000',
+      boardId: 'default',
+      onMessage,
+      createWebSocket: socketFactory,
+    });
+
+    client.connect();
+    fakeSocket.emitOpen();
+
+    expect(socketFactory).toHaveBeenCalledWith('ws://linpo.test:8000/ws/boards/default/tasks');
+    expect(fakeSocket.sent).toEqual([]);
+  });
+
+  it('parses tasks_changed messages', () => {
+    const fakeSocket = new FakeWebSocket();
+    const onMessage = vi.fn();
+    const client = createBoardTasksRealtimeClient({
+      baseUrl: 'http://linpo.test:8000',
+      boardId: 'default',
+      onMessage,
+      createWebSocket: () => fakeSocket,
+    });
+
+    client.connect();
+    fakeSocket.emitMessage(
+      JSON.stringify({
+        type: 'tasks_changed',
+        channel: 'board:default:tasks',
+        seq: 2,
+        timestamp: '2026-03-31T00:00:00Z',
+        payload: {
+          action: 'delete',
+          task_id: 'task-1',
+        },
+      })
+    );
+
+    expect(onMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'tasks_changed',
+        payload: {
+          action: 'delete',
+          task_id: 'task-1',
+        },
+      })
+    );
+  });
+
+  it('calls onDisconnected when board socket closes unexpectedly', () => {
+    const fakeSocket = new FakeWebSocket();
+    const onDisconnected = vi.fn();
+    const client = createBoardTasksRealtimeClient({
+      baseUrl: 'http://linpo.test:8000',
+      boardId: 'default',
+      onMessage: vi.fn(),
+      onDisconnected,
+      createWebSocket: () => fakeSocket,
+    });
+
+    client.connect();
+    fakeSocket.emitClose();
+
+    expect(onDisconnected).toHaveBeenCalledTimes(1);
   });
 });
