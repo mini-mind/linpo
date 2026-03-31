@@ -8,7 +8,8 @@ import {
   validateInstance,
   validateInstanceByPairCode,
 } from '../api/instanceClient';
-import type { InstanceItem } from '../api/types';
+import { getAggregateTopology } from '../api/client';
+import type { AggregateTopologyResponse, InstanceItem } from '../api/types';
 import { useCurrentInstanceId } from '../hooks/useCurrentInstance';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
@@ -17,6 +18,20 @@ type CreateTab = 'token' | 'pair_code';
 type PanelState =
   | { kind: 'new' }
   | { kind: 'instance'; instanceId: string };
+
+interface InstanceTreeSessionItem {
+  sessionKey: string;
+  label: string;
+  updatedAt: string | null;
+}
+
+interface InstanceTreeAgentItem {
+  agentId: string;
+  agentName: string;
+  status: string;
+  isActive: boolean;
+  sessions: InstanceTreeSessionItem[];
+}
 
 const DEFAULT_INSTANCE_NAME = 'claw2';
 const DEFAULT_ENDPOINT = 'http://127.0.0.1:28789';
@@ -29,8 +44,11 @@ export function PairingPage(): JSX.Element {
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
+  const [isTopologyLoading, setIsTopologyLoading] = useState(false);
   const [panel, setPanel] = useState<PanelState>({ kind: 'new' });
   const [createTab, setCreateTab] = useState<CreateTab>('token');
+  const [topology, setTopology] = useState<AggregateTopologyResponse | null>(null);
+  const [topologyError, setTopologyError] = useState<string | null>(null);
 
   const [tokenName, setTokenName] = useState(DEFAULT_INSTANCE_NAME);
   const [tokenEndpoint, setTokenEndpoint] = useState(DEFAULT_ENDPOINT);
@@ -57,6 +75,45 @@ export function PairingPage(): JSX.Element {
     }
     return sortedInstances.find((item) => item.id === panel.instanceId) ?? null;
   }, [panel, sortedInstances]);
+
+  const topologyDiagnostic = useMemo(() => {
+    if (!selectedInstance || !topology) {
+      return null;
+    }
+    return topology.diagnostics.find((item) => item.instance_id === selectedInstance.id) ?? null;
+  }, [selectedInstance, topology]);
+
+  const topologyAgents = useMemo<InstanceTreeAgentItem[]>(() => {
+    if (!selectedInstance || !topology) {
+      return [];
+    }
+    const instanceId = selectedInstance.id;
+    const sessionsByAgent = new Map<string, InstanceTreeSessionItem[]>();
+    for (const session of topology.sessions) {
+      if (session.instance_id !== instanceId) {
+        continue;
+      }
+      const current = sessionsByAgent.get(session.agent_id) ?? [];
+      current.push({
+        sessionKey: session.session_key,
+        label: session.label,
+        updatedAt: session.updated_at,
+      });
+      sessionsByAgent.set(session.agent_id, current);
+    }
+    return topology.agents
+      .filter((item) => item.instance_id === instanceId)
+      .map((agent) => ({
+        agentId: agent.agent_id,
+        agentName: agent.agent_name,
+        status: agent.status,
+        isActive: agent.is_active,
+        sessions: [...(sessionsByAgent.get(agent.agent_id) ?? [])].sort((left, right) =>
+          left.sessionKey.localeCompare(right.sessionKey)
+        ),
+      }))
+      .sort((left, right) => left.agentName.localeCompare(right.agentName));
+  }, [selectedInstance, topology]);
   const resolvedWorkspaceStyle = isMobile ? workspaceStyleMobile : workspaceStyle;
   const resolvedTabBodyLayoutStyle = isMobile ? tabBodyLayoutStyleMobile : tabBodyLayoutStyle;
 
@@ -87,6 +144,27 @@ export function PairingPage(): JSX.Element {
   useEffect(() => {
     void reloadInstances();
   }, [reloadInstances]);
+
+  const reloadTopology = useCallback(async () => {
+    setIsTopologyLoading(true);
+    setTopologyError(null);
+    try {
+      const data = await getAggregateTopology();
+      setTopology(data);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '读取拓扑失败';
+      setTopologyError(message);
+    } finally {
+      setIsTopologyLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (panel.kind !== 'instance') {
+      return;
+    }
+    void reloadTopology();
+  }, [panel, reloadTopology]);
 
   const handleValidateToken = useCallback(async () => {
     if (!tokenName.trim() || !tokenEndpoint.trim() || !tokenGatewayToken.trim()) {
@@ -418,6 +496,73 @@ export function PairingPage(): JSX.Element {
                   <p style={detailValueStyle}>{selectedInstance.created_at}</p>
                 </section>
               </div>
+              <section style={topologySectionStyle} aria-label="实例拓扑树">
+                <div style={topologyHeaderStyle}>
+                  <p style={detailLabelStyle}>关系拓扑</p>
+                  <button
+                    type="button"
+                    style={ghostButtonStyle}
+                    onClick={() => void reloadTopology()}
+                    disabled={isTopologyLoading}
+                  >
+                    {isTopologyLoading ? '刷新中...' : '刷新拓扑'}
+                  </button>
+                </div>
+                {isTopologyLoading ? <p style={hintTextStyle}>拓扑加载中...</p> : null}
+                {!isTopologyLoading && topologyError ? (
+                  <p style={topologyErrorStyle}>拓扑读取失败：{topologyError}</p>
+                ) : null}
+                {!isTopologyLoading && !topologyError && topologyDiagnostic?.status === 'failed' ? (
+                  <p style={topologyErrorStyle}>实例不可用：{topologyDiagnostic.error?.message ?? '连接失败'}</p>
+                ) : null}
+                {!isTopologyLoading && !topologyError && topologyAgents.length === 0 ? (
+                  <p style={hintTextStyle}>当前实例暂无 Agent 或 Session。</p>
+                ) : null}
+                {!isTopologyLoading && !topologyError && topologyAgents.length > 0 ? (
+                  <div style={topologyTreeWrapStyle} data-testid="instance-topology-tree">
+                    <ul style={treeRootListStyle}>
+                      <li style={treeItemStyle}>
+                        <div style={treeInstanceNodeStyle}>
+                          <span>实例</span>
+                          <strong style={treeNodeStrongStyle}>{selectedInstance.name}</strong>
+                        </div>
+                        <ul style={treeChildListStyle}>
+                          {topologyAgents.map((agent) => (
+                            <li key={agent.agentId} style={treeItemStyle}>
+                              <div style={treeAgentNodeStyle}>
+                                <span style={treeNodeMainLabelStyle}>
+                                  Agent · {agent.agentName || agent.agentId}
+                                </span>
+                                <span style={treeNodeMetaStyle}>
+                                  {agent.isActive ? '活跃' : agent.status} · {agent.sessions.length} 会话
+                                </span>
+                              </div>
+                              {agent.sessions.length > 0 ? (
+                                <ul style={treeChildListStyle}>
+                                  {agent.sessions.map((session) => (
+                                    <li key={session.sessionKey} style={treeItemStyle}>
+                                      <div style={treeSessionNodeStyle}>
+                                        <span style={treeNodeMainLabelStyle}>
+                                          Session · {session.label || session.sessionKey}
+                                        </span>
+                                        <span style={treeNodeMetaStyle}>
+                                          {session.updatedAt ? `更新于 ${session.updatedAt}` : '暂无更新时间'}
+                                        </span>
+                                      </div>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <p style={treeEmptyHintStyle}>该 Agent 暂无 Session</p>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </li>
+                    </ul>
+                  </div>
+                ) : null}
+              </section>
               <div style={actionRowStyle}>
                 {currentInstanceId === selectedInstance.id ? (
                   <span style={currentBadgeStyle}>当前实例</span>
@@ -822,4 +967,117 @@ const currentBadgeStyle: React.CSSProperties = {
   padding: '0.15rem 0.52rem',
   fontSize: '0.72rem',
   fontWeight: 700,
+};
+
+const topologySectionStyle: React.CSSProperties = {
+  border: '1px solid rgba(148, 163, 184, 0.25)',
+  borderRadius: '0.58rem',
+  background: 'rgba(255, 255, 255, 0.84)',
+  padding: '0.56rem',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.45rem',
+  minHeight: '180px',
+};
+
+const topologyHeaderStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '0.5rem',
+};
+
+const topologyErrorStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.74rem',
+  color: '#b91c1c',
+  lineHeight: 1.45,
+};
+
+const topologyTreeWrapStyle: React.CSSProperties = {
+  maxHeight: '320px',
+  overflowY: 'auto',
+  paddingRight: '0.12rem',
+};
+
+const treeRootListStyle: React.CSSProperties = {
+  margin: 0,
+  padding: 0,
+  listStyle: 'none',
+};
+
+const treeChildListStyle: React.CSSProperties = {
+  margin: '0.36rem 0 0 0.68rem',
+  padding: 0,
+  listStyle: 'none',
+  borderLeft: '1px dashed rgba(148, 163, 184, 0.45)',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.28rem',
+};
+
+const treeItemStyle: React.CSSProperties = {
+  margin: 0,
+  padding: 0,
+};
+
+const treeInstanceNodeStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '0.42rem',
+  border: '1px solid rgba(14, 116, 144, 0.32)',
+  background: 'rgba(224, 242, 254, 0.75)',
+  borderRadius: '0.45rem',
+  padding: '0.3rem 0.48rem',
+  fontSize: '0.76rem',
+  color: '#0f172a',
+};
+
+const treeAgentNodeStyle: React.CSSProperties = {
+  marginLeft: '0.56rem',
+  border: '1px solid rgba(148, 163, 184, 0.32)',
+  background: 'rgba(248, 250, 252, 0.9)',
+  borderRadius: '0.45rem',
+  padding: '0.28rem 0.44rem',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '0.48rem',
+};
+
+const treeSessionNodeStyle: React.CSSProperties = {
+  marginLeft: '0.56rem',
+  border: '1px solid rgba(148, 163, 184, 0.22)',
+  background: 'rgba(255, 255, 255, 0.92)',
+  borderRadius: '0.42rem',
+  padding: '0.22rem 0.4rem',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '0.48rem',
+};
+
+const treeNodeStrongStyle: React.CSSProperties = {
+  fontSize: '0.76rem',
+  color: '#0f172a',
+};
+
+const treeNodeMainLabelStyle: React.CSSProperties = {
+  fontSize: '0.74rem',
+  color: '#0f172a',
+  fontWeight: 700,
+  lineHeight: 1.35,
+  wordBreak: 'break-word',
+};
+
+const treeNodeMetaStyle: React.CSSProperties = {
+  fontSize: '0.68rem',
+  color: '#64748b',
+  whiteSpace: 'nowrap',
+};
+
+const treeEmptyHintStyle: React.CSSProperties = {
+  margin: '0.2rem 0 0 1.22rem',
+  fontSize: '0.7rem',
+  color: '#64748b',
 };

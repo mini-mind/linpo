@@ -4,7 +4,7 @@ import { userEvent } from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { InstanceItem } from '../api/types';
+import type { AggregateTopologyResponse, InstanceItem } from '../api/types';
 import { ToastProvider } from '../hooks/useToast';
 import { PairingPage } from './PairingPage';
 
@@ -15,6 +15,7 @@ const {
   mockValidateInstanceByPairCode,
   mockCreateInstanceByPairCode,
   mockDeleteInstance,
+  mockGetAggregateTopology,
 } = vi.hoisted(() => ({
   mockListInstances: vi.fn(),
   mockValidateInstance: vi.fn(),
@@ -22,6 +23,7 @@ const {
   mockValidateInstanceByPairCode: vi.fn(),
   mockCreateInstanceByPairCode: vi.fn(),
   mockDeleteInstance: vi.fn(),
+  mockGetAggregateTopology: vi.fn(),
 }));
 
 vi.mock('../api/instanceClient', async () => {
@@ -37,6 +39,14 @@ vi.mock('../api/instanceClient', async () => {
   };
 });
 
+vi.mock('../api/client', async () => {
+  const actual = await vi.importActual<typeof import('../api/client')>('../api/client');
+  return {
+    ...actual,
+    getAggregateTopology: mockGetAggregateTopology,
+  };
+});
+
 function buildInstance(overrides: Partial<InstanceItem> = {}): InstanceItem {
   return {
     id: 'inst-1',
@@ -46,6 +56,79 @@ function buildInstance(overrides: Partial<InstanceItem> = {}): InstanceItem {
     status: 'online',
     last_check_at: '2026-03-30T08:00:00Z',
     created_at: '2026-03-30T07:00:00Z',
+    ...overrides,
+  };
+}
+
+function buildTopology(overrides: Partial<AggregateTopologyResponse> = {}): AggregateTopologyResponse {
+  return {
+    request_id: 'req-topology-1',
+    freshness: {
+      status: 'fresh',
+      checked_at: '2026-03-30T08:00:00Z',
+    },
+    partial_failure: false,
+    diagnostics: [
+      {
+        instance_id: 'inst-1',
+        instance_name: 'claw2',
+        status: 'ok',
+        freshness: {
+          status: 'fresh',
+          checked_at: '2026-03-30T08:00:00Z',
+        },
+        error: null,
+      },
+    ],
+    instances: [
+      {
+        node_id: 'instance:inst-1',
+        instance_id: 'inst-1',
+        name: 'claw2',
+        type: 'openclaw',
+        status: 'online',
+        last_check_at: '2026-03-30T08:00:00Z',
+        created_at: '2026-03-30T07:00:00Z',
+      },
+    ],
+    agents: [
+      {
+        node_id: 'agent:planner',
+        instance_id: 'inst-1',
+        instance_name: 'claw2',
+        agent_id: 'planner',
+        agent_name: 'Planner',
+        status: 'running',
+        is_active: true,
+        last_active_at: '2026-03-30T08:10:00Z',
+        drilldown_path: '/session?agentId=planner',
+      },
+    ],
+    sessions: [
+      {
+        node_id: 'session:planner:main',
+        instance_id: 'inst-1',
+        instance_name: 'claw2',
+        agent_id: 'planner',
+        agent_name: 'Planner',
+        session_key: 'planner-main',
+        label: '主会话',
+        updated_at: '2026-03-30T08:11:00Z',
+      },
+    ],
+    tools: [],
+    edges: [
+      {
+        source: 'instance:inst-1',
+        target: 'agent:planner',
+        kind: 'instance_agent',
+      },
+      {
+        source: 'agent:planner',
+        target: 'session:planner:main',
+        kind: 'agent_session',
+      },
+    ],
     ...overrides,
   };
 }
@@ -70,6 +153,7 @@ describe('PairingPage', () => {
     mockValidateInstanceByPairCode.mockResolvedValue({ ok: true, status: 'ok', message: '配对码可用' });
     mockCreateInstanceByPairCode.mockResolvedValue(buildInstance({ id: 'inst-created-by-code', name: 'claw2-code' }));
     mockDeleteInstance.mockResolvedValue({ deleted: true });
+    mockGetAggregateTopology.mockResolvedValue(buildTopology());
   });
 
   it('renders sidebar and instance detail panel, and allows setting current instance', async () => {
@@ -83,6 +167,11 @@ describe('PairingPage', () => {
     expect(screen.getByRole('button', { name: '新建配对' })).toBeInTheDocument();
     expect(screen.getAllByText('claw2').length).toBeGreaterThan(0);
     expect(screen.getByText('http://127.0.0.1:28789')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId('instance-topology-tree')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Agent · Planner')).toBeInTheDocument();
+    expect(screen.getByText('Session · 主会话')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '设为当前实例' }));
     expect(window.localStorage.getItem('linpo.currentInstanceId')).toBe('inst-1');
   });

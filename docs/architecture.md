@@ -33,6 +33,7 @@
 - `KanbanShell` 在“按流程分列”模式下，列头需展示流程状态并提供主动作（`中断流程/继续流程/运行流程`）与删除动作。
 - `Layout`：维护流程导航入口缓存（`linpo.lastFlowEntryPath`），用于“点击导航栏流程时回到上次访问的编辑页”。
 - `PairingPage`：OpenClaw 实例页，承接“左侧实例列表 + 右侧主工作区”；右侧支持实例详情区块与新建配对双标签（Token/配对码）。
+- `PairingPage`：实例详情态需额外展示“实例 -> Agent -> Session”的树形拓扑，数据源复用 `/aggregate/topology` 并按选中实例过滤。
 - `PairingTutorialPage`：配对教程页，承接“仅通过 OpenClaw 对话拿到 endpoint/token”的接入步骤说明与跳转入口。
 - 三个主工作页（`KanbanShell/FlowListPage/FlowEditorPanel`）共用贴顶扁平工具栏样式 token，保持一致的视觉与层级。
 - `ApprovalCenter`：统一审批列表与批量操作。
@@ -120,6 +121,7 @@
 - `DELETE /api/v1/boards/{board_id}/tasks/{task_id}`：删除单个需求节点；若该节点被同需求下游节点依赖，后端移除对应依赖并重算可调度任务。
 - `DELETE /api/v1/boards/{board_id}/tasks/requirements/{requirement_id}`：删除整组需求节点（同 `requirement_id`）。
 - `GET/POST/PATCH/DELETE /instances*`：OpenClaw 实例配对管理契约，配对成功后前端写入 `linpo.currentInstanceId` 作为默认实例上下文。
+- `GET /aggregate/topology`：实例页详情态用于构建关系树（实例节点、Agent 节点、Session 节点），前端按选中实例筛选并渲染。
 - `POST /instances/pair-code/validate`、`POST /instances/pair-code`：配对码校验与配对创建契约，后端负责将配对码解析为 `endpoint/gateway_token` 再复用实例校验与落库流程。
 - 为兼容部分网关对 `DELETE` 的限制，提供等价兜底：`POST /api/v1/boards/{board_id}/tasks/{task_id}/delete`、`POST /api/v1/boards/{board_id}/tasks/requirements/{requirement_id}/delete`。
 - v0.7 默认单看板，前端默认使用 `board_id=default`。

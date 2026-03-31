@@ -69,6 +69,12 @@ type TaskOutputEntry = {
   value: string;
 };
 
+type TaskDependencyEntry = {
+  nodeId: string;
+  title: string;
+  statusLabel: string;
+};
+
 type TaskDetailTab = 'info' | 'stream' | 'output';
 
 const TASK_SESSION_REALTIME_DATA_SOURCE = getDefaultObserverDataSource();
@@ -170,6 +176,41 @@ export default function CollabPage(): JSX.Element {
     }
     return ids.size;
   }, [allTasks]);
+  const dependencyEntries = useMemo<TaskDependencyEntry[]>(() => {
+    if (!selectedTask) {
+      return [];
+    }
+    const dependencyNodeIds = parseDependencyNodeIds(selectedTask.extras.dependencies);
+    if (dependencyNodeIds.length === 0) {
+      return [];
+    }
+
+    const selectedFlowId = (selectedTask.extras.flow_id ?? '').trim();
+    const selectedRequirementId = (selectedTask.extras.requirement_id ?? '').trim();
+    return dependencyNodeIds.map((nodeId) => {
+      const matchedByFlow = allTasks.find((task) => {
+        const candidateFlowId = (task.extras.flow_id ?? '').trim();
+        const candidateNodeId = (task.extras.flow_node ?? '').trim();
+        return selectedFlowId !== '' && candidateFlowId === selectedFlowId && candidateNodeId === nodeId;
+      });
+      const matchedByRequirement = allTasks.find((task) => {
+        const candidateRequirementId = (task.extras.requirement_id ?? '').trim();
+        const candidateNodeId = (task.extras.flow_node ?? '').trim();
+        return (
+          selectedRequirementId !== ''
+          && candidateRequirementId === selectedRequirementId
+          && candidateNodeId === nodeId
+        );
+      });
+      const matchedFallback = allTasks.find((task) => task.id === nodeId || (task.extras.flow_node ?? '').trim() === nodeId);
+      const matched = matchedByFlow ?? matchedByRequirement ?? matchedFallback;
+      return {
+        nodeId,
+        title: matched?.title ?? `节点 ${nodeId}`,
+        statusLabel: matched ? getTaskStatusLabelForDetail(matched) : '未知',
+      };
+    });
+  }, [allTasks, selectedTask]);
   const outputEntries = useMemo<TaskOutputEntry[]>(() => {
     if (!selectedTask) {
       return [];
@@ -876,19 +917,37 @@ export default function CollabPage(): JSX.Element {
             <div style={taskDetailBodyStyle}>
               {taskDetailTab === 'info' ? (
                 <section style={taskInfoPanelStyle} aria-label="基本信息">
-                  <div style={taskDetailMetaGridStyle}>
-                    <p style={taskDetailMetaTextStyle}>状态：{selectedTask.status}</p>
-                    <p style={taskDetailMetaTextStyle}>来源：{selectedTask.source === 'flow' ? 'Flow' : 'Provider'}</p>
-                    <p style={taskDetailMetaTextStyle}>Agent：{selectedTask.agentName || '待分配'}</p>
-                    <p style={taskDetailMetaTextStyle}>Agent ID：{selectedTask.agentId ?? 'n/a'}</p>
-                  </div>
                   <div style={taskDetailDescriptionWrapStyle}>
                     <p style={taskDetailSectionTitleStyle}>任务描述</p>
                     <p style={taskDetailSummaryStyle}>{selectedTask.summary || '暂无描述'}</p>
                   </div>
-                  <p style={taskDetailSummaryStyle}>
-                    会话：{getTaskExecutionSessionKey(selectedTask) ?? '当前节点未绑定 execution_session_key'}
-                  </p>
+
+                  <section style={taskKeyFieldsCardStyle} aria-label="关键字段">
+                    <p style={taskDetailSectionTitleStyle}>关键字段</p>
+                    <div style={taskDetailMetaGridStyle}>
+                      <article style={taskMetaFieldItemStyle}>
+                        <p style={taskMetaFieldLabelStyle}>状态</p>
+                        <p style={taskMetaFieldValueStyle}>{selectedTask.status}</p>
+                      </article>
+                      <article style={taskMetaFieldItemStyle}>
+                        <p style={taskMetaFieldLabelStyle}>来源</p>
+                        <p style={taskMetaFieldValueStyle}>{selectedTask.source === 'flow' ? 'Flow' : 'Provider'}</p>
+                      </article>
+                      <article style={taskMetaFieldItemStyle}>
+                        <p style={taskMetaFieldLabelStyle}>Agent</p>
+                        <p style={taskMetaFieldValueStyle}>{selectedTask.agentName || '待分配'}</p>
+                      </article>
+                      <article style={taskMetaFieldItemStyle}>
+                        <p style={taskMetaFieldLabelStyle}>Agent ID</p>
+                        <p style={taskMetaFieldValueStyle}>{selectedTask.agentId ?? 'n/a'}</p>
+                      </article>
+                      <article style={taskMetaFieldItemStyle}>
+                        <p style={taskMetaFieldLabelStyle}>会话</p>
+                        <p style={taskMetaFieldValueStyle}>
+                          {getTaskExecutionSessionKey(selectedTask) ?? '当前节点未绑定 execution_session_key'}
+                        </p>
+                      </article>
+                    </div>
                   <div style={taskControlActionsStyle}>
                     {selectedTask.status === 'running' ? (
                       <button
@@ -924,6 +983,23 @@ export default function CollabPage(): JSX.Element {
                     && selectedTask.status !== 'blocked_by_approval' ? (
                       <p style={taskControlHintStyle}>当前状态无可执行控制动作</p>
                     ) : null}
+                  </div>
+                  </section>
+
+                  <div style={taskDetailDescriptionWrapStyle}>
+                    <p style={taskDetailSectionTitleStyle}>依赖节点</p>
+                    {dependencyEntries.length === 0 ? (
+                      <p style={taskDetailSummaryStyle}>无</p>
+                    ) : (
+                      <ul style={dependencyListStyle}>
+                        {dependencyEntries.map((item) => (
+                          <li key={item.nodeId} style={dependencyItemStyle}>
+                            <span style={dependencyNameStyle}>{item.title}</span>
+                            <span style={dependencyStatusStyle}>{item.statusLabel}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                 </section>
               ) : null}
@@ -1210,12 +1286,29 @@ function normalizeTaskStatus(status: string): TaskStatus {
   return 'queued';
 }
 
+function parseDependencyNodeIds(raw: string | null | undefined): string[] {
+  const value = (raw ?? '').trim();
+  if (value === '' || value === 'none') {
+    return [];
+  }
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item !== '');
+}
+
 function resolveStatusColumnKey(task: BoardTask): StatusColumnKey {
   const dispatchStatus = String(task.extras.dispatch_status ?? '').trim().toLowerCase();
   if (dispatchStatus === 'interrupted' || dispatchStatus === 'stopped' || dispatchStatus === 'blocked') {
     return 'blocked';
   }
   return task.status;
+}
+
+function getTaskStatusLabelForDetail(task: BoardTask): string {
+  const key = resolveStatusColumnKey(task);
+  const matched = STATUS_COLUMNS.find((item) => item.key === key);
+  return matched?.title ?? task.status;
 }
 
 function isInterruptedBlockedFlowTask(task: BoardTask): boolean {
@@ -2097,14 +2190,9 @@ const taskInfoPanelStyle: React.CSSProperties = {
 
 const taskDetailMetaGridStyle: React.CSSProperties = {
   display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-  gap: '0.3rem 0.6rem',
-};
-
-const taskDetailMetaTextStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: '0.76rem',
-  color: '#334155',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))',
+  gap: '0.38rem',
+  minWidth: 0,
 };
 
 const taskDetailDescriptionWrapStyle: React.CSSProperties = {
@@ -2125,6 +2213,83 @@ const taskDetailSummaryStyle: React.CSSProperties = {
   fontSize: '0.76rem',
   color: '#475569',
   lineHeight: 1.45,
+};
+
+const taskKeyFieldsCardStyle: React.CSSProperties = {
+  border: '1px solid rgba(148, 163, 184, 0.24)',
+  borderRadius: '0.5rem',
+  background: 'rgba(255, 255, 255, 0.86)',
+  padding: '0.5rem',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.42rem',
+  minWidth: 0,
+};
+
+const taskMetaFieldItemStyle: React.CSSProperties = {
+  minWidth: 0,
+  border: '1px solid rgba(148, 163, 184, 0.2)',
+  borderRadius: '0.42rem',
+  background: 'rgba(248, 250, 252, 0.85)',
+  padding: '0.32rem 0.4rem',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.16rem',
+};
+
+const taskMetaFieldLabelStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.68rem',
+  color: '#64748b',
+  fontWeight: 700,
+  lineHeight: 1.35,
+};
+
+const taskMetaFieldValueStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.75rem',
+  color: '#0f172a',
+  fontWeight: 600,
+  lineHeight: 1.4,
+  overflowWrap: 'anywhere',
+  wordBreak: 'break-word',
+  whiteSpace: 'normal',
+};
+
+const dependencyListStyle: React.CSSProperties = {
+  margin: 0,
+  padding: 0,
+  listStyle: 'none',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.26rem',
+};
+
+const dependencyItemStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '0.48rem',
+  border: '1px solid rgba(148, 163, 184, 0.22)',
+  borderRadius: '0.4rem',
+  background: 'rgba(255, 255, 255, 0.86)',
+  padding: '0.24rem 0.42rem',
+};
+
+const dependencyNameStyle: React.CSSProperties = {
+  fontSize: '0.74rem',
+  color: '#0f172a',
+  fontWeight: 600,
+  lineHeight: 1.35,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+};
+
+const dependencyStatusStyle: React.CSSProperties = {
+  fontSize: '0.7rem',
+  color: '#475569',
+  whiteSpace: 'nowrap',
 };
 
 const taskControlActionsStyle: React.CSSProperties = {

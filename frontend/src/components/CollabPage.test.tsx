@@ -338,6 +338,17 @@ describe('CollabPage', () => {
     mockGetAggregateOverview.mockResolvedValue(buildOverview({ agents: [buildAgent()] }));
     mockListKanbanTasks.mockResolvedValue([
       buildKanbanTask({
+        id: 'task-dep-1',
+        title: '上游数据准备',
+        status: 'completed',
+        extras: {
+          flow_id: 'flow-detail-1',
+          requirement_id: 'req-detail-1',
+          flow_node: 'node-a',
+          dependencies: 'none',
+        },
+      }),
+      buildKanbanTask({
         title: '详情任务',
         summary: '这是一条用于弹窗详情的任务摘要',
         status: 'running',
@@ -345,6 +356,10 @@ describe('CollabPage', () => {
         extras: {
           board_id: 'default',
           trace_id: 'trace-001',
+          flow_id: 'flow-detail-1',
+          requirement_id: 'req-detail-1',
+          flow_node: 'node-b',
+          dependencies: 'node-a',
         },
       }),
     ]);
@@ -361,6 +376,9 @@ describe('CollabPage', () => {
     expect(within(detailDialog).getByRole('tab', { name: '任务产出' })).toBeInTheDocument();
     expect(within(detailDialog).getByText('任务描述')).toBeInTheDocument();
     expect(within(detailDialog).getByText('这是一条用于弹窗详情的任务摘要')).toBeInTheDocument();
+    expect(within(detailDialog).getByText('依赖节点')).toBeInTheDocument();
+    expect(within(detailDialog).getByText('上游数据准备')).toBeInTheDocument();
+    expect(within(detailDialog).getByText('完成')).toBeInTheDocument();
     expect(within(detailDialog).getByRole('button', { name: '中断' })).toBeInTheDocument();
 
     await userEvent.click(within(detailDialog).getByRole('tab', { name: '任务产出' }));
