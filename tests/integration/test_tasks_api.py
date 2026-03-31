@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import quote
 
 import pytest
 from cryptography.fernet import Fernet
@@ -18,6 +19,10 @@ from tests.integration._asgi import request
 DEFAULT_TASKS_PATH = "/api/v1/boards/default/tasks"
 DEFAULT_FLOW_GENERATE_PATH = "/api/v1/boards/default/tasks/flow/generate"
 DEFAULT_FLOW_CONFIRM_PATH = "/api/v1/boards/default/tasks/flow/confirm"
+DEFAULT_TASK_INTERRUPT_PATH = "/api/v1/boards/default/tasks/{task_id}/interrupt"
+DEFAULT_TASK_CONTINUE_PATH = "/api/v1/boards/default/tasks/{task_id}/continue"
+DEFAULT_TASK_OUTPUT_PREVIEW_PATH = "/api/v1/boards/default/tasks/{task_id}/output-preview"
+DEFAULT_TASK_OUTPUT_FILE_PATH = "/api/v1/boards/default/tasks/{task_id}/output-file"
 
 
 def _json_headers(cookie_header: str | None = None) -> dict[str, str]:
@@ -542,6 +547,144 @@ def test_flow_confirm_enqueues_tasks_then_dispatches_from_queue(
     assert any(item["status"] in {"running", "completed", "blocked_by_approval"} for item in list_payload)
 
 
+def test_flow_confirm_reuse_requirement_id_replaces_previous_tasks(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("flow-instance-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-flow-instance",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-instance",
+    )
+
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
+        lambda self, **kwargs: {
+            "request_id": f"req-{kwargs['agent_id']}",
+            "agent_id": kwargs["agent_id"],
+            "status": "accepted",
+        },
+    )
+
+    requirement_id = "flow_single_instance_demo"
+    confirm_payload = {
+        "instance_id": instance["id"],
+        "requirement_id": requirement_id,
+        "executor_agent_id": "agent-executor",
+        "manager_agent_id": "agent-manager",
+        "nodes": [
+            {
+                "id": "node_1",
+                "title": "步骤1",
+                "x": 100,
+                "y": 100,
+                "layer": 1,
+                "sensitive": False,
+                "status": "queued",
+                "agent_id": "agent-executor",
+            },
+            {
+                "id": "node_2",
+                "title": "步骤2",
+                "x": 380,
+                "y": 100,
+                "layer": 2,
+                "sensitive": False,
+                "status": "queued",
+                "agent_id": "agent-executor",
+            },
+        ],
+        "edges": [
+            {
+                "id": "edge-node_1-node_2",
+                "source": "node_1",
+                "target": "node_2",
+            }
+        ],
+    }
+
+    first_confirm_status, _, _ = _request_json(
+        "POST",
+        DEFAULT_FLOW_CONFIRM_PATH,
+        confirm_payload,
+        auth_cookie,
+    )
+    assert first_confirm_status == 200
+
+    first_list_status, _, first_list_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
+    assert first_list_status == 200
+    first_tasks = cast(list[dict[str, Any]], json.loads(first_list_body.decode("utf-8")))
+    first_running = next(
+        item for item in first_tasks if item["extras"]["requirement_id"] == requirement_id and item["status"] == "running"
+    )
+
+    run_id_1 = first_running["extras"]["dispatch_run_id"]
+    callback_token_1 = first_running["extras"]["dispatch_callback_token"]
+    event_status_1, _, _ = _request_json(
+        "POST",
+        f"/api/v1/boards/default/tasks/task-runs/{run_id_1}/events",
+        {
+            "eventType": "completed",
+            "callbackToken": callback_token_1,
+            "idempotencyKey": "evt-flow-instance-1",
+            "message": "node-1 done",
+        },
+    )
+    assert event_status_1 == 200
+
+    second_running_status, _, second_running_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
+    assert second_running_status == 200
+    second_running_tasks = cast(list[dict[str, Any]], json.loads(second_running_body.decode("utf-8")))
+    first_instance_node2 = next(
+        item
+        for item in second_running_tasks
+        if item["extras"]["requirement_id"] == requirement_id
+        and item["extras"]["flow_node"] == "node_2"
+        and item["status"] == "running"
+    )
+
+    run_id_2 = first_instance_node2["extras"]["dispatch_run_id"]
+    callback_token_2 = first_instance_node2["extras"]["dispatch_callback_token"]
+    event_status_2, _, _ = _request_json(
+        "POST",
+        f"/api/v1/boards/default/tasks/task-runs/{run_id_2}/events",
+        {
+            "eventType": "completed",
+            "callbackToken": callback_token_2,
+            "idempotencyKey": "evt-flow-instance-2",
+            "message": "node-2 done",
+        },
+    )
+    assert event_status_2 == 200
+
+    second_confirm_status, _, _ = _request_json(
+        "POST",
+        DEFAULT_FLOW_CONFIRM_PATH,
+        confirm_payload,
+        auth_cookie,
+    )
+    assert second_confirm_status == 200
+
+    final_list_status, _, final_list_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
+    assert final_list_status == 200
+    final_tasks = cast(list[dict[str, Any]], json.loads(final_list_body.decode("utf-8")))
+    latest_tasks = [
+        item
+        for item in final_tasks
+        if item["extras"].get("requirement_id") == requirement_id
+    ]
+    assert len(latest_tasks) == 2
+    latest_node_1 = next(item for item in latest_tasks if item["extras"]["flow_node"] == "node_1")
+    latest_node_2 = next(item for item in latest_tasks if item["extras"]["flow_node"] == "node_2")
+    assert latest_node_1["status"] == "running"
+    assert latest_node_2["status"] == "queued"
+    assert all("flow_instance_id" not in item["extras"] for item in latest_tasks)
+
+
 def test_flow_requirement_rename_updates_all_requirement_tasks(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -720,16 +863,284 @@ def test_flow_requirement_stop_marks_future_tasks_and_requests_running_stop(
     assert len(after_tasks) == 2
 
     stopped_task = next(item for item in after_tasks if item["id"] == queued_before["id"])
-    assert stopped_task["status"] == "failed"
-    assert stopped_task["extras"]["dispatch_status"] == "stopped"
-    assert stopped_task["extras"]["dispatch_error"] == "stopped_by_user"
+    assert stopped_task["status"] == "blocked_by_approval"
+    assert stopped_task["extras"]["dispatch_status"] == "interrupted"
+    assert stopped_task["extras"]["dispatch_error"] == "interrupted_by_flow"
     assert stopped_task["extras"]["flow_stopped"] == "true"
 
     running_task = next(item for item in after_tasks if item["id"] == running_before["id"])
-    assert running_task["status"] == "running"
+    assert running_task["status"] == "blocked_by_approval"
     assert running_task["extras"]["flow_stopped"] == "true"
     assert isinstance(running_task["extras"].get("stop_requested_at"), str)
     assert running_task["extras"]["stop_requested_at"]
+    assert running_task["extras"]["dispatch_status"] == "interrupted"
+
+
+def test_flow_requirement_continue_resumes_interrupted_tasks(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("flow-continue-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-flow-continue",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-continue",
+    )
+
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
+        lambda self, **kwargs: {
+            "request_id": f"req-{kwargs['agent_id']}",
+            "agent_id": kwargs["agent_id"],
+            "status": "accepted",
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.pause_agent",
+        lambda self, **kwargs: {
+            "request_id": "pause-flow-continue",
+            "agent_id": kwargs["agent_id"],
+            "status": "accepted",
+            "message": "paused",
+        },
+    )
+
+    confirm_status, _, _ = _request_json(
+        "POST",
+        DEFAULT_FLOW_CONFIRM_PATH,
+        {
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor",
+            "nodes": [
+                {
+                    "id": "node_1",
+                    "title": "步骤1",
+                    "x": 100,
+                    "y": 100,
+                    "layer": 1,
+                    "sensitive": False,
+                    "status": "queued",
+                    "agent_id": "agent-executor",
+                },
+                {
+                    "id": "node_2",
+                    "title": "步骤2",
+                    "x": 380,
+                    "y": 100,
+                    "layer": 2,
+                    "sensitive": False,
+                    "status": "queued",
+                    "agent_id": "agent-executor",
+                },
+            ],
+            "edges": [
+                {
+                    "id": "edge-node_1-node_2",
+                    "source": "node_1",
+                    "target": "node_2",
+                }
+            ],
+        },
+        auth_cookie,
+    )
+    assert confirm_status == 200
+
+    list_status, _, list_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
+    assert list_status == 200
+    tasks = cast(list[dict[str, Any]], json.loads(list_body.decode("utf-8")))
+    requirement_id = str(tasks[0]["extras"]["requirement_id"])
+    assert requirement_id
+
+    stop_status, _, _ = _request_json(
+        "POST",
+        f"/api/v1/boards/default/tasks/requirements/{requirement_id}/stop",
+        {},
+        auth_cookie,
+    )
+    assert stop_status == 200
+
+    continue_status, _, continue_payload = _request_json(
+        "POST",
+        f"/api/v1/boards/default/tasks/requirements/{requirement_id}/continue",
+        {},
+        auth_cookie,
+    )
+    assert continue_status == 200
+    assert continue_payload["requirement_id"] == requirement_id
+    assert len(continue_payload["resumed_task_ids"]) >= 1
+    assert isinstance(continue_payload["dispatched_task_ids"], list)
+
+    after_status, _, after_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
+    assert after_status == 200
+    after_tasks = cast(list[dict[str, Any]], json.loads(after_body.decode("utf-8")))
+    resumed_running = [
+        item
+        for item in after_tasks
+        if item["extras"].get("requirement_id") == requirement_id and item["status"] == "running"
+    ]
+    assert len(resumed_running) >= 1
+
+
+def test_flow_requirement_sync_updates_blocked_unexecuted_nodes(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("flow-sync-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-flow-sync",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-sync",
+    )
+
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
+        lambda self, **kwargs: {
+            "request_id": f"req-{kwargs['agent_id']}",
+            "agent_id": kwargs["agent_id"],
+            "status": "accepted",
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.pause_agent",
+        lambda self, **kwargs: {
+            "request_id": "pause-flow-sync",
+            "agent_id": kwargs["agent_id"],
+            "status": "accepted",
+            "message": "paused",
+        },
+    )
+
+    confirm_status, _, _ = _request_json(
+        "POST",
+        DEFAULT_FLOW_CONFIRM_PATH,
+        {
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor",
+            "nodes": [
+                {
+                    "id": "node_1",
+                    "title": "步骤1",
+                    "x": 100,
+                    "y": 100,
+                    "layer": 1,
+                    "sensitive": False,
+                    "status": "queued",
+                    "agent_id": "agent-executor",
+                },
+                {
+                    "id": "node_2",
+                    "title": "步骤2",
+                    "x": 380,
+                    "y": 100,
+                    "layer": 2,
+                    "sensitive": False,
+                    "status": "queued",
+                    "agent_id": "agent-executor",
+                },
+            ],
+            "edges": [
+                {
+                    "id": "edge-node_1-node_2",
+                    "source": "node_1",
+                    "target": "node_2",
+                }
+            ],
+        },
+        auth_cookie,
+    )
+    assert confirm_status == 200
+
+    list_status, _, list_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
+    assert list_status == 200
+    tasks = cast(list[dict[str, Any]], json.loads(list_body.decode("utf-8")))
+    requirement_id = str(tasks[0]["extras"]["requirement_id"])
+    assert requirement_id
+
+    stop_status, _, _ = _request_json(
+        "POST",
+        f"/api/v1/boards/default/tasks/requirements/{requirement_id}/stop",
+        {},
+        auth_cookie,
+    )
+    assert stop_status == 200
+
+    sync_status, _, sync_payload = _request_json(
+        "POST",
+        f"/api/v1/boards/default/tasks/requirements/{requirement_id}/sync",
+        {
+            "requirement_title": "同步后流程",
+            "nodes": [
+                {
+                    "id": "node_1",
+                    "title": "步骤1",
+                    "description": "保留原节点",
+                    "x": 100,
+                    "y": 100,
+                    "layer": 1,
+                    "sensitive": False,
+                    "status": "blocked_by_approval",
+                    "agent_id": "agent-executor",
+                },
+                {
+                    "id": "node_2",
+                    "title": "步骤2-已修订",
+                    "description": "修改后的节点描述",
+                    "x": 380,
+                    "y": 100,
+                    "layer": 2,
+                    "sensitive": False,
+                    "status": "blocked_by_approval",
+                    "agent_id": "agent-executor",
+                },
+                {
+                    "id": "node_3",
+                    "title": "新增步骤3",
+                    "description": "新增节点",
+                    "x": 660,
+                    "y": 100,
+                    "layer": 2,
+                    "sensitive": False,
+                    "status": "blocked_by_approval",
+                    "agent_id": "agent-executor",
+                },
+            ],
+            "edges": [
+                {
+                    "id": "edge-node_1-node_2",
+                    "source": "node_1",
+                    "target": "node_2",
+                },
+                {
+                    "id": "edge-node_1-node_3",
+                    "source": "node_1",
+                    "target": "node_3",
+                },
+            ],
+        },
+        auth_cookie,
+    )
+    assert sync_status == 200
+    assert sync_payload["requirement_id"] == requirement_id
+    assert len(sync_payload["updated_task_ids"]) >= 2
+    assert len(sync_payload["created_task_ids"]) == 1
+
+    after_status, _, after_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
+    assert after_status == 200
+    after_tasks = cast(list[dict[str, Any]], json.loads(after_body.decode("utf-8")))
+    flow_tasks = [item for item in after_tasks if item["extras"].get("requirement_id") == requirement_id]
+    assert len(flow_tasks) == 3
+    updated_node_2 = next(item for item in flow_tasks if item["extras"]["flow_node"] == "node_2")
+    assert updated_node_2["title"] == "步骤2-已修订"
+    assert updated_node_2["summary"] == "修改后的节点描述"
+    created_node_3 = next(item for item in flow_tasks if item["extras"]["flow_node"] == "node_3")
+    assert created_node_3["status"] == "blocked_by_approval"
+    assert created_node_3["extras"]["dispatch_status"] == "interrupted"
 
 
 def test_task_run_completed_event_dispatches_next_queued_task(
@@ -1000,6 +1411,176 @@ def test_create_task_sets_requirement_metadata(
     assert create_payload["extras"]["requirement"] == "校验需求元数据"
     assert isinstance(create_payload["extras"]["requirement_id"], str)
     assert create_payload["extras"]["requirement_id"] != ""
+
+
+def test_interrupt_running_task_marks_blocked_and_dispatches_queue(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("task-interrupt-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-task-interrupt",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-task-interrupt",
+    )
+
+    def _fake_send(self: Any, **kwargs: Any) -> dict[str, str]:
+        return {
+            "request_id": f"req-{kwargs['agent_id']}",
+            "agent_id": str(kwargs["agent_id"]),
+            "status": "accepted",
+        }
+
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
+        _fake_send,
+    )
+
+    pause_calls: list[dict[str, Any]] = []
+
+    def _fake_pause(self: Any, **kwargs: Any) -> dict[str, str]:
+        del self
+        pause_calls.append(kwargs)
+        return {
+            "request_id": "pause-req-1",
+            "agent_id": str(kwargs["agent_id"]),
+            "status": "accepted",
+            "message": "paused",
+        }
+
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.pause_agent",
+        _fake_pause,
+    )
+
+    create_status, _, create_payload = _request_json(
+        "POST",
+        DEFAULT_TASKS_PATH,
+        {
+            "requirement": "可中断任务",
+            "agent_id": "agent-alpha",
+            "agent_name": "Alpha Agent",
+            "instance_id": instance["id"],
+        },
+        auth_cookie,
+    )
+    assert create_status == 201
+    assert create_payload["status"] == "running"
+    task_id = create_payload["id"]
+
+    interrupt_status, _, interrupt_payload = request(
+        "POST",
+        DEFAULT_TASK_INTERRUPT_PATH.format(task_id=quote(task_id, safe="")),
+        headers={"cookie": auth_cookie},
+    )
+    assert interrupt_status == 200
+    payload = cast(dict[str, Any], json.loads(interrupt_payload.decode("utf-8")))
+    assert payload["accepted"] is True
+    assert payload["task_id"] == task_id
+    assert payload["status"] == "blocked_by_approval"
+    assert payload["pause_requested"] is True
+    assert isinstance(payload["dispatched_task_ids"], list)
+
+    assert len(pause_calls) == 1
+    assert pause_calls[0]["agent_id"] == "agent-alpha"
+
+    list_status, _, list_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
+    assert list_status == 200
+    tasks = cast(list[dict[str, Any]], json.loads(list_body.decode("utf-8")))
+    interrupted_task = next(item for item in tasks if item["id"] == task_id)
+    assert interrupted_task["status"] == "blocked_by_approval"
+    assert interrupted_task["extras"]["dispatch_status"] == "interrupted"
+    assert interrupted_task["extras"]["dispatch_error"] == "interrupted_by_user"
+    assert interrupted_task["extras"]["interrupt_pause_status"] == "accepted"
+
+    second_interrupt_status, _, second_interrupt_body = request(
+        "POST",
+        DEFAULT_TASK_INTERRUPT_PATH.format(task_id=quote(task_id, safe="")),
+        headers={"cookie": auth_cookie},
+    )
+    assert second_interrupt_status == 200
+    second_payload = cast(dict[str, Any], json.loads(second_interrupt_body.decode("utf-8")))
+    assert second_payload["status"] == "blocked_by_approval"
+    assert second_payload["pause_requested"] is False
+
+
+def test_continue_blocked_task_requeues_and_dispatches(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("task-continue-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-task-continue",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-task-continue",
+    )
+
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
+        lambda self, **kwargs: {
+            "request_id": f"req-{kwargs['agent_id']}",
+            "agent_id": str(kwargs["agent_id"]),
+            "status": "accepted",
+        },
+    )
+
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.pause_agent",
+        lambda self, **kwargs: {
+            "request_id": "pause-req-continue",
+            "agent_id": str(kwargs["agent_id"]),
+            "status": "accepted",
+            "message": "paused",
+        },
+    )
+
+    create_status, _, create_payload = _request_json(
+        "POST",
+        DEFAULT_TASKS_PATH,
+        {
+            "requirement": "可继续任务",
+            "agent_id": "agent-alpha",
+            "agent_name": "Alpha Agent",
+            "instance_id": instance["id"],
+        },
+        auth_cookie,
+    )
+    assert create_status == 201
+    task_id = create_payload["id"]
+    assert create_payload["status"] == "running"
+
+    interrupt_status, _, _ = request(
+        "POST",
+        DEFAULT_TASK_INTERRUPT_PATH.format(task_id=quote(task_id, safe="")),
+        headers={"cookie": auth_cookie},
+    )
+    assert interrupt_status == 200
+
+    continue_status, _, continue_body = request(
+        "POST",
+        DEFAULT_TASK_CONTINUE_PATH.format(task_id=quote(task_id, safe="")),
+        headers={"cookie": auth_cookie},
+    )
+    assert continue_status == 200
+    continue_payload = cast(dict[str, Any], json.loads(continue_body.decode("utf-8")))
+    assert continue_payload["accepted"] is True
+    assert continue_payload["task_id"] == task_id
+    assert continue_payload["status"] == "running"
+    assert task_id in continue_payload["dispatched_task_ids"]
+
+    list_status, _, list_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
+    assert list_status == 200
+    tasks = cast(list[dict[str, Any]], json.loads(list_body.decode("utf-8")))
+    continued_task = next(item for item in tasks if item["id"] == task_id)
+    assert continued_task["status"] == "running"
+    assert continued_task["extras"]["dispatch_status"] == "accepted"
+    assert continued_task["extras"]["resumed_by"] == "user"
 
 
 def test_delete_task_node_rewires_dependencies_and_dispatches_next(
@@ -1306,3 +1887,136 @@ def test_delete_requirement_post_alias_supported(
     payload = cast(dict[str, Any], json.loads(delete_body.decode("utf-8")))
     assert payload["deleted"] is True
     assert payload["requirement_id"] == requirement_id
+
+
+def test_task_output_preview_and_download_with_task_scoped_path(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("task-output-preview-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-task-output-preview",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-task-output-preview",
+    )
+
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
+        lambda self, **kwargs: {
+            "request_id": f"req-{kwargs['agent_id']}",
+            "agent_id": kwargs["agent_id"],
+            "status": "accepted",
+        },
+    )
+
+    confirm_status, _, _ = _request_json(
+        "POST",
+        DEFAULT_FLOW_CONFIRM_PATH,
+        {
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor",
+            "requirement_title": "任务产出预览测试",
+            "nodes": [
+                {
+                    "id": "node_output",
+                    "title": "生成输出",
+                    "x": 120,
+                    "y": 100,
+                    "layer": 1,
+                    "sensitive": False,
+                    "status": "queued",
+                    "agent_id": "agent-executor",
+                }
+            ],
+            "edges": [],
+        },
+        auth_cookie,
+    )
+    assert confirm_status == 200
+
+    list_status, _, list_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
+    assert list_status == 200
+    tasks = cast(list[dict[str, Any]], json.loads(list_body.decode("utf-8")))
+    assert len(tasks) == 1
+    task = tasks[0]
+    task_id = str(task["id"])
+    output_path = Path(str(task["extras"]["temp_output_path"]))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text('{"result":"ok","score":98}', encoding="utf-8")
+
+    encoded_output_path = quote(str(output_path), safe="")
+    preview_path = DEFAULT_TASK_OUTPUT_PREVIEW_PATH.format(task_id=task_id)
+    preview_status, _, preview_body = request(
+        "GET",
+        f"{preview_path}?path={encoded_output_path}",
+        headers={"cookie": auth_cookie},
+    )
+    assert preview_status == 200
+    preview_payload = cast(dict[str, Any], json.loads(preview_body.decode("utf-8")))
+    assert preview_payload["path"] == str(output_path)
+    assert preview_payload["kind"] == "json"
+    assert preview_payload["truncated"] is False
+    assert '"result": "ok"' in str(preview_payload["content"])
+    assert f"/api/v1/boards/default/tasks/{task_id}/output-file" in preview_payload["download_url"]
+
+    file_path = DEFAULT_TASK_OUTPUT_FILE_PATH.format(task_id=task_id)
+    file_status, file_headers, file_body = request(
+        "GET",
+        f"{file_path}?path={encoded_output_path}&download=true",
+        headers={"cookie": auth_cookie},
+    )
+    assert file_status == 200
+    assert "application/json" in file_headers.get("content-type", "")
+    assert b'"result":"ok"' in file_body
+    assert "attachment" in file_headers.get("content-disposition", "")
+
+
+def test_task_output_preview_rejects_non_task_path(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("task-output-deny-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-task-output-deny",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-task-output-deny",
+    )
+
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
+        lambda self, **kwargs: {
+            "request_id": f"req-{kwargs['agent_id']}",
+            "agent_id": kwargs["agent_id"],
+            "status": "accepted",
+        },
+    )
+
+    create_status, _, create_payload = _request_json(
+        "POST",
+        DEFAULT_TASKS_PATH,
+        {
+            "requirement": "产出路径校验",
+            "agent_id": "agent-alpha",
+            "agent_name": "Alpha Agent",
+            "instance_id": instance["id"],
+        },
+        auth_cookie,
+    )
+    assert create_status == 201
+    task_id = str(create_payload["id"])
+
+    preview_path = DEFAULT_TASK_OUTPUT_PREVIEW_PATH.format(task_id=task_id)
+    denied_status, _, denied_body = request(
+        "GET",
+        f"{preview_path}?path={quote('/etc/passwd', safe='')}",
+        headers={"cookie": auth_cookie},
+    )
+    assert denied_status == 403
+    denied_payload = cast(dict[str, Any], json.loads(denied_body.decode("utf-8")))
+    assert denied_payload["detail"] == "Output path is not allowed for this task"

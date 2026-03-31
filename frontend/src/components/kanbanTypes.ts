@@ -1,4 +1,4 @@
-export type BoardViewMode = 'status' | 'agent' | 'requirement';
+export type BoardViewMode = 'status' | 'agent' | 'flow';
 
 export type TaskStatus =
   | 'queued'
@@ -15,6 +15,7 @@ export interface BoardTask {
   summary: string;
   status: TaskStatus;
   source: TaskSource;
+  instanceId: string | null;
   agentId: string | null;
   agentName: string;
   artifacts: string[];

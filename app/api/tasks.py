@@ -2,17 +2,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+import json
+import mimetypes
 import os
+from pathlib import Path
+import re
 from typing import cast
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api.schemas import (
     FlowRequirementRenameRequest,
     FlowRequirementRenameResponse,
+    FlowRequirementContinueResponse,
+    FlowRequirementSyncRequest,
+    FlowRequirementSyncResponse,
     FlowRequirementStopResponse,
     FlowCanvasEdge,
     FlowCanvasNode,
@@ -21,10 +29,13 @@ from app.api.schemas import (
     FlowConfirmResponse,
     FlowGenerateRequest,
     FlowGenerateResponse,
+    TaskContinueResponse,
     TaskDeleteResponse,
+    TaskOutputPreviewResponse,
     TaskRunEventRequest,
     TaskRunEventResponse,
     TaskCreateRequest,
+    TaskInterruptResponse,
     TaskItem,
     TaskSource,
     TaskStatus,
@@ -44,6 +55,7 @@ router = APIRouter(prefix="/api/v1/boards/{board_id}/tasks", tags=["tasks"])
 
 _DEFAULT_STALE_RUNNING_SECONDS = 900
 _EVENT_KEY_MAX = 80
+_OUTPUT_PREVIEW_MAX_BYTES = 120_000
 
 
 def get_task_service() -> TaskService:
@@ -227,6 +239,192 @@ def _task_requirement_title(task: Task) -> str:
     if planner_session_key:
         return f"需求 {planner_session_key[:8]}"
     return task.title
+
+
+def _is_flow_interrupted_blocked_task(task: Task) -> bool:
+    if _normalize_task_status(task.status) != "blocked_by_approval":
+        return False
+    extras = task.extras if isinstance(task.extras, dict) else {}
+    dispatch_status = str(extras.get("dispatch_status", "")).strip().lower()
+    return dispatch_status in {"interrupted", "stopped", "blocked"}
+
+
+def _is_flow_editable_task(task: Task) -> bool:
+    status = _normalize_task_status(task.status)
+    if status == "queued":
+        return True
+    return _is_flow_interrupted_blocked_task(task)
+
+
+def _normalize_output_path(raw_path: str) -> Path | None:
+    normalized = raw_path.strip()
+    if normalized == "" or "\x00" in normalized:
+        return None
+    candidate = Path(normalized).expanduser()
+    if not candidate.is_absolute():
+        return None
+    try:
+        return candidate.resolve(strict=False)
+    except OSError:
+        return None
+
+
+def _extract_output_paths_from_artifact(item: str) -> list[str]:
+    normalized = item.strip()
+    if normalized == "":
+        return []
+
+    candidates: list[str] = []
+    lowered = normalized.lower()
+    if lowered.startswith("artifact:"):
+        value = normalized.split(":", 1)[1].strip()
+        if value:
+            candidates.append(value)
+
+    if normalized.startswith("/"):
+        candidates.append(normalized)
+
+    for match in re.findall(r"(/tmp/[^\s\"'<>]+)", normalized):
+        candidates.append(match)
+
+    return candidates
+
+
+def _task_output_allowed_paths(task: Task) -> set[Path]:
+    extras = task.extras if isinstance(task.extras, dict) else {}
+    candidates: list[str] = [_task_temp_output_path(task)]
+    output_path = str(extras.get("temp_output_path", "")).strip()
+    if output_path:
+        candidates.append(output_path)
+    input_paths = _task_temp_input_paths(task)
+    candidates.extend(input_paths)
+    for item in task.artifacts:
+        if not isinstance(item, str):
+            continue
+        candidates.extend(_extract_output_paths_from_artifact(item))
+
+    allowed: set[Path] = set()
+    for candidate in candidates:
+        normalized = _normalize_output_path(candidate)
+        if normalized is None:
+            continue
+        allowed.add(normalized)
+    return allowed
+
+
+def _resolve_task_output_path(task: Task, requested_path: str | None) -> Path:
+    fallback = _task_temp_output_path(task)
+    raw_candidate = requested_path if isinstance(requested_path, str) else ""
+    candidate = raw_candidate.strip() or fallback
+    normalized = _normalize_output_path(candidate)
+    if normalized is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid output path")
+
+    allowed = _task_output_allowed_paths(task)
+    if normalized not in allowed:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Output path is not allowed for this task")
+    return normalized
+
+
+def _guess_output_mime_type(path: Path) -> str:
+    guessed, _ = mimetypes.guess_type(path.name)
+    if guessed:
+        return guessed
+    return "application/octet-stream"
+
+
+def _is_binary_content(payload: bytes) -> bool:
+    if payload == b"":
+        return False
+    if b"\x00" in payload:
+        return True
+    control_count = 0
+    for value in payload:
+        if value in (9, 10, 13):
+            continue
+        if value < 32:
+            control_count += 1
+    return control_count / max(1, len(payload)) > 0.08
+
+
+def _build_output_download_url(*, board_id: str, task_id: UUID, path: Path) -> str:
+    encoded_board_id = quote(board_id, safe="")
+    encoded_task_id = quote(str(task_id), safe="")
+    encoded_path = quote(str(path), safe="")
+    return (
+        f"/api/v1/boards/{encoded_board_id}/tasks/{encoded_task_id}/output-file"
+        f"?path={encoded_path}&download=true"
+    )
+
+
+def _build_task_output_preview(
+    *,
+    board_id: str,
+    task: Task,
+    output_path: Path,
+) -> TaskOutputPreviewResponse:
+    if not output_path.exists() or not output_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Output file not found")
+
+    mime_type = _guess_output_mime_type(output_path)
+    size_bytes = output_path.stat().st_size
+    with output_path.open("rb") as handle:
+        raw = handle.read(_OUTPUT_PREVIEW_MAX_BYTES + 1)
+    truncated = len(raw) > _OUTPUT_PREVIEW_MAX_BYTES
+    preview_bytes = raw[:_OUTPUT_PREVIEW_MAX_BYTES]
+
+    kind: str = "binary"
+    content: str | None = None
+    if not _is_binary_content(preview_bytes):
+        decoded = preview_bytes.decode("utf-8", errors="replace")
+        if output_path.suffix.lower() == ".json" or mime_type == "application/json":
+            try:
+                parsed_json = json.loads(decoded)
+                decoded = json.dumps(parsed_json, ensure_ascii=False, indent=2)
+                kind = "json"
+            except json.JSONDecodeError:
+                kind = "text"
+        else:
+            kind = "text"
+        content = decoded
+
+    return TaskOutputPreviewResponse(
+        path=str(output_path),
+        kind=kind,
+        mime_type=mime_type,
+        size_bytes=size_bytes,
+        truncated=truncated,
+        content=content,
+        download_url=_build_output_download_url(
+            board_id=board_id,
+            task_id=task.id,
+            path=output_path,
+        ),
+    )
+
+
+def _get_board_task_for_user(
+    *,
+    board_id: str,
+    task_id: UUID,
+    current_user: User,
+    db_session: Session,
+    task_service: TaskService,
+) -> Task:
+    normalized_board_id = board_id.strip() or "default"
+    task = task_service.get_task(
+        db_session,
+        user_id=current_user.id,
+        task_id=task_id,
+    )
+    if task is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    extras = task.extras if isinstance(task.extras, dict) else {}
+    task_board_id = str(extras.get("board_id", "default")).strip() or "default"
+    if task_board_id != normalized_board_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    return task
 
 
 def _event_callback_base_url() -> str:
@@ -811,6 +1009,10 @@ def generate_flow(
     decomposition = flow_decomposition_service.decompose(
         requirement=requirement,
         board_id=normalized_board_id,
+        planner_session_key=payload.planner_session_key,
+        flow_name=payload.flow_name,
+        current_nodes=[node.model_dump(mode="json") for node in payload.current_nodes],
+        current_edges=[edge.model_dump(mode="json") for edge in payload.current_edges],
     )
     planner_session_key = decomposition.planner_session_key
     manager_session_key = f"linpo:flow:{normalized_board_id}:manager"
@@ -820,7 +1022,7 @@ def generate_flow(
         _FlowNodeDraft(
             id=node.id,
             title=node.title,
-            description="",
+            description=node.description,
             depends_on=node.depends_on,
             sensitive=node.sensitive,
         )
@@ -909,12 +1111,36 @@ def confirm_flow(
         if candidate_agent_id != "":
             node_agent_id_by_id[canvas_node.id] = candidate_agent_id
 
-    flow_id = uuid4().hex
+    requested_requirement_id = (
+        payload.requirement_id.strip()
+        if isinstance(payload.requirement_id, str) and payload.requirement_id.strip()
+        else ""
+    )
+    sanitized_requirement_id = re.sub(r"[^0-9A-Za-z_-]", "_", requested_requirement_id)
+    flow_id = sanitized_requirement_id or uuid4().hex
     requirement_title = (
         payload.requirement_title.strip()
         if isinstance(payload.requirement_title, str) and payload.requirement_title.strip()
         else f"需求 {flow_id[:8]}"
     )
+
+    # 单流程即单实例：同一 requirement_id 再次运行前先清理旧任务，避免实例堆叠。
+    existing_requirement_tasks = [
+        task
+        for task in task_service.list_tasks(
+            db_session,
+            user_id=current_user.id,
+            board_id=normalized_board_id,
+            instance_id=instance_uuid,
+        )
+        if _task_requirement_id(task) == flow_id
+    ]
+    for task in existing_requirement_tasks:
+        task_service.delete_task(
+            db_session,
+            task=task,
+        )
+
     created_task_ids: list[str] = []
     for layer_index, layer_node_ids in enumerate(layers):
         for node_id in layer_node_ids:
@@ -1196,6 +1422,58 @@ def list_tasks(
     return [_to_task_item(task) for task in tasks]
 
 
+@router.get("/{task_id}/output-preview", response_model=TaskOutputPreviewResponse)
+def preview_task_output(
+    board_id: str,
+    task_id: UUID,
+    path: str | None = Query(default=None),
+    current_user: User = Depends(get_current_user),
+    db_session: Session = Depends(get_session),
+    task_service: TaskService = Depends(get_task_service),
+) -> TaskOutputPreviewResponse:
+    task = _get_board_task_for_user(
+        board_id=board_id,
+        task_id=task_id,
+        current_user=current_user,
+        db_session=db_session,
+        task_service=task_service,
+    )
+    output_path = _resolve_task_output_path(task, path)
+    normalized_board_id = board_id.strip() or "default"
+    return _build_task_output_preview(
+        board_id=normalized_board_id,
+        task=task,
+        output_path=output_path,
+    )
+
+
+@router.get("/{task_id}/output-file")
+def download_task_output_file(
+    board_id: str,
+    task_id: UUID,
+    path: str | None = Query(default=None),
+    download: bool = Query(default=False),
+    current_user: User = Depends(get_current_user),
+    db_session: Session = Depends(get_session),
+    task_service: TaskService = Depends(get_task_service),
+) -> FileResponse:
+    task = _get_board_task_for_user(
+        board_id=board_id,
+        task_id=task_id,
+        current_user=current_user,
+        db_session=db_session,
+        task_service=task_service,
+    )
+    output_path = _resolve_task_output_path(task, path)
+    if not output_path.exists() or not output_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Output file not found")
+
+    media_type = _guess_output_mime_type(output_path)
+    if download:
+        return FileResponse(output_path, media_type=media_type, filename=output_path.name)
+    return FileResponse(output_path, media_type=media_type)
+
+
 def _delete_requirement_tasks_impl(
     *,
     board_id: str,
@@ -1340,23 +1618,58 @@ def stop_requirement(
         extras["flow_stopped"] = "true"
         extras["flow_stopped_at"] = _iso_now()
         if task.status == "queued":
-            extras["dispatch_status"] = "stopped"
-            extras["dispatch_error"] = "stopped_by_user"
+            extras["dispatch_last_event"] = "interrupted"
+            extras["dispatch_last_event_at"] = _iso_now()
+            extras["dispatch_error"] = "interrupted_by_flow"
+            extras["dispatch_status"] = "interrupted"
             extras["finished_at"] = _iso_now()
             task_service.update_task_status(
                 db_session,
                 task=task,
-                status="failed",
+                status="blocked_by_approval",
                 extras=extras,
             )
             stopped_task_ids.append(str(task.id))
             continue
         if task.status == "running":
+            extras["dispatch_last_event"] = "interrupted"
+            extras["dispatch_last_event_at"] = _iso_now()
+            extras["dispatch_error"] = "interrupted_by_flow"
+            extras["dispatch_status"] = "interrupted"
+            extras["finished_at"] = _iso_now()
+            if task.instance_id is not None and isinstance(task.agent_id, str) and task.agent_id.strip() != "":
+                try:
+                    instance_context = instance_service.get_openclaw_context(
+                        db_session,
+                        user_id=current_user.id,
+                        instance_id=task.instance_id,
+                    )
+                    execution_context = provider_application_service.build_execution_context(instance_context)
+                    pause_response = provider_application_service.pause_agent(
+                        data_source="openclaw",
+                        execution_context=execution_context,
+                        agent_id=task.agent_id.strip(),
+                        session_key=str(extras.get("execution_session_key", "")).strip() or None,
+                    )
+                    extras["interrupt_pause_status"] = str(pause_response.get("status", "accepted"))
+                except (HTTPException, InstanceNotFoundError) as exc:
+                    extras["interrupt_pause_status"] = "failed"
+                    extras["interrupt_pause_error"] = (
+                        str(exc.detail) if isinstance(exc, HTTPException) else "Instance not found"
+                    )
             extras["stop_requested_at"] = _iso_now()
+            task_service.update_task_status(
+                db_session,
+                task=task,
+                status="blocked_by_approval",
+                extras=extras,
+            )
             running_task_ids.append(str(task.id))
-        task_service.update_task_extras(
+            continue
+        task_service.update_task_status(
             db_session,
             task=task,
+            status=_normalize_task_status(task.status),
             extras=extras,
         )
 
@@ -1376,6 +1689,460 @@ def stop_requirement(
         requirement_id=normalized_requirement_id,
         stopped_task_ids=stopped_task_ids,
         running_task_ids=running_task_ids,
+    )
+
+
+@router.post("/requirements/{requirement_id}/continue", response_model=FlowRequirementContinueResponse)
+def continue_requirement(
+    board_id: str,
+    requirement_id: str,
+    current_user: User = Depends(get_current_user),
+    db_session: Session = Depends(get_session),
+    task_service: TaskService = Depends(get_task_service),
+    instance_service: InstanceService = Depends(get_instance_service),
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
+) -> FlowRequirementContinueResponse:
+    normalized_requirement_id = requirement_id.strip()
+    matched = _list_requirement_tasks(
+        board_id=board_id,
+        requirement_id=normalized_requirement_id,
+        current_user=current_user,
+        db_session=db_session,
+        task_service=task_service,
+    )
+
+    resumed_task_ids: list[str] = []
+    instance_ids: set[UUID] = set()
+    now_iso = _iso_now()
+    for task in matched:
+        if not _is_flow_interrupted_blocked_task(task):
+            continue
+        extras = dict(task.extras if isinstance(task.extras, dict) else {})
+        extras["dispatch_status"] = "pending"
+        extras["dispatch_error"] = ""
+        extras["dispatch_last_event"] = "resumed"
+        extras["dispatch_last_event_at"] = now_iso
+        extras["dispatch_last_heartbeat_at"] = now_iso
+        extras["resume_requested_at"] = now_iso
+        extras["resumed_by"] = "user"
+        extras.pop("finished_at", None)
+        task_service.update_task_status(
+            db_session,
+            task=task,
+            status="queued",
+            extras=extras,
+        )
+        resumed_task_ids.append(str(task.id))
+        if task.instance_id is not None:
+            instance_ids.add(task.instance_id)
+
+    dispatched_task_ids: list[str] = []
+    normalized_board_id = board_id.strip() or "default"
+    for instance_id in instance_ids:
+        dispatched_task_ids.extend(
+            _dispatch_queue_for_instance(
+                user_id=current_user.id,
+                board_id=normalized_board_id,
+                instance_id=instance_id,
+                task_service=task_service,
+                db_session=db_session,
+                provider_application_service=provider_application_service,
+                instance_service=instance_service,
+            )
+        )
+
+    return FlowRequirementContinueResponse(
+        requirement_id=normalized_requirement_id,
+        resumed_task_ids=resumed_task_ids,
+        dispatched_task_ids=dispatched_task_ids,
+    )
+
+
+@router.post("/requirements/{requirement_id}/sync", response_model=FlowRequirementSyncResponse)
+def sync_requirement(
+    board_id: str,
+    requirement_id: str,
+    payload: FlowRequirementSyncRequest,
+    current_user: User = Depends(get_current_user),
+    db_session: Session = Depends(get_session),
+    task_service: TaskService = Depends(get_task_service),
+) -> FlowRequirementSyncResponse:
+    normalized_requirement_id = requirement_id.strip()
+    matched = _list_requirement_tasks(
+        board_id=board_id,
+        requirement_id=normalized_requirement_id,
+        current_user=current_user,
+        db_session=db_session,
+        task_service=task_service,
+    )
+
+    sorted_matched = sorted(
+        matched,
+        key=lambda item: (
+            item.updated_at.timestamp() if item.updated_at.tzinfo else item.updated_at.replace(tzinfo=UTC).timestamp(),
+            str(item.id),
+        ),
+        reverse=True,
+    )
+    template_task = sorted_matched[0]
+    template_extras = dict(template_task.extras if isinstance(template_task.extras, dict) else {})
+    normalized_board_id = board_id.strip() or "default"
+    requirement_title = (
+        payload.requirement_title.strip()
+        if isinstance(payload.requirement_title, str) and payload.requirement_title.strip()
+        else _task_requirement_title(template_task)
+    )
+    blocked_mode = any(_is_flow_interrupted_blocked_task(task) for task in sorted_matched)
+
+    existing_by_node: dict[str, Task] = {}
+    for task in sorted_matched:
+        extras = task.extras if isinstance(task.extras, dict) else {}
+        node_id = str(extras.get("flow_node", "")).strip()
+        if node_id == "" or node_id in existing_by_node:
+            continue
+        existing_by_node[node_id] = task
+
+    normalized_nodes: list[FlowCanvasNode] = []
+    node_ids: set[str] = set()
+    for node in payload.nodes:
+        node_id = node.id.strip()
+        if node_id == "" or node_id in node_ids:
+            continue
+        node_ids.add(node_id)
+        normalized_nodes.append(node)
+
+    deps_by_target: dict[str, list[str]] = {node.id: [] for node in normalized_nodes}
+    for edge in payload.edges:
+        source = edge.source.strip()
+        target = edge.target.strip()
+        if source == "" or target == "" or source == target:
+            continue
+        if source not in node_ids or target not in node_ids:
+            continue
+        deps = deps_by_target.setdefault(target, [])
+        if source not in deps:
+            deps.append(source)
+
+    updated_task_ids: list[str] = []
+    created_task_ids: list[str] = []
+    deleted_task_ids: list[str] = []
+
+    default_instance_id = template_task.instance_id
+    default_agent_id = (
+        template_task.agent_id.strip()
+        if isinstance(template_task.agent_id, str) and template_task.agent_id.strip() != ""
+        else None
+    )
+    planner_session_key = str(template_extras.get("planner_session_key", "")).strip()
+    manager_session_key = str(template_extras.get("manager_session_key", "")).strip()
+    execution_session_prefix = str(template_extras.get("execution_session_prefix", "")).strip() or "linpo:flow:default:exec"
+
+    for node in normalized_nodes:
+        node_id = node.id.strip()
+        dependencies = deps_by_target.get(node_id, [])
+        node_title = node.title.strip() or node_id
+        node_description = (node.description or "").strip()
+        assigned_agent_id = (node.agent_id or "").strip() or default_agent_id
+        assigned_agent_name = f"Agent {assigned_agent_id}" if assigned_agent_id else "待分配"
+        base_status: TaskStatus = "blocked_by_approval" if blocked_mode else "queued"
+        base_dispatch_status = "interrupted" if blocked_mode else "pending"
+        temp_input_paths = ",".join([f"/tmp/linpo/{normalized_requirement_id}/{dep}.json" for dep in dependencies]) or "none"
+        temp_output_path = f"/tmp/linpo/{normalized_requirement_id}/{node_id}.json"
+
+        existing_task = existing_by_node.get(node_id)
+        if existing_task is not None:
+            if not _is_flow_editable_task(existing_task):
+                continue
+            next_status = _normalize_task_status(existing_task.status)
+            extras = dict(existing_task.extras if isinstance(existing_task.extras, dict) else {})
+            extras["requirement_id"] = normalized_requirement_id
+            extras["requirement_title"] = requirement_title
+            extras["requirement"] = requirement_title
+            extras["flow_id"] = normalized_requirement_id
+            extras["board_id"] = normalized_board_id
+            if default_instance_id is not None:
+                extras["instance_id"] = str(default_instance_id)
+            extras["flow_node"] = node_id
+            extras["flow_node_description"] = node_description
+            extras["layer"] = f"L{max(1, node.layer)}"
+            extras["dependencies"] = ",".join(dependencies) or "none"
+            extras["temp_input_paths"] = temp_input_paths
+            extras["temp_output_path"] = temp_output_path
+            extras["sensitive"] = "true" if node.sensitive else "false"
+            if planner_session_key:
+                extras["planner_session_key"] = planner_session_key
+            if manager_session_key:
+                extras["manager_session_key"] = manager_session_key
+            if assigned_agent_id:
+                extras["execution_session_key"] = f"{execution_session_prefix}:{assigned_agent_id}:{node_id}"
+            if blocked_mode and _is_flow_interrupted_blocked_task(existing_task):
+                extras["dispatch_status"] = "interrupted"
+                extras["dispatch_error"] = "interrupted_by_flow"
+            else:
+                extras["dispatch_status"] = base_dispatch_status
+            existing_task.title = node_title
+            existing_task.summary = node_description or f"来自流程拆解节点 {node_id}"
+            existing_task.agent_id = assigned_agent_id
+            existing_task.agent_name = assigned_agent_name
+            task_service.update_task_status(
+                db_session,
+                task=existing_task,
+                status=next_status,
+                extras=extras,
+            )
+            updated_task_ids.append(str(existing_task.id))
+            continue
+
+        created = task_service.create_task(
+            db_session,
+            payload=TaskCreateInput(
+                user_id=current_user.id,
+                instance_id=default_instance_id,
+                title=node_title,
+                summary=node_description or f"来自流程拆解节点 {node_id}",
+                status=base_status,
+                source="flow",
+                agent_id=assigned_agent_id,
+                agent_name=assigned_agent_name,
+                artifacts=[
+                    f"flow_node: {node_id}",
+                    f"layer: L{max(1, node.layer)}",
+                    f"dispatch_status: {base_dispatch_status}",
+                    f"description: {node_description or 'none'}",
+                ],
+                extras={
+                    "requirement_id": normalized_requirement_id,
+                    "requirement_title": requirement_title,
+                    "requirement": requirement_title,
+                    "flow_id": normalized_requirement_id,
+                    "board_id": normalized_board_id,
+                    "instance_id": str(default_instance_id) if default_instance_id is not None else "",
+                    "flow_node": node_id,
+                    "flow_node_description": node_description,
+                    "layer": f"L{max(1, node.layer)}",
+                    "dependencies": ",".join(dependencies) or "none",
+                    "temp_input_paths": temp_input_paths,
+                    "temp_output_path": temp_output_path,
+                    "sensitive": "true" if node.sensitive else "false",
+                    "planner_session_key": planner_session_key,
+                    "manager_session_key": manager_session_key,
+                    "execution_session_key": f"{execution_session_prefix}:{assigned_agent_id}:{node_id}" if assigned_agent_id else "",
+                    "dispatch_status": base_dispatch_status,
+                    "dispatch_error": "interrupted_by_flow" if blocked_mode else "",
+                },
+            ),
+        )
+        created_task_ids.append(str(created.id))
+
+    for node_id, task in existing_by_node.items():
+        if node_id in node_ids:
+            continue
+        if not _is_flow_editable_task(task):
+            continue
+        deleted_task_ids.append(str(task.id))
+        task_service.delete_task(
+            db_session,
+            task=task,
+        )
+
+    return FlowRequirementSyncResponse(
+        requirement_id=normalized_requirement_id,
+        updated_task_ids=updated_task_ids,
+        created_task_ids=created_task_ids,
+        deleted_task_ids=deleted_task_ids,
+    )
+
+
+@router.post("/{task_id}/interrupt", response_model=TaskInterruptResponse)
+def interrupt_task(
+    board_id: str,
+    task_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db_session: Session = Depends(get_session),
+    task_service: TaskService = Depends(get_task_service),
+    instance_service: InstanceService = Depends(get_instance_service),
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
+) -> TaskInterruptResponse:
+    normalized_board_id = board_id.strip() or "default"
+    task = _get_board_task_for_user(
+        board_id=normalized_board_id,
+        task_id=task_id,
+        current_user=current_user,
+        db_session=db_session,
+        task_service=task_service,
+    )
+    current_status = _normalize_task_status(task.status)
+    if current_status in {"completed", "failed", "blocked_by_approval"}:
+        return TaskInterruptResponse(
+            accepted=True,
+            task_id=str(task.id),
+            status=current_status,
+            dispatched_task_ids=[],
+            pause_requested=False,
+            message="任务已处于终态，无需中断",
+        )
+
+    extras = dict(task.extras if isinstance(task.extras, dict) else {})
+    pause_requested = False
+    pause_message: str | None = None
+
+    if (
+        current_status == "running"
+        and isinstance(task.agent_id, str)
+        and task.agent_id.strip() != ""
+        and task.instance_id is not None
+    ):
+        try:
+            instance_context = instance_service.get_openclaw_context(
+                db_session,
+                user_id=current_user.id,
+                instance_id=task.instance_id,
+            )
+            execution_context = provider_application_service.build_execution_context(instance_context)
+            pause_response = provider_application_service.pause_agent(
+                data_source="openclaw",
+                execution_context=execution_context,
+                agent_id=task.agent_id.strip(),
+                session_key=str(extras.get("execution_session_key", "")).strip() or None,
+            )
+            pause_requested = True
+            pause_status = str(pause_response.get("status", "accepted")).strip() or "accepted"
+            extras["interrupt_pause_status"] = pause_status
+            pause_message = str(pause_response.get("message", "")).strip() or None
+            if isinstance(pause_response.get("request_id"), str):
+                extras["interrupt_pause_request_id"] = str(pause_response.get("request_id"))
+        except (HTTPException, InstanceNotFoundError) as exc:
+            pause_message = str(exc.detail) if isinstance(exc, HTTPException) else "Instance not found"
+            extras["interrupt_pause_status"] = "failed"
+            extras["interrupt_pause_error"] = pause_message
+    elif current_status == "running":
+        pause_message = "任务缺少可中断执行上下文，已仅在 Linpo 标记为中断"
+
+    now_iso = _iso_now()
+    extras["dispatch_status"] = "interrupted"
+    extras["dispatch_error"] = "interrupted_by_user"
+    extras["dispatch_last_event"] = "interrupted"
+    extras["dispatch_last_event_at"] = now_iso
+    extras["dispatch_last_heartbeat_at"] = now_iso
+    extras["interrupted_at"] = now_iso
+    extras["interrupted_by"] = "user"
+    extras["finished_at"] = now_iso
+    _append_artifact(task, "interrupted: 用户手动中断")
+    task_service.update_task_status(
+        db_session,
+        task=task,
+        status="blocked_by_approval",
+        extras=extras,
+    )
+
+    dispatched_task_ids = _dispatch_queue_for_task_owner(
+        task=task,
+        board_id=normalized_board_id,
+        task_service=task_service,
+        db_session=db_session,
+        provider_application_service=provider_application_service,
+        instance_service=instance_service,
+    )
+
+    return TaskInterruptResponse(
+        accepted=True,
+        task_id=str(task.id),
+        status="blocked_by_approval",
+        dispatched_task_ids=dispatched_task_ids,
+        pause_requested=pause_requested,
+        message=pause_message,
+    )
+
+
+@router.post("/{task_id}/continue", response_model=TaskContinueResponse)
+def continue_task(
+    board_id: str,
+    task_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db_session: Session = Depends(get_session),
+    task_service: TaskService = Depends(get_task_service),
+    instance_service: InstanceService = Depends(get_instance_service),
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
+) -> TaskContinueResponse:
+    normalized_board_id = board_id.strip() or "default"
+    task = _get_board_task_for_user(
+        board_id=normalized_board_id,
+        task_id=task_id,
+        current_user=current_user,
+        db_session=db_session,
+        task_service=task_service,
+    )
+    current_status = _normalize_task_status(task.status)
+    if current_status != "blocked_by_approval":
+        return TaskContinueResponse(
+            accepted=True,
+            task_id=str(task.id),
+            status=current_status,
+            dispatched_task_ids=[],
+            message="任务未处于阻塞状态，无需继续",
+        )
+
+    extras = dict(task.extras if isinstance(task.extras, dict) else {})
+    dispatch_status = str(extras.get("dispatch_status", "")).strip().lower()
+    now_iso = _iso_now()
+    dispatched_task_ids: list[str] = []
+    response_message = "已恢复任务并重新进入队列"
+
+    if dispatch_status in {"interrupted", "stopped", "blocked"}:
+        extras["dispatch_status"] = "pending"
+        extras["dispatch_error"] = ""
+        extras["dispatch_last_event"] = "resumed"
+        extras["dispatch_last_event_at"] = now_iso
+        extras["dispatch_last_heartbeat_at"] = now_iso
+        extras["resume_requested_at"] = now_iso
+        extras["resumed_by"] = "user"
+        extras.pop("finished_at", None)
+        extras.pop("flow_stopped", None)
+        extras.pop("flow_stopped_at", None)
+        task_service.update_task_status(
+            db_session,
+            task=task,
+            status="queued",
+            extras=extras,
+        )
+    else:
+        extras["dispatch_status"] = "approved"
+        extras["dispatch_error"] = ""
+        extras["dispatch_last_event"] = "approval_continue"
+        extras["dispatch_last_event_at"] = now_iso
+        extras["dispatch_last_heartbeat_at"] = now_iso
+        extras["approval_decision"] = "approved"
+        extras["approval_decided_at"] = now_iso
+        extras["approval_decided_by"] = "user"
+        task_service.update_task_status(
+            db_session,
+            task=task,
+            status="completed",
+            extras=extras,
+        )
+        response_message = "已确认继续，任务标记为完成并推进后续节点"
+
+    dispatched_task_ids = _dispatch_queue_for_task_owner(
+        task=task,
+        board_id=normalized_board_id,
+        task_service=task_service,
+        db_session=db_session,
+        provider_application_service=provider_application_service,
+        instance_service=instance_service,
+    )
+    refreshed_task = task_service.get_task(
+        db_session,
+        user_id=current_user.id,
+        task_id=task_id,
+    )
+    next_status = _normalize_task_status(refreshed_task.status) if refreshed_task is not None else "queued"
+
+    return TaskContinueResponse(
+        accepted=True,
+        task_id=str(task.id),
+        status=next_status,
+        dispatched_task_ids=dispatched_task_ids,
+        message=response_message,
     )
 
 

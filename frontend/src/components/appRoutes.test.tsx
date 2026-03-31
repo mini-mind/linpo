@@ -41,6 +41,14 @@ vi.mock('./LoginPage', () => ({
   LoginPage: () => <div>login-page</div>,
 }));
 
+vi.mock('./PairingPage', () => ({
+  PairingPage: () => <div>pairing-page</div>,
+}));
+
+vi.mock('./PairingTutorialPage', () => ({
+  PairingTutorialPage: () => <div>pairing-tutorial-page</div>,
+}));
+
 describe('app routes', () => {
   afterEach(() => {
     cleanup();
@@ -122,5 +130,35 @@ describe('app routes', () => {
     });
 
     expect(screen.getByText('landing-page')).toBeInTheDocument();
+  });
+
+  it('renders /pairing as first-class app route', async () => {
+    document.body.innerHTML = '<div id="root"></div>';
+    window.history.pushState({}, '', '/pairing');
+
+    await act(async () => {
+      await import('../main');
+    });
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/pairing');
+    });
+
+    expect(screen.getByText('pairing-page')).toBeInTheDocument();
+  });
+
+  it('renders /pairing/tutorial as first-class app route', async () => {
+    document.body.innerHTML = '<div id="root"></div>';
+    window.history.pushState({}, '', '/pairing/tutorial');
+
+    await act(async () => {
+      await import('../main');
+    });
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/pairing/tutorial');
+    });
+
+    expect(screen.getByText('pairing-tutorial-page')).toBeInTheDocument();
   });
 });

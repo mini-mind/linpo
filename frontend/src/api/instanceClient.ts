@@ -5,6 +5,7 @@
 
 import type {
   InstanceItem,
+  InstancePairCodeRequest,
   InstanceWriteRequest,
   InstancePatchRequest,
   InstanceValidationResponse,
@@ -45,10 +46,26 @@ export async function createInstance(payload: InstanceWriteRequest): Promise<Ins
   });
 }
 
+export async function createInstanceByPairCode(payload: InstancePairCodeRequest): Promise<InstanceItem> {
+  return fetchApi<InstanceItem>('/instances/pair-code', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function validateInstance(
   payload: InstanceWriteRequest
 ): Promise<InstanceValidationResponse> {
   return fetchApi<InstanceValidationResponse>('/instances/validate', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function validateInstanceByPairCode(
+  payload: InstancePairCodeRequest
+): Promise<InstanceValidationResponse> {
+  return fetchApi<InstanceValidationResponse>('/instances/pair-code/validate', {
     method: 'POST',
     body: JSON.stringify(payload),
   });

@@ -34,6 +34,7 @@ class FlowNodeDraft:
     title: str
     depends_on: list[str]
     sensitive: bool
+    description: str = ""
 
 
 @dataclass(frozen=True)
@@ -56,14 +57,29 @@ class FlowDecompositionService:
         *,
         requirement: str,
         board_id: str,
+        planner_session_key: str | None = None,
+        flow_name: str | None = None,
+        current_nodes: list[dict[str, Any]] | None = None,
+        current_edges: list[dict[str, Any]] | None = None,
     ) -> FlowDecompositionResult:
         normalized_requirement = requirement.strip()
         if normalized_requirement == "":
             raise HTTPException(status_code=400, detail="requirement is required")
 
         context = self._build_claw3_execution_context()
-        planner_session_key = f"linpo:flow:{board_id}:planner:claw3:{uuid4().hex[:8]}"
-        prompt = self._build_decomposition_prompt(normalized_requirement)
+        normalized_planner_session_key = (
+            planner_session_key.strip()
+            if isinstance(planner_session_key, str) and planner_session_key.strip()
+            else f"linpo:flow:{board_id}:planner:claw3:{uuid4().hex[:8]}"
+        )
+        normalized_nodes = current_nodes or []
+        normalized_edges = current_edges or []
+        prompt = self._build_decomposition_prompt(
+            normalized_requirement,
+            flow_name=flow_name,
+            current_nodes=normalized_nodes,
+            current_edges=normalized_edges,
+        )
 
         try:
             self._provider_application_service.send_chat_message(
@@ -71,7 +87,7 @@ class FlowDecompositionService:
                 execution_context=context,
                 agent_id=self._decomposition_agent_id(),
                 message=prompt,
-                session_key=planner_session_key,
+                session_key=normalized_planner_session_key,
             )
         except HTTPException:
             raise
@@ -80,12 +96,12 @@ class FlowDecompositionService:
 
         assistant_message = self._wait_for_assistant_json(
             context=context,
-            session_key=planner_session_key,
+            session_key=normalized_planner_session_key,
         )
-        nodes = self._parse_nodes_from_message(assistant_message)
+        nodes = self._parse_nodes_from_message(assistant_message, current_nodes=normalized_nodes)
         return FlowDecompositionResult(
             nodes=nodes,
-            planner_session_key=planner_session_key,
+            planner_session_key=normalized_planner_session_key,
             raw_assistant_message=assistant_message,
         )
 
@@ -147,7 +163,12 @@ class FlowDecompositionService:
             detail="Flow decomposition failed: claw3 did not return structured JSON",
         )
 
-    def _parse_nodes_from_message(self, assistant_message: str) -> list[FlowNodeDraft]:
+    def _parse_nodes_from_message(
+        self,
+        assistant_message: str,
+        *,
+        current_nodes: list[dict[str, Any]] | None = None,
+    ) -> list[FlowNodeDraft]:
         payload = self._parse_json_payload(assistant_message)
         nodes_payload = payload.get("nodes")
         if not isinstance(nodes_payload, list) or len(nodes_payload) == 0:
@@ -161,12 +182,14 @@ class FlowDecompositionService:
 
             node_id_raw = item.get("id")
             title_raw = item.get("title")
+            description_raw = item.get("description")
             depends_raw = item.get("depends_on", item.get("dependencies", []))
             sensitive_raw = item.get("sensitive")
 
             title = str(title_raw).strip() if isinstance(title_raw, str) else ""
             if title == "":
                 continue
+            description = str(description_raw).strip() if isinstance(description_raw, str) else ""
 
             normalized_id = self._normalize_node_id(node_id_raw, fallback_index=index + 1, seen_ids=seen_ids)
             seen_ids.add(normalized_id)
@@ -185,6 +208,7 @@ class FlowDecompositionService:
                     title=title,
                     depends_on=depends_on,
                     sensitive=bool(sensitive_raw) if isinstance(sensitive_raw, bool) else False,
+                    description=description,
                 )
             )
 
@@ -193,14 +217,19 @@ class FlowDecompositionService:
 
         known_ids = {node.id for node in normalized_nodes}
         sanitized_nodes: list[FlowNodeDraft] = []
+        description_by_node_id = self._build_existing_description_map(current_nodes)
         for node in normalized_nodes:
             depends_on = [dep for dep in node.depends_on if dep in known_ids and dep != node.id]
+            description = node.description
+            if description == "":
+                description = description_by_node_id.get(node.id, "")
             sanitized_nodes.append(
                 FlowNodeDraft(
                     id=node.id,
                     title=node.title,
                     depends_on=depends_on,
                     sensitive=node.sensitive,
+                    description=description,
                 )
             )
 
@@ -211,6 +240,7 @@ class FlowDecompositionService:
                 title=last.title,
                 depends_on=last.depends_on,
                 sensitive=True,
+                description=last.description,
             )
         return sanitized_nodes
 
@@ -281,20 +311,84 @@ class FlowDecompositionService:
             value = f"{value}_{suffix}"
         return value
 
-    def _build_decomposition_prompt(self, requirement: str) -> str:
-        return (
+    def _build_decomposition_prompt(
+        self,
+        requirement: str,
+        *,
+        flow_name: str | None,
+        current_nodes: list[dict[str, Any]],
+        current_edges: list[dict[str, Any]],
+    ) -> str:
+        base_prompt = (
             "你是 Linpo 的流程拆解服务。"
             "请把用户需求拆解为可执行流程图节点，并仅输出 JSON。"
             "输出格式必须严格为："
-            '{"nodes":[{"id":"node_1","title":"任务标题","depends_on":[],"sensitive":false}]}'
+            '{"nodes":[{"id":"node_1","title":"任务标题","description":"任务详细描述","depends_on":[],"sensitive":false}]}'
             "约束："
             "1) id 全局唯一；"
             "2) depends_on 只能引用已存在节点 id；"
             "3) 节点数 2-12；"
-            "4) 尽量并行，不要线性化所有步骤；"
-            "5) 最终至少一个敏感节点 sensitive=true 用于审批。"
-            f"用户需求：{requirement}"
+            "4) 优先识别可独立子任务，拆成可并行分支，不要线性化所有步骤；"
+            "5) 每个节点 description 要写清执行要点；若节点可再拆分，请明确写出“可委派 subagent 并行执行”的建议；"
+            "6) 最终至少一个敏感节点 sensitive=true 用于审批。"
         )
+        if not current_nodes and not current_edges:
+            return f"{base_prompt}用户需求：{requirement}"
+
+        compact_nodes: list[dict[str, Any]] = []
+        for node in current_nodes[:24]:
+            if not isinstance(node, dict):
+                continue
+            compact_nodes.append(
+                {
+                    "id": str(node.get("id", "")).strip(),
+                    "title": str(node.get("title", "")).strip(),
+                    "description": str(node.get("description", "")).strip(),
+                    "sensitive": bool(node.get("sensitive", False)),
+                }
+            )
+        compact_edges: list[dict[str, Any]] = []
+        for edge in current_edges[:48]:
+            if not isinstance(edge, dict):
+                continue
+            compact_edges.append(
+                {
+                    "source": str(edge.get("source", "")).strip(),
+                    "target": str(edge.get("target", "")).strip(),
+                }
+            )
+
+        context_payload = {
+            "flow_name": (flow_name or "").strip() or "未命名流程",
+            "nodes": compact_nodes,
+            "edges": compact_edges,
+        }
+        context_json = json.dumps(context_payload, ensure_ascii=False)
+        return (
+            f"{base_prompt}"
+            "你会收到“当前流程上下文”和“新增指令”，请基于当前流程做增量修改并输出完整最新 nodes。"
+            "若指令仅修改局部，未提及的有效节点可保留。"
+            f"当前流程上下文：{context_json}"
+            f"新增指令：{requirement}"
+        )
+
+    def _build_existing_description_map(
+        self,
+        current_nodes: list[dict[str, Any]] | None,
+    ) -> dict[str, str]:
+        if not current_nodes:
+            return {}
+        result: dict[str, str] = {}
+        for node in current_nodes:
+            if not isinstance(node, dict):
+                continue
+            node_id = str(node.get("id", "")).strip()
+            if node_id == "":
+                continue
+            description = str(node.get("description", "")).strip()
+            if description != "":
+                result[node_id] = description
+        return result
 
     def _decomposition_base_url(self) -> str:
         return (

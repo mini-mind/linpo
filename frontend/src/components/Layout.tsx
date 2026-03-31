@@ -1,4 +1,4 @@
-import type React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, Navigate, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
@@ -30,6 +30,21 @@ export function Layout(): JSX.Element {
   const isMobile = useIsMobile(960);
   const location = useLocation();
   const isFlowRoute = location.pathname.startsWith('/flow');
+  const [flowNavTarget, setFlowNavTarget] = useState('/flow');
+
+  useEffect(() => {
+    const cached = loadLastFlowEntryPath();
+    setFlowNavTarget(cached ?? '/flow');
+  }, []);
+
+  useEffect(() => {
+    const candidate = normalizeFlowEntryPath(`${location.pathname}${location.search}${location.hash}`);
+    if (!candidate) {
+      return;
+    }
+    saveLastFlowEntryPath(candidate);
+    setFlowNavTarget(candidate);
+  }, [location.hash, location.pathname, location.search]);
 
   return (
     <div style={shellStyle}>
@@ -52,8 +67,12 @@ export function Layout(): JSX.Element {
               看板
             </NavLink>
             <span aria-hidden="true" style={toolbarNavDividerStyle} data-testid="toolbar-nav-divider" />
-            <NavLink to="/flow" className="linpo-nav-link" style={({ isActive }) => getNavTextLinkStyle(isActive)}>
+            <NavLink to={flowNavTarget} className="linpo-nav-link" style={() => getNavTextLinkStyle(isFlowRoute)}>
               流程
+            </NavLink>
+            <span aria-hidden="true" style={toolbarNavDividerStyle} />
+            <NavLink to="/pairing" className="linpo-nav-link" style={({ isActive }) => getNavTextLinkStyle(isActive)}>
+              实例
             </NavLink>
           </nav>
         </div>
@@ -77,6 +96,38 @@ export function RedirectToKanban(): JSX.Element {
 // Kept for backward compatibility in existing test imports.
 export function RedirectToOverview(): JSX.Element {
   return <RedirectToKanban />;
+}
+
+const FLOW_ENTRY_STORAGE_KEY = 'linpo.lastFlowEntryPath';
+
+function normalizeFlowEntryPath(rawPath: string | null | undefined): string | null {
+  const value = String(rawPath ?? '').trim();
+  if (!value.startsWith('/flow')) {
+    return null;
+  }
+  if (value === '/flow' || value.startsWith('/flow?') || value.startsWith('/flow#')) {
+    return '/flow';
+  }
+  if (value.startsWith('/flow/edit/')) {
+    return value;
+  }
+  return '/flow';
+}
+
+function loadLastFlowEntryPath(): string | null {
+  try {
+    return normalizeFlowEntryPath(window.localStorage.getItem(FLOW_ENTRY_STORAGE_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function saveLastFlowEntryPath(path: string): void {
+  try {
+    window.localStorage.setItem(FLOW_ENTRY_STORAGE_KEY, path);
+  } catch {
+    // ignore storage failures
+  }
 }
 
 const shellStyle: React.CSSProperties = {

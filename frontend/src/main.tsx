@@ -7,6 +7,8 @@ import { FlowPage } from './components/FlowPage';
 import { LandingPage } from './components/LandingPage';
 import { Layout, RedirectToOverview } from './components/Layout';
 import { LoginPage } from './components/LoginPage';
+import { PairingPage } from './components/PairingPage';
+import { PairingTutorialPage } from './components/PairingTutorialPage';
 import { AuthProvider } from './hooks/useAuth';
 import { ToastProvider } from './hooks/useToast';
 import { ProtectedRoute, PublicRoute } from './routes';
@@ -33,6 +35,8 @@ function App(): JSX.Element {
                 <Route path="kanban" element={<CollabPage />} />
                 <Route path="flow" element={<FlowListPage />} />
                 <Route path="flow/edit/:flowId" element={<FlowPage />} />
+                <Route path="pairing" element={<PairingPage />} />
+                <Route path="pairing/tutorial" element={<PairingTutorialPage />} />
                 <Route path="*" element={<Navigate to="/kanban" replace />} />
               </Route>
             </Route>

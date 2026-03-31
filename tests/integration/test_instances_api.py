@@ -1,4 +1,5 @@
 import json
+import base64
 from collections.abc import Iterator
 from http.cookies import SimpleCookie
 from pathlib import Path
@@ -67,6 +68,11 @@ def _register_and_login(username: str, password: str = "secret-123") -> str:
     )
     assert login_status == 200
     return _cookie_header_from_set_cookie(login_headers["set-cookie"])
+
+
+def _encode_pair_code(payload: dict[str, object]) -> str:
+    raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return f"LP1.{base64.urlsafe_b64encode(raw).decode('utf-8').rstrip('=')}"
 
 
 @pytest.fixture(autouse=True)
@@ -140,6 +146,150 @@ def test_validate_instance_returns_auth_failed_for_invalid_token(
     assert status_code == 400
     assert payload["code"] == "auth_failed"
     assert payload["message"] == "gateway token 校验失败"
+
+
+def test_validate_instance_accepts_gateway_token_alias_success_path(
+    isolated_database_url: str,
+    auth_cookie: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+
+    def fake_validate(
+        _self: object,
+        validation_request: InstanceValidationRequest,
+    ) -> InstanceValidationResult:
+        assert validation_request.gateway_token == "claw2-token"
+        assert validation_request.endpoint == "http://127.0.0.1:28789"
+        return InstanceValidationResult(
+            ok=True,
+            status="ok",
+            message="连接成功",
+            code=None,
+        )
+
+    monkeypatch.setattr(
+        "app.services.instance_validator.InstanceValidatorService.validate",
+        fake_validate,
+    )
+
+    status_code, _, payload = _request_json(
+        "POST",
+        "/instances/validate",
+        {
+            "name": "claw2",
+            "type": "openclaw",
+            "endpoint": "http://127.0.0.1:28789",
+            "gatewayToken": "claw2-token",
+        },
+        auth_cookie,
+    )
+
+    assert status_code == 200
+    assert payload["ok"] is True
+    assert payload["status"] == "ok"
+    assert payload["message"] == "连接成功"
+
+
+def test_validate_instance_by_pair_code_success(
+    isolated_database_url: str,
+    auth_cookie: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+
+    def fake_validate(
+        _self: object,
+        validation_request: InstanceValidationRequest,
+    ) -> InstanceValidationResult:
+        assert validation_request.name == "claw2"
+        assert validation_request.endpoint == "http://127.0.0.1:28789"
+        assert validation_request.gateway_token == "pair-token"
+        return InstanceValidationResult(
+            ok=True,
+            status="ok",
+            message="连接成功",
+            code=None,
+        )
+
+    monkeypatch.setattr(
+        "app.services.instance_validator.InstanceValidatorService.validate",
+        fake_validate,
+    )
+    pair_code = _encode_pair_code(
+        {
+            "endpoint": "http://127.0.0.1:28789",
+            "gatewayToken": "pair-token",
+        }
+    )
+
+    status_code, _, payload = _request_json(
+        "POST",
+        "/instances/pair-code/validate",
+        {
+            "name": "claw2",
+            "type": "openclaw",
+            "pairCode": pair_code,
+        },
+        auth_cookie,
+    )
+    assert status_code == 200
+    assert payload["ok"] is True
+    assert payload["status"] == "ok"
+
+
+def test_create_instance_by_pair_code_then_list(
+    isolated_database_url: str,
+    auth_cookie: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+
+    def fake_validate(
+        _self: object,
+        validation_request: InstanceValidationRequest,
+    ) -> InstanceValidationResult:
+        assert validation_request.name == "claw2-by-code"
+        assert validation_request.gateway_token == "pair-token-2"
+        return InstanceValidationResult(
+            ok=True,
+            status="active",
+            message="validated",
+            code=None,
+        )
+
+    monkeypatch.setattr(
+        "app.services.instance_validator.InstanceValidatorService.validate",
+        fake_validate,
+    )
+    pair_code = _encode_pair_code(
+        {
+            "endpoint": "http://127.0.0.1:28789",
+            "gatewayToken": "pair-token-2",
+        }
+    )
+
+    create_status, _, create_payload = _request_json(
+        "POST",
+        "/instances/pair-code",
+        {
+            "name": "claw2-by-code",
+            "type": "openclaw",
+            "pairCode": pair_code,
+        },
+        auth_cookie,
+    )
+    assert create_status == 201
+    assert create_payload["name"] == "claw2-by-code"
+
+    list_status, _, list_body = request("GET", "/instances", headers={"cookie": auth_cookie})
+    assert list_status == 200
+    items = cast(list[dict[str, Any]], json.loads(list_body.decode("utf-8")))
+    created = next(item for item in items if item["id"] == create_payload["id"])
+    assert created["name"] == "claw2-by-code"
+    assert created["status"] == "active"
+    assert "gatewayToken" not in created
+    assert "gateway_token" not in created
 
 
 def test_validate_instance_rejects_unsafe_endpoint_before_probe(
@@ -441,6 +591,55 @@ def test_list_returns_only_current_users_instances_and_hides_plaintext_token(
     assert "createdAt" not in payload[0]
     assert "gatewayToken" not in payload[0]
     assert "gateway_token" not in payload[0]
+
+
+def test_claw2_pairing_create_then_list_visible_for_same_user(
+    isolated_database_url: str,
+    auth_cookie: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+
+    def fake_validate(
+        _self: object,
+        validation_request: InstanceValidationRequest,
+    ) -> InstanceValidationResult:
+        assert validation_request.name == "claw2"
+        assert validation_request.gateway_token == "claw2-token"
+        return InstanceValidationResult(
+            ok=True,
+            status="ok",
+            message="连接成功",
+            code=None,
+        )
+
+    monkeypatch.setattr(
+        "app.services.instance_validator.InstanceValidatorService.validate",
+        fake_validate,
+    )
+
+    create_status, _, create_payload = _request_json(
+        "POST",
+        "/instances",
+        {
+            "name": "claw2",
+            "type": "openclaw",
+            "endpoint": "http://127.0.0.1:28789",
+            "gatewayToken": "claw2-token",
+        },
+        auth_cookie,
+    )
+    assert create_status == 201
+    assert create_payload["name"] == "claw2"
+
+    list_status, _, list_body = request("GET", "/instances", headers={"cookie": auth_cookie})
+    assert list_status == 200
+    items = cast(list[dict[str, Any]], json.loads(list_body.decode("utf-8")))
+    claw2 = next(item for item in items if item["id"] == create_payload["id"])
+    assert claw2["name"] == "claw2"
+    assert claw2["endpoint"] == "http://127.0.0.1:28789"
+    assert "gatewayToken" not in claw2
+    assert "gateway_token" not in claw2
 
 
 def test_patch_revalidates_when_endpoint_or_token_changes(

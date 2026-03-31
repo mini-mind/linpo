@@ -2,11 +2,14 @@ import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
+  continueFlowRequirement,
   confirmFlowToKanban,
+  generateFlowFromRequirement,
   getAggregateOverview,
   listKanbanTasks,
   renameFlowRequirement,
   stopFlowRequirement,
+  syncFlowRequirement,
 } from '../api/client';
 import type {
   AggregateOverviewAgentItem,
@@ -132,6 +135,9 @@ const LANE_MIN_WIDTH = 360;
 const LANE_SIDE_PADDING = 22;
 const NODE_DEFAULT_MARGIN = 24;
 const NODE_VERTICAL_GAP = 160;
+const FIXED_FLOW_PLANNER_AGENT_ID = 'claw3';
+
+type FlowRuntimeState = 'idle' | 'running' | 'blocked';
 
 export function FlowPage(): JSX.Element {
   const navigate = useNavigate();
@@ -142,8 +148,9 @@ export function FlowPage(): JSX.Element {
   const [overview, setOverview] = useState<AggregateOverviewResponse | null>(null);
   const [flowTasks, setFlowTasks] = useState<KanbanTaskItem[]>([]);
 
-  const [isConfirming, setIsConfirming] = useState(false);
-  const [isStoppingFlow, setIsStoppingFlow] = useState(false);
+  const [isSubmittingFlow, setIsSubmittingFlow] = useState(false);
+  const [isFlowActioning, setIsFlowActioning] = useState(false);
+  const [isSyncingBlockedFlow, setIsSyncingBlockedFlow] = useState(false);
 
   const [flowNodes, setFlowNodes] = useState<FlowCanvasNode[]>([]);
   const [flowEdges, setFlowEdges] = useState<FlowCanvasEdge[]>([]);
@@ -155,7 +162,6 @@ export function FlowPage(): JSX.Element {
   const [loadedRouteKey, setLoadedRouteKey] = useState('');
   const [isDraftCanvas, setIsDraftCanvas] = useState(true);
   const [isSubmittedFlow, setIsSubmittedFlow] = useState(false);
-  const [isFlowFrozen, setIsFlowFrozen] = useState(false);
 
   const [selectedExecutorAgentId, setSelectedExecutorAgentId] = useState('');
   const [isSubmitConfirmOpen, setIsSubmitConfirmOpen] = useState(false);
@@ -164,6 +170,8 @@ export function FlowPage(): JSX.Element {
   const [flowDisplayName, setFlowDisplayName] = useState('未命名流程');
   const [flowNameInput, setFlowNameInput] = useState('未命名流程');
   const [flowRequirement, setFlowRequirement] = useState('');
+  const [plannerInput, setPlannerInput] = useState('');
+  const [isPlanning, setIsPlanning] = useState(false);
 
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [dragState, setDragState] = useState<DragState | null>(null);
@@ -189,6 +197,8 @@ export function FlowPage(): JSX.Element {
 
   const canvasViewportRef = useRef<HTMLDivElement | null>(null);
   const generatedDraftIdRef = useRef('');
+  const blockedSyncSignatureRef = useRef('');
+  const blockedSyncTimerRef = useRef<number | null>(null);
 
   const routeState = useMemo<FlowRouteState | null>(() => {
     const value = location.state as FlowRouteState | null;
@@ -311,7 +321,6 @@ export function FlowPage(): JSX.Element {
     }
     setIsDraftCanvas(true);
     setIsSubmittedFlow(false);
-    setIsFlowFrozen(false);
     setSelectedNodeIds([]);
     setConnectionDrag(null);
   }, [uniqueAgents]);
@@ -332,7 +341,6 @@ export function FlowPage(): JSX.Element {
     }
     setIsDraftCanvas(false);
     setIsSubmittedFlow(true);
-    setIsFlowFrozen(true);
     setSelectedNodeIds([]);
     setConnectionDrag(null);
   }, []);
@@ -375,7 +383,6 @@ export function FlowPage(): JSX.Element {
           }
           setIsDraftCanvas(true);
           setIsSubmittedFlow(false);
-          setIsFlowFrozen(false);
           setSelectedNodeIds([]);
           setConnectionDrag(null);
         }
@@ -400,7 +407,6 @@ export function FlowPage(): JSX.Element {
             setLastResponse(null);
             setIsDraftCanvas(true);
             setIsSubmittedFlow(false);
-            setIsFlowFrozen(false);
             setSelectedNodeIds([]);
             setConnectionDrag(null);
           }
@@ -511,8 +517,28 @@ export function FlowPage(): JSX.Element {
     return flowCatalog.has(normalized) ? normalized : '';
   }, [currentFlowId, flowCatalog, isNewFlowRoute, resolvedFlowId]);
 
-  const canEdit = !isFlowFrozen;
-  const canConfirm = flowNodes.length > 0 && canEdit;
+  const flowRequirementScopeId = useMemo(() => {
+    const routeFlowId = !isNewFlowRoute ? resolvedFlowId.trim() : '';
+    if (routeFlowId) {
+      return routeFlowId;
+    }
+    return currentFlowId.trim();
+  }, [currentFlowId, isNewFlowRoute, resolvedFlowId]);
+
+  const currentRequirementTasks = useMemo(() => {
+    const requirementId = flowRequirementScopeId.trim();
+    if (!requirementId) {
+      return [];
+    }
+    return flowTasks.filter((task) => getRequirementIdFromTask(task) === requirementId);
+  }, [flowRequirementScopeId, flowTasks]);
+  const flowRuntimeState = useMemo<FlowRuntimeState>(
+    () => resolveFlowRuntimeState(currentRequirementTasks),
+    [currentRequirementTasks]
+  );
+
+  const canEdit = !isPlanning && !isFlowActioning && flowRuntimeState !== 'running';
+  const canConfirm = flowNodes.length > 0 && !isPlanning && !isFlowActioning && flowRuntimeState === 'idle';
 
   const normalizedLanes = useMemo(() => {
     if (lanes.length > 0) {
@@ -841,7 +867,7 @@ export function FlowPage(): JSX.Element {
 
   const handleDeleteNodes = useCallback((nodeIds: string[]) => {
     if (!canEdit) {
-      addToast('流程已冻结，请先停止流程', 'warning');
+      addToast('正在规划中，请稍后编辑', 'warning');
       return;
     }
     const deleting = new Set(nodeIds);
@@ -867,7 +893,7 @@ export function FlowPage(): JSX.Element {
 
   const handleRemoveEdge = useCallback((edgeId: string) => {
     if (!canEdit) {
-      addToast('流程已冻结，请先停止流程', 'warning');
+      addToast('正在规划中，请稍后编辑', 'warning');
       return;
     }
     setFlowEdges((current) => current.filter((edge) => edge.id !== edgeId));
@@ -879,7 +905,7 @@ export function FlowPage(): JSX.Element {
     event.stopPropagation();
     event.preventDefault();
     if (!canEdit) {
-      addToast('流程已冻结，请先停止流程', 'warning');
+      addToast('正在规划中，请稍后编辑', 'warning');
       return;
     }
     const point = toCanvasPoint(canvasViewportRef.current, event.clientX, event.clientY);
@@ -1075,9 +1101,232 @@ export function FlowPage(): JSX.Element {
     };
   }, [handleDeleteNodes, selectedNodeIds]);
 
+  useEffect(() => {
+    if (blockedSyncTimerRef.current !== null) {
+      window.clearTimeout(blockedSyncTimerRef.current);
+      blockedSyncTimerRef.current = null;
+    }
+    if (flowRuntimeState !== 'blocked' || isPlanning || isFlowActioning || isSubmittingFlow) {
+      blockedSyncSignatureRef.current = '';
+      return;
+    }
+    const requirementId = activeSubmittedRequirementId.trim();
+    if (!requirementId) {
+      return;
+    }
+
+    const sortedNodes = [...flowNodes]
+      .map((node) => ({
+        id: node.id,
+        title: node.title,
+        description: node.description ?? '',
+        sensitive: node.sensitive,
+        agent_id: node.agent_id ?? '',
+      }))
+      .sort((left, right) => left.id.localeCompare(right.id, 'en'));
+    const sortedEdges = [...flowEdges]
+      .map((edge) => ({ source: edge.source, target: edge.target }))
+      .sort((left, right) => `${left.source}->${left.target}`.localeCompare(`${right.source}->${right.target}`, 'en'));
+    const signature = JSON.stringify({
+      requirementId,
+      requirementTitle: flowDisplayName.trim(),
+      nodes: sortedNodes,
+      edges: sortedEdges,
+    });
+    if (signature === blockedSyncSignatureRef.current) {
+      return;
+    }
+
+    blockedSyncTimerRef.current = window.setTimeout(() => {
+      blockedSyncTimerRef.current = null;
+      setIsSyncingBlockedFlow(true);
+      void syncFlowRequirement(
+        requirementId,
+        {
+          requirement_title: flowDisplayName.trim(),
+          nodes: flowNodes,
+          edges: flowEdges,
+        },
+        undefined,
+        'default'
+      )
+        .then(async () => {
+          blockedSyncSignatureRef.current = signature;
+          await refreshFlowTasks();
+        })
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : '阻塞流程同步失败';
+          addToast(message, 'error');
+        })
+        .finally(() => {
+          setIsSyncingBlockedFlow(false);
+        });
+    }, 280);
+
+    return () => {
+      if (blockedSyncTimerRef.current !== null) {
+        window.clearTimeout(blockedSyncTimerRef.current);
+        blockedSyncTimerRef.current = null;
+      }
+    };
+  }, [
+    activeSubmittedRequirementId,
+    addToast,
+    flowDisplayName,
+    flowEdges,
+    flowNodes,
+    flowRuntimeState,
+    isFlowActioning,
+    isPlanning,
+    isSubmittingFlow,
+    refreshFlowTasks,
+  ]);
+
+  const handlePlanByInstruction = useCallback(async () => {
+    if (isPlanning) {
+      return;
+    }
+    if (!canEdit) {
+      addToast('流程运行中，先中断后再编辑', 'warning');
+      return;
+    }
+    const instruction = plannerInput.trim();
+    if (!instruction) {
+      addToast('请输入流程拆解指令', 'warning');
+      return;
+    }
+
+    const executorAgentId =
+      selectedExecutorAgentId.trim() || uniqueAgents[0]?.agent_id?.trim() || lanes.find((lane) => lane.agentId)?.agentId || '';
+    if (!executorAgentId) {
+      addToast('请先配置可用 Agent（泳道或默认执行 Agent）', 'warning');
+      return;
+    }
+    const executor = uniqueAgents.find((agent) => agent.agent_id === executorAgentId);
+    if (!executor) {
+      addToast('当前执行 Agent 不可用', 'warning');
+      return;
+    }
+
+    setPlannerInput('');
+    setIsPlanning(true);
+    try {
+      const response = await generateFlowFromRequirement(
+        {
+          requirement: instruction,
+          instance_id: executor.instance_id,
+          executor_agent_id: executorAgentId,
+          planner_agent_id: FIXED_FLOW_PLANNER_AGENT_ID,
+          manager_agent_id: executorAgentId,
+          planner_session_key: lastResponse?.planner_session_key ?? null,
+          flow_name: flowDisplayName.trim() || null,
+          current_nodes: flowNodes,
+          current_edges: flowEdges,
+        },
+        { instanceId: executor.instance_id },
+        'default'
+      );
+
+      const lanePayload = buildLanesAndNodeLaneMapFromNodes(response.nodes, uniqueAgents, executorAgentId);
+      setFlowNodes(response.nodes);
+      setFlowEdges(response.edges);
+      setLanes(lanePayload.lanes);
+      setNodeLaneById(lanePayload.nodeLaneById);
+      setLastResponse(response);
+      setSelectedNodeIds([]);
+      setConnectionDrag(null);
+      setIsDraftCanvas(true);
+      setIsSubmittedFlow(false);
+      if (!flowRequirement.trim()) {
+        setFlowRequirement(instruction);
+      }
+      if ((flowDisplayName.trim() === '' || flowDisplayName.trim() === '未命名流程') && instruction) {
+        const nextName = buildDraftFlowName(instruction);
+        setFlowDisplayName(nextName);
+        setFlowNameInput(nextName);
+      }
+      addToast('流程草图已更新', 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '流程规划失败';
+      addToast(message, 'error');
+    } finally {
+      setIsPlanning(false);
+    }
+  }, [
+    addToast,
+    canEdit,
+    flowDisplayName,
+    flowEdges,
+    flowNodes,
+    flowRequirement,
+    isPlanning,
+    lanes,
+    lastResponse?.planner_session_key,
+    plannerInput,
+    selectedExecutorAgentId,
+    uniqueAgents,
+  ]);
+
+  const handlePlannerInputKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key !== 'Enter') {
+      return;
+    }
+    const nativeEvent = event.nativeEvent as KeyboardEvent;
+    if (nativeEvent.isComposing) {
+      return;
+    }
+    if (event.shiftKey) {
+      return;
+    }
+    event.preventDefault();
+    void handlePlanByInstruction();
+  }, [handlePlanByInstruction]);
+
+  const handleStopFlow = useCallback(async () => {
+    const requirementId = activeSubmittedRequirementId.trim();
+    if (!requirementId) {
+      addToast('当前流程尚未加入看板，无法中断', 'warning');
+      return;
+    }
+    const confirmed = window.confirm('确认中断当前流程吗？运行中的节点会被阻断，后续可点击“继续”恢复。');
+    if (!confirmed) {
+      return;
+    }
+    setIsFlowActioning(true);
+    try {
+      await stopFlowRequirement(requirementId, undefined, 'default');
+      await refreshFlowTasks();
+      addToast('流程已中断', 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '流程中断失败';
+      addToast(message, 'error');
+    } finally {
+      setIsFlowActioning(false);
+    }
+  }, [activeSubmittedRequirementId, addToast, refreshFlowTasks]);
+
+  const handleContinueFlow = useCallback(async () => {
+    const requirementId = activeSubmittedRequirementId.trim();
+    if (!requirementId) {
+      addToast('当前流程尚未加入看板，无法继续', 'warning');
+      return;
+    }
+    setIsFlowActioning(true);
+    try {
+      await continueFlowRequirement(requirementId, undefined, 'default');
+      await refreshFlowTasks();
+      addToast('流程已继续', 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '流程继续失败';
+      addToast(message, 'error');
+    } finally {
+      setIsFlowActioning(false);
+    }
+  }, [activeSubmittedRequirementId, addToast, refreshFlowTasks]);
+
   const handleConfirm = useCallback(async () => {
     if (!canEdit) {
-      addToast('流程已冻结，无法再次提交', 'warning');
+      addToast('正在规划中，请稍后再试', 'warning');
       return;
     }
     if (flowNodes.length === 0) {
@@ -1112,11 +1361,12 @@ export function FlowPage(): JSX.Element {
       return;
     }
 
-    setIsConfirming(true);
+    setIsSubmittingFlow(true);
     try {
       const response = await confirmFlowToKanban(
         {
           instance_id: executor.instance_id,
+          requirement_id: currentFlowId.trim() || activeSubmittedRequirementId || null,
           executor_agent_id: executorAgentId,
           manager_agent_id: executorAgentId,
           requirement_title: flowDisplayName.trim() || null,
@@ -1144,6 +1394,8 @@ export function FlowPage(): JSX.Element {
         deleteFlowDraft(currentFlowId.trim());
       }
 
+      setIsDraftCanvas(false);
+      setIsSubmittedFlow(true);
       setIsSubmitConfirmOpen(false);
       setSelectedNodeIds([]);
       setConnectionDrag(null);
@@ -1153,20 +1405,18 @@ export function FlowPage(): JSX.Element {
       );
 
       if (nextRequirementId) {
+        setCurrentFlowId(nextRequirementId);
         navigate(`/flow/edit/${encodeURIComponent(nextRequirementId)}`, { replace: true });
-      } else {
-        setIsDraftCanvas(false);
-        setIsSubmittedFlow(true);
-        setIsFlowFrozen(true);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : '流程加入看板失败';
       addToast(message, 'error');
     } finally {
-      setIsConfirming(false);
+      setIsSubmittingFlow(false);
     }
   }, [
     addToast,
+    activeSubmittedRequirementId,
     canEdit,
     currentFlowId,
     flowEdges,
@@ -1181,67 +1431,6 @@ export function FlowPage(): JSX.Element {
     refreshFlowTasks,
     selectedExecutorAgentId,
     uniqueAgents,
-  ]);
-
-  const handleStopFlow = useCallback(async () => {
-    const requirementId = activeSubmittedRequirementId;
-    if (!requirementId) {
-      addToast('当前流程还未提交，无需停止', 'warning');
-      return;
-    }
-    setIsStoppingFlow(true);
-    try {
-      const response = await stopFlowRequirement(requirementId, undefined, 'default');
-      const draftName = flowDisplayName.trim() || '未命名流程';
-      const draftId = requirementId;
-      upsertFlowDraft({
-        id: draftId,
-        name: draftName,
-        requirement: flowRequirement,
-        nodes: flowNodes,
-        edges: flowEdges,
-        lanes: normalizedLanes.map((lane) => ({
-          id: lane.id,
-          name: lane.name,
-          agent_id: lane.agentId,
-          created_at: lane.createdAt,
-        })),
-        node_lane_by_id: nodeLaneById,
-        planner_session_key: lastResponse?.planner_session_key ?? null,
-        execution_session_prefix: lastResponse?.execution_session_prefix ?? null,
-        executor_agent_id: selectedExecutorAgentId.trim() || null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      });
-      setCurrentFlowId(draftId);
-      setIsDraftCanvas(true);
-      setIsSubmittedFlow(false);
-      setIsFlowFrozen(false);
-      await refreshFlowTasks();
-
-      addToast(
-        `已停止后续调度，终止 ${response.stopped_task_ids.length} 个待调度任务，运行中 ${response.running_task_ids.length} 个`,
-        'success'
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '停止流程失败';
-      addToast(message, 'error');
-    } finally {
-      setIsStoppingFlow(false);
-    }
-  }, [
-    activeSubmittedRequirementId,
-    addToast,
-    flowDisplayName,
-    flowEdges,
-    flowNodes,
-    flowRequirement,
-    lastResponse?.execution_session_prefix,
-    lastResponse?.planner_session_key,
-    nodeLaneById,
-    normalizedLanes,
-    refreshFlowTasks,
-    selectedExecutorAgentId,
   ]);
 
   const handleRenameFlow = useCallback(async () => {
@@ -1307,6 +1496,22 @@ export function FlowPage(): JSX.Element {
   ]);
 
   const displayFlowName = flowDisplayName.trim() || '未命名流程';
+  const flowStateLabel = flowRuntimeState === 'running' ? '运行中' : flowRuntimeState === 'blocked' ? '阻塞中' : '可运行';
+  const flowActionButtonLabel = flowRuntimeState === 'running'
+    ? (isFlowActioning ? '中断中...' : '中断')
+    : flowRuntimeState === 'blocked'
+      ? (isFlowActioning ? '继续中...' : '继续')
+      : (isSubmittingFlow ? '运行中...' : '运行');
+  const flowActionButtonStyle = flowRuntimeState === 'running'
+    ? flowStopButtonStyle
+    : flowRuntimeState === 'blocked'
+      ? flowContinueButtonStyle
+      : primaryButtonStyle;
+  const flowActionDisabled = flowRuntimeState === 'running'
+    ? (isFlowActioning || isPlanning)
+    : flowRuntimeState === 'blocked'
+      ? (isFlowActioning || isPlanning)
+      : (!canConfirm || isSubmittingFlow || isPlanning || isFlowActioning);
 
   return (
     <section style={pageStyle} aria-label="flow-page">
@@ -1330,27 +1535,27 @@ export function FlowPage(): JSX.Element {
           </button>
         </div>
         <div style={toolbarRightStyle}>
-          <span style={flowStateBadgeStyle}>{isFlowFrozen ? '已冻结' : '可编辑'}</span>
+          <span style={flowStateBadgeStyle}>{flowStateLabel}</span>
+          {isSyncingBlockedFlow ? <span style={flowSyncBadgeStyle}>同步中...</span> : null}
           <span style={flowHintBadgeStyle}>节点间数据流转: 临时文件</span>
-          {isSubmittedFlow && isFlowFrozen ? (
-            <button
-              type="button"
-              style={dangerButtonStyle}
-              onClick={() => void handleStopFlow()}
-              disabled={isStoppingFlow || isConfirming}
-            >
-              {isStoppingFlow ? '停止中...' : '停止流程'}
-            </button>
-          ) : (
-            <button
-              type="button"
-              style={primaryButtonStyle}
-              onClick={() => setIsSubmitConfirmOpen(true)}
-              disabled={!canConfirm || isConfirming || isStoppingFlow}
-            >
-              {isConfirming ? '运行中...' : '运行'}
-            </button>
-          )}
+          <button
+            type="button"
+            style={flowActionButtonStyle}
+            onClick={() => {
+              if (flowRuntimeState === 'running') {
+                void handleStopFlow();
+                return;
+              }
+              if (flowRuntimeState === 'blocked') {
+                void handleContinueFlow();
+                return;
+              }
+              setIsSubmitConfirmOpen(true);
+            }}
+            disabled={flowActionDisabled}
+          >
+            {flowActionButtonLabel}
+          </button>
         </div>
       </header>
 
@@ -1364,14 +1569,24 @@ export function FlowPage(): JSX.Element {
               onChange={(event) => setFlowNameInput(event.target.value)}
               style={formInputStyle}
               placeholder="输入流程名称"
-              disabled={isConfirming || isStoppingFlow}
+              disabled={isSubmittingFlow || isFlowActioning || isPlanning}
             />
           </label>
           <div style={actionRowStyle}>
-            <button type="button" style={secondaryButtonStyle} onClick={() => setIsDetailOpen(false)} disabled={isConfirming || isStoppingFlow}>
+            <button
+              type="button"
+              style={secondaryButtonStyle}
+              onClick={() => setIsDetailOpen(false)}
+              disabled={isSubmittingFlow || isFlowActioning || isPlanning}
+            >
               关闭
             </button>
-            <button type="button" style={primaryButtonStyle} onClick={() => void handleRenameFlow()} disabled={isConfirming || isStoppingFlow}>
+            <button
+              type="button"
+              style={primaryButtonStyle}
+              onClick={() => void handleRenameFlow()}
+              disabled={isSubmittingFlow || isFlowActioning || isPlanning}
+            >
               保存
             </button>
           </div>
@@ -1382,13 +1597,13 @@ export function FlowPage(): JSX.Element {
         <div style={confirmOverlayStyle} role="dialog" aria-modal="true" aria-label="确认运行流程">
           <div style={confirmCardStyle}>
             <h3 style={confirmTitleStyle}>确认运行流程</h3>
-            <p style={confirmTextStyle}>运行后将写入看板并冻结当前流程编辑，确认继续？</p>
+            <p style={confirmTextStyle}>运行后将按当前画布把该流程加入看板队列并开始调度，确认继续？</p>
             <div style={actionRowStyle}>
-              <button type="button" style={secondaryButtonStyle} onClick={() => setIsSubmitConfirmOpen(false)} disabled={isConfirming}>
+              <button type="button" style={secondaryButtonStyle} onClick={() => setIsSubmitConfirmOpen(false)} disabled={isSubmittingFlow || isPlanning}>
                 取消
               </button>
-              <button type="button" style={primaryButtonStyle} onClick={() => void handleConfirm()} disabled={isConfirming}>
-                {isConfirming ? '运行中...' : '确认运行'}
+              <button type="button" style={primaryButtonStyle} onClick={() => void handleConfirm()} disabled={isSubmittingFlow || isPlanning}>
+                {isSubmittingFlow ? '运行中...' : '确认运行'}
               </button>
             </div>
           </div>
@@ -1671,6 +1886,32 @@ export function FlowPage(): JSX.Element {
           ) : null}
         </div>
       </div>
+
+      <div style={plannerComposerShellStyle}>
+        <div style={plannerComposerCardStyle} role="group" aria-label="流程规划对话框">
+          <textarea
+            value={plannerInput}
+            onChange={(event) => setPlannerInput(event.target.value)}
+            onKeyDown={handlePlannerInputKeyDown}
+            style={plannerComposerTextareaStyle}
+            placeholder="输入规划指令：例如“把验收拆成并行节点，并补全每个节点的输入输出”"
+            aria-label="流程规划输入框"
+            data-testid="flow-planner-input"
+            disabled={!canEdit}
+          />
+          <div style={plannerComposerFooterStyle}>
+            <span style={plannerComposerHintStyle}>Enter 发送 · Shift+Enter 换行</span>
+            <button
+              type="button"
+              style={primaryButtonStyle}
+              onClick={() => void handlePlanByInstruction()}
+              disabled={!canEdit || plannerInput.trim() === ''}
+            >
+              {isPlanning ? '正在规划...' : '发送'}
+            </button>
+          </div>
+        </div>
+      </div>
     </section>
   );
 }
@@ -1692,8 +1933,19 @@ function buildFlowSnapshotFromTasks(
   agents: AggregateOverviewAgentItem[]
 ): FlowSnapshot {
   const sorted = [...tasks].sort((a, b) => toEpochMillis(a.created_at) - toEpochMillis(b.created_at));
+  const deduplicatedByNode = new Map<string, KanbanTaskItem>();
+  for (const task of sorted) {
+    const nodeId = getFlowNodeId(task);
+    const existing = deduplicatedByNode.get(nodeId);
+    if (!existing || toEpochMillis(task.updated_at) >= toEpochMillis(existing.updated_at)) {
+      deduplicatedByNode.set(nodeId, task);
+    }
+  }
+  const effectiveTasks = Array.from(deduplicatedByNode.values()).sort(
+    (a, b) => toEpochMillis(a.created_at) - toEpochMillis(b.created_at)
+  );
   const nodeIdSet = new Set<string>();
-  const nodeDrafts: NodeDraft[] = sorted.map((task) => {
+  const nodeDrafts: NodeDraft[] = effectiveTasks.map((task) => {
     const nodeId = getFlowNodeId(task);
     nodeIdSet.add(nodeId);
     return {
@@ -1737,7 +1989,7 @@ function buildFlowSnapshotFromTasks(
       id: laneId,
       name: agentKey === 'unassigned' ? '未委派泳道' : nameByAgentId.get(agentKey) ?? agentKey,
       agentId: agentKey === 'unassigned' ? null : agentKey,
-      createdAt: sorted[0]?.created_at ?? new Date().toISOString(),
+      createdAt: effectiveTasks[0]?.created_at ?? new Date().toISOString(),
     });
     laneNodes.sort((left, right) => {
       const layerDiff = (layerMap.get(left.id) ?? 0) - (layerMap.get(right.id) ?? 0);
@@ -1775,31 +2027,31 @@ function buildFlowSnapshotFromTasks(
     }
   }
 
-  const requirementTitle = getRequirementTitleFromTask(sorted[0]);
-  const updatedAt = sorted.reduce((latest, task) => {
+  const requirementTitle = getRequirementTitleFromTask(effectiveTasks[0]);
+  const updatedAt = effectiveTasks.reduce((latest, task) => {
     return toEpochMillis(task.updated_at) > toEpochMillis(latest) ? task.updated_at : latest;
-  }, sorted[0]?.updated_at ?? new Date().toISOString());
+  }, effectiveTasks[0]?.updated_at ?? new Date().toISOString());
 
-  const plannerSessionKey = String(sorted[0]?.extras.planner_session_key ?? '').trim() || `linpo:flow:default:planner:claw3:loaded`;
-  const managerSessionKey = String(sorted[0]?.extras.manager_session_key ?? '').trim() || `linpo:flow:default:manager`;
-  const executionSessionKey = String(sorted[0]?.extras.execution_session_key ?? '').trim();
+  const plannerSessionKey = String(effectiveTasks[0]?.extras.planner_session_key ?? '').trim() || `linpo:flow:default:planner:claw3:loaded`;
+  const managerSessionKey = String(effectiveTasks[0]?.extras.manager_session_key ?? '').trim() || `linpo:flow:default:manager`;
+  const executionSessionKey = String(effectiveTasks[0]?.extras.execution_session_key ?? '').trim();
   const executionSessionPrefix =
     executionSessionKey && executionSessionKey.includes(':')
       ? executionSessionKey.split(':').slice(0, -1).join(':')
       : 'linpo:flow:default:exec';
 
   const syntheticResponse: FlowGenerateResponse = {
-    board_id: sorted[0]?.board_id ?? 'default',
+    board_id: effectiveTasks[0]?.board_id ?? 'default',
     planner_session_key: plannerSessionKey,
     manager_session_key: managerSessionKey,
     execution_session_prefix: executionSessionPrefix,
     nodes,
     edges,
     messages: [],
-    created_task_ids: sorted.map((task) => task.id),
+    created_task_ids: effectiveTasks.map((task) => task.id),
   };
 
-  const executorAgentId = (sorted[0]?.agent_id ?? '').trim();
+  const executorAgentId = (effectiveTasks[0]?.agent_id ?? '').trim();
 
   return {
     requirementId,
@@ -1912,6 +2164,29 @@ function normalizeTaskStatus(value: string): TaskStatus {
   if (value === 'failed') return 'failed';
   if (value === 'completed') return 'completed';
   return 'queued';
+}
+
+function resolveFlowRuntimeState(tasks: KanbanTaskItem[]): FlowRuntimeState {
+  if (tasks.length === 0) {
+    return 'idle';
+  }
+  if (tasks.some((task) => {
+    const status = normalizeTaskStatus(task.status);
+    return status === 'running' || status === 'queued';
+  })) {
+    return 'running';
+  }
+  if (tasks.some((task) => {
+    const status = normalizeTaskStatus(task.status);
+    if (status !== 'blocked_by_approval') {
+      return false;
+    }
+    const dispatchStatus = String(task.extras.dispatch_status ?? '').trim().toLowerCase();
+    return dispatchStatus === 'interrupted' || dispatchStatus === 'stopped' || dispatchStatus === 'blocked';
+  })) {
+    return 'blocked';
+  }
+  return 'idle';
 }
 
 function toEpochMillis(value: string): number {
@@ -2356,6 +2631,29 @@ const primaryButtonStyle: React.CSSProperties = {
   cursor: 'pointer',
 };
 
+const flowStopButtonStyle: React.CSSProperties = {
+  ...primaryButtonStyle,
+  border: '1px solid rgba(220, 38, 38, 0.46)',
+  background: 'linear-gradient(120deg, #b91c1c 0%, #dc2626 100%)',
+};
+
+const flowContinueButtonStyle: React.CSSProperties = {
+  ...primaryButtonStyle,
+  border: '1px solid rgba(180, 83, 9, 0.46)',
+  background: 'linear-gradient(120deg, #b45309 0%, #d97706 100%)',
+};
+
+const flowSyncBadgeStyle: React.CSSProperties = {
+  border: '1px solid rgba(14, 116, 144, 0.34)',
+  borderRadius: '999px',
+  padding: '0.1rem 0.5rem',
+  fontSize: '0.7rem',
+  fontWeight: 700,
+  color: '#075985',
+  background: 'rgba(224, 242, 254, 0.85)',
+  whiteSpace: 'nowrap',
+};
+
 const secondaryButtonStyle: React.CSSProperties = {
   border: '1px solid rgba(148, 163, 184, 0.5)',
   background: 'rgba(255, 255, 255, 0.84)',
@@ -2364,17 +2662,6 @@ const secondaryButtonStyle: React.CSSProperties = {
   padding: '0.42rem 0.75rem',
   fontSize: '0.8rem',
   fontWeight: 600,
-  cursor: 'pointer',
-};
-
-const dangerButtonStyle: React.CSSProperties = {
-  border: '1px solid rgba(220, 38, 38, 0.4)',
-  background: 'rgba(254, 242, 242, 0.92)',
-  color: '#991b1b',
-  borderRadius: '0.45rem',
-  padding: '0.42rem 0.75rem',
-  fontSize: '0.8rem',
-  fontWeight: 700,
   cursor: 'pointer',
 };
 
@@ -2493,11 +2780,64 @@ const confirmTextStyle: React.CSSProperties = {
   lineHeight: 1.5,
 };
 
+const plannerComposerShellStyle: React.CSSProperties = {
+  position: 'absolute',
+  left: '50%',
+  bottom: '0.9rem',
+  transform: 'translateX(-50%)',
+  zIndex: 70,
+  width: 'min(820px, calc(100vw - 1.6rem))',
+  pointerEvents: 'none',
+};
+
+const plannerComposerCardStyle: React.CSSProperties = {
+  width: '100%',
+  border: '1px solid rgba(14, 116, 144, 0.28)',
+  borderRadius: '0.7rem',
+  background: 'rgba(248, 250, 252, 0.88)',
+  backdropFilter: 'blur(8px)',
+  boxShadow: '0 22px 42px -34px rgba(15, 23, 42, 0.95)',
+  padding: '0.58rem',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.45rem',
+  pointerEvents: 'auto',
+};
+
+const plannerComposerTextareaStyle: React.CSSProperties = {
+  width: '100%',
+  border: '1px solid rgba(148, 163, 184, 0.45)',
+  borderRadius: '0.55rem',
+  padding: '0.52rem 0.62rem',
+  fontSize: '0.8rem',
+  lineHeight: 1.45,
+  minHeight: '92px',
+  resize: 'vertical',
+  background: 'rgba(255, 255, 255, 0.9)',
+  color: '#0f172a',
+};
+
+const plannerComposerFooterStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '0.52rem',
+};
+
+const plannerComposerHintStyle: React.CSSProperties = {
+  fontSize: '0.72rem',
+  fontWeight: 600,
+  color: '#475569',
+  whiteSpace: 'nowrap',
+};
+
 const canvasViewportStyle: React.CSSProperties = {
   position: 'relative',
   width: '100%',
   height: '100%',
   overflow: 'auto',
+  boxSizing: 'border-box',
+  paddingBottom: '156px',
   background:
     'radial-gradient(circle at 30px 30px, rgba(15, 118, 110, 0.08) 1px, transparent 1px), radial-gradient(circle at 30px 30px, rgba(148, 163, 184, 0.07) 0.5px, transparent 0.5px), linear-gradient(160deg, rgba(255, 255, 255, 0.72), rgba(240, 253, 250, 0.6))',
   backgroundSize: '38px 38px, 19px 19px, cover',

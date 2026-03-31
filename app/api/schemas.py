@@ -151,6 +151,14 @@ class InstanceWriteRequest(BaseModel):
     gateway_token: str = Field(alias="gatewayToken")
 
 
+class InstancePairCodeRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str
+    type: str
+    pair_code: str = Field(alias="pairCode")
+
+
 class InstancePatchRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -370,10 +378,15 @@ class FlowGenerateRequest(BaseModel):
     executor_agent_id: str = Field(min_length=1, max_length=128)
     planner_agent_id: str | None = Field(default=None, max_length=128)
     manager_agent_id: str | None = Field(default=None, max_length=128)
+    planner_session_key: str | None = Field(default=None, max_length=256)
+    flow_name: str | None = Field(default=None, max_length=256)
+    current_nodes: list["FlowCanvasNode"] = Field(default_factory=list)
+    current_edges: list["FlowCanvasEdge"] = Field(default_factory=list)
 
 
 class FlowConfirmRequest(BaseModel):
     instance_id: str = Field(min_length=1)
+    requirement_id: str | None = Field(default=None, max_length=128)
     executor_agent_id: str = Field(min_length=1, max_length=128)
     manager_agent_id: str | None = Field(default=None, max_length=128)
     requirement_title: str | None = Field(default=None, max_length=4000)
@@ -453,10 +466,40 @@ class TaskRunEventResponse(BaseModel):
     dispatched_task_ids: list[str]
 
 
+class TaskInterruptResponse(BaseModel):
+    accepted: bool
+    task_id: str
+    status: TaskStatus
+    dispatched_task_ids: list[str]
+    pause_requested: bool
+    message: str | None = None
+
+
+class TaskContinueResponse(BaseModel):
+    accepted: bool
+    task_id: str
+    status: TaskStatus
+    dispatched_task_ids: list[str]
+    message: str | None = None
+
+
 class TaskDeleteResponse(BaseModel):
     deleted: bool
     deleted_task_ids: list[str]
     requirement_id: str | None = None
+
+
+TaskOutputPreviewKind = Literal["text", "json", "binary"]
+
+
+class TaskOutputPreviewResponse(BaseModel):
+    path: str
+    kind: TaskOutputPreviewKind
+    mime_type: str
+    size_bytes: int
+    truncated: bool
+    content: str | None
+    download_url: str
 
 
 class FlowRequirementRenameRequest(BaseModel):
@@ -473,3 +516,22 @@ class FlowRequirementStopResponse(BaseModel):
     requirement_id: str
     stopped_task_ids: list[str]
     running_task_ids: list[str]
+
+
+class FlowRequirementContinueResponse(BaseModel):
+    requirement_id: str
+    resumed_task_ids: list[str]
+    dispatched_task_ids: list[str]
+
+
+class FlowRequirementSyncRequest(BaseModel):
+    requirement_title: str | None = Field(default=None, max_length=4000)
+    nodes: list[FlowCanvasNode]
+    edges: list[FlowCanvasEdge]
+
+
+class FlowRequirementSyncResponse(BaseModel):
+    requirement_id: str
+    updated_task_ids: list[str]
+    created_task_ids: list[str]
+    deleted_task_ids: list[str]

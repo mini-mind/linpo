@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.api.schemas import (
     InstanceDeleteResponse,
     InstanceItem,
+    InstancePairCodeRequest,
     InstancePatchRequest,
     InstanceValidationErrorResponse,
     InstanceValidationResponse,
@@ -23,6 +24,11 @@ from app.services.instance_service import (
     InstanceService,
     InstanceUpdateInput,
     InstanceValidationFailedError,
+)
+from app.services.instance_validator import InstanceValidationErrorCode
+from app.services.instance_pairing_code import (
+    InstancePairingCodeError,
+    decode_instance_pairing_code,
 )
 
 router = APIRouter(prefix="/instances", tags=["instances"])
@@ -69,6 +75,16 @@ def _validation_error_response(
             message=message,
             code=code,
         ).model_dump(),
+    )
+
+
+def _pair_code_to_create_input(payload: InstancePairCodeRequest) -> InstanceCreateInput:
+    credentials = decode_instance_pairing_code(payload.pair_code)
+    return InstanceCreateInput(
+        name=payload.name,
+        type=payload.type,
+        endpoint=credentials.endpoint,
+        gateway_token=credentials.gateway_token,
     )
 
 
@@ -151,6 +167,85 @@ def validate_instance(
         message=result.message,
         code=None if result.code is None else result.code.value,
     )
+
+
+@router.post(
+    "/pair-code/validate",
+    response_model=InstanceValidationResponse,
+    responses={400: {"model": InstanceValidationErrorResponse}},
+)
+def validate_instance_by_pair_code(
+    payload: InstancePairCodeRequest,
+    current_user: User = Depends(get_current_user),
+    db_session: Session = Depends(get_session),
+    instance_service: InstanceService = Depends(get_instance_service),
+) -> InstanceValidationResponse | JSONResponse:
+    try:
+        create_input = _pair_code_to_create_input(payload)
+    except InstancePairingCodeError as exc:
+        return _validation_error_response(
+            ok=False,
+            status_text="failed",
+            message=str(exc),
+            code=InstanceValidationErrorCode.PROTOCOL_FAILED.value,
+        )
+
+    result = instance_service.validate_instance(
+        db_session,
+        user_id=current_user.id,
+        payload=create_input,
+    )
+    if not result.ok:
+        return _validation_error_response(
+            ok=result.ok,
+            status_text=result.status,
+            message=result.message,
+            code=None if result.code is None else result.code.value,
+        )
+    return InstanceValidationResponse(
+        ok=result.ok,
+        status=result.status,
+        message=result.message,
+        code=None if result.code is None else result.code.value,
+    )
+
+
+@router.post(
+    "/pair-code",
+    response_model=InstanceItem,
+    status_code=status.HTTP_201_CREATED,
+    responses={400: {"model": InstanceValidationErrorResponse}},
+)
+def create_instance_by_pair_code(
+    payload: InstancePairCodeRequest,
+    current_user: User = Depends(get_current_user),
+    db_session: Session = Depends(get_session),
+    instance_service: InstanceService = Depends(get_instance_service),
+) -> InstanceItem | JSONResponse:
+    try:
+        create_input = _pair_code_to_create_input(payload)
+    except InstancePairingCodeError as exc:
+        return _validation_error_response(
+            ok=False,
+            status_text="failed",
+            message=str(exc),
+            code=InstanceValidationErrorCode.PROTOCOL_FAILED.value,
+        )
+
+    try:
+        instance = instance_service.create_instance(
+            db_session,
+            user_id=current_user.id,
+            payload=create_input,
+        )
+    except InstanceValidationFailedError as exc:
+        return _validation_error_response(
+            ok=exc.result.ok,
+            status_text=exc.result.status,
+            message=exc.result.message,
+            code=None if exc.result.code is None else exc.result.code.value,
+        )
+    return _instance_to_item(instance)
 
 
 @router.patch(

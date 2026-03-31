@@ -1,5 +1,32 @@
 # Linpo 文档变更记录
 
+## 2026-03-31
+
+- PRD/Architecture 补充看板“按流程分列”列头交互：展示流程状态并提供主动作（`中断流程/继续流程/运行流程`），删除流程仍遵循“先中断后删除”。
+
+## 2026-03-30
+
+- PRD/Architecture 收敛流程运行模型：移除“流程实例面板/flow_instance_id 多实例”口径，改为“单流程即单实例”。
+- PRD/Architecture 调整编辑页主按钮状态机：`运行 -> 中断 -> 继续 -> 运行`；运行中冻结编辑，阻塞态允许编辑未执行节点并回写看板。
+- Architecture 补充流程级接口：新增 `POST /tasks/requirements/{requirement_id}/continue` 与 `POST /tasks/requirements/{requirement_id}/sync`。
+- PRD/Architecture 调整看板分列口径：`按需求分列` 更名为 `按流程分列`；流程列头新增“中断流程/删除流程（先中断后删除）”动作。
+- PRD/Architecture 补充状态列要求：按状态分列新增“阻塞”列，用于展示被中断/阻断节点。
+- PRD/Architecture 收敛任务控制按钮策略：仅 `running` 节点展示“中断”，其他状态按可用动作显示不同按钮组。
+- Architecture 补充多实例调度隔离：同一流程多次运行采用 `flow_instance_id` 分隔依赖判定，避免跨实例串联。
+- PRD/Architecture 调整流程导航行为：导航栏点击“流程”优先回到上次访问的流程路由（缓存），仅在无缓存或缓存为列表页时进入 `/flow`。
+- PRD/Architecture 移除流程编辑冻结态口径：编辑页始终可编辑，“运行”仅创建新的流程实例并触发调度。
+- PRD/Architecture 新增编辑页实例观察能力：工具栏右上展示当前流程实例统计（运行中/历史）与实例列表。
+- PRD/Architecture 调整任务详情默认页签：弹窗默认展示“基本信息”，终态不再自动跳转“任务产出”。
+- PRD/Architecture 扩展阻塞态控制：`blocked_by_approval` 节点在“基本信息”页新增“继续”动作，并补充后端 `POST /tasks/{task_id}/continue` 契约。
+- PRD/Architecture 补充流程拆解并行策略：`flow.generate` 提示词明确鼓励把可独立子任务拆成并行分支，并在节点描述中给出 subagent 并行委派建议。
+- PRD/Architecture 扩展任务详情“基本信息”页契约：提供任务控制按钮（含`中断`）并新增后端任务中断接口约束。
+- PRD/Architecture 同步任务详情弹窗新契约：采用 `基本信息/执行流程/任务产出` 三标签页，降低信息拥挤。
+- PRD/Architecture 曾补充终态交互约束：任务进入 `completed/failed/blocked_by_approval` 后默认切到“任务产出”标签页（同日后续已调整为默认停留“基本信息”）。
+- PRD/Architecture 新增任务产出能力口径：文本按 Markdown 渲染，文件支持格式化预览与下载；后端新增任务范围受限的产出预览/文件流接口。
+- PRD/Architecture 细化任务产出预览：前端按 MIME 做专用渲染（JSON 折叠树、图片/PDF/音视频内嵌），其余类型保留下载兜底。
+- PRD/Architecture 调整任务详情交互：弹窗改为 `基本信息/执行流程/任务产出` 三标签页（终态默认页签后续已统一为“基本信息”）。
+- PRD/Architecture 收敛任务产出来源：仅展示 Agent 显式上报的 `artifact` 交接文件，不再从普通消息文本推断路径。
+
 ## 2026-03-29
 
 - PRD/Architecture 升级流程编辑画布契约：移除底部输入框，改为 ComfyUI 风格直编画布（双击画布建节点、双击节点编辑、四向连接点连线）。
@@ -11,6 +38,13 @@
 - PRD/Architecture 补充“所有流程”页布局与交互约束：移除顶部标题说明区，工具栏承载筛选/排序与“新建流程”，流程卡片提供“开始流程/重命名流程/删除流程”编辑动作。
 - PRD/Architecture 调整“所有流程”与“编辑流程”交互：流程列表编辑弹窗移除“开始流程”，卡片主体直接进入编辑页；编辑页主按钮文案由“提交流程”改为“运行”；流程新建拆解 Agent 固定为 `claw3`（后续通过配置切换）。
 - PRD 进一步统一工作台视觉：看板/流程列表/流程编辑工具栏统一为贴顶扁平风格；流程列表卡片布局恢复多列网格。
+- PRD/Architecture 补充看板任务详情弹窗契约：新增 `详情/消息流` 标签页，消息流复用 session 历史接口展示任务执行过程。
+- PRD/Architecture 收敛节点消息流原则：每个任务节点绑定唯一 `execution_session_key`，看板弹窗消息流改为“history 首屏 + realtime 增量订阅”，移除轮询刷新。
+- PRD/Architecture 调整流程编辑交互：恢复底部悬浮指令对话框（无消息流面板），支持 `Enter` 发送、`Shift+Enter` 换行；发送中禁用画布编辑并显示“正在规划...”。
+- PRD/Architecture 扩展 `flow.generate` 契约：支持携带当前 `nodes/edges` 与 `planner_session_key`，用于在已编辑流程上增量改图。
+- PRD/Architecture 补充 OpenClaw 接入能力：新增 `/pairing` 配对管理页与 `/pairing/tutorial` 教程页，支持用户自有实例（如 `claw2`）最短路径接入。
+- PRD/Architecture 调整接入 IA：`接入` 页面统一命名为 `实例` 页面，并改为“左侧实例列表 + 右侧详情/新建配对工作区”。
+- PRD/Architecture 新增双配对方式口径：`Token 配对` 与 `配对码配对`，并补充后端 `instances/pair-code` 契约。
 - PRD 同步流程页交互收敛：移除消息流面板，仅保留底部悬浮对话框。
 - PRD 补充流程页键盘契约：`Enter` 发送、`Shift+Enter` 换行；发送中按钮禁用并显示“规划中...”。
 - PRD 补充“每次发送附带当前工作流上下文”的增量改图口径。

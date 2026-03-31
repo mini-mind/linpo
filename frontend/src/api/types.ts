@@ -20,6 +20,12 @@ export interface InstanceWriteRequest {
   gatewayToken: string;
 }
 
+export interface InstancePairCodeRequest {
+  name: string;
+  type: string;
+  pairCode: string;
+}
+
 export interface InstancePatchRequest {
   name?: string;
   type?: string;
@@ -317,6 +323,10 @@ export interface FlowGenerateRequest {
   executor_agent_id: string;
   planner_agent_id?: string | null;
   manager_agent_id?: string | null;
+  planner_session_key?: string | null;
+  flow_name?: string | null;
+  current_nodes?: FlowCanvasNode[];
+  current_edges?: FlowCanvasEdge[];
 }
 
 export interface FlowGenerateResponse {
@@ -332,6 +342,7 @@ export interface FlowGenerateResponse {
 
 export interface FlowConfirmRequest {
   instance_id: string;
+  requirement_id?: string | null;
   executor_agent_id: string;
   manager_agent_id?: string | null;
   requirement_title?: string | null;
@@ -369,10 +380,58 @@ export interface FlowRequirementStopResponse {
   running_task_ids: string[];
 }
 
+export interface FlowRequirementContinueResponse {
+  requirement_id: string;
+  resumed_task_ids: string[];
+  dispatched_task_ids: string[];
+}
+
+export interface FlowRequirementSyncRequest {
+  requirement_title?: string | null;
+  nodes: FlowCanvasNode[];
+  edges: FlowCanvasEdge[];
+}
+
+export interface FlowRequirementSyncResponse {
+  requirement_id: string;
+  updated_task_ids: string[];
+  created_task_ids: string[];
+  deleted_task_ids: string[];
+}
+
+export interface TaskInterruptResponse {
+  accepted: boolean;
+  task_id: string;
+  status: TaskStatus;
+  dispatched_task_ids: string[];
+  pause_requested: boolean;
+  message: string | null;
+}
+
+export interface TaskContinueResponse {
+  accepted: boolean;
+  task_id: string;
+  status: TaskStatus;
+  dispatched_task_ids: string[];
+  message: string | null;
+}
+
 export interface TaskDeleteResponse {
   deleted: boolean;
   deleted_task_ids: string[];
   requirement_id?: string | null;
+}
+
+export type TaskOutputPreviewKind = 'text' | 'json' | 'binary';
+
+export interface TaskOutputPreviewResponse {
+  path: string;
+  kind: TaskOutputPreviewKind;
+  mime_type: string;
+  size_bytes: number;
+  truncated: boolean;
+  content: string | null;
+  download_url: string;
 }
 
 /**

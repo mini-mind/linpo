@@ -14,6 +14,9 @@ import type {
 	FlowGenerateResponse,
 	FlowRequirementRenameRequest,
 	FlowRequirementRenameResponse,
+	FlowRequirementContinueResponse,
+	FlowRequirementSyncRequest,
+	FlowRequirementSyncResponse,
 	FlowRequirementStopResponse,
 	KanbanTaskCreateRequest,
 	KanbanTaskItem,
@@ -29,6 +32,9 @@ import type {
 	SessionsListResponse,
 	SessionsPreviewResponse,
 	TaskDeleteResponse,
+	TaskContinueResponse,
+	TaskInterruptResponse,
+	TaskOutputPreviewResponse,
 } from './types';
 
 const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
@@ -64,6 +70,10 @@ function withInstanceContext(path: string, options?: ObserverRequestOptions): st
 
 function withBusinessContext(path: string, options?: ObserverRequestOptions): string {
   return withInstanceContext(withDefaultDataSource(path), options);
+}
+
+function buildApiUrlWithContext(path: string, options?: ObserverRequestOptions): string {
+  return `${API_BASE_URL}${withBusinessContext(path, options)}`;
 }
 
 export function getDefaultObserverDataSource(): string {
@@ -111,7 +121,7 @@ async function fetchApi<T>(
   options?: RequestInit,
   requestOptions?: ObserverRequestOptions
 ): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, requestOptions)}`, {
+  const response = await fetch(buildApiUrlWithContext(path, requestOptions), {
     ...options,
     credentials: 'include',
     headers: {
@@ -225,6 +235,93 @@ export async function deleteKanbanRequirementTasks(
   }
 }
 
+export async function interruptKanbanTask(
+  taskId: string,
+  options?: ObserverRequestOptions,
+  boardId?: string | null
+): Promise<TaskInterruptResponse> {
+  const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
+  const encodedTaskId = encodeURIComponent(taskId);
+  return fetchApi<TaskInterruptResponse>(
+    `/api/v1/boards/${encodedBoardId}/tasks/${encodedTaskId}/interrupt`,
+    {
+      method: 'POST',
+    },
+    options
+  );
+}
+
+export async function continueKanbanTask(
+  taskId: string,
+  options?: ObserverRequestOptions,
+  boardId?: string | null
+): Promise<TaskContinueResponse> {
+  const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
+  const encodedTaskId = encodeURIComponent(taskId);
+  return fetchApi<TaskContinueResponse>(
+    `/api/v1/boards/${encodedBoardId}/tasks/${encodedTaskId}/continue`,
+    {
+      method: 'POST',
+    },
+    options
+  );
+}
+
+export async function previewKanbanTaskOutput(
+  taskId: string,
+  path: string | null | undefined,
+  options?: ObserverRequestOptions,
+  boardId?: string | null
+): Promise<TaskOutputPreviewResponse> {
+  const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
+  const encodedTaskId = encodeURIComponent(taskId);
+  const params = new URLSearchParams();
+  if (path && path.trim()) {
+    params.set('path', path.trim());
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  return fetchApi<TaskOutputPreviewResponse>(
+    `/api/v1/boards/${encodedBoardId}/tasks/${encodedTaskId}/output-preview${suffix}`,
+    undefined,
+    options
+  );
+}
+
+export function buildKanbanTaskOutputDownloadUrl(
+  taskId: string,
+  path: string,
+  options?: ObserverRequestOptions,
+  boardId?: string | null
+): string {
+  return buildKanbanTaskOutputFileUrl(
+    taskId,
+    path,
+    {
+      download: true,
+    },
+    options,
+    boardId
+  );
+}
+
+export function buildKanbanTaskOutputFileUrl(
+  taskId: string,
+  path: string,
+  query?: { download?: boolean },
+  options?: ObserverRequestOptions,
+  boardId?: string | null
+): string {
+  const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
+  const encodedTaskId = encodeURIComponent(taskId);
+  const params = new URLSearchParams();
+  params.set('path', path);
+  if (query?.download === true) {
+    params.set('download', 'true');
+  }
+  const endpoint = `/api/v1/boards/${encodedBoardId}/tasks/${encodedTaskId}/output-file?${params.toString()}`;
+  return buildApiUrlWithContext(endpoint, options);
+}
+
 export async function generateFlowFromRequirement(
   payload: FlowGenerateRequest,
   options?: ObserverRequestOptions,
@@ -289,6 +386,41 @@ export async function stopFlowRequirement(
     `/api/v1/boards/${encodedBoardId}/tasks/requirements/${encodedRequirementId}/stop`,
     {
       method: 'POST',
+    },
+    options
+  );
+}
+
+export async function continueFlowRequirement(
+  requirementId: string,
+  options?: ObserverRequestOptions,
+  boardId?: string | null
+): Promise<FlowRequirementContinueResponse> {
+  const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
+  const encodedRequirementId = encodeURIComponent(requirementId);
+  return fetchApi<FlowRequirementContinueResponse>(
+    `/api/v1/boards/${encodedBoardId}/tasks/requirements/${encodedRequirementId}/continue`,
+    {
+      method: 'POST',
+    },
+    options
+  );
+}
+
+export async function syncFlowRequirement(
+  requirementId: string,
+  payload: FlowRequirementSyncRequest,
+  options?: ObserverRequestOptions,
+  boardId?: string | null
+): Promise<FlowRequirementSyncResponse> {
+  const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
+  const encodedRequirementId = encodeURIComponent(requirementId);
+  return fetchApi<FlowRequirementSyncResponse>(
+    `/api/v1/boards/${encodedBoardId}/tasks/requirements/${encodedRequirementId}/sync`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
     },
     options
   );
