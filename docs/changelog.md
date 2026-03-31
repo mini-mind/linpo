@@ -2,10 +2,34 @@
 
 ## 2026-03-31
 
+- 后端下线看板 board websocket 通道：移除 `WS /ws/boards/{board_id}/tasks` 路由与集成测试，仅保留 `GET /sse/boards/{board_id}/tasks` 作为唯一看板实时通道。
+- 看板页 realtime 主链路由 board websocket 切换为 board SSE：`CollabPage` 改为订阅 `GET /sse/boards/{board_id}/tasks`，前端移除 `createBoardTasksRealtimeClient` 残留实现，统一使用 SSE 增量更新任务列表与卡片基础信息。
+- PRD/Architecture 调整账户下拉交互：新增“实例”菜单项并弹窗展示实例列表/实例详情；移除“用户信息”菜单项，改为点击下拉顶部用户名弹窗展示用户基本信息与会员充值入口。
+- Architecture 补充账户弹窗组件口径：新增 `UserProfileModal` 与 `InstanceListModal`，并明确 `MessageCenterModal` 通过 portal 渲染与层级修复要求。
+- PRD/Architecture 细化“账户”弹窗能力：支持改用户名、改密码、换头像（真实后端流程），并保留会员充值渠道占位。
+- PRD/Architecture 细化“账户”弹窗布局：改为“侧边栏 tabs（基本信息/修改密码/会员）+ 展示区”，并明确头像与用户名编辑入口位于基本信息页。
+- PRD/Architecture 调整实例入口：导航栏移除“实例”主入口，实例管理迁移到 `/profile` 的“实例列表”视图；`/pairing` 仅保留兼容路由。
+- PRD/Architecture 重构用户信息页：新增“用户信息/实例列表”侧边栏结构；用户信息改为弹窗式头像/密码/会员操作，实例列表支持展开详情与拓扑树并内置三种挂载方式弹窗。
+- Architecture 补充消息中心弹窗渲染口径：`MessageCenterModal` 使用 portal 挂载，避免层级遮挡导致弹窗不可见。
+- PRD/Architecture 新增“用户信息”能力：导航栏账户下拉新增“用户信息”入口，新增 `/profile` 页面并定义头像更新、密码修改与会员充值渠道占位口径。
+- Architecture 补充认证接口契约：新增 `PATCH /auth/profile`（头像更新）与 `POST /auth/password`（改密）标准登录态流程。
+- PRD/Architecture 升级 Agent 自助挂载契约：由 `request -> email code confirm` 改为 `request -> receipt link -> login confirm`，目标用户通过 email 唯一定位，不再要求 request 阶段提交 username。
+- PRD/Architecture 新增消息中心口径：导航栏账户菜单提供“消息”入口，承载回执链接消息列表与详情查看。
+- PRD/Architecture 补充回执确认接口：新增消息读取/已读与回执确认契约（登录态邮箱匹配校验 + 一次性 token）。
+- PRD/Architecture 修正配对链路死锁：`/pairing/tutorial` 调整为匿名可访问路由，不再依赖登录态。
+- PRD/Architecture 强化验证码投递口径：新增 `LINPO_PAIRING_CHALLENGE_DELIVERY + LINPO_SMTP_*` 配置，challenge 创建需以邮件投递成功为前置。
+- PRD/Architecture 扩展配对教程页：新增“可直接转发给 OpenClaw 的纯文本指引模板”，覆盖自助挂载/自助卸载两条链路并支持复制。
+- PRD/Architecture 细化接入交互：`/pairing` 新建配对改为三标签（Token/配对码/教程链接）；`/pairing/tutorial` 改为 Markdown 静态页承载指引正文。
+- PRD/Architecture 修正教程直连口径：OpenClaw 应使用 `/pairing/tutorial.md`（纯 Markdown 静态文件）作为读取入口，避免 HTML 页面语法噪音。
+- PRD/Architecture 增加后缀漏写兼容：访问 `/pairing/tutorial` 时自动重定向到 `/pairing/tutorial.md`，不显示中间提示文案。
+- 流程编辑页节点状态同步链路由 board websocket 切换为 board SSE：新增 `GET /sse/boards/{board_id}/tasks`，前端 `FlowPage` 改为 SSE 增量更新，降低 ws 不稳定导致的状态滞后。
+- 流程画布连线交互调整：默认不展示删除按钮；点击连线后选中，再显示单一删除按钮执行删除。
 - PRD/Architecture 补充看板任务 realtime 契约：新增 `WS /ws/boards/{board_id}/tasks` 通道，任务列表与弹窗基础信息改为事件驱动增量同步，减少手动刷新依赖。
 - PRD/Architecture 补充流程编辑页节点状态同步口径：编辑页订阅 board realtime，节点状态随任务事件实时更新。
 - PRD/Architecture 补充看板“按流程分列”列头交互：展示流程状态并提供主动作（`中断流程/继续流程/运行流程`），删除流程仍遵循“先中断后删除”。
 - PRD/Architecture 补充实例页详情口径：已配对实例需展示 `实例 -> Agent -> Session` 树形拓扑，并定义空态/失败态提示与刷新交互。
+- PRD/Architecture 新增“Agent 自助挂载/卸载”口径：支持免登录 `request -> email code confirm` 双阶段实例绑定与解绑。
+- PRD/Architecture 调整认证契约：注册改为 `username + email + password`，登录支持 `identifier(用户名或邮箱) + password`。
 
 ## 2026-03-30
 

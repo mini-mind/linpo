@@ -19,7 +19,7 @@ const {
   mockInterruptKanbanTask,
   mockStopFlowRequirement,
   mockGetSessionHistory,
-  mockCreateBoardTasksRealtimeClient,
+  mockCreateBoardTasksSseClient,
   mockCreateObserverRealtimeClient,
   mockPreviewKanbanTaskOutput,
 } = vi.hoisted(() => ({
@@ -33,7 +33,7 @@ const {
   mockInterruptKanbanTask: vi.fn(),
   mockStopFlowRequirement: vi.fn(),
   mockGetSessionHistory: vi.fn(),
-  mockCreateBoardTasksRealtimeClient: vi.fn(),
+  mockCreateBoardTasksSseClient: vi.fn(),
   mockCreateObserverRealtimeClient: vi.fn(),
   mockPreviewKanbanTaskOutput: vi.fn(),
 }));
@@ -60,7 +60,7 @@ vi.mock('../api/realtimeClient', async () => {
   const actual = await vi.importActual<typeof import('../api/realtimeClient')>('../api/realtimeClient');
   return {
     ...actual,
-    createBoardTasksRealtimeClient: mockCreateBoardTasksRealtimeClient,
+    createBoardTasksSseClient: mockCreateBoardTasksSseClient,
     createObserverRealtimeClient: mockCreateObserverRealtimeClient,
   };
 });
@@ -172,7 +172,7 @@ describe('CollabPage', () => {
       message: null,
     });
     mockGetSessionHistory.mockResolvedValue({ ts: 1, items: [] });
-    mockCreateBoardTasksRealtimeClient.mockImplementation(() => ({
+    mockCreateBoardTasksSseClient.mockImplementation(() => ({
       connect: vi.fn(),
       close: vi.fn(),
     }));
@@ -202,7 +202,7 @@ describe('CollabPage', () => {
     expect(screen.getByLabelText('分列方式')).toBeInTheDocument();
     expect(screen.queryByLabelText('需求筛选')).not.toBeInTheDocument();
     expect(screen.getByLabelText('看板统计')).toBeInTheDocument();
-    expect(screen.getByText('需求数量 0')).toBeInTheDocument();
+    expect(screen.getByText('流程数量 0')).toBeInTheDocument();
     expect(screen.queryByText('分列方式')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '➕任务' })).toBeInTheDocument();
     expect(screen.getByTestId('kanban-board')).toHaveStyle({ overflowX: 'auto' });
@@ -627,7 +627,7 @@ describe('CollabPage', () => {
     await screen.findByText('实时任务');
     expect(screen.getByText('queued')).toBeInTheDocument();
 
-    const realtimeOptions = mockCreateBoardTasksRealtimeClient.mock.calls[0]?.[0];
+    const realtimeOptions = mockCreateBoardTasksSseClient.mock.calls[0]?.[0];
     expect(realtimeOptions).toBeDefined();
     act(() => {
       realtimeOptions.onMessage({

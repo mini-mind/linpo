@@ -25,6 +25,17 @@ vi.mock('../hooks/useIsMobile', () => ({
   useIsMobile: () => true,
 }));
 
+vi.mock('../api/realtimeClient', () => ({
+  createBoardTasksSseClient: () => ({
+    connect: vi.fn(),
+    close: vi.fn(),
+  }),
+  createObserverRealtimeClient: () => ({
+    connect: vi.fn(),
+    close: vi.fn(),
+  }),
+}));
+
 function buildOverview(overrides: Partial<AggregateOverviewResponse> = {}): AggregateOverviewResponse {
   return {
     request_id: 'req-mobile-scroll',

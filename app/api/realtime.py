@@ -1,11 +1,12 @@
 import asyncio
 import json
 from datetime import UTC, datetime
-from queue import Empty, Queue
+from queue import Empty
 from typing import Any, Protocol, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, WebSocket
+from fastapi.responses import StreamingResponse
 from fastapi.websockets import WebSocketDisconnect
 from sqlalchemy.orm import Session
 
@@ -85,9 +86,9 @@ def _resolve_realtime_openclaw_context(
     return provider_application_service.build_execution_context(instance_context)
 
 
-def _resolve_realtime_user(websocket: WebSocket) -> User:
+def _resolve_http_realtime_user(request: Request) -> User:
     with Session(get_engine(get_database_url())) as db_session:
-        current_user = get_authenticated_user(db_session, cast(Any, websocket))
+        current_user = get_authenticated_user(db_session, cast(Any, request))
         if current_user is None:
             raise HTTPException(status_code=401, detail="Unauthorized")
         return current_user
@@ -181,72 +182,81 @@ async def observer_websocket(
         await websocket.close(code=1008)
 
 
-@router.websocket("/ws/boards/{board_id}/tasks")
-async def board_tasks_websocket(
-    websocket: WebSocket,
+@router.get("/sse/boards/{board_id}/tasks")
+async def board_tasks_sse(
+    request: Request,
     board_id: str,
-) -> None:
-    await websocket.accept()
+    snapshot_only: bool = Query(default=False, alias="snapshotOnly"),
+) -> Response:
     normalized_board_id = board_id.strip() or "default"
     channel = f"board:{normalized_board_id}:tasks"
-    current_user: User | None = None
-    subscriber_id: str | None = None
-    subscriber_queue: Queue[dict[str, Any]] | None = None
+    current_user = _resolve_http_realtime_user(request)
+    hub = get_board_task_realtime_hub()
 
-    try:
-        current_user = _resolve_realtime_user(websocket)
-        hub = get_board_task_realtime_hub()
-        subscriber_id, subscriber_queue, latest_seq = hub.subscribe(
+    base_headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    if snapshot_only:
+        latest_seq = hub.latest_seq(
             user_id=current_user.id,
             board_id=normalized_board_id,
         )
-
-        await _send_message(
-            websocket,
-            message_type="snapshot_ready",
-            channel=channel,
-            seq=latest_seq,
-            payload={"status": "ok"},
+        return Response(
+            content=_to_sse_data(
+                {
+                    "type": "snapshot_ready",
+                    "channel": channel,
+                    "seq": latest_seq,
+                    "timestamp": _timestamp(),
+                    "payload": {"status": "ok"},
+                }
+            ),
+            media_type="text/event-stream",
+            headers=base_headers,
         )
 
-        while True:
-            try:
-                message = await asyncio.wait_for(websocket.receive(), timeout=0.1)
-            except TimeoutError:
-                message = None
-            except WebSocketDisconnect:
+    subscriber_id, subscriber_queue, latest_seq = hub.subscribe(
+        user_id=current_user.id,
+        board_id=normalized_board_id,
+    )
+
+    async def event_stream() -> Any:
+        try:
+            yield _to_sse_data(
+                {
+                    "type": "snapshot_ready",
+                    "channel": channel,
+                    "seq": latest_seq,
+                    "timestamp": _timestamp(),
+                    "payload": {"status": "ok"},
+                }
+            )
+            if snapshot_only:
                 return
 
-            if message is not None and message["type"] == "websocket.disconnect":
-                return
-
-            if subscriber_queue is None:
-                continue
-
-            for _ in range(96):
+            while True:
+                if await request.is_disconnected():
+                    return
                 try:
-                    event = subscriber_queue.get_nowait()
+                    event = await asyncio.to_thread(subscriber_queue.get, True, 20.0)
                 except Empty:
-                    break
-                await websocket.send_text(json.dumps(event))
-    except WebSocketDisconnect:
-        return
-    except Exception as exc:
-        await _send_message(
-            websocket,
-            message_type="error",
-            channel=channel,
-            seq=0,
-            payload={"detail": _error_detail(exc)},
-        )
-        await websocket.close(code=1008)
-    finally:
-        if current_user is not None and subscriber_id is not None:
-            get_board_task_realtime_hub().unsubscribe(
+                    yield ": keep-alive\n\n"
+                    continue
+                yield _to_sse_data(event)
+        finally:
+            hub.unsubscribe(
                 user_id=current_user.id,
                 board_id=normalized_board_id,
                 subscriber_id=subscriber_id,
             )
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers=base_headers,
+    )
 
 
 def _is_valid_subscribe_message(message: object) -> bool:
@@ -452,3 +462,8 @@ def _error_detail(exc: Exception) -> str:
             return detail
         return json.dumps(detail)
     return str(exc)
+
+
+def _to_sse_data(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, ensure_ascii=False)
+    return f"data: {encoded}\n\n"

@@ -17,7 +17,7 @@ const {
   mockStopFlowRequirement,
   mockContinueFlowRequirement,
   mockSyncFlowRequirement,
-  mockCreateBoardTasksRealtimeClient,
+  mockCreateBoardTasksSseClient,
 } = vi.hoisted(() => ({
   mockGetAggregateOverview: vi.fn(),
   mockGenerateFlowFromRequirement: vi.fn(),
@@ -27,7 +27,7 @@ const {
   mockStopFlowRequirement: vi.fn(),
   mockContinueFlowRequirement: vi.fn(),
   mockSyncFlowRequirement: vi.fn(),
-  mockCreateBoardTasksRealtimeClient: vi.fn(),
+  mockCreateBoardTasksSseClient: vi.fn(),
 }));
 
 vi.mock('../api/client', async () => {
@@ -49,7 +49,7 @@ vi.mock('../api/realtimeClient', async () => {
   const actual = await vi.importActual<typeof import('../api/realtimeClient')>('../api/realtimeClient');
   return {
     ...actual,
-    createBoardTasksRealtimeClient: mockCreateBoardTasksRealtimeClient,
+    createBoardTasksSseClient: mockCreateBoardTasksSseClient,
   };
 });
 
@@ -207,7 +207,7 @@ describe('FlowPage', () => {
       created_task_ids: [],
       deleted_task_ids: [],
     });
-    mockCreateBoardTasksRealtimeClient.mockImplementation(() => ({
+    mockCreateBoardTasksSseClient.mockImplementation(() => ({
       connect: vi.fn(),
       close: vi.fn(),
     }));
@@ -306,10 +306,11 @@ describe('FlowPage', () => {
     await createNodeByCanvasDoubleClick('节点A', '详细描述A');
     await createNodeByCanvasDoubleClick('节点B');
 
-    const rightConnectorButtons = screen.getAllByRole('button', { name: /右侧连接点/ });
-    const leftConnectorButtons = screen.getAllByRole('button', { name: /左侧连接点/ });
-    fireEvent.mouseDown(rightConnectorButtons[0]);
-    fireEvent.mouseUp(leftConnectorButtons[1]);
+    await userEvent.click(screen.getByRole('button', { name: '流程节点-节点A' }));
+    const sourceConnector = screen.getByRole('button', { name: '节点 节点A 右侧连接点' });
+    fireEvent.mouseDown(sourceConnector);
+    const targetConnector = screen.getByRole('button', { name: '节点 节点B 左侧连接点' });
+    fireEvent.mouseUp(targetConnector);
 
     await userEvent.click(screen.getByRole('button', { name: '运行' }));
     expect(screen.getByRole('dialog', { name: '确认运行流程' })).toBeInTheDocument();
@@ -327,6 +328,43 @@ describe('FlowPage', () => {
     expect(payload.nodes.some((node: { description?: string | null }) => (node.description ?? '').includes('详细描述A'))).toBe(true);
     const layers = payload.nodes.map((node: { layer: number }) => node.layer);
     expect(layers.every((layer: number) => layer >= 1)).toBe(true);
+  });
+
+  it('removes selected edge by Delete key without edge delete button', async () => {
+    renderFlowPage('/flow/edit/new');
+    await screen.findByRole('toolbar', { name: '流程编辑工具栏' });
+
+    await createNodeByCanvasDoubleClick('节点A');
+    await createNodeByCanvasDoubleClick('节点B');
+
+    await userEvent.click(screen.getByRole('button', { name: '流程节点-节点A' }));
+    const sourceConnector = screen.getByRole('button', { name: '节点 节点A 右侧连接点' });
+    fireEvent.mouseDown(sourceConnector);
+    const targetConnector = screen.getByRole('button', { name: '节点 节点B 左侧连接点' });
+    fireEvent.mouseUp(targetConnector);
+
+    expect(screen.queryByRole('button', { name: /删除连接/ })).not.toBeInTheDocument();
+    expect(document.querySelectorAll('[data-flow-edge-path="true"]').length).toBe(1);
+
+    const edgePath = document.querySelector('[data-flow-edge-path="true"]');
+    expect(edgePath).not.toBeNull();
+    fireEvent.click(edgePath as Element);
+    await userEvent.keyboard('{Delete}');
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-flow-edge-path="true"]')).toBeNull();
+    });
+  });
+
+  it('hides unconnected handles on unselected nodes', async () => {
+    renderFlowPage('/flow/edit/new');
+    await screen.findByRole('toolbar', { name: '流程编辑工具栏' });
+
+    await createNodeByCanvasDoubleClick('节点A');
+    await createNodeByCanvasDoubleClick('节点B');
+
+    expect(screen.queryByRole('button', { name: '节点 节点A 右侧连接点' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '节点 节点B 右侧连接点' })).toBeInTheDocument();
   });
 
   it('shows runtime action button by flow state and removes instance panel', async () => {
@@ -416,7 +454,7 @@ describe('FlowPage', () => {
     });
   });
 
-  it('updates flow node status in editor via board realtime websocket events', async () => {
+  it('updates flow node status in editor via board task sse events', async () => {
     mockListKanbanTasks.mockResolvedValue([
       buildKanbanTask({
         id: 'task-realtime-node',
@@ -436,7 +474,7 @@ describe('FlowPage', () => {
     await screen.findByRole('button', { name: '流程节点-拆解需求' });
     expect(screen.getByText('queued')).toBeInTheDocument();
 
-    const realtimeOptions = mockCreateBoardTasksRealtimeClient.mock.calls[0]?.[0];
+    const realtimeOptions = mockCreateBoardTasksSseClient.mock.calls[0]?.[0];
     expect(realtimeOptions).toBeDefined();
 
     act(() => {

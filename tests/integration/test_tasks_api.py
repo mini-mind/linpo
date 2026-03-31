@@ -10,15 +10,11 @@ from urllib.parse import quote
 import pytest
 from cryptography.fernet import Fernet
 from fastapi import HTTPException
-from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from app.db import session as db_session
-from app.db.models import User
 from app.main import app
-from app.services.board_task_realtime import get_board_task_realtime_hub
 from app.services.instance_validator import InstanceValidationResult
-from tests.integration._asgi import request, websocket
+from tests.integration._asgi import request
 
 DEFAULT_TASKS_PATH = "/api/v1/boards/default/tasks"
 DEFAULT_FLOW_GENERATE_PATH = "/api/v1/boards/default/tasks/flow/generate"
@@ -59,17 +55,18 @@ def _cookie_header_from_set_cookie(set_cookie: str) -> str:
 
 
 def _register_and_login(username: str, password: str = "secret-123") -> str:
+    email = f"{username}@example.com"
     register_status, _, _ = _request_json(
         "POST",
         "/auth/register",
-        {"username": username, "password": password},
+        {"username": username, "email": email, "password": password},
     )
     assert register_status == 201
 
     login_status, login_headers, _ = _request_json(
         "POST",
         "/auth/login",
-        {"username": username, "password": password},
+        {"identifier": username, "password": password},
     )
     assert login_status == 200
     return _cookie_header_from_set_cookie(login_headers["set-cookie"])
@@ -278,57 +275,32 @@ def test_task_list_is_isolated_by_user(
     assert [item["title"] for item in list_b_payload] == ["B 的任务"]
 
 
-def test_board_tasks_websocket_pushes_task_updates(
+def test_board_tasks_sse_requires_authentication(
+    isolated_database_url: str,
+) -> None:
+    del isolated_database_url
+    status_code, _, _ = request("GET", "/sse/boards/default/tasks?snapshotOnly=1")
+    assert status_code == 401
+
+
+def test_board_tasks_sse_returns_snapshot_payload(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    database_url = isolated_database_url
+    del isolated_database_url
     _allow_instance_validation(monkeypatch)
-    auth_cookie = _register_and_login("ws-board-user")
-    with Session(db_session.get_engine(database_url)) as session:
-        current_user = session.execute(
-            select(User).where(User.username == "ws-board-user")
-        ).scalar_one()
+    auth_cookie = _register_and_login("sse-board-user")
 
-    outbound = websocket(
-        "/ws/boards/default/tasks",
+    status_code, _, body = request(
+        "GET",
+        "/sse/boards/default/tasks?snapshotOnly=1",
         headers={"cookie": auth_cookie},
-        idle_hooks=[
-            lambda: get_board_task_realtime_hub().publish_task_upserted(
-                user_id=current_user.id,
-                board_id="default",
-                task={
-                    "id": "task-ws-1",
-                    "board_id": "default",
-                    "title": "websocket任务",
-                    "summary": "来自实时推送",
-                    "status": "queued",
-                    "source": "flow",
-                    "agent_id": "agent-ws",
-                    "agent_name": "Agent WS",
-                    "artifacts": [],
-                    "extras": {"board_id": "default"},
-                    "instance_id": None,
-                    "created_at": "2026-03-31T00:00:00Z",
-                    "updated_at": "2026-03-31T00:00:00Z",
-                },
-            )
-        ],
     )
-
-    send_messages = [
-        cast(dict[str, Any], json.loads(cast(str, message.get("text"))))
-        for message in outbound
-        if message["type"] == "websocket.send" and isinstance(message.get("text"), str)
-    ]
-    assert any(message.get("type") == "snapshot_ready" for message in send_messages)
-    assert any(
-        message.get("type") == "tasks_changed"
-        and cast(dict[str, Any], message.get("payload", {})).get("action") == "upsert"
-        and cast(dict[str, Any], cast(dict[str, Any], message.get("payload", {})).get("task", {})).get("title")
-        == "websocket任务"
-        for message in send_messages
-    )
+    assert status_code == 200
+    text = body.decode("utf-8")
+    assert "data: " in text
+    assert '"type": "snapshot_ready"' in text
+    assert '"channel": "board:default:tasks"' in text
 
 
 def test_create_task_keeps_task_when_dispatch_fails(

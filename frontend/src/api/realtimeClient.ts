@@ -69,22 +69,27 @@ export type BoardRealtimeMessage =
       payload: BoardRealtimeErrorPayload;
     };
 
-export interface BoardRealtimeClientOptions {
+export interface EventSourceLike {
+  addEventListener(type: string, listener: (event?: unknown) => void): void;
+  close(): void;
+}
+
+export interface BoardRealtimeSseClientOptions {
   baseUrl?: string;
   boardId: string;
   onMessage: (message: BoardRealtimeMessage) => void;
   onParseError?: (raw: string, error: Error) => void;
   onDisconnected?: () => void;
-  createWebSocket?: (url: string) => WebSocketLike;
+  createEventSource?: (url: string) => EventSourceLike;
 }
 
-export interface BoardRealtimeClient {
+export interface BoardRealtimeSseClient {
   connect: () => void;
   close: () => void;
 }
 
 const OBSERVER_WS_PATH = '/ws/observer';
-const BOARD_TASKS_WS_PREFIX = '/ws/boards/';
+const BOARD_TASKS_SSE_PREFIX = '/sse/boards/';
 
 function resolveApiBaseUrl(overrideBaseUrl?: string): string {
   if (overrideBaseUrl) {
@@ -118,13 +123,11 @@ function toWebSocketUrl(
   return url.toString();
 }
 
-function toBoardTasksWebSocketUrl(apiBaseUrl: string, boardId: string): string {
+function toBoardTasksSseUrl(apiBaseUrl: string, boardId: string): string {
   const normalizedBoardId = boardId.trim() || 'default';
   const encodedBoardId = encodeURIComponent(normalizedBoardId);
-  const path = `${BOARD_TASKS_WS_PREFIX}${encodedBoardId}/tasks`;
-  const url = new URL(path, apiBaseUrl);
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  return url.toString();
+  const path = `${BOARD_TASKS_SSE_PREFIX}${encodedBoardId}/tasks`;
+  return new URL(path, apiBaseUrl).toString();
 }
 
 function assertRealtimeDataSource(dataSource: string, channel: RealtimeObserverChannel): void {
@@ -358,44 +361,29 @@ function parseBoardRealtimeMessage(raw: string): BoardRealtimeMessage {
   throw new Error('Invalid board realtime message');
 }
 
-export function createBoardTasksRealtimeClient(
-  options: BoardRealtimeClientOptions
-): BoardRealtimeClient {
+export function createBoardTasksSseClient(
+  options: BoardRealtimeSseClientOptions
+): BoardRealtimeSseClient {
   if (!options.boardId.trim()) {
     throw new Error('Realtime boardId is required');
   }
   const apiBaseUrl = resolveApiBaseUrl(options.baseUrl);
-  const createWebSocket =
-    options.createWebSocket ?? ((url: string): WebSocketLike => new WebSocket(url));
+  const createEventSource =
+    options.createEventSource ??
+    ((url: string): EventSourceLike => new EventSource(url, { withCredentials: true }));
 
-  let socket: WebSocketLike | null = null;
+  let source: EventSourceLike | null = null;
   let manuallyClosed = false;
-  let opened = false;
-  let closedBeforeOpen = false;
 
   const connect = (): void => {
-    if (socket) {
+    if (source) {
       return;
     }
-
     manuallyClosed = false;
-    opened = false;
-    closedBeforeOpen = false;
-    const ws = createWebSocket(toBoardTasksWebSocketUrl(apiBaseUrl, options.boardId));
-    socket = ws;
+    const nextSource = createEventSource(toBoardTasksSseUrl(apiBaseUrl, options.boardId));
+    source = nextSource;
 
-    ws.addEventListener('open', () => {
-      if (socket !== ws) {
-        return;
-      }
-      opened = true;
-      if (closedBeforeOpen) {
-        socket = null;
-        ws.close();
-      }
-    });
-
-    ws.addEventListener('message', (event) => {
+    nextSource.addEventListener('message', (event) => {
       const raw =
         typeof event === 'object' && event !== null && 'data' in event
           ? (event as { data?: unknown }).data
@@ -413,10 +401,11 @@ export function createBoardTasksRealtimeClient(
       }
     });
 
-    ws.addEventListener('close', () => {
-      if (socket === ws) {
-        socket = null;
+    nextSource.addEventListener('error', () => {
+      if (!source) {
+        return;
       }
+      source = null;
       if (manuallyClosed) {
         return;
       }
@@ -425,17 +414,12 @@ export function createBoardTasksRealtimeClient(
   };
 
   const close = (): void => {
-    if (!socket) {
+    if (!source) {
       return;
     }
     manuallyClosed = true;
-    if (!opened) {
-      closedBeforeOpen = true;
-      socket = null;
-      return;
-    }
-    socket.close();
-    socket = null;
+    source.close();
+    source = null;
   };
 
   return {

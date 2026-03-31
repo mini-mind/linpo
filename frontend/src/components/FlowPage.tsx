@@ -2,8 +2,7 @@ import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
-  createBoardTasksRealtimeClient,
-  type BoardRealtimeClient,
+  createBoardTasksSseClient,
   type BoardRealtimeMessage,
 } from '../api/realtimeClient';
 import {
@@ -87,8 +86,8 @@ type EdgeRenderMeta = {
   source: string;
   target: string;
   path: string;
-  midX: number;
-  midY: number;
+  sourceSide: ConnectorSide;
+  targetSide: ConnectorSide;
 };
 
 type ConnectorSide = 'top' | 'right' | 'bottom' | 'left';
@@ -134,6 +133,9 @@ type ConnectionDragState = {
 
 const NODE_WIDTH = 224;
 const NODE_HEIGHT = 118;
+const NODE_BORDER_WIDTH = 1;
+const CONNECTOR_SIZE = 14;
+const CONNECTOR_OFFSET = CONNECTOR_SIZE / 2;
 const HEADER_HEIGHT = 56;
 const LANE_GAP = 14;
 const LANE_MIN_WIDTH = 360;
@@ -180,6 +182,7 @@ export function FlowPage(): JSX.Element {
   const [isPlanning, setIsPlanning] = useState(false);
 
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [connectionDrag, setConnectionDrag] = useState<ConnectionDragState | null>(null);
   const [nodeModal, setNodeModal] = useState<NodeModalState>({
@@ -205,7 +208,7 @@ export function FlowPage(): JSX.Element {
   const generatedDraftIdRef = useRef('');
   const blockedSyncSignatureRef = useRef('');
   const blockedSyncTimerRef = useRef<number | null>(null);
-  const boardRealtimeRef = useRef<BoardRealtimeClient | null>(null);
+  const boardRealtimeRef = useRef<ReturnType<typeof createBoardTasksSseClient> | null>(null);
 
   const routeState = useMemo<FlowRouteState | null>(() => {
     const value = location.state as FlowRouteState | null;
@@ -305,7 +308,7 @@ export function FlowPage(): JSX.Element {
       if (cancelled) {
         return;
       }
-      const client = createBoardTasksRealtimeClient({
+      const client = createBoardTasksSseClient({
         boardId: FLOW_BOARD_REALTIME_ID,
         onMessage: (message) => {
           if (cancelled) {
@@ -404,6 +407,7 @@ export function FlowPage(): JSX.Element {
     setIsDraftCanvas(true);
     setIsSubmittedFlow(false);
     setSelectedNodeIds([]);
+    setSelectedEdgeId(null);
     setConnectionDrag(null);
   }, [uniqueAgents]);
 
@@ -424,6 +428,7 @@ export function FlowPage(): JSX.Element {
     setIsDraftCanvas(false);
     setIsSubmittedFlow(true);
     setSelectedNodeIds([]);
+    setSelectedEdgeId(null);
     setConnectionDrag(null);
   }, []);
 
@@ -466,6 +471,7 @@ export function FlowPage(): JSX.Element {
           setIsDraftCanvas(true);
           setIsSubmittedFlow(false);
           setSelectedNodeIds([]);
+          setSelectedEdgeId(null);
           setConnectionDrag(null);
         }
       } else {
@@ -490,6 +496,7 @@ export function FlowPage(): JSX.Element {
             setIsDraftCanvas(true);
             setIsSubmittedFlow(false);
             setSelectedNodeIds([]);
+            setSelectedEdgeId(null);
             setConnectionDrag(null);
           }
         }
@@ -719,6 +726,21 @@ export function FlowPage(): JSX.Element {
   }, [flowNodes, laneLayoutById, nodeLaneById, normalizedLanes]);
 
   const edgeRenderMetas = useMemo(() => buildEdgeRenderMetas(flowEdges, nodeRenderLayoutById), [flowEdges, nodeRenderLayoutById]);
+  const edgeConnectorUsageByNode = useMemo(() => {
+    const usage = new Map<string, Set<ConnectorSide>>();
+    for (const edge of edgeRenderMetas) {
+      if (!usage.has(edge.source)) {
+        usage.set(edge.source, new Set<ConnectorSide>());
+      }
+      if (!usage.has(edge.target)) {
+        usage.set(edge.target, new Set<ConnectorSide>());
+      }
+      usage.get(edge.source)?.add(edge.sourceSide);
+      usage.get(edge.target)?.add(edge.targetSide);
+    }
+    return usage;
+  }, [edgeRenderMetas]);
+  const isConnecting = connectionDrag !== null;
   const connectionPreviewPath = useMemo(() => {
     if (!connectionDrag) {
       return null;
@@ -827,6 +849,7 @@ export function FlowPage(): JSX.Element {
     const target = event.target as HTMLElement;
     if (
       target.closest('[data-flow-node-card="true"]') ||
+      target.closest('[data-flow-edge-path="true"]') ||
       target.closest('button') ||
       target.closest('input') ||
       target.closest('select') ||
@@ -835,6 +858,7 @@ export function FlowPage(): JSX.Element {
       return;
     }
     setSelectedNodeIds([]);
+    setSelectedEdgeId(null);
     setConnectionDrag(null);
   }, []);
 
@@ -870,6 +894,7 @@ export function FlowPage(): JSX.Element {
       ]);
       setNodeLaneById((current) => ({ ...current, [nodeId]: laneId }));
       setSelectedNodeIds([nodeId]);
+      setSelectedEdgeId(null);
       setNodeModal((current) => ({ ...current, open: false }));
       setIsDraftCanvas(true);
       setIsSubmittedFlow(false);
@@ -891,6 +916,7 @@ export function FlowPage(): JSX.Element {
           : node
       )
     );
+    setSelectedEdgeId(null);
     setNodeModal((current) => ({ ...current, open: false }));
     setIsDraftCanvas(true);
     setIsSubmittedFlow(false);
@@ -968,6 +994,7 @@ export function FlowPage(): JSX.Element {
       return next;
     });
     setSelectedNodeIds([]);
+    setSelectedEdgeId(null);
     setConnectionDrag(null);
     setIsDraftCanvas(true);
     setIsSubmittedFlow(false);
@@ -979,6 +1006,7 @@ export function FlowPage(): JSX.Element {
       return;
     }
     setFlowEdges((current) => current.filter((edge) => edge.id !== edgeId));
+    setSelectedEdgeId((current) => (current === edgeId ? null : current));
     setIsDraftCanvas(true);
     setIsSubmittedFlow(false);
   }, [addToast, canEdit]);
@@ -999,6 +1027,7 @@ export function FlowPage(): JSX.Element {
       currentX: point.x,
       currentY: point.y,
     });
+    setSelectedEdgeId(null);
   }, [addToast, canEdit]);
 
   const handleConnectorMouseUp = useCallback((event: React.MouseEvent<HTMLButtonElement>, handle: ConnectorHandle) => {
@@ -1026,6 +1055,7 @@ export function FlowPage(): JSX.Element {
         target: handle.nodeId,
       },
     ]);
+    setSelectedEdgeId(null);
     setIsDraftCanvas(true);
     setIsSubmittedFlow(false);
     setConnectionDrag(null);
@@ -1049,6 +1079,7 @@ export function FlowPage(): JSX.Element {
       }
       return [nodeId];
     });
+    setSelectedEdgeId(null);
     const selectedIds = appendSelection && selectedNodeIds.length > 0
       ? Array.from(new Set([...selectedNodeIds, nodeId]))
       : [nodeId];
@@ -1158,7 +1189,7 @@ export function FlowPage(): JSX.Element {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Delete' && event.key !== 'Backspace') {
+      if (event.key !== 'Delete') {
         return;
       }
       const activeElement = document.activeElement as HTMLElement | null;
@@ -1171,17 +1202,31 @@ export function FlowPage(): JSX.Element {
       ) {
         return;
       }
-      if (selectedNodeIds.length === 0) {
+      if (selectedNodeIds.length > 0) {
+        event.preventDefault();
+        handleDeleteNodes(selectedNodeIds);
         return;
       }
-      event.preventDefault();
-      handleDeleteNodes(selectedNodeIds);
+      if (selectedEdgeId) {
+        event.preventDefault();
+        handleRemoveEdge(selectedEdgeId);
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [handleDeleteNodes, selectedNodeIds]);
+  }, [handleDeleteNodes, handleRemoveEdge, selectedEdgeId, selectedNodeIds]);
+
+  useEffect(() => {
+    if (!selectedEdgeId) {
+      return;
+    }
+    if (flowEdges.some((edge) => edge.id === selectedEdgeId)) {
+      return;
+    }
+    setSelectedEdgeId(null);
+  }, [flowEdges, selectedEdgeId]);
 
   useEffect(() => {
     if (blockedSyncTimerRef.current !== null) {
@@ -1316,6 +1361,7 @@ export function FlowPage(): JSX.Element {
       setNodeLaneById(lanePayload.nodeLaneById);
       setLastResponse(response);
       setSelectedNodeIds([]);
+      setSelectedEdgeId(null);
       setConnectionDrag(null);
       setIsDraftCanvas(true);
       setIsSubmittedFlow(false);
@@ -1480,6 +1526,7 @@ export function FlowPage(): JSX.Element {
       setIsSubmittedFlow(true);
       setIsSubmitConfirmOpen(false);
       setSelectedNodeIds([]);
+      setSelectedEdgeId(null);
       setConnectionDrag(null);
       addToast(
         `已入队 ${response.created_task_ids.length} 个任务，已投放 ${response.dispatched_task_ids.length} 个`,
@@ -1597,6 +1644,7 @@ export function FlowPage(): JSX.Element {
 
   return (
     <section style={pageStyle} aria-label="flow-page">
+      <style>{flowCanvasAnimationStyleText}</style>
       <header style={topToolbarStyle} role="toolbar" aria-label="流程编辑工具栏">
         <div style={toolbarLeftStyle}>
           <button type="button" style={breadcrumbRootButtonStyle} onClick={() => navigate('/flow')} aria-label="我的流程">
@@ -1619,7 +1667,6 @@ export function FlowPage(): JSX.Element {
         <div style={toolbarRightStyle}>
           <span style={flowStateBadgeStyle}>{flowStateLabel}</span>
           {isSyncingBlockedFlow ? <span style={flowSyncBadgeStyle}>同步中...</span> : null}
-          <span style={flowHintBadgeStyle}>节点间数据流转: 临时文件</span>
           <button
             type="button"
             style={flowActionButtonStyle}
@@ -1830,28 +1877,61 @@ export function FlowPage(): JSX.Element {
             ))}
 
             <svg width={canvasWidth} height={canvasHeight} style={edgeSvgStyle} aria-hidden="true">
-              {edgeRenderMetas.map((edge) => (
-                <path key={edge.id} d={edge.path} style={edgePathStyle} />
-              ))}
+              <defs>
+                <marker
+                  id="flow-edge-arrow"
+                  viewBox="0 0 10 10"
+                  refX="9"
+                  refY="5"
+                  markerWidth="7"
+                  markerHeight="7"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(14, 116, 144, 0.82)" />
+                </marker>
+                <marker
+                  id="flow-edge-arrow-selected"
+                  viewBox="0 0 10 10"
+                  refX="9"
+                  refY="5"
+                  markerWidth="7"
+                  markerHeight="7"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(2, 132, 199, 0.96)" />
+                </marker>
+              </defs>
+              {edgeRenderMetas.map((edge) => {
+                const isSelected = edge.id === selectedEdgeId;
+                return (
+                  <g key={edge.id}>
+                    <path
+                      d={edge.path}
+                      style={isSelected ? edgePathSelectedStyle : edgePathStyle}
+                      markerEnd={isSelected ? 'url(#flow-edge-arrow-selected)' : 'url(#flow-edge-arrow)'}
+                    />
+                    <path
+                      d={edge.path}
+                      style={{
+                        ...edgeHitPathStyle,
+                        cursor: canEdit ? 'pointer' : 'default',
+                      }}
+                      data-flow-edge-path="true"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        if (!canEdit) {
+                          return;
+                        }
+                        setSelectedNodeIds([]);
+                        setSelectedEdgeId(edge.id);
+                      }}
+                    />
+                  </g>
+                );
+              })}
               {connectionPreviewPath ? <path d={connectionPreviewPath} style={edgePreviewPathStyle} /> : null}
             </svg>
-
-            {edgeRenderMetas.map((edge) => (
-              <button
-                key={`edge-delete-${edge.id}`}
-                type="button"
-                style={{
-                  ...edgeDeleteButtonStyle,
-                  left: `${edge.midX - 11}px`,
-                  top: `${edge.midY - 11}px`,
-                }}
-                onClick={() => handleRemoveEdge(edge.id)}
-                disabled={!canEdit}
-                aria-label={`删除连接 ${edge.source} 到 ${edge.target}`}
-              >
-                ×
-              </button>
-            ))}
 
             {flowNodes.map((node) => {
               const renderLayout = nodeRenderLayoutById.get(node.id);
@@ -1860,6 +1940,13 @@ export function FlowPage(): JSX.Element {
               }
               const isSelected = selectedNodeIdSet.has(node.id);
               const lane = laneById.get(renderLayout.laneId);
+              const connectedSides = edgeConnectorUsageByNode.get(node.id);
+              const shouldShowConnector = (side: ConnectorSide): boolean => {
+                if (isSelected || isConnecting) {
+                  return true;
+                }
+                return connectedSides?.has(side) ?? false;
+              };
               return (
                 <article
                   key={node.id}
@@ -1887,6 +1974,7 @@ export function FlowPage(): JSX.Element {
                       }
                       return [...current, node.id];
                     });
+                    setSelectedEdgeId(null);
                   }}
                   onDoubleClick={(event) => {
                     event.preventDefault();
@@ -1912,50 +2000,58 @@ export function FlowPage(): JSX.Element {
                   <p style={nodeDescriptionStyle}>{(node.description ?? '').trim() || '未填写详细描述'}</p>
                   <p style={nodeMetaStyle}>{node.sensitive ? '敏感节点' : '普通节点'}</p>
 
-                  <button
-                    type="button"
-                    data-flow-connector="true"
-                    data-node-id={node.id}
-                    data-side="top"
-                    style={{ ...connectorStyle, ...connectorTopStyle, borderColor: connectionDrag?.from.nodeId === node.id && connectionDrag.from.side === 'top' ? '#0284c7' : connectorStyle.borderColor }}
-                    onMouseDown={(event) => handleConnectorMouseDown(event, { nodeId: node.id, side: 'top' })}
-                    onMouseUp={(event) => handleConnectorMouseUp(event, { nodeId: node.id, side: 'top' })}
-                    aria-label={`节点 ${node.title} 顶部连接点`}
-                    disabled={!canEdit}
-                  />
-                  <button
-                    type="button"
-                    data-flow-connector="true"
-                    data-node-id={node.id}
-                    data-side="right"
-                    style={{ ...connectorStyle, ...connectorRightStyle, borderColor: connectionDrag?.from.nodeId === node.id && connectionDrag.from.side === 'right' ? '#0284c7' : connectorStyle.borderColor }}
-                    onMouseDown={(event) => handleConnectorMouseDown(event, { nodeId: node.id, side: 'right' })}
-                    onMouseUp={(event) => handleConnectorMouseUp(event, { nodeId: node.id, side: 'right' })}
-                    aria-label={`节点 ${node.title} 右侧连接点`}
-                    disabled={!canEdit}
-                  />
-                  <button
-                    type="button"
-                    data-flow-connector="true"
-                    data-node-id={node.id}
-                    data-side="bottom"
-                    style={{ ...connectorStyle, ...connectorBottomStyle, borderColor: connectionDrag?.from.nodeId === node.id && connectionDrag.from.side === 'bottom' ? '#0284c7' : connectorStyle.borderColor }}
-                    onMouseDown={(event) => handleConnectorMouseDown(event, { nodeId: node.id, side: 'bottom' })}
-                    onMouseUp={(event) => handleConnectorMouseUp(event, { nodeId: node.id, side: 'bottom' })}
-                    aria-label={`节点 ${node.title} 底部连接点`}
-                    disabled={!canEdit}
-                  />
-                  <button
-                    type="button"
-                    data-flow-connector="true"
-                    data-node-id={node.id}
-                    data-side="left"
-                    style={{ ...connectorStyle, ...connectorLeftStyle, borderColor: connectionDrag?.from.nodeId === node.id && connectionDrag.from.side === 'left' ? '#0284c7' : connectorStyle.borderColor }}
-                    onMouseDown={(event) => handleConnectorMouseDown(event, { nodeId: node.id, side: 'left' })}
-                    onMouseUp={(event) => handleConnectorMouseUp(event, { nodeId: node.id, side: 'left' })}
-                    aria-label={`节点 ${node.title} 左侧连接点`}
-                    disabled={!canEdit}
-                  />
+                  {shouldShowConnector('top') ? (
+                    <button
+                      type="button"
+                      data-flow-connector="true"
+                      data-node-id={node.id}
+                      data-side="top"
+                      style={{ ...connectorStyle, ...connectorTopStyle, borderColor: connectionDrag?.from.nodeId === node.id && connectionDrag.from.side === 'top' ? '#0284c7' : connectorStyle.borderColor }}
+                      onMouseDown={(event) => handleConnectorMouseDown(event, { nodeId: node.id, side: 'top' })}
+                      onMouseUp={(event) => handleConnectorMouseUp(event, { nodeId: node.id, side: 'top' })}
+                      aria-label={`节点 ${node.title} 顶部连接点`}
+                      disabled={!canEdit}
+                    />
+                  ) : null}
+                  {shouldShowConnector('right') ? (
+                    <button
+                      type="button"
+                      data-flow-connector="true"
+                      data-node-id={node.id}
+                      data-side="right"
+                      style={{ ...connectorStyle, ...connectorRightStyle, borderColor: connectionDrag?.from.nodeId === node.id && connectionDrag.from.side === 'right' ? '#0284c7' : connectorStyle.borderColor }}
+                      onMouseDown={(event) => handleConnectorMouseDown(event, { nodeId: node.id, side: 'right' })}
+                      onMouseUp={(event) => handleConnectorMouseUp(event, { nodeId: node.id, side: 'right' })}
+                      aria-label={`节点 ${node.title} 右侧连接点`}
+                      disabled={!canEdit}
+                    />
+                  ) : null}
+                  {shouldShowConnector('bottom') ? (
+                    <button
+                      type="button"
+                      data-flow-connector="true"
+                      data-node-id={node.id}
+                      data-side="bottom"
+                      style={{ ...connectorStyle, ...connectorBottomStyle, borderColor: connectionDrag?.from.nodeId === node.id && connectionDrag.from.side === 'bottom' ? '#0284c7' : connectorStyle.borderColor }}
+                      onMouseDown={(event) => handleConnectorMouseDown(event, { nodeId: node.id, side: 'bottom' })}
+                      onMouseUp={(event) => handleConnectorMouseUp(event, { nodeId: node.id, side: 'bottom' })}
+                      aria-label={`节点 ${node.title} 底部连接点`}
+                      disabled={!canEdit}
+                    />
+                  ) : null}
+                  {shouldShowConnector('left') ? (
+                    <button
+                      type="button"
+                      data-flow-connector="true"
+                      data-node-id={node.id}
+                      data-side="left"
+                      style={{ ...connectorStyle, ...connectorLeftStyle, borderColor: connectionDrag?.from.nodeId === node.id && connectionDrag.from.side === 'left' ? '#0284c7' : connectorStyle.borderColor }}
+                      onMouseDown={(event) => handleConnectorMouseDown(event, { nodeId: node.id, side: 'left' })}
+                      onMouseUp={(event) => handleConnectorMouseUp(event, { nodeId: node.id, side: 'left' })}
+                      aria-label={`节点 ${node.title} 左侧连接点`}
+                      disabled={!canEdit}
+                    />
+                  ) : null}
                 </article>
               );
             })}
@@ -2451,23 +2547,34 @@ function getNodeConnectorPoint(layout: NodeRenderLayout, side: ConnectorSide): {
   const centerX = layout.left + NODE_WIDTH / 2;
   const centerY = layout.top + NODE_HEIGHT / 2;
   if (side === 'top') {
-    return { x: centerX, y: layout.top };
+    return { x: centerX, y: layout.top + NODE_BORDER_WIDTH };
   }
   if (side === 'right') {
-    return { x: layout.left + NODE_WIDTH, y: centerY };
+    return { x: layout.left + NODE_WIDTH - NODE_BORDER_WIDTH, y: centerY };
   }
   if (side === 'bottom') {
-    return { x: centerX, y: layout.top + NODE_HEIGHT };
+    return { x: centerX, y: layout.top + NODE_HEIGHT - NODE_BORDER_WIDTH };
   }
-  return { x: layout.left, y: centerY };
+  return { x: layout.left + NODE_BORDER_WIDTH, y: centerY };
 }
 
 function resolveShortestConnectorPair(
   sourceLayout: NodeRenderLayout,
   targetLayout: NodeRenderLayout
-): { source: { x: number; y: number }; target: { x: number; y: number } } {
+): {
+  source: { x: number; y: number };
+  target: { x: number; y: number };
+  sourceSide: ConnectorSide;
+  targetSide: ConnectorSide;
+} {
   const sides: ConnectorSide[] = ['top', 'right', 'bottom', 'left'];
-  let best: { source: { x: number; y: number }; target: { x: number; y: number }; distance: number } | null = null;
+  let best: {
+    source: { x: number; y: number };
+    target: { x: number; y: number };
+    sourceSide: ConnectorSide;
+    targetSide: ConnectorSide;
+    distance: number;
+  } | null = null;
   for (const sourceSide of sides) {
     const sourcePoint = getNodeConnectorPoint(sourceLayout, sourceSide);
     for (const targetSide of sides) {
@@ -2479,6 +2586,8 @@ function resolveShortestConnectorPair(
         best = {
           source: sourcePoint,
           target: targetPoint,
+          sourceSide,
+          targetSide,
           distance,
         };
       }
@@ -2487,6 +2596,8 @@ function resolveShortestConnectorPair(
   return {
     source: best?.source ?? getNodeConnectorPoint(sourceLayout, 'right'),
     target: best?.target ?? getNodeConnectorPoint(targetLayout, 'left'),
+    sourceSide: best?.sourceSide ?? 'right',
+    targetSide: best?.targetSide ?? 'left',
   };
 }
 
@@ -2523,8 +2634,8 @@ function buildEdgeRenderMetas(
       source: edge.source,
       target: edge.target,
       path,
-      midX: (pair.source.x + pair.target.x) / 2,
-      midY: (pair.source.y + pair.target.y) / 2,
+      sourceSide: pair.sourceSide,
+      targetSide: pair.targetSide,
     });
   }
   return result;
@@ -2688,17 +2799,6 @@ const flowStateBadgeStyle: React.CSSProperties = {
   fontWeight: 700,
   color: '#334155',
   background: 'rgba(255, 255, 255, 0.74)',
-  whiteSpace: 'nowrap',
-};
-
-const flowHintBadgeStyle: React.CSSProperties = {
-  border: '1px solid rgba(14, 116, 144, 0.3)',
-  borderRadius: '999px',
-  padding: '0.1rem 0.5rem',
-  fontSize: '0.7rem',
-  fontWeight: 700,
-  color: '#0369a1',
-  background: 'rgba(240, 249, 255, 0.85)',
   whiteSpace: 'nowrap',
 };
 
@@ -3009,13 +3109,31 @@ const edgeSvgStyle: React.CSSProperties = {
   position: 'absolute',
   inset: 0,
   zIndex: 6,
-  pointerEvents: 'none',
+  pointerEvents: 'auto',
 };
 
 const edgePathStyle: React.CSSProperties = {
   stroke: 'rgba(14, 116, 144, 0.5)',
   strokeWidth: 2,
+  strokeDasharray: '8 8',
+  strokeDashoffset: 0,
+  animation: 'flowEdgeDash 1.2s linear infinite',
   fill: 'none',
+  pointerEvents: 'none',
+};
+
+const edgePathSelectedStyle: React.CSSProperties = {
+  ...edgePathStyle,
+  stroke: 'rgba(2, 132, 199, 0.92)',
+  strokeWidth: 2.4,
+  animation: 'flowEdgeDash 0.9s linear infinite',
+};
+
+const edgeHitPathStyle: React.CSSProperties = {
+  stroke: 'rgba(2, 132, 199, 0)',
+  strokeWidth: 14,
+  fill: 'none',
+  pointerEvents: 'stroke',
 };
 
 const edgePreviewPathStyle: React.CSSProperties = {
@@ -3023,30 +3141,22 @@ const edgePreviewPathStyle: React.CSSProperties = {
   strokeWidth: 2,
   strokeDasharray: '6 5',
   fill: 'none',
+  pointerEvents: 'none',
 };
 
-const edgeDeleteButtonStyle: React.CSSProperties = {
-  position: 'absolute',
-  width: '22px',
-  height: '22px',
-  borderRadius: '999px',
-  border: '1px solid rgba(148, 163, 184, 0.56)',
-  background: 'rgba(255, 255, 255, 0.95)',
-  color: '#1e293b',
-  fontWeight: 700,
-  lineHeight: '1',
-  cursor: 'pointer',
-  zIndex: 12,
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  padding: 0,
-};
+const flowCanvasAnimationStyleText = `
+@keyframes flowEdgeDash {
+  to {
+    stroke-dashoffset: -16;
+  }
+}
+`;
 
 const flowNodeCardStyle: React.CSSProperties = {
   position: 'absolute',
   width: `${NODE_WIDTH}px`,
-  minHeight: `${NODE_HEIGHT}px`,
+  height: `${NODE_HEIGHT}px`,
+  boxSizing: 'border-box',
   border: '1px solid rgba(15, 118, 110, 0.3)',
   borderRadius: '0.65rem',
   padding: '0.56rem',
@@ -3113,33 +3223,36 @@ const connectorStyle: React.CSSProperties = {
   position: 'absolute',
   width: '14px',
   height: '14px',
+  boxSizing: 'border-box',
   borderRadius: '999px',
-  border: '2px solid rgba(14, 116, 144, 0.58)',
-  background: 'rgba(255, 255, 255, 0.98)',
+  border: '2px solid rgba(2, 132, 199, 0.95)',
+  background: 'radial-gradient(circle at 45% 45%, #ffffff 0%, #e0f2fe 55%, #38bdf8 100%)',
+  boxShadow: '0 0 0 1px rgba(255, 255, 255, 0.9), 0 0 10px rgba(14, 116, 144, 0.45)',
   padding: 0,
   cursor: 'crosshair',
+  zIndex: 18,
 };
 
 const connectorTopStyle: React.CSSProperties = {
   left: '50%',
-  top: '-8px',
+  top: `${-CONNECTOR_OFFSET}px`,
   transform: 'translateX(-50%)',
 };
 
 const connectorRightStyle: React.CSSProperties = {
-  right: '-8px',
+  right: `${-CONNECTOR_OFFSET}px`,
   top: '50%',
   transform: 'translateY(-50%)',
 };
 
 const connectorBottomStyle: React.CSSProperties = {
   left: '50%',
-  bottom: '-8px',
+  bottom: `${-CONNECTOR_OFFSET}px`,
   transform: 'translateX(-50%)',
 };
 
 const connectorLeftStyle: React.CSSProperties = {
-  left: '-8px',
+  left: `${-CONNECTOR_OFFSET}px`,
   top: '50%',
   transform: 'translateY(-50%)',
 };

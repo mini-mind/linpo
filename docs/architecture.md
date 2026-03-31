@@ -30,12 +30,22 @@
 - `FlowListPage`：所有流程列表页（我的流程目录），承接“工具栏筛选/排序 + 新建流程弹窗 + 卡片级编辑动作（重命名/删除）+ 需求拆解等待态”。
 - `FlowListPage` 新建流程时，需求拆解 Agent 固定为 `claw3`（通过配置项可调整，不在 UI 暴露选择器）。
 - `FlowEditorPanel`：编辑流程页，承接泳道画布编排、流程状态按钮（`运行/中断/继续`）、重命名交互与底部悬浮指令对话框（增量改图）。
-- `FlowEditorPanel`：编辑流程页需订阅 board realtime 任务事件并增量更新 `flowTasks`，由任务快照反向投影节点状态到画布。
+- `FlowEditorPanel`：编辑流程页需订阅 board tasks SSE 任务事件并增量更新 `flowTasks`，由任务快照反向投影节点状态到画布。
 - `KanbanShell` 在“按流程分列”模式下，列头需展示流程状态并提供主动作（`中断流程/继续流程/运行流程`）与删除动作。
 - `Layout`：维护流程导航入口缓存（`linpo.lastFlowEntryPath`），用于“点击导航栏流程时回到上次访问的编辑页”。
-- `PairingPage`：OpenClaw 实例页，承接“左侧实例列表 + 右侧主工作区”；右侧支持实例详情区块与新建配对双标签（Token/配对码）。
-- `PairingPage`：实例详情态需额外展示“实例 -> Agent -> Session”的树形拓扑，数据源复用 `/aggregate/topology` 并按选中实例过滤。
+- `Layout`：主导航仅保留 `看板/流程`；账户相关入口统一走导航栏用户信息下拉菜单，`/pairing` 保留兼容路由但不在主导航暴露。
+- `MessageCenterModal`：导航栏账户下拉菜单触发的消息中心弹窗，承接“消息列表 + 详情 + 回执确认跳转”。
+- `MessageCenterModal`：通过 portal 挂载到 `document.body`，避免受局部层级与滚动容器影响导致不可见。
+- `AccountMenu`：下拉菜单提供 `账户/消息/实例/退出` 菜单动作；`账户`打开 `UserProfileModal`（左侧 `基本信息/修改密码/会员` 侧边栏 + 右侧展示区）。
+- `UserProfileModal`：`基本信息`页提供“头像更换按钮 + 用户名编辑按钮”；`修改密码`页提供密码更新表单；`会员`页展示充值渠道占位。
+- `InstanceListModal`：由账户下拉菜单“实例”触发，展示已配对实例列表、实例信息与拓扑（`实例 -> Agent -> Session`）。
+- `ProfilePage`：`/profile` 作为兼容入口保留，不再作为用户主导航路径。
 - `PairingTutorialPage`：配对教程页，承接“仅通过 OpenClaw 对话拿到 endpoint/token”的接入步骤说明与跳转入口。
+- `PairingTutorialPage`：公开路由（匿名可访问），用于“未登录/未配对阶段”的最短接入说明，避免教程访问死锁。
+- `PairingTutorialPage`：提供可复制的纯文本模板（`mount/unmount`），模板内嵌 API 路径与 JSON 参数规范，供用户直接转发给 OpenClaw 执行。
+- `PairingTutorialPage`：页面内容来自仓库内 Markdown 静态文件，不再维护独立的样式化说明卡片。
+- OpenClaw 读取入口使用静态文件路径 `/pairing/tutorial.md`，返回纯 Markdown 文本；`/pairing/tutorial` 仅作为人类用户导航提示页。
+- 兼容路径：`/pairing/tutorial` 进入后立即执行前端重定向到 `/pairing/tutorial.md`，避免路由漏写后缀导致读取错误格式。
 - 三个主工作页（`KanbanShell/FlowListPage/FlowEditorPanel`）共用贴顶扁平工具栏样式 token，保持一致的视觉与层级。
 - `ApprovalCenter`：统一审批列表与批量操作。
 - `ArtifactPreviewPanel`：卡片产出详情与文件预览。
@@ -108,7 +118,7 @@
 ### 6.1 v0.7 任务 API 最小契约
 
 - `GET /api/v1/boards/{board_id}/tasks`：返回当前登录用户在指定看板可见任务列表，作为看板主数据源。
-- `WS /ws/boards/{board_id}/tasks`：看板任务实时事件通道（按当前登录用户隔离），推送 `tasks_changed` 增量事件；前端据此增量更新本地任务列表。
+- `GET /sse/boards/{board_id}/tasks`：看板任务 SSE 实时事件通道（按当前登录用户隔离），推送 `snapshot_ready/tasks_changed/error` 事件；看板页与流程编辑页统一使用该通道同步任务与节点状态。
 - `POST /api/v1/boards/{board_id}/tasks`：创建任务并记录指派信息，创建成功后由应用层触发 OpenClaw `chat.send`。
 - `POST /api/v1/boards/{board_id}/tasks/flow/generate`：根据需求生成流程图节点/边草稿，不落看板任务；支持可选 `current_nodes/current_edges/planner_session_key` 以在已有流程上增量改图。
 - `POST /api/v1/boards/{board_id}/tasks/flow/confirm`：确认草稿后创建 `queued` 任务并触发队列调度。
@@ -124,8 +134,17 @@
 - `DELETE /api/v1/boards/{board_id}/tasks/{task_id}`：删除单个需求节点；若该节点被同需求下游节点依赖，后端移除对应依赖并重算可调度任务。
 - `DELETE /api/v1/boards/{board_id}/tasks/requirements/{requirement_id}`：删除整组需求节点（同 `requirement_id`）。
 - `GET/POST/PATCH/DELETE /instances*`：OpenClaw 实例配对管理契约，配对成功后前端写入 `linpo.currentInstanceId` 作为默认实例上下文。
-- `GET /aggregate/topology`：实例页详情态用于构建关系树（实例节点、Agent 节点、Session 节点），前端按选中实例筛选并渲染。
+- `GET /aggregate/topology`：实例列表详情态用于构建关系树（实例节点、Agent 节点、Session 节点），前端按选中实例筛选并渲染。
 - `POST /instances/pair-code/validate`、`POST /instances/pair-code`：配对码校验与配对创建契约，后端负责将配对码解析为 `endpoint/gateway_token` 再复用实例校验与落库流程。
+- `POST /auth/register`：注册请求需包含 `username + email + password`，邮箱全局唯一。
+- `POST /auth/login`：登录请求支持 `identifier(用户名或邮箱) + password`。
+- `PATCH /auth/profile`：登录态下更新用户头像（`avatar_url`，`data:image/*;base64`）。
+- `POST /auth/password`：登录态下修改密码（校验 `current_password`，更新 `new_password`）。
+- `GET /instances/messages`：读取当前登录用户的消息中心列表（包含回执链接与确认状态）。
+- `POST /instances/messages/{message_id}/read`：将消息标记为已读。
+- `POST /instances/agent-mount/request`：免登录的 Agent 自助挂载申请，提交 `email + endpoint + gatewayToken`；后端按 email 定位用户并返回 `confirmation_url`，同时投递到用户消息中心。
+- `POST /instances/agent-unmount/request`：免登录的 Agent 自助卸载申请，提交 `email + instance_id`；后端校验实例归属并返回 `confirmation_url`，同时投递到用户消息中心。
+- `POST /instances/agent-receipts/{token}/confirm`：登录用户确认回执；需校验 token、TTL、一次性消费与“登录用户邮箱=回执目标邮箱”。
 - 为兼容部分网关对 `DELETE` 的限制，提供等价兜底：`POST /api/v1/boards/{board_id}/tasks/{task_id}/delete`、`POST /api/v1/boards/{board_id}/tasks/requirements/{requirement_id}/delete`。
 - v0.7 默认单看板，前端默认使用 `board_id=default`。
 - 任务状态机最小集遵循 `queued/running/blocked_by_approval/failed/completed`。
@@ -165,6 +184,12 @@
 - 未显式配置 `LINPO_TASK_EVENT_CALLBACK_BASE_URL` 时，后端会优先根据实例 endpoint 推导公网回调地址（host 不变，端口默认 `8000`），并附带 `127.0.0.1` 本地地址作为候选兜底。
 - `LINPO_TASK_EVENT_CALLBACK_PORT`：未显式配置回调基地址时，推导公网回调地址使用的端口（默认 `8000`）。
 - `LINPO_TASK_RUN_STALE_SECONDS`：`running` 无 heartbeat 的超时阈值（默认 `900` 秒，最小 `60` 秒）。
+
+### 7.3 Agent 自助挂载回执配置
+
+- `LINPO_PAIRING_RECEIPT_TTL_SECONDS`：挂载/卸载回执有效期（默认 `1800` 秒）。
+- 回执 token 必须一次性消费，确认成功后立即失效。
+- 回执确认必须要求登录态；登录用户邮箱与回执目标邮箱不一致时必须拒绝确认。
 
 ## 8. Tauri 构建约束
 

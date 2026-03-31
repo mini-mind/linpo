@@ -18,9 +18,8 @@ import {
   stopFlowRequirement,
 } from '../api/client';
 import {
-  createBoardTasksRealtimeClient,
+  createBoardTasksSseClient,
   createObserverRealtimeClient,
-  type BoardRealtimeClient,
   type BoardRealtimeMessage,
   type ObserverRealtimeClient,
 } from '../api/realtimeClient';
@@ -109,7 +108,7 @@ export default function CollabPage(): JSX.Element {
   const [taskDetailTab, setTaskDetailTab] = useState<TaskDetailTab>('info');
   const taskSessionRealtimeRef = useRef<ObserverRealtimeClient | null>(null);
   const taskSessionFallbackPollRef = useRef<number | null>(null);
-  const boardRealtimeRef = useRef<BoardRealtimeClient | null>(null);
+  const boardRealtimeRef = useRef<ReturnType<typeof createBoardTasksSseClient> | null>(null);
   const taskSessionListRef = useRef<HTMLDivElement | null>(null);
   const [selectedOutputEntryId, setSelectedOutputEntryId] = useState<string | null>(null);
   const [outputPreview, setOutputPreview] = useState<TaskOutputPreviewResponse | null>(null);
@@ -183,7 +182,7 @@ export default function CollabPage(): JSX.Element {
       if (cancelled) {
         return;
       }
-      const client = createBoardTasksRealtimeClient({
+      const client = createBoardTasksSseClient({
         boardId: KANBAN_BOARD_REALTIME_ID,
         onMessage: (message) => {
           if (cancelled) {
@@ -836,7 +835,7 @@ export default function CollabPage(): JSX.Element {
     <section style={pageStyle} aria-label="kanban-workbench">
       <header style={flatToolbarStyle}>
         <div style={toolbarStatsStyle} aria-label="看板统计">
-          <span style={statsItemStyle}>需求数量 {requirementCount}</span>
+          <span style={statsItemStyle}>流程数量 {requirementCount}</span>
         </div>
         <div style={toolbarGroupStyle}>
           <button
@@ -2740,6 +2739,11 @@ const boardTrackStyle: React.CSSProperties = {
   gap: '0.65rem',
 };
 
+const KANBAN_COLUMN_WIDTH_PX = 280;
+const KANBAN_MOBILE_COLUMN_VW = 57;
+const KANBAN_MOBILE_COLUMN_MIN_PX = 220;
+const KANBAN_MOBILE_COLUMN_MAX_PX = 374;
+
 const mobileBoardTrackStyle: React.CSSProperties = {
   ...boardTrackStyle,
   height: 'auto',
@@ -2749,8 +2753,8 @@ const mobileBoardTrackStyle: React.CSSProperties = {
 };
 
 const columnStyle: React.CSSProperties = {
-  width: '420px',
-  flex: '0 0 420px',
+  width: `${KANBAN_COLUMN_WIDTH_PX}px`,
+  flex: `0 0 ${KANBAN_COLUMN_WIDTH_PX}px`,
   minHeight: 0,
   display: 'flex',
   flexDirection: 'column',
@@ -2762,10 +2766,10 @@ const columnStyle: React.CSSProperties = {
 
 const mobileColumnStyle: React.CSSProperties = {
   ...columnStyle,
-  width: '86vw',
-  minWidth: '320px',
-  maxWidth: '560px',
-  flex: '0 0 86vw',
+  width: `${KANBAN_MOBILE_COLUMN_VW}vw`,
+  minWidth: `${KANBAN_MOBILE_COLUMN_MIN_PX}px`,
+  maxWidth: `${KANBAN_MOBILE_COLUMN_MAX_PX}px`,
+  flex: `0 0 ${KANBAN_MOBILE_COLUMN_VW}vw`,
   minHeight: 'auto',
   alignSelf: 'flex-start',
 };
