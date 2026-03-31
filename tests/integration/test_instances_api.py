@@ -1,9 +1,11 @@
 import json
 import base64
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlparse
 from uuid import UUID
 
 import pytest
@@ -54,17 +56,18 @@ def _cookie_header_from_set_cookie(set_cookie: str) -> str:
 
 
 def _register_and_login(username: str, password: str = "secret-123") -> str:
+    email = f"{username}@example.com"
     register_status, _, _ = _request_json(
         "POST",
         "/auth/register",
-        {"username": username, "password": password},
+        {"username": username, "email": email, "password": password},
     )
     assert register_status == 201
 
     login_status, login_headers, _ = _request_json(
         "POST",
         "/auth/login",
-        {"username": username, "password": password},
+        {"identifier": username, "password": password},
     )
     assert login_status == 200
     return _cookie_header_from_set_cookie(login_headers["set-cookie"])
@@ -73,6 +76,48 @@ def _register_and_login(username: str, password: str = "secret-123") -> str:
 def _encode_pair_code(payload: dict[str, object]) -> str:
     raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     return f"LP1.{base64.urlsafe_b64encode(raw).decode('utf-8').rstrip('=')}"
+
+
+def _extract_receipt_token(confirmation_url: str) -> str:
+    parsed = urlparse(confirmation_url)
+    path = parsed.path if parsed.scheme else confirmation_url
+    for marker in ("/instances/agent-receipts/", "/pairing/receipt/"):
+        if marker in path:
+            segment = path.split(marker, 1)[1]
+            token = segment.split("/confirm", 1)[0].strip("/")
+            assert token != ""
+            return token
+    raise AssertionError(f"unexpected confirmation_url: {confirmation_url}")
+
+
+def _require_confirmation_url(status_code: int, payload: dict[str, Any]) -> str:
+    assert status_code == 200
+    confirmation_url = cast(str | None, payload.get("confirmation_url"))
+    assert isinstance(confirmation_url, str) and confirmation_url != ""
+    return confirmation_url
+
+
+def _list_messages(auth_cookie: str) -> list[dict[str, Any]]:
+    status_code, _, body = request("GET", "/instances/messages", headers={"cookie": auth_cookie})
+    assert status_code == 200
+    payload = cast(list[dict[str, Any]], json.loads(body.decode("utf-8")))
+    return payload
+
+
+def _confirm_receipt(
+    token: str,
+    auth_cookie: str | None = None,
+) -> tuple[int, dict[str, Any]]:
+    headers: dict[str, str] = {}
+    if auth_cookie:
+        headers["cookie"] = auth_cookie
+    status_code, _, body = request(
+        "POST",
+        f"/instances/agent-receipts/{token}/confirm",
+        headers=headers,
+    )
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8"))) if body else {}
+    return status_code, payload
 
 
 @pytest.fixture(autouse=True)
@@ -290,6 +335,365 @@ def test_create_instance_by_pair_code_then_list(
     assert created["status"] == "active"
     assert "gatewayToken" not in created
     assert "gateway_token" not in created
+
+
+def test_agent_mount_request_returns_confirmation_url_and_writes_message(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    auth_cookie = _register_and_login("alice")
+
+    monkeypatch.setattr(
+        "app.services.instance_validator.InstanceValidatorService.validate",
+        lambda self, validation_request: InstanceValidationResult(
+            ok=True,
+            status="active",
+            message=f"validated:{validation_request.endpoint}",
+        ),
+    )
+
+    request_status, _, request_payload = _request_json(
+        "POST",
+        "/instances/agent-mount/request",
+        {
+            "email": "alice@example.com",
+            "name": "alice-self-mount",
+            "type": "openclaw",
+            "endpoint": "http://127.0.0.1:28789",
+            "gatewayToken": "self-mount-token",
+        },
+    )
+    confirmation_url = _require_confirmation_url(request_status, request_payload)
+    token = _extract_receipt_token(confirmation_url)
+    assert token != ""
+
+    messages = _list_messages(auth_cookie)
+    target = next((item for item in messages if item.get("confirmation_url") == confirmation_url), None)
+    assert target is not None
+    assert target["action"] == "mount"
+
+
+def test_message_read_endpoint_marks_message_as_read(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    auth_cookie = _register_and_login("alice")
+
+    monkeypatch.setattr(
+        "app.services.instance_validator.InstanceValidatorService.validate",
+        lambda self, validation_request: InstanceValidationResult(
+            ok=True,
+            status="active",
+            message=f"validated:{validation_request.endpoint}",
+        ),
+    )
+
+    request_status, _, request_payload = _request_json(
+        "POST",
+        "/instances/agent-mount/request",
+        {
+            "email": "alice@example.com",
+            "name": "alice-message-read",
+            "type": "openclaw",
+            "endpoint": "http://127.0.0.1:28789",
+            "gatewayToken": "message-read-token",
+        },
+    )
+    confirmation_url = _require_confirmation_url(request_status, request_payload)
+
+    messages = _list_messages(auth_cookie)
+    target = next((item for item in messages if item.get("confirmation_url") == confirmation_url), None)
+    assert target is not None
+    assert target.get("is_read") is False
+
+    read_status, _, read_body = request(
+        "POST",
+        f"/instances/messages/{target['id']}/read",
+        headers={"cookie": auth_cookie},
+    )
+    assert read_status == 200
+    read_payload = cast(dict[str, Any], json.loads(read_body.decode("utf-8")))
+    assert read_payload == {"read": True}
+
+    updated_messages = _list_messages(auth_cookie)
+    updated = next((item for item in updated_messages if item.get("id") == target["id"]), None)
+    assert updated is not None
+    assert updated.get("is_read") is True
+    assert isinstance(updated.get("read_at"), str) and updated.get("read_at")
+
+
+def test_agent_mount_request_is_not_blocked_by_legacy_challenge_delivery_env(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _register_and_login("alice")
+    monkeypatch.setenv("LINPO_PAIRING_CHALLENGE_DELIVERY", "smtp")
+    monkeypatch.delenv("LINPO_SMTP_HOST", raising=False)
+    monkeypatch.delenv("LINPO_SMTP_FROM", raising=False)
+    monkeypatch.setattr(
+        "app.services.instance_validator.InstanceValidatorService.validate",
+        lambda self, validation_request: InstanceValidationResult(
+            ok=True,
+            status="active",
+            message=f"validated:{validation_request.endpoint}",
+        ),
+    )
+
+    request_status, _, request_payload = _request_json(
+        "POST",
+        "/instances/agent-mount/request",
+        {
+            "email": "alice@example.com",
+            "name": "alice-self-mount",
+            "type": "openclaw",
+            "endpoint": "http://127.0.0.1:28789",
+            "gatewayToken": "self-mount-token",
+        },
+    )
+    confirmation_url = _require_confirmation_url(request_status, request_payload)
+    assert confirmation_url.startswith("/pairing/receipt/")
+
+
+def test_agent_unmount_request_returns_confirmation_url(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    auth_cookie = _register_and_login("alice")
+
+    monkeypatch.setattr(
+        "app.services.instance_validator.InstanceValidatorService.validate",
+        lambda self, validation_request: InstanceValidationResult(
+            ok=True,
+            status="active",
+            message=f"validated:{validation_request.endpoint}",
+        ),
+    )
+
+    create_status, _, create_payload = _request_json(
+        "POST",
+        "/instances",
+        {
+            "name": "alice-to-unmount",
+            "type": "openclaw",
+            "endpoint": "http://127.0.0.1:28789",
+            "gatewayToken": "token-to-unmount",
+        },
+        auth_cookie,
+    )
+    assert create_status == 201
+
+    request_status, _, request_payload = _request_json(
+        "POST",
+        "/instances/agent-unmount/request",
+        {
+            "email": "alice@example.com",
+            "instanceId": create_payload["id"],
+        },
+    )
+    confirmation_url = _require_confirmation_url(request_status, request_payload)
+    token = _extract_receipt_token(confirmation_url)
+    assert token != ""
+
+
+def test_agent_receipt_confirm_requires_login(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _register_and_login("alice")
+
+    monkeypatch.setattr(
+        "app.services.instance_validator.InstanceValidatorService.validate",
+        lambda self, validation_request: InstanceValidationResult(
+            ok=True,
+            status="active",
+            message=f"validated:{validation_request.endpoint}",
+        ),
+    )
+    request_status, _, request_payload = _request_json(
+        "POST",
+        "/instances/agent-mount/request",
+        {
+            "email": "alice@example.com",
+            "name": "alice-require-login",
+            "type": "openclaw",
+            "endpoint": "http://127.0.0.1:28789",
+            "gatewayToken": "login-required-token",
+        },
+    )
+    confirmation_url = _require_confirmation_url(request_status, request_payload)
+    token = _extract_receipt_token(confirmation_url)
+
+    confirm_status, confirm_payload = _confirm_receipt(token, None)
+    assert confirm_status == 401
+
+
+def test_agent_receipt_confirm_rejects_email_mismatch(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _register_and_login("alice")
+    bob_cookie = _register_and_login("bob")
+
+    monkeypatch.setattr(
+        "app.services.instance_validator.InstanceValidatorService.validate",
+        lambda self, validation_request: InstanceValidationResult(
+            ok=True,
+            status="active",
+            message=f"validated:{validation_request.endpoint}",
+        ),
+    )
+    request_status, _, request_payload = _request_json(
+        "POST",
+        "/instances/agent-mount/request",
+        {
+            "email": "alice@example.com",
+            "name": "alice-email-mismatch",
+            "type": "openclaw",
+            "endpoint": "http://127.0.0.1:28789",
+            "gatewayToken": "email-mismatch-token",
+        },
+    )
+    confirmation_url = _require_confirmation_url(request_status, request_payload)
+    token = _extract_receipt_token(confirmation_url)
+
+    monkeypatch.setattr(
+        "app.services.pairing_receipt_service._utc_now",
+        lambda: datetime.now(UTC),
+    )
+    confirm_status, confirm_payload = _confirm_receipt(token, bob_cookie)
+    assert confirm_status == 403
+
+
+def test_agent_receipt_confirm_mount_and_unmount_success(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    auth_cookie = _register_and_login("alice")
+
+    monkeypatch.setattr(
+        "app.services.instance_validator.InstanceValidatorService.validate",
+        lambda self, validation_request: InstanceValidationResult(
+            ok=True,
+            status="active",
+            message=f"validated:{validation_request.endpoint}",
+        ),
+    )
+
+    mount_request_status, _, mount_request_payload = _request_json(
+        "POST",
+        "/instances/agent-mount/request",
+        {
+            "email": "alice@example.com",
+            "name": "alice-mount-success",
+            "type": "openclaw",
+            "endpoint": "http://127.0.0.1:28789",
+            "gatewayToken": "mount-success-token",
+        },
+    )
+    mount_confirmation_url = _require_confirmation_url(mount_request_status, mount_request_payload)
+    mount_token = _extract_receipt_token(mount_confirmation_url)
+
+    monkeypatch.setattr(
+        "app.services.pairing_receipt_service._utc_now",
+        lambda: datetime.now(UTC),
+    )
+    mount_confirm_status, mount_confirm_payload = _confirm_receipt(mount_token, auth_cookie)
+    assert mount_confirm_status == 200
+    assert mount_confirm_payload["mounted"] is True
+    mounted_instance_id = cast(str, mount_confirm_payload["instance"]["id"])
+
+    unmount_request_status, _, unmount_request_payload = _request_json(
+        "POST",
+        "/instances/agent-unmount/request",
+        {
+            "email": "alice@example.com",
+            "instanceId": mounted_instance_id,
+        },
+    )
+    unmount_confirmation_url = _require_confirmation_url(unmount_request_status, unmount_request_payload)
+    unmount_token = _extract_receipt_token(unmount_confirmation_url)
+
+    unmount_confirm_status, unmount_confirm_payload = _confirm_receipt(unmount_token, auth_cookie)
+    assert unmount_confirm_status == 200
+    assert unmount_confirm_payload["action"] == "unmount"
+    assert unmount_confirm_payload["mounted"] is False
+    assert unmount_confirm_payload["unmounted"] is True
+    assert unmount_confirm_payload["instance"] is None
+    assert unmount_confirm_payload["instance_id"] == mounted_instance_id
+
+
+def test_agent_receipt_confirm_rejects_expired_or_duplicate_token(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    auth_cookie = _register_and_login("alice")
+    monkeypatch.setenv("LINPO_PAIRING_RECEIPT_TTL_SECONDS", "60")
+
+    monkeypatch.setattr(
+        "app.services.instance_validator.InstanceValidatorService.validate",
+        lambda self, validation_request: InstanceValidationResult(
+            ok=True,
+            status="active",
+            message=f"validated:{validation_request.endpoint}",
+        ),
+    )
+
+    duplicate_status, _, duplicate_payload = _request_json(
+        "POST",
+        "/instances/agent-mount/request",
+        {
+            "email": "alice@example.com",
+            "name": "alice-consume-once",
+            "type": "openclaw",
+            "endpoint": "http://127.0.0.1:28789",
+            "gatewayToken": "consume-once-token",
+        },
+    )
+    duplicate_confirmation_url = _require_confirmation_url(duplicate_status, duplicate_payload)
+    duplicate_token = _extract_receipt_token(duplicate_confirmation_url)
+
+    monkeypatch.setattr(
+        "app.services.pairing_receipt_service._utc_now",
+        lambda: datetime.now(UTC),
+    )
+    first_confirm_status, first_confirm_payload = _confirm_receipt(duplicate_token, auth_cookie)
+    assert first_confirm_status == 200
+
+    second_confirm_status, second_confirm_payload = _confirm_receipt(duplicate_token, auth_cookie)
+    assert second_confirm_status >= 400
+    assert "invalid" in str(second_confirm_payload.get("detail", "")).lower() or "expired" in str(
+        second_confirm_payload.get("detail", "")
+    ).lower() or "consum" in str(second_confirm_payload.get("detail", "")).lower()
+
+    expired_status, _, expired_payload = _request_json(
+        "POST",
+        "/instances/agent-mount/request",
+        {
+            "email": "alice@example.com",
+            "name": "alice-expired-token",
+            "type": "openclaw",
+            "endpoint": "http://127.0.0.1:28789",
+            "gatewayToken": "expired-token",
+        },
+    )
+    expired_confirmation_url = _require_confirmation_url(expired_status, expired_payload)
+    expired_token = _extract_receipt_token(expired_confirmation_url)
+
+    monkeypatch.setattr(
+        "app.services.pairing_receipt_service._utc_now",
+        lambda: datetime.now(UTC) + timedelta(seconds=120),
+    )
+    expired_confirm_status, expired_confirm_payload = _confirm_receipt(expired_token, auth_cookie)
+    assert expired_confirm_status >= 400
+    assert "expired" in str(expired_confirm_payload.get("detail", "")).lower()
 
 
 def test_validate_instance_rejects_unsafe_endpoint_before_probe(

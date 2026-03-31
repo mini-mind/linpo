@@ -7,6 +7,10 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.api.schemas import (
+    AgentMountRequestPayload,
+    AgentReceiptConfirmResponse,
+    AgentPairingRequestResponse,
+    AgentUnmountRequestPayload,
     InstanceDeleteResponse,
     InstanceItem,
     InstancePairCodeRequest,
@@ -14,8 +18,10 @@ from app.api.schemas import (
     InstanceValidationErrorResponse,
     InstanceValidationResponse,
     InstanceWriteRequest,
+    UserMessageItem,
+    UserMessageReadResponse,
 )
-from app.db.models import Instance, User
+from app.db.models import Instance, User, UserMessage
 from app.db.session import get_session
 from app.services.auth_service import get_authenticated_user
 from app.services.instance_service import (
@@ -24,6 +30,19 @@ from app.services.instance_service import (
     InstanceService,
     InstanceUpdateInput,
     InstanceValidationFailedError,
+)
+from app.services.agent_self_pairing_service import (
+    AgentMountStartInput,
+    AgentSelfPairingService,
+    AgentSelfPairingUserNotFoundError,
+    AgentUnmountStartInput,
+)
+from app.services.message_center_service import MessageCenterService, MessageNotFoundError
+from app.services.pairing_receipt_service import (
+    PairingReceiptConsumedError,
+    PairingReceiptEmailMismatchError,
+    PairingReceiptExpiredError,
+    PairingReceiptNotFoundError,
 )
 from app.services.instance_validator import InstanceValidationErrorCode
 from app.services.instance_pairing_code import (
@@ -36,6 +55,14 @@ router = APIRouter(prefix="/instances", tags=["instances"])
 
 def get_instance_service() -> InstanceService:
     return InstanceService()
+
+
+def get_agent_self_pairing_service() -> AgentSelfPairingService:
+    return AgentSelfPairingService()
+
+
+def get_message_center_service() -> MessageCenterService:
+    return MessageCenterService()
 
 
 def get_current_user(
@@ -75,6 +102,21 @@ def _validation_error_response(
             message=message,
             code=code,
         ).model_dump(),
+    )
+
+
+def _message_to_item(message: UserMessage) -> UserMessageItem:
+    return UserMessageItem(
+        id=str(message.id),
+        target_email=message.target_email,
+        action=message.action,
+        payload=message.payload,
+        title=message.title,
+        body=message.body,
+        confirmation_url=message.confirmation_url,
+        is_read=message.is_read,
+        read_at=None if message.read_at is None else message.read_at.isoformat(),
+        created_at=message.created_at.isoformat(),
     )
 
 
@@ -130,6 +172,169 @@ def create_instance(
         )
 
     return _instance_to_item(instance)
+
+
+@router.post(
+    "/agent-mount/request",
+    response_model=AgentPairingRequestResponse,
+    responses={400: {"model": InstanceValidationErrorResponse}},
+)
+def request_agent_mount(
+    payload: AgentMountRequestPayload,
+    db_session: Session = Depends(get_session),
+    pairing_service: AgentSelfPairingService = Depends(get_agent_self_pairing_service),
+) -> AgentPairingRequestResponse | JSONResponse:
+    try:
+        created = pairing_service.start_mount(
+            db_session,
+            payload=AgentMountStartInput(
+                email=payload.email,
+                name=payload.name,
+                type=payload.type,
+                endpoint=payload.endpoint,
+                gateway_token=payload.gateway_token,
+            ),
+        )
+    except AgentSelfPairingUserNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="user not found",
+        )
+    except InstanceValidationFailedError as exc:
+        return _validation_error_response(
+            ok=exc.result.ok,
+            status_text=exc.result.status,
+            message=exc.result.message,
+            code=None if exc.result.code is None else exc.result.code.value,
+        )
+
+    return AgentPairingRequestResponse(
+        confirmation_url=created.confirmation_url,
+        expires_at=created.expires_at.isoformat(),
+        expires_in_seconds=created.expires_in_seconds,
+    )
+
+
+@router.post(
+    "/agent-unmount/request",
+    response_model=AgentPairingRequestResponse,
+)
+def request_agent_unmount(
+    payload: AgentUnmountRequestPayload,
+    db_session: Session = Depends(get_session),
+    pairing_service: AgentSelfPairingService = Depends(get_agent_self_pairing_service),
+) -> AgentPairingRequestResponse:
+    try:
+        created = pairing_service.start_unmount(
+            db_session,
+            payload=AgentUnmountStartInput(
+                email=payload.email,
+                instance_id=UUID(payload.instance_id),
+            ),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid instance id") from exc
+    except AgentSelfPairingUserNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="user not found",
+        )
+    except InstanceNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found") from exc
+
+    return AgentPairingRequestResponse(
+        confirmation_url=created.confirmation_url,
+        expires_at=created.expires_at.isoformat(),
+        expires_in_seconds=created.expires_in_seconds,
+    )
+
+
+@router.post(
+    "/agent-receipts/{token}/confirm",
+    response_model=AgentReceiptConfirmResponse,
+    responses={400: {"model": InstanceValidationErrorResponse}},
+)
+def confirm_agent_receipt(
+    token: str,
+    current_user: User = Depends(get_current_user),
+    db_session: Session = Depends(get_session),
+    pairing_service: AgentSelfPairingService = Depends(get_agent_self_pairing_service),
+) -> AgentReceiptConfirmResponse | JSONResponse:
+    try:
+        confirmed = pairing_service.confirm_receipt(
+            db_session,
+            token=token,
+            current_user=current_user,
+        )
+    except PairingReceiptNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="pairing receipt not found") from exc
+    except PairingReceiptExpiredError as exc:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="pairing receipt expired") from exc
+    except PairingReceiptConsumedError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="pairing receipt already consumed") from exc
+    except PairingReceiptEmailMismatchError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="pairing receipt email mismatch") from exc
+    except InstanceNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found") from exc
+    except InstanceValidationFailedError as exc:
+        return _validation_error_response(
+            ok=exc.result.ok,
+            status_text=exc.result.status,
+            message=exc.result.message,
+            code=None if exc.result.code is None else exc.result.code.value,
+        )
+    except AgentSelfPairingUserNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="user email unavailable") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid receipt payload") from exc
+
+    if confirmed.action == "mount":
+        return AgentReceiptConfirmResponse(
+            action="mount",
+            mounted=True,
+            unmounted=False,
+            instance=None if confirmed.instance is None else _instance_to_item(confirmed.instance),
+            instance_id=None,
+        )
+    return AgentReceiptConfirmResponse(
+        action="unmount",
+        mounted=False,
+        unmounted=True,
+        instance=None,
+        instance_id=None if confirmed.instance_id is None else str(confirmed.instance_id),
+    )
+
+
+@router.get("/messages", response_model=list[UserMessageItem])
+def list_messages(
+    current_user: User = Depends(get_current_user),
+    db_session: Session = Depends(get_session),
+    message_service: MessageCenterService = Depends(get_message_center_service),
+) -> list[UserMessageItem]:
+    messages = message_service.list_messages(
+        db_session,
+        user_id=current_user.id,
+    )
+    return [_message_to_item(message) for message in messages]
+
+
+@router.post("/messages/{message_id}/read", response_model=UserMessageReadResponse)
+def read_message(
+    message_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db_session: Session = Depends(get_session),
+    message_service: MessageCenterService = Depends(get_message_center_service),
+) -> UserMessageReadResponse:
+    try:
+        message_service.mark_read(
+            db_session,
+            user_id=current_user.id,
+            message_id=message_id,
+        )
+    except MessageNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="message not found") from exc
+
+    return UserMessageReadResponse(read=True)
 
 
 @router.post(

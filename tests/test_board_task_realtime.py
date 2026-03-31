@@ -76,7 +76,7 @@ def test_task_service_emits_realtime_events(monkeypatch) -> None:
     monkeypatch.setattr(task_service_module, "get_board_task_realtime_hub", lambda: fake_hub)
 
     with Session(engine) as db_session:
-        user = User(username="realtime-user", password_hash="hashed")
+        user = User(username="realtime-user", email="realtime-user@example.com", password_hash="hashed")
         db_session.add(user)
         db_session.commit()
         db_session.refresh(user)

@@ -53,17 +53,18 @@ def _cookie_header_from_set_cookie(set_cookie: str) -> str:
 
 
 def _register_and_login(username: str, password: str = "secret-123") -> str:
+    email = f"{username}@example.com"
     register_status, _, _ = _request_json(
         "POST",
         "/auth/register",
-        {"username": username, "password": password},
+        {"username": username, "email": email, "password": password},
     )
     assert register_status == 201
 
     login_status, login_headers, _ = _request_json(
         "POST",
         "/auth/login",
-        {"username": username, "password": password},
+        {"identifier": username, "password": password},
     )
     assert login_status == 200
     return _cookie_header_from_set_cookie(login_headers["set-cookie"])

@@ -225,6 +225,15 @@ class InstanceService:
             ),
         )
 
+    def get_owned_instance(
+        self,
+        db_session: Session,
+        *,
+        user_id: UUID,
+        instance_id: UUID,
+    ) -> Instance | None:
+        return self._get_owned_instance(db_session, user_id=user_id, instance_id=instance_id)
+
     def _count_instances(self, db_session: Session, *, user_id: UUID) -> int:
         statement = select(func.count()).select_from(Instance).where(Instance.user_id == user_id)
         return int(db_session.execute(statement).scalar_one())

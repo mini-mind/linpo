@@ -33,7 +33,7 @@ def _json_headers(
 def _request_json(
     method: str,
     path: str,
-    payload: dict[str, str],
+    payload: dict[str, Any],
     cookie_header: str | None = None,
     extra_headers: dict[str, str] | None = None,
 ) -> tuple[int, dict[str, str], dict[str, Any]]:
@@ -60,7 +60,12 @@ def _reload_auth_service_bindings():
     reloaded_auth_service = importlib.reload(auth_service)
 
     auth.DuplicateUsernameError = reloaded_auth_service.DuplicateUsernameError
+    auth.DuplicateEmailError = reloaded_auth_service.DuplicateEmailError
+    auth.InvalidEmailError = reloaded_auth_service.InvalidEmailError
+    auth.InvalidAvatarError = reloaded_auth_service.InvalidAvatarError
+    auth.InvalidCurrentPasswordError = reloaded_auth_service.InvalidCurrentPasswordError
     auth.authenticate_user = reloaded_auth_service.authenticate_user
+    auth.change_user_password = reloaded_auth_service.change_user_password
     auth.clear_session_cookie = reloaded_auth_service.clear_session_cookie
     auth.create_session = reloaded_auth_service.create_session
     auth.create_user = reloaded_auth_service.create_user
@@ -69,6 +74,7 @@ def _reload_auth_service_bindings():
     auth.get_session_id = reloaded_auth_service.get_session_id
     auth.set_session_cookie = reloaded_auth_service.set_session_cookie
     auth.store_session = reloaded_auth_service.store_session
+    auth.update_user_profile = reloaded_auth_service.update_user_profile
 
     aggregate.get_authenticated_user = reloaded_auth_service.get_authenticated_user
     agents.get_authenticated_user = reloaded_auth_service.get_authenticated_user
@@ -120,7 +126,14 @@ def test_auth_me_route_can_boot_with_explicit_db_bootstrap(
     assert payload == {"detail": "Unauthorized"}
 
     inspector = inspect(create_engine(database_url))
-    assert sorted(inspector.get_table_names()) == ["auth_sessions", "instances", "tasks", "users"]
+    assert sorted(inspector.get_table_names()) == [
+        "auth_sessions",
+        "instances",
+        "pairing_receipts",
+        "tasks",
+        "user_messages",
+        "users",
+    ]
 
 
 def test_auth_db_bootstrap_uses_isolated_database_path(
@@ -135,14 +148,21 @@ def test_auth_db_bootstrap_uses_isolated_database_path(
 
     assert test_db_path.exists()
     inspector = inspect(create_engine(database_url))
-    assert sorted(inspector.get_table_names()) == ["auth_sessions", "instances", "tasks", "users"]
+    assert sorted(inspector.get_table_names()) == [
+        "auth_sessions",
+        "instances",
+        "pairing_receipts",
+        "tasks",
+        "user_messages",
+        "users",
+    ]
 
 
 def test_password_hash_is_persisted_without_plaintext(db_handle: Session) -> None:
     from app.services.auth_service import hash_password, verify_password
 
     password = "secret-123"
-    user = User(username="alice", password_hash=hash_password(password))
+    user = User(username="alice", email="alice@example.com", password_hash=hash_password(password))
     db_handle.add(user)
     db_handle.commit()
     db_handle.refresh(user)
@@ -173,6 +193,28 @@ def test_cors_allow_origins_parses_trimmed_deduplicated_values(
     assert origins.count("http://175.178.213.10:5173") == 1
     assert origins.count("https://linpo.duckdns.org") == 1
     assert "" not in origins
+
+
+def test_cors_preflight_allows_patch_for_auth_profile(
+    isolated_database_url: str,
+) -> None:
+    del isolated_database_url
+
+    status_code, headers, _ = request(
+        "OPTIONS",
+        "/auth/profile",
+        headers={
+            "origin": "http://175.178.213.10:5173",
+            "access-control-request-method": "PATCH",
+            "access-control-request-headers": "content-type",
+        },
+    )
+
+    assert status_code == 200
+    assert headers["access-control-allow-origin"] == "http://175.178.213.10:5173"
+    assert headers["access-control-allow-credentials"] == "true"
+    allowed_methods = {method.strip().upper() for method in headers["access-control-allow-methods"].split(",")}
+    assert "PATCH" in allowed_methods
 
 
 def test_encrypt_secret_round_trips_without_plaintext_leak(
@@ -252,7 +294,7 @@ def test_stored_session_survives_auth_service_reload(isolated_database_url: str)
 def test_expired_session_is_removed_when_loaded(db_handle: Session) -> None:
     from app.services import auth_service
 
-    user = User(username="expired-user", password_hash="hash")
+    user = User(username="expired-user", email="expired@example.com", password_hash="hash")
     db_handle.add(user)
     db_handle.commit()
     db_handle.refresh(user)
@@ -315,13 +357,28 @@ def test_register_returns_minimal_user_payload(isolated_database_url: str) -> No
     status_code, _, payload = _request_json(
         "POST",
         "/auth/register",
-        {"username": "alice", "password": "secret-123"},
+        {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
     )
 
     assert status_code == 201
     assert payload["username"] == "alice"
     assert payload["id"]
-    assert sorted(payload.keys()) == ["id", "username"]
+    assert payload["email"] == "alice@example.com"
+    assert payload["avatar_url"] is None
+    assert sorted(payload.keys()) == ["avatar_url", "email", "id", "username"]
+
+
+def test_register_requires_email_field(isolated_database_url: str) -> None:
+    del isolated_database_url
+
+    status_code, _, payload = _request_json(
+        "POST",
+        "/auth/register",
+        {"username": "alice", "password": "secret-123"},
+    )
+
+    assert status_code == 422
+    assert isinstance(payload["detail"], list)
 
 
 def test_register_sets_session_cookie_and_me_returns_current_user(isolated_database_url: str) -> None:
@@ -330,7 +387,7 @@ def test_register_sets_session_cookie_and_me_returns_current_user(isolated_datab
     register_status, register_headers, register_payload = _request_json(
         "POST",
         "/auth/register",
-        {"username": "alice", "password": "secret-123"},
+        {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
         extra_headers={"Origin": "http://175.178.213.10:5173"},
     )
 
@@ -356,13 +413,13 @@ def test_register_rejects_duplicate_username(isolated_database_url: str) -> None
     _request_json(
         "POST",
         "/auth/register",
-        {"username": "alice", "password": "secret-123"},
+        {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
     )
 
     status_code, _, payload = _request_json(
         "POST",
         "/auth/register",
-        {"username": "alice", "password": "secret-123"},
+        {"username": "alice", "email": "alice2@example.com", "password": "secret-123"},
     )
 
     assert status_code == 409
@@ -424,20 +481,22 @@ def test_login_sets_session_cookie_and_me_returns_current_user(isolated_database
     _request_json(
         "POST",
         "/auth/register",
-        {"username": "alice", "password": "secret-123"},
+        {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
     )
 
     login_status, login_headers, login_payload = _request_json(
         "POST",
         "/auth/login",
-        {"username": "alice", "password": "secret-123"},
+        {"identifier": "alice@example.com", "password": "secret-123"},
         extra_headers={"Origin": "http://127.0.0.1:5173"},
     )
 
     assert login_status == 200
     assert login_payload["username"] == "alice"
     assert login_payload["id"]
-    assert sorted(login_payload.keys()) == ["id", "username"]
+    assert login_payload["email"] == "alice@example.com"
+    assert login_payload["avatar_url"] is None
+    assert sorted(login_payload.keys()) == ["avatar_url", "email", "id", "username"]
     assert "set-cookie" in login_headers
     assert login_headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
     assert login_headers["access-control-allow-credentials"] == "true"
@@ -458,7 +517,7 @@ def test_login_session_survives_auth_service_reload_for_me_route(isolated_databa
     login_status, login_headers, login_payload = _request_json(
         "POST",
         "/auth/register",
-        {"username": "alice", "password": "secret-123"},
+        {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
     )
     assert login_status == 201
 
@@ -479,17 +538,203 @@ def test_login_rejects_bad_password(isolated_database_url: str) -> None:
     _request_json(
         "POST",
         "/auth/register",
-        {"username": "alice", "password": "secret-123"},
+        {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
     )
 
     status_code, _, payload = _request_json(
         "POST",
         "/auth/login",
-        {"username": "alice", "password": "wrong-password"},
+        {"identifier": "alice", "password": "wrong-password"},
     )
 
     assert status_code == 401
-    assert payload == {"detail": "Invalid username or password"}
+    assert payload == {"detail": "Invalid identifier or password"}
+
+
+def test_profile_patch_updates_avatar_and_me_reflects_change(isolated_database_url: str) -> None:
+    del isolated_database_url
+    _, register_headers, _ = _request_json(
+        "POST",
+        "/auth/register",
+        {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
+    )
+    cookie_header = _cookie_header_from_set_cookie(register_headers["set-cookie"])
+    avatar_data_url = (
+        "data:image/png;base64,"
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/w8AAgMBgQdPpV8AAAAASUVORK5CYII="
+    )
+
+    status_code, _, payload = _request_json(
+        "PATCH",
+        "/auth/profile",
+        {"avatar_url": avatar_data_url},
+        cookie_header=cookie_header,
+    )
+
+    assert status_code == 200
+    assert payload["avatar_url"] == avatar_data_url
+    assert payload["username"] == "alice"
+    assert payload["email"] == "alice@example.com"
+
+    me_status, _, me_body = request("GET", "/auth/me", headers={"cookie": cookie_header})
+    assert me_status == 200
+    me_payload = cast(dict[str, Any], json.loads(me_body.decode("utf-8")))
+    assert me_payload["avatar_url"] == avatar_data_url
+
+
+def test_profile_patch_rejects_invalid_avatar(isolated_database_url: str) -> None:
+    del isolated_database_url
+    _, register_headers, _ = _request_json(
+        "POST",
+        "/auth/register",
+        {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
+    )
+    cookie_header = _cookie_header_from_set_cookie(register_headers["set-cookie"])
+
+    status_code, _, payload = _request_json(
+        "PATCH",
+        "/auth/profile",
+        {"avatar_url": "https://example.com/avatar.png"},
+        cookie_header=cookie_header,
+    )
+
+    assert status_code == 400
+    assert payload == {"detail": "Invalid avatar, only data:image/*;base64 is allowed"}
+
+
+def test_profile_patch_requires_authentication(isolated_database_url: str) -> None:
+    del isolated_database_url
+    status_code, _, payload = _request_json(
+        "PATCH",
+        "/auth/profile",
+        {"avatar_url": None},
+    )
+    assert status_code == 401
+    assert payload == {"detail": "Unauthorized"}
+
+
+def test_profile_patch_updates_username(isolated_database_url: str) -> None:
+    del isolated_database_url
+    _, register_headers, _ = _request_json(
+        "POST",
+        "/auth/register",
+        {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
+    )
+    cookie_header = _cookie_header_from_set_cookie(register_headers["set-cookie"])
+
+    status_code, _, payload = _request_json(
+        "PATCH",
+        "/auth/profile",
+        {"username": "alice_new"},
+        cookie_header=cookie_header,
+    )
+    assert status_code == 200
+    assert payload["username"] == "alice_new"
+
+    old_login_status, _, old_login_payload = _request_json(
+        "POST",
+        "/auth/login",
+        {"identifier": "alice", "password": "secret-123"},
+    )
+    assert old_login_status == 401
+    assert old_login_payload == {"detail": "Invalid identifier or password"}
+
+    new_login_status, _, new_login_payload = _request_json(
+        "POST",
+        "/auth/login",
+        {"identifier": "alice_new", "password": "secret-123"},
+    )
+    assert new_login_status == 200
+    assert new_login_payload["username"] == "alice_new"
+
+
+def test_profile_patch_rejects_duplicate_username(isolated_database_url: str) -> None:
+    del isolated_database_url
+    _, first_headers, _ = _request_json(
+        "POST",
+        "/auth/register",
+        {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
+    )
+    _request_json(
+        "POST",
+        "/auth/register",
+        {"username": "bob", "email": "bob@example.com", "password": "secret-123"},
+    )
+    first_cookie = _cookie_header_from_set_cookie(first_headers["set-cookie"])
+
+    status_code, _, payload = _request_json(
+        "PATCH",
+        "/auth/profile",
+        {"username": "bob"},
+        cookie_header=first_cookie,
+    )
+    assert status_code == 409
+    assert payload == {"detail": "Username already exists"}
+
+
+def test_password_update_changes_login_credentials(isolated_database_url: str) -> None:
+    del isolated_database_url
+    _, register_headers, _ = _request_json(
+        "POST",
+        "/auth/register",
+        {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
+    )
+    cookie_header = _cookie_header_from_set_cookie(register_headers["set-cookie"])
+
+    status_code, _, payload = _request_json(
+        "POST",
+        "/auth/password",
+        {"current_password": "secret-123", "new_password": "new-secret-456"},
+        cookie_header=cookie_header,
+    )
+    assert status_code == 200
+    assert payload == {"ok": True}
+
+    old_login_status, _, old_login_payload = _request_json(
+        "POST",
+        "/auth/login",
+        {"identifier": "alice", "password": "secret-123"},
+    )
+    assert old_login_status == 401
+    assert old_login_payload == {"detail": "Invalid identifier or password"}
+
+    new_login_status, _, new_login_payload = _request_json(
+        "POST",
+        "/auth/login",
+        {"identifier": "alice@example.com", "password": "new-secret-456"},
+    )
+    assert new_login_status == 200
+    assert new_login_payload["username"] == "alice"
+
+
+def test_password_update_rejects_wrong_current_password(isolated_database_url: str) -> None:
+    del isolated_database_url
+    _, register_headers, _ = _request_json(
+        "POST",
+        "/auth/register",
+        {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
+    )
+    cookie_header = _cookie_header_from_set_cookie(register_headers["set-cookie"])
+
+    status_code, _, payload = _request_json(
+        "POST",
+        "/auth/password",
+        {"current_password": "wrong-123", "new_password": "new-secret-456"},
+        cookie_header=cookie_header,
+    )
+    assert status_code == 400
+    assert payload == {"detail": "Current password is incorrect"}
+
+
+def test_password_update_requires_authentication(isolated_database_url: str) -> None:
+    del isolated_database_url
+    status_code, _, payload = _request_json(
+        "POST",
+        "/auth/password",
+        {"current_password": "secret-123", "new_password": "new-secret-456"},
+    )
+    assert status_code == 401
+    assert payload == {"detail": "Unauthorized"}
 
 
 def test_logout_clears_session_and_me_requires_authentication(isolated_database_url: str) -> None:
@@ -497,12 +742,12 @@ def test_logout_clears_session_and_me_requires_authentication(isolated_database_
     _request_json(
         "POST",
         "/auth/register",
-        {"username": "alice", "password": "secret-123"},
+        {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
     )
     _, login_headers, _ = _request_json(
         "POST",
         "/auth/login",
-        {"username": "alice", "password": "secret-123"},
+        {"identifier": "alice", "password": "secret-123"},
     )
     cookie_header = _cookie_header_from_set_cookie(login_headers["set-cookie"])
 

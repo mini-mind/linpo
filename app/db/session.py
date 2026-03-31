@@ -3,6 +3,7 @@ from collections.abc import Iterator
 from functools import lru_cache
 
 from sqlalchemy import create_engine
+from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
@@ -25,7 +26,30 @@ def get_engine(database_url: str) -> Engine:
 
 
 def init_db() -> None:
-    Base.metadata.create_all(get_engine(get_database_url()))
+    engine = get_engine(get_database_url())
+    Base.metadata.create_all(engine)
+    _ensure_users_columns(engine)
+
+
+def _ensure_users_columns(engine: Engine) -> None:
+    inspector = inspect(engine)
+    if "users" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("users")}
+    with engine.begin() as connection:
+        if "email" not in columns:
+            if engine.dialect.name == "postgresql":
+                connection.execute(text("ALTER TABLE users ADD COLUMN email VARCHAR(255)"))
+            elif engine.dialect.name == "sqlite":
+                connection.execute(text("ALTER TABLE users ADD COLUMN email VARCHAR(255)"))
+        if "avatar_data_url" not in columns:
+            if engine.dialect.name == "postgresql":
+                connection.execute(text("ALTER TABLE users ADD COLUMN avatar_data_url TEXT"))
+            elif engine.dialect.name == "sqlite":
+                connection.execute(text("ALTER TABLE users ADD COLUMN avatar_data_url TEXT"))
+        connection.execute(
+            text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)")
+        )
 
 
 def get_session() -> Iterator[Session]:

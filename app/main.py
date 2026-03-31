@@ -22,6 +22,7 @@ _DEFAULT_CORS_ORIGINS = [
     "http://127.0.0.1:5173",
     "http://175.178.213.10:5173",
 ]
+_ALLOWED_CORS_METHODS = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
 
 
 def _get_cors_allow_origins() -> list[str]:
@@ -78,7 +79,7 @@ async def add_http_cors_headers(
     if origin in _ALLOWED_CORS_ORIGINS:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = _ALLOWED_CORS_METHODS
         response.headers["Access-Control-Allow-Headers"] = _get_cors_allow_headers(request)
         response.headers.append("Vary", "Origin")
         response.headers.append("Vary", "Access-Control-Request-Headers")

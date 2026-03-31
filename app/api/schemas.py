@@ -203,6 +203,54 @@ class InstanceDeleteResponse(BaseModel):
     deleted: bool
 
 
+class AgentMountRequestPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    email: str
+    name: str
+    type: str
+    endpoint: str
+    gateway_token: str = Field(alias="gatewayToken")
+
+
+class AgentUnmountRequestPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    email: str
+    instance_id: str = Field(alias="instanceId")
+
+
+class AgentPairingRequestResponse(BaseModel):
+    confirmation_url: str
+    expires_at: str
+    expires_in_seconds: int
+
+
+class AgentReceiptConfirmResponse(BaseModel):
+    action: str
+    mounted: bool
+    unmounted: bool
+    instance: InstanceItem | None = None
+    instance_id: str | None = None
+
+
+class UserMessageItem(BaseModel):
+    id: str
+    target_email: str
+    action: str
+    payload: dict[str, str]
+    title: str
+    body: str
+    confirmation_url: str
+    is_read: bool
+    read_at: str | None
+    created_at: str
+
+
+class UserMessageReadResponse(BaseModel):
+    read: bool
+
+
 class FreshnessInfo(BaseModel):
     status: str
     checked_at: str | None

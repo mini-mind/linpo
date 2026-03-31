@@ -1,4 +1,5 @@
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from secrets import token_urlsafe
@@ -7,7 +8,7 @@ from uuid import UUID
 
 import bcrypt
 from fastapi import Request, Response
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -19,6 +20,9 @@ _SESSION_TTL = timedelta(days=7)
 _DEFAULT_SESSION_COOKIE_SAMESITE = "lax"
 _ALLOWED_SESSION_COOKIE_SAMESITE = {"lax", "strict", "none"}
 CookieSameSite = Literal["lax", "strict", "none"]
+_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_MAX_AVATAR_DATA_URL_LENGTH = 4_200_000
+_MIN_PASSWORD_LENGTH = 6
 
 
 def _utc_now() -> datetime:
@@ -63,6 +67,52 @@ class SessionState:
 
 class DuplicateUsernameError(Exception):
     pass
+
+
+class DuplicateEmailError(Exception):
+    pass
+
+
+class InvalidEmailError(Exception):
+    pass
+
+
+class InvalidAvatarError(Exception):
+    pass
+
+
+class InvalidCurrentPasswordError(Exception):
+    pass
+
+
+def normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def normalize_username(username: str) -> str:
+    normalized = username.strip()
+    if normalized == "":
+        raise ValueError("username is required")
+    if len(normalized) > 64:
+        raise ValueError("username must be at most 64 characters")
+    return normalized
+
+
+def _is_valid_email(email: str) -> bool:
+    return bool(_EMAIL_PATTERN.fullmatch(email))
+
+
+def normalize_avatar_data_url(avatar_data_url: str | None) -> str | None:
+    if avatar_data_url is None:
+        return None
+    normalized = avatar_data_url.strip()
+    if normalized == "":
+        return None
+    if len(normalized) > _MAX_AVATAR_DATA_URL_LENGTH:
+        raise InvalidAvatarError
+    if not normalized.startswith("data:image/") or ";base64," not in normalized:
+        raise InvalidAvatarError
+    return normalized
 
 
 def hash_password(password: str) -> str:
@@ -130,26 +180,136 @@ def get_session_id(request: Request) -> str | None:
     return request.cookies.get(SESSION_COOKIE_NAME)
 
 
-def create_user(db_session: Session, username: str, password: str) -> User:
-    user = User(username=username, password_hash=hash_password(password))
+def create_user(db_session: Session, username: str, email: str, password: str) -> User:
+    normalized_username = normalize_username(username)
+    normalized_email = normalize_email(email)
+    if normalized_username == "":
+        raise ValueError("username is required")
+    if not _is_valid_email(normalized_email):
+        raise InvalidEmailError
+    if len(password) < _MIN_PASSWORD_LENGTH:
+        raise ValueError("password must be at least 6 characters")
+    if db_session.execute(select(User.id).where(User.username == normalized_username)).scalar_one_or_none():
+        raise DuplicateUsernameError
+    if db_session.execute(select(User.id).where(User.email == normalized_email)).scalar_one_or_none():
+        raise DuplicateEmailError
+
+    user = User(
+        username=normalized_username,
+        email=normalized_email,
+        password_hash=hash_password(password),
+    )
     db_session.add(user)
     try:
         db_session.commit()
     except IntegrityError as exc:
         db_session.rollback()
+        message = str(exc).lower()
+        if "email" in message:
+            raise DuplicateEmailError from exc
         raise DuplicateUsernameError from exc
 
     db_session.refresh(user)
     return user
 
 
-def authenticate_user(db_session: Session, username: str, password: str) -> User | None:
-    user = db_session.execute(select(User).where(User.username == username)).scalar_one_or_none()
+def authenticate_user(db_session: Session, identifier: str, password: str) -> User | None:
+    normalized_identifier = identifier.strip()
+    if normalized_identifier == "":
+        return None
+    normalized_email = normalize_email(normalized_identifier)
+    user = db_session.execute(
+        select(User).where(
+            or_(
+                User.username == normalized_identifier,
+                User.email == normalized_email,
+            )
+        )
+    ).scalar_one_or_none()
     if user is None:
         return None
     if not verify_password(password, user.password_hash):
         return None
     return user
+
+
+def update_user_avatar(db_session: Session, user: User, avatar_data_url: str | None) -> User:
+    user.avatar_data_url = normalize_avatar_data_url(avatar_data_url)
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
+def update_user_profile(
+    db_session: Session,
+    user: User,
+    *,
+    username: str | None = None,
+    username_provided: bool = False,
+    avatar_data_url: str | None = None,
+    avatar_provided: bool = False,
+) -> User:
+    if not username_provided and not avatar_provided:
+        raise ValueError("at least one profile field is required")
+
+    if username_provided:
+        normalized_username = normalize_username(username or "")
+        if normalized_username != user.username:
+            existing = db_session.execute(
+                select(User.id).where(User.username == normalized_username, User.id != user.id)
+            ).scalar_one_or_none()
+            if existing is not None:
+                raise DuplicateUsernameError
+            user.username = normalized_username
+
+    if avatar_provided:
+        user.avatar_data_url = normalize_avatar_data_url(avatar_data_url)
+
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
+def change_user_password(
+    db_session: Session,
+    user: User,
+    *,
+    current_password: str,
+    new_password: str,
+) -> None:
+    if not verify_password(current_password, user.password_hash):
+        raise InvalidCurrentPasswordError
+    if len(new_password) < _MIN_PASSWORD_LENGTH:
+        raise ValueError("password must be at least 6 characters")
+    if verify_password(new_password, user.password_hash):
+        raise ValueError("new password must be different from current password")
+
+    user.password_hash = hash_password(new_password)
+    db_session.add(user)
+    db_session.commit()
+
+
+def find_user_by_username_and_email(
+    db_session: Session,
+    *,
+    username: str,
+    email: str,
+) -> User | None:
+    try:
+        normalized_username = normalize_username(username)
+    except ValueError:
+        return None
+    normalized_email = normalize_email(email)
+    if not _is_valid_email(normalized_email):
+        return None
+    return db_session.execute(
+        select(User).where(
+            User.username == normalized_username,
+            User.email == normalized_email,
+        )
+    ).scalar_one_or_none()
 
 
 def store_session(session_state: SessionState) -> None:

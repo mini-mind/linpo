@@ -56,7 +56,7 @@ def test_concurrent_create_keeps_per_user_limit_at_three(
     service = InstanceService(validator=SlowSuccessValidator())
 
     with Session(engine) as session:
-        user = User(username="alice", password_hash=hash_password("secret-123"))
+        user = User(username="alice", email="alice@example.com", password_hash=hash_password("secret-123"))
         session.add(user)
         session.flush()
         user_id = user.id
