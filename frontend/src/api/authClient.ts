@@ -10,11 +10,29 @@ const API_BASE_URL = configuredApiBaseUrl || inferredApiBaseUrl;
 export interface User {
   id: string;
   username: string;
+  email?: string | null;
+  avatar_url?: string | null;
 }
 
-export interface Credentials {
-  username: string;
+export interface LoginCredentials {
+  identifier: string;
   password: string;
+}
+
+export interface RegisterCredentials {
+  username: string;
+  email: string;
+  password: string;
+}
+
+export interface UpdateProfilePayload {
+  username?: string;
+  avatar_url?: string | null;
+}
+
+export interface UpdatePasswordPayload {
+  current_password: string;
+  new_password: string;
 }
 
 type AuthErrorCode = 
@@ -80,10 +98,10 @@ export async function getCurrentUser(): Promise<User | null> {
 }
 
 /**
- * Login with username and password
+ * Login with identifier (username or email) and password
  * Sets session cookie on success
  */
-export async function login(credentials: Credentials): Promise<User> {
+export async function login(credentials: LoginCredentials): Promise<User> {
   return fetchApi<User>('/auth/login', {
     method: 'POST',
     body: JSON.stringify(credentials),
@@ -93,7 +111,7 @@ export async function login(credentials: Credentials): Promise<User> {
 /**
  * Register new user
  */
-export async function register(credentials: Credentials): Promise<User> {
+export async function register(credentials: RegisterCredentials): Promise<User> {
   return fetchApi<User>('/auth/register', {
     method: 'POST',
     body: JSON.stringify(credentials),
@@ -107,5 +125,19 @@ export async function register(credentials: Credentials): Promise<User> {
 export async function logout(): Promise<void> {
   await fetchApi<{ ok: boolean }>('/auth/logout', {
     method: 'POST',
+  });
+}
+
+export async function updateProfile(payload: UpdateProfilePayload): Promise<User> {
+  return fetchApi<User>('/auth/profile', {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updatePassword(payload: UpdatePasswordPayload): Promise<void> {
+  await fetchApi<{ ok: boolean }>('/auth/password', {
+    method: 'POST',
+    body: JSON.stringify(payload),
   });
 }

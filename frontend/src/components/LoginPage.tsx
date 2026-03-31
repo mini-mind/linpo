@@ -13,7 +13,9 @@ export function LoginPage(): JSX.Element {
   const { addToast } = useToast();
 
   const [mode, setMode] = useState<AuthMode>('login');
+  const [identifier, setIdentifier] = useState('');
   const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
@@ -22,7 +24,9 @@ export function LoginPage(): JSX.Element {
   const handleModeToggle = useCallback(() => {
     setMode((prev) => (prev === 'login' ? 'register' : 'login'));
     clearError();
+    setIdentifier('');
     setUsername('');
+    setEmail('');
     setPassword('');
     setConfirmPassword('');
   }, [clearError]);
@@ -32,12 +36,11 @@ export function LoginPage(): JSX.Element {
       e.preventDefault();
       clearError();
 
-      if (!username.trim() || !password.trim()) {
-        addToast('请输入用户名和密码', 'warning');
-        return;
-      }
-
       if (mode === 'register') {
+        if (!username.trim() || !email.trim() || !password.trim()) {
+          addToast('请填写用户名、邮箱和密码', 'warning');
+          return;
+        }
         if (password !== confirmPassword) {
           addToast('两次输入的密码不一致', 'warning');
           return;
@@ -46,14 +49,17 @@ export function LoginPage(): JSX.Element {
           addToast('密码长度至少为6位', 'warning');
           return;
         }
+      } else if (!identifier.trim() || !password.trim()) {
+        addToast('请输入用户名/邮箱和密码', 'warning');
+        return;
       }
 
       try {
         if (mode === 'login') {
-          await login({ username: username.trim(), password });
+          await login({ identifier: identifier.trim(), password });
           addToast('登录成功', 'success');
         } else {
-          await register({ username: username.trim(), password });
+          await register({ username: username.trim(), email: email.trim(), password });
           addToast('注册成功', 'success');
         }
         navigate(from, { replace: true });
@@ -61,7 +67,7 @@ export function LoginPage(): JSX.Element {
         // Error is already handled by useAuth and shown via authError
       }
     },
-    [username, password, confirmPassword, mode, login, register, clearError, addToast, navigate, from]
+    [identifier, username, email, password, confirmPassword, mode, login, register, clearError, addToast, navigate, from]
   );
 
   const isLogin = mode === 'login';
@@ -81,16 +87,42 @@ export function LoginPage(): JSX.Element {
         </div>
 
         <form onSubmit={handleSubmit} style={formStyle}>
-          <div style={inputGroupStyle}>
-            <input
-              type="text"
-              placeholder="用户名"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              style={inputStyle}
-              disabled={loading}
-            />
-          </div>
+          {isLogin ? (
+            <div style={inputGroupStyle}>
+              <input
+                type="text"
+                placeholder="用户名或邮箱"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
+                style={inputStyle}
+                disabled={loading}
+              />
+            </div>
+          ) : (
+            <>
+              <div style={inputGroupStyle}>
+                <input
+                  type="text"
+                  placeholder="用户名"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  style={inputStyle}
+                  disabled={loading}
+                />
+              </div>
+
+              <div style={inputGroupStyle}>
+                <input
+                  type="email"
+                  placeholder="邮箱"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  style={inputStyle}
+                  disabled={loading}
+                />
+              </div>
+            </>
+          )}
 
           <div style={inputGroupStyle}>
             <input
@@ -123,7 +155,12 @@ export function LoginPage(): JSX.Element {
           <button
             type="submit"
             style={submitButtonStyle}
-            disabled={loading || !username.trim() || !password.trim()}
+            disabled={
+              loading ||
+              (isLogin
+                ? !identifier.trim() || !password.trim()
+                : !username.trim() || !email.trim() || !password.trim())
+            }
           >
             {buttonText}
           </button>

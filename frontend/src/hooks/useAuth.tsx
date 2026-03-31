@@ -13,15 +13,24 @@ import {
   useRef,
   useState,
 } from 'react';
-import { getCurrentUser, login, logout, register, type User, type Credentials, AuthError } from '../api/authClient';
+import {
+  getCurrentUser,
+  login,
+  logout,
+  register,
+  type LoginCredentials,
+  type RegisterCredentials,
+  type User,
+  AuthError,
+} from '../api/authClient';
 import { clearStoredCurrentInstanceId } from './useCurrentInstance';
 
 export interface AuthState {
   user: User | null;
   loading: boolean;
   error: string | null;
-  login: (credentials: Credentials) => Promise<void>;
-  register: (credentials: Credentials) => Promise<void>;
+  login: (credentials: LoginCredentials) => Promise<void>;
+  register: (credentials: RegisterCredentials) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
   clearError: () => void;
@@ -57,7 +66,7 @@ export function AuthProvider({ children }: AuthProviderProps): JSX.Element {
     refresh().finally(() => setLoading(false));
   }, [refresh]);
 
-  const handleLogin = useCallback(async (credentials: Credentials) => {
+  const handleLogin = useCallback(async (credentials: LoginCredentials) => {
     setLoading(true);
     setError(null);
     try {
@@ -68,7 +77,7 @@ export function AuthProvider({ children }: AuthProviderProps): JSX.Element {
       if (e instanceof AuthError) {
         // Map error codes to Chinese messages
         const messageMap: Record<string, string> = {
-          unauthorized: '用户名或密码错误',
+          unauthorized: '账号或密码错误',
           conflict: '用户名已存在',
           network_error: '网络错误，请重试',
           unknown: '登录失败，请重试',
@@ -83,7 +92,7 @@ export function AuthProvider({ children }: AuthProviderProps): JSX.Element {
     }
   }, []);
 
-  const handleRegister = useCallback(async (credentials: Credentials) => {
+  const handleRegister = useCallback(async (credentials: RegisterCredentials) => {
     setLoading(true);
     setError(null);
     try {
@@ -94,7 +103,7 @@ export function AuthProvider({ children }: AuthProviderProps): JSX.Element {
       if (e instanceof AuthError) {
         const messageMap: Record<string, string> = {
           unauthorized: '未登录',
-          conflict: '用户名已存在',
+          conflict: '用户名或邮箱已存在',
           network_error: '网络错误，请重试',
           unknown: '注册失败，请重试',
         };

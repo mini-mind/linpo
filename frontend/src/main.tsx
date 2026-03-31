@@ -8,7 +8,9 @@ import { LandingPage } from './components/LandingPage';
 import { Layout, RedirectToOverview } from './components/Layout';
 import { LoginPage } from './components/LoginPage';
 import { PairingPage } from './components/PairingPage';
+import { PairingReceiptConfirmPage } from './components/PairingReceiptConfirmPage';
 import { PairingTutorialPage } from './components/PairingTutorialPage';
+import { ProfilePage } from './components/ProfilePage';
 import { AuthProvider } from './hooks/useAuth';
 import { ToastProvider } from './hooks/useToast';
 import { ProtectedRoute, PublicRoute } from './routes';
@@ -26,17 +28,19 @@ function App(): JSX.Element {
         <BrowserRouter>
           <Routes>
             <Route path="/landing" element={<LandingPage />} />
+            <Route path="/pairing/tutorial" element={<PairingTutorialPage />} />
             <Route element={<PublicRoute />}>
               <Route path="/login" element={<LoginPage />} />
             </Route>
             <Route element={<ProtectedRoute />}>
+              <Route path="/pairing/receipt/:token" element={<PairingReceiptConfirmPage />} />
               <Route path="/" element={<Layout />}>
                 <Route index element={<RedirectToOverview />} />
                 <Route path="kanban" element={<CollabPage />} />
                 <Route path="flow" element={<FlowListPage />} />
                 <Route path="flow/edit/:flowId" element={<FlowPage />} />
                 <Route path="pairing" element={<PairingPage />} />
-                <Route path="pairing/tutorial" element={<PairingTutorialPage />} />
+                <Route path="profile" element={<ProfilePage />} />
                 <Route path="*" element={<Navigate to="/kanban" replace />} />
               </Route>
             </Route>

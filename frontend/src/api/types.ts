@@ -51,6 +51,37 @@ export interface InstanceDeleteResponse {
   deleted: boolean;
 }
 
+export interface UserMessageLinkItem {
+  label?: string | null;
+  href: string;
+}
+
+export interface UserMessageItem {
+  id: string;
+  target_email?: string;
+  action?: string;
+  payload?: Record<string, string> | null;
+  title: string;
+  body: string;
+  created_at: string;
+  is_read?: boolean;
+  read_at?: string | null;
+  confirmation_url?: string | null;
+  // backward-compatible fields
+  status?: 'unread' | 'read' | string;
+  action_url?: string | null;
+  action_label?: string | null;
+  links?: UserMessageLinkItem[] | null;
+}
+
+export interface UserMessageListResponse {
+  messages: UserMessageItem[];
+}
+
+export interface UserMessageReadResponse {
+  read: boolean;
+}
+
 export interface FreshnessInfo {
   status: 'fresh' | 'stale' | 'failed';
   checked_at: string | null;

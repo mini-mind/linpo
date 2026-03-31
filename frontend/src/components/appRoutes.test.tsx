@@ -49,6 +49,14 @@ vi.mock('./PairingTutorialPage', () => ({
   PairingTutorialPage: () => <div>pairing-tutorial-page</div>,
 }));
 
+vi.mock('./PairingReceiptConfirmPage', () => ({
+  PairingReceiptConfirmPage: () => <div>pairing-receipt-confirm-page</div>,
+}));
+
+vi.mock('./ProfilePage', () => ({
+  ProfilePage: () => <div>profile-page</div>,
+}));
+
 describe('app routes', () => {
   afterEach(() => {
     cleanup();
@@ -160,5 +168,20 @@ describe('app routes', () => {
     });
 
     expect(screen.getByText('pairing-tutorial-page')).toBeInTheDocument();
+  });
+
+  it('renders /profile as first-class app route', async () => {
+    document.body.innerHTML = '<div id="root"></div>';
+    window.history.pushState({}, '', '/profile');
+
+    await act(async () => {
+      await import('../main');
+    });
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/profile');
+    });
+
+    expect(screen.getByText('profile-page')).toBeInTheDocument();
   });
 });

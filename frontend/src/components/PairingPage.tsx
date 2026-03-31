@@ -14,7 +14,7 @@ import { useCurrentInstanceId } from '../hooks/useCurrentInstance';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
 
-type CreateTab = 'token' | 'pair_code';
+type CreateTab = 'token' | 'pair_code' | 'tutorial_link';
 type PanelState =
   | { kind: 'new' }
   | { kind: 'instance'; instanceId: string };
@@ -58,6 +58,7 @@ export function PairingPage(): JSX.Element {
   const [pairCodeName, setPairCodeName] = useState(DEFAULT_INSTANCE_NAME);
   const [pairCode, setPairCode] = useState('');
   const [pairCodeValidationText, setPairCodeValidationText] = useState('');
+  const tutorialLink = useMemo(() => `${window.location.origin}/pairing/tutorial.md`, []);
 
   const sortedInstances = useMemo(
     () =>
@@ -284,6 +285,15 @@ export function PairingPage(): JSX.Element {
     [addToast, currentInstanceId, reloadInstances, setCurrentInstanceId]
   );
 
+  const handleCopyTutorialLink = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(tutorialLink);
+      addToast('教程链接已复制', 'success');
+    } catch {
+      addToast('复制失败，请手动复制链接', 'error');
+    }
+  }, [addToast, tutorialLink]);
+
   return (
     <section style={pageStyle} aria-label="instances-page">
       <header style={toolbarStyle} role="toolbar" aria-label="实例工具栏">
@@ -363,6 +373,18 @@ export function PairingPage(): JSX.Element {
                 >
                   配对码配对
                 </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={createTab === 'tutorial_link'}
+                  style={{
+                    ...tabButtonStyle,
+                    ...(createTab === 'tutorial_link' ? tabButtonActiveStyle : null),
+                  }}
+                  onClick={() => setCreateTab('tutorial_link')}
+                >
+                  教程链接配对
+                </button>
               </div>
 
               {createTab === 'token' ? (
@@ -425,7 +447,7 @@ export function PairingPage(): JSX.Element {
                     <p style={guideTextStyle}>创建后可在左侧列表切换实例，并设置当前实例作为默认请求上下文。</p>
                   </div>
                 </div>
-              ) : (
+              ) : createTab === 'pair_code' ? (
                 <div style={resolvedTabBodyLayoutStyle}>
                   <div style={tabFormPanelStyle}>
                     <label style={fieldStyle}>
@@ -472,6 +494,33 @@ export function PairingPage(): JSX.Element {
                     <h3 style={guideTitleStyle}>配对码说明</h3>
                     <p style={guideTextStyle}>适用于只拿到短码的场景；后端会解析配对码并复用实例校验/创建流程。</p>
                     <p style={guideTextStyle}>推荐通过 OpenClaw 对话请求“生成配对码”，然后粘贴到左侧表单。</p>
+                  </div>
+                </div>
+              ) : (
+                <div style={resolvedTabBodyLayoutStyle}>
+                  <div style={tabFormPanelStyle}>
+                    <label style={fieldStyle}>
+                      <span style={labelStyle}>教程链接</span>
+                      <input value={tutorialLink} readOnly style={inputStyle} />
+                    </label>
+                    <div style={actionRowStyle}>
+                      <button type="button" style={ghostButtonStyle} onClick={() => void handleCopyTutorialLink()}>
+                        复制链接
+                      </button>
+                      <a
+                        href={tutorialLink}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        style={linkButtonStyle}
+                      >
+                        打开教程页
+                      </a>
+                    </div>
+                  </div>
+                  <div style={tabGuidePanelStyle}>
+                    <h3 style={guideTitleStyle}>教程链接配对说明</h3>
+                    <p style={guideTextStyle}>把该链接直接发送给 OpenClaw。</p>
+                    <p style={guideTextStyle}>OpenClaw 按页面内 Markdown 发起 request，拿到 confirmation_url 后由用户登录 Linpo 点击确认。</p>
                   </div>
                 </div>
               )}
@@ -891,6 +940,14 @@ const primaryButtonStyle: React.CSSProperties = {
   fontSize: '0.78rem',
   fontWeight: 700,
   cursor: 'pointer',
+};
+
+const linkButtonStyle: React.CSSProperties = {
+  ...primaryButtonStyle,
+  textDecoration: 'none',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
 };
 
 const dangerButtonStyle: React.CSSProperties = {

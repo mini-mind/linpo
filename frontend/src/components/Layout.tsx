@@ -57,7 +57,7 @@ export function Layout(): JSX.Element {
             <div>
               <div style={brandTitleRowStyle}>
                 <p style={brandTitleStyle}>灵盘</p>
-                {!isMobile ? <span style={brandSloganStyle}>——让协作更顺，让结果更稳</span> : null}
+                {!isMobile ? <span style={brandSloganStyle}>——灵活调度任务的Agent沙盘</span> : null}
               </div>
             </div>
           </Link>
@@ -69,10 +69,6 @@ export function Layout(): JSX.Element {
             <span aria-hidden="true" style={toolbarNavDividerStyle} data-testid="toolbar-nav-divider" />
             <NavLink to={flowNavTarget} className="linpo-nav-link" style={() => getNavTextLinkStyle(isFlowRoute)}>
               流程
-            </NavLink>
-            <span aria-hidden="true" style={toolbarNavDividerStyle} />
-            <NavLink to="/pairing" className="linpo-nav-link" style={({ isActive }) => getNavTextLinkStyle(isActive)}>
-              实例
             </NavLink>
           </nav>
         </div>
@@ -179,8 +175,8 @@ const brandBlockMobileStyle: React.CSSProperties = {
 };
 
 const brandIconStyle: React.CSSProperties = {
-  width: '2.5rem',
-  height: '2.5rem',
+  width: '3rem',
+  height: '3rem',
   display: 'block',
   flexShrink: 0,
 };

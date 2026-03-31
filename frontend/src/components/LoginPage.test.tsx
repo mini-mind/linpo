@@ -55,7 +55,7 @@ describe('LoginPage auth flow', () => {
     );
 
     expect(await screen.findByText('登录到灵盘')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('用户名')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('用户名或邮箱')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('密码')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '登录' })).toBeInTheDocument();
   });
@@ -103,7 +103,7 @@ describe('LoginPage auth flow', () => {
 
     await screen.findByRole('button', { name: '登录' });
 
-    const usernameInput = screen.getByPlaceholderText('用户名');
+    const usernameInput = screen.getByPlaceholderText('用户名或邮箱');
     const passwordInput = screen.getByPlaceholderText('密码');
     const loginButton = screen.getByRole('button', { name: '登录' });
 
@@ -117,7 +117,7 @@ describe('LoginPage auth flow', () => {
         expect.objectContaining({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: 'alice', password: 'secret123' }),
+          body: JSON.stringify({ identifier: 'alice', password: 'secret123' }),
         })
       );
     });
@@ -148,11 +148,13 @@ describe('LoginPage auth flow', () => {
     await userEvent.click(registerLink);
 
     const usernameInput = screen.getByPlaceholderText('用户名');
+    const emailInput = screen.getByPlaceholderText('邮箱');
     const passwordInput = screen.getByPlaceholderText('密码');
     const confirmInput = screen.getByPlaceholderText('确认密码');
     const registerButton = screen.getByRole('button', { name: '注册' });
 
     await userEvent.type(usernameInput, 'bob');
+    await userEvent.type(emailInput, 'bob@example.com');
     await userEvent.type(passwordInput, 'password123');
     await userEvent.type(confirmInput, 'password123');
     await userEvent.click(registerButton);
@@ -163,7 +165,7 @@ describe('LoginPage auth flow', () => {
         expect.objectContaining({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: 'bob', password: 'password123' }),
+          body: JSON.stringify({ username: 'bob', email: 'bob@example.com', password: 'password123' }),
         })
       );
     });
@@ -192,7 +194,7 @@ describe('LoginPage auth flow', () => {
 
     await screen.findByRole('button', { name: '登录' });
 
-    const usernameInput = screen.getByPlaceholderText('用户名');
+    const usernameInput = screen.getByPlaceholderText('用户名或邮箱');
     const passwordInput = screen.getByPlaceholderText('密码');
     const loginButton = screen.getByRole('button', { name: '登录' });
 
@@ -200,7 +202,7 @@ describe('LoginPage auth flow', () => {
     await userEvent.type(passwordInput, 'wrongpassword');
     await userEvent.click(loginButton);
 
-    expect(await screen.findByText('用户名或密码错误')).toBeInTheDocument();
+    expect(await screen.findByText('账号或密码错误')).toBeInTheDocument();
   });
 
   it('shows error on duplicate username', async () => {
@@ -224,16 +226,18 @@ describe('LoginPage auth flow', () => {
     await userEvent.click(registerLink);
 
     const usernameInput = screen.getByPlaceholderText('用户名');
+    const emailInput = screen.getByPlaceholderText('邮箱');
     const passwordInput = screen.getByPlaceholderText('密码');
     const confirmInput = screen.getByPlaceholderText('确认密码');
     const registerButton = screen.getByRole('button', { name: '注册' });
 
     await userEvent.type(usernameInput, 'existinguser');
+    await userEvent.type(emailInput, 'existing@example.com');
     await userEvent.type(passwordInput, 'password123');
     await userEvent.type(confirmInput, 'password123');
     await userEvent.click(registerButton);
 
-    expect(await screen.findByText('用户名已存在')).toBeInTheDocument();
+    expect(await screen.findByText('用户名或邮箱已存在')).toBeInTheDocument();
   });
 });
 
