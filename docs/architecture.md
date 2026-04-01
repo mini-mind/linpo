@@ -14,7 +14,7 @@
 
 ## 2. 系统边界
 
-- Linpo 前端：任务看板、流程列表、流程编辑、审批面板、事件侧栏、产出预览。
+- Linpo 前端：任务看板、流程列表、流程编辑、消息中心、实例/账户弹窗、产出预览。
 - Linpo 后端：聚合数据、调度编排、审批状态管理、OpenClaw 协议适配。
 - OpenClaw：agent 生命周期、消息执行、会话与工具调用。
 
@@ -31,7 +31,7 @@
 - `FlowListPage` 新建流程时，需求拆解 Agent 固定为 `claw3`（通过配置项可调整，不在 UI 暴露选择器）。
 - `FlowEditorPanel`：编辑流程页，承接泳道画布编排、流程状态按钮（`运行/中断/继续`）、重命名交互与底部悬浮指令对话框（增量改图）。
 - `FlowEditorPanel`：编辑流程页需订阅 board tasks SSE 任务事件并增量更新 `flowTasks`，由任务快照反向投影节点状态到画布。
-- `KanbanShell` 在“按流程分列”模式下，列头需展示流程状态并提供主动作（`中断流程/继续流程/运行流程`）与删除动作。
+- `KanbanShell` 在“按流程分列”模式下，列头需展示流程状态并提供主动作（`中断流程/继续流程/运行流程`）；删除流程统一留在 `FlowListPage` 卡片动作中处理。
 - `KanbanShell` 支持按列维度维护折叠状态；双击列头可在“完整列 / 折叠列”间切换，折叠态收敛为半透明窄列并移除列头，仅在顶部保留纵向省略号与渐隐背景，不卸载整页横向滚动容器。
 - `KanbanShell` 未折叠列采用“内容包裹 + 列体内滚动”布局：轨道顶部对齐，列本身只增长到当前工作区可用高度上限，超出部分由列内卡片列表承担纵向滚动。
 - `Layout`：维护流程导航入口缓存（`linpo.lastFlowEntryPath`），用于“点击导航栏流程时回到上次访问的编辑页”。
@@ -40,8 +40,7 @@
 - `InstanceFilesPage`：任务产物与 Agent 文档是两条数据链，前者走 Linpo 任务文件作用域校验，后者走 OpenClaw `agents.files.list/get` 白名单文档转调。
 - `MessageCenterModal`：导航栏账户下拉菜单触发的消息中心弹窗，承接“消息列表 + 详情 + 回执确认跳转”。
 - `MessageCenterModal`：通过 portal 挂载到 `document.body`，避免受局部层级与滚动容器影响导致不可见。
-- `AccountMenu`：下拉菜单提供 `账户/消息/实例/退出` 菜单动作；`账户`打开 `UserProfileModal`（左侧 `基本信息/修改密码/会员` 侧边栏 + 右侧展示区）。
-- `AccountMenu`：下拉菜单提供 `账户/实例/消息/退出` 菜单动作。
+- `AccountMenu`：下拉菜单提供 `账户/实例/消息/退出` 菜单动作；`账户`打开 `UserProfileModal`（左侧 `基本信息/修改密码/会员` 侧边栏 + 右侧展示区）。
 - `UserProfileModal`：`基本信息`页提供“头像更换按钮 + 用户名编辑按钮”；`修改密码`页提供密码更新表单；`会员`页展示充值渠道占位。
 - `InstanceListModal`：由账户下拉菜单“实例”触发，展示已配对实例列表、实例信息与拓扑（`实例 -> Agent -> Session`）。
 - `ProfilePage`：`/profile` 作为兼容入口保留，不再作为用户主导航路径。
@@ -52,9 +51,7 @@
 - OpenClaw 读取入口使用静态文件路径 `/pairing/tutorial.md`，返回纯 Markdown 文本；`/pairing/tutorial` 仅作为人类用户导航提示页。
 - 兼容路径：`/pairing/tutorial` 进入后立即执行前端重定向到 `/pairing/tutorial.md`，避免路由漏写后缀导致读取错误格式。
 - 三个主工作页（`KanbanShell/FlowListPage/FlowEditorPanel`）共用贴顶扁平工具栏样式 token，保持一致的视觉与层级。
-- `ApprovalCenter`：统一审批列表与批量操作。
 - `ArtifactPreviewPanel`：卡片产出详情与文件预览。
-- `EventDrawer`：事件流侧边栏。
 
 ## 4. 调度与执行模型
 
@@ -101,6 +98,7 @@
 ## 5. 统一审批边界
 
 - 所有敏感动作由后端统一归口为 `ApprovalRequest`。
+- v0.7 不单独实现“审批中心”页面；审批入口落在看板节点状态与流程主动作中，由 `blocked_by_approval` 状态承载。
 - 看板中只展示可读摘要，不透出原始敏感载荷。
 - 审批动作写入审计日志，支持回放。
 
@@ -111,7 +109,7 @@
 - 固定字段：`task_id`、`title`、`status`、`agent_id`、`dependencies`。
 - 扩展字段：`extras: Record<string, unknown>`。
 - 产出字段：`artifacts[]`（文本、结构化片段、文件引用）。
-- 需求分组字段：`extras.requirement_id`、`extras.requirement_title`（支持按需求分列、筛选、批量删除）。
+- 流程分组字段：`extras.requirement_id`、`extras.requirement_title`（支持按流程分列、流程名展示与整组删除）。
 - 详情弹窗字段：采用三标签页结构（`基本信息 / 执行流程 / 任务产出`）；消息流按“每节点一个 session”原则，仅使用 `execution_session_key`：先读 `chat.history`，再订阅 `session:{key}:messages` 实时增量。
 - 看板任务列表通过独立 board realtime 通道接收任务增量事件（新增/更新/删除），用于同步卡片状态与弹窗基础信息，避免全页轮询。
 - 任务详情弹窗默认进入 `基本信息` 标签页；任务进入终态后不自动切换标签页。

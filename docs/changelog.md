@@ -2,6 +2,10 @@
 
 ## 2026-04-01
 
+- PRD/Architecture 按当前源码回收漂移口径：主工作区改为 `看板/流程列表/流程编辑/文件`，不再沿用“仅看板单页”表述。
+- PRD/Architecture 修正文案：看板工具栏统计由“需求数量”改为“流程数量”；看板视图口径统一为“状态/Agent/流程”。
+- PRD/Architecture 收敛流程列头动作：按流程分列时列头仅保留 `运行/中断/继续` 主动作，`删除流程` 统一留在流程列表页处理。
+- PRD/Architecture 明确审批边界：v0.7 保留“统一审批状态机”，但未实现独立“审批中心/事件侧边栏”页面，审批入口以看板节点与流程主动作承载。
 - PRD/Architecture 扩展“实例文件页”口径：新增 OpenClaw Agent 白名单文档浏览能力，文件页统一展示“任务产物 + Agent 文档”两类资源。
 - Architecture 补充 Agent 文档转调契约：新增 `GET /instances/{instance_id}/agent-docs`、`/agent-docs/preview`、`/agent-docs/download`，后端转调 OpenClaw `agents.files.list/get`。
 - PRD/Architecture 补充看板列高度口径：未折叠列按内部卡片自然包裹，超出页面高度后仅列内列表滚动，不再把所有列统一拉满高度。
