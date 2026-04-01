@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToastProvider } from '../hooks/useToast';
@@ -64,12 +64,15 @@ describe('InstanceFilesPage', () => {
     mockListInstanceFiles.mockResolvedValue({
       items: [
         {
-          id: 'task-1:/tmp/linpo/demo/out.json',
+          id: 'task-1:/home/node/.openclaw/workspace/demo/out.json',
           task_id: 'task-1',
+          agent_id: 'agent-1',
+          agent_name: 'Alpha Agent',
           task_title: '产出节点',
           task_status: 'completed',
           requirement_id: 'req-demo',
-          path: '/tmp/linpo/demo/out.json',
+          requirement_title: '演示流程',
+          path: '/home/node/.openclaw/workspace/demo/out.json',
           name: 'out.json',
           exists: true,
           size_bytes: 18,
@@ -85,7 +88,7 @@ describe('InstanceFilesPage', () => {
       existing_count: 0,
     });
     mockPreviewInstanceFile.mockResolvedValue({
-      path: '/tmp/linpo/demo/out.json',
+      path: '/home/node/.openclaw/workspace/demo/out.json',
       kind: 'json',
       mime_type: 'application/json',
       size_bytes: 18,
@@ -107,11 +110,81 @@ describe('InstanceFilesPage', () => {
       expect(mockPreviewInstanceFile).toHaveBeenCalledWith(
         'inst-1',
         'task-1',
-        '/tmp/linpo/demo/out.json',
+        '/home/node/.openclaw/workspace/demo/out.json',
         { boardId: 'default' }
       );
     });
     expect(screen.getByText(/"result": "ok"/)).toBeInTheDocument();
+  });
+
+  it('renders desktop path tree and keeps preview content centered', async () => {
+    mockListInstanceAgentDocs.mockResolvedValueOnce({
+      items: [
+        {
+          id: 'agent-1:SOUL.md',
+          agent_id: 'agent-1',
+          agent_name: 'Alpha Agent',
+          path: 'agent://agent-1/SOUL.md',
+          name: 'SOUL.md',
+          exists: true,
+          size_bytes: 36,
+          updated_at: '2026-04-01T00:00:00Z',
+        },
+      ],
+      total: 1,
+      existing_count: 1,
+    });
+
+    renderPage();
+
+    await screen.findByRole('button', { name: '查看任务文件 out.json' });
+    await screen.findByRole('button', { name: '查看 Agent 文档 SOUL.md' });
+
+    const shell = screen.getByTestId('instance-files-shell');
+    const sidebar = screen.getByTestId('instance-files-sidebar');
+    const previewContent = screen.getByTestId('instance-files-preview-content');
+
+    expect(shell).toHaveStyle({ gridTemplateColumns: '320px 10px minmax(0, 1fr)' });
+    expect(screen.queryByRole('toolbar')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '回看板' })).not.toBeInTheDocument();
+    expect(sidebar).toHaveTextContent('claw1');
+    expect(sidebar).toHaveTextContent('文件树');
+    expect(sidebar).not.toHaveTextContent('/home/node/.openclaw/workspace/');
+    expect(sidebar).toHaveTextContent('demo');
+    expect(sidebar).toHaveTextContent('agents');
+    expect(sidebar).toHaveTextContent('agent-1');
+    expect(sidebar).not.toHaveTextContent('流程：演示流程');
+    expect(sidebar).not.toHaveTextContent('节点：产出节点');
+    expect(sidebar).not.toHaveTextContent('配置');
+    expect(sidebar).not.toHaveTextContent('产出');
+    expect(within(sidebar).getByRole('button', { name: '刷新' })).toBeInTheDocument();
+    expect(within(sidebar).getAllByTestId('file-type-icon').length).toBeGreaterThan(0);
+    expect(previewContent).toHaveStyle({ maxWidth: '960px', margin: '0 auto' });
+    expect(screen.getByText('类型：产出')).toBeInTheDocument();
+    expect(screen.getByText('状态：可访问')).toBeInTheDocument();
+    expect(screen.getByText('流程：演示流程')).toBeInTheDocument();
+    expect(screen.getByText('节点：产出节点')).toBeInTheDocument();
+  });
+
+  it('allows resizing sidebar width by dragging handle on desktop', async () => {
+    renderPage();
+    await screen.findByRole('button', { name: '查看任务文件 out.json' });
+
+    const shell = screen.getByTestId('instance-files-shell');
+    const resizer = screen.getByTestId('instance-files-sidebar-resizer');
+
+    expect(shell).toHaveStyle({ gridTemplateColumns: '320px 10px minmax(0, 1fr)' });
+    await act(async () => {
+      fireEvent.pointerDown(resizer, { pointerId: 11, clientX: 320 });
+    });
+    await act(async () => {
+      fireEvent.pointerMove(window, { pointerId: 11, clientX: 408 });
+    });
+    await act(async () => {
+      fireEvent.pointerUp(window, { pointerId: 11, clientX: 408 });
+    });
+
+    expect(shell).toHaveStyle({ gridTemplateColumns: '408px 10px minmax(0, 1fr)' });
   });
 
   it('loads agent docs and renders markdown preview', async () => {
@@ -156,7 +229,7 @@ describe('InstanceFilesPage', () => {
     expect(screen.getByText('Agent mission profile.')).toBeInTheDocument();
   });
 
-  it('uses compact stats and full-width controls on mobile', async () => {
+  it('uses full-width controls on mobile', async () => {
     const originalWidth = window.innerWidth;
     await act(async () => {
       window.innerWidth = 480;
@@ -166,12 +239,10 @@ describe('InstanceFilesPage', () => {
     renderPage();
 
     await screen.findByRole('button', { name: '查看任务文件 out.json' });
-    expect(screen.getByText('总文件数 1')).toBeInTheDocument();
-    expect(screen.getByText('可访问 1')).toBeInTheDocument();
-    expect(screen.queryByText('任务产物 1')).not.toBeInTheDocument();
-    expect(screen.queryByText('Agent 文档 0')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '刷新' })).toBeInTheDocument();
     expect(screen.getByLabelText('选择实例')).toHaveStyle({ width: '100%' });
     expect(screen.getByLabelText('搜索实例文件')).toHaveStyle({ width: '100%' });
+    expect(screen.getByTestId('instance-files-content-frame')).toHaveStyle({ gridTemplateColumns: '1fr' });
 
     await act(async () => {
       window.innerWidth = originalWidth;

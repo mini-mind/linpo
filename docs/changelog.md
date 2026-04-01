@@ -2,12 +2,34 @@
 
 ## 2026-04-01
 
+- PRD/Architecture 细化流程规划消息流契约：前端在发送 `flow.generate` 前确定 `planner_session_key`，并通过 `/api/v1/boards/{board_id}/tasks/flow/planner-sse` 订阅 `planner_messages_updated` SSE 增量。
+- PRD/Architecture 调整流程页规划消息流：改为由专用 planner session SSE 增量展示，不再只依赖 `flow.generate` 同步返回的静态消息数组。
+- PRD/Architecture 细化流程页浮窗与规划态：折叠态改为半透明单输入框、消息流上置且空态留白，发送中按钮显示“思考中...”，并为画布增加半透明规划遮罩。
+- PRD/Architecture 调整文件页桌面交互：左侧文件树侧栏支持拖拽调宽，预览区移除“回看板”快捷入口。
+- PRD/Architecture 收口文件页侧栏头部：移除文件数量统计，刷新按钮挪到实例下拉右侧。
+- PRD/Architecture 调整文件树叶子节点：左侧改为仅展示 `[icon][文件名]` 的紧凑树项，资源类型与关联信息统一放到右侧预览区。
+- PRD/Architecture 补充全站表单控件尺寸约束：`input/textarea/select` 统一遵循容器内 `border-box + max-width:100%`，修复横向溢出口径。
+- PRD/Architecture 收口流程页侧栏：移除筛选/排序，仅保留标题同行右侧“新建”按钮；流程卡片编辑按钮移到卡片内部右下角。
+- PRD/Architecture 细化流程规划浮窗交互：焦点进入浮窗或消息流即展开，离开画布区域即自动收起；折叠态仅保留 `输入您的需求，自动规划流程` 输入框，发送按钮下置右对齐并附 `Enter/Shift+Enter` 说明。
+- PRD/Architecture 调整流程画布空间分配：画布需占满主编辑区，避免底部或右侧出现无意义留白。
+- PRD/Architecture 重写实例文件页侧栏头部：改为实例下拉、搜索框、文件数量+刷新按钮三段式，并将文件树根节点文案固定为实例名。
+- PRD/Architecture 细化实例文件树表现：文件节点需按文件类型展示开源图标，并在行尾标注 `配置` 或 `产出`。
+- PRD/Architecture 调整摘要页审批卡片：移除“打开看板”跳转，仅保留审批续行动作。
+- PRD/Architecture 调整流程编辑页交互：画布右上角仅保留“运行”按钮，流程列表项新增编辑弹窗承载重命名/删除/运行/中断/继续。
+- PRD/Architecture 收敛流程规划浮窗：移除 title/描述，改为点击展开、失焦收起、自动滚到底部且不再制造页面底部留白。
+- PRD/Architecture 调整实例文件页树结构：侧栏改为“实例名 -> `/home/node/.openclaw/workspace/` -> 实际路径”的真实路径树。
+- PRD/Architecture 收紧流程拆解口径：`flow.generate` 后端固定以 `claw3` 为 planner 目标，不再允许静默回退其他默认 agent。
 - PRD/Architecture 细化 `FlowEditorPanel` 侧栏行为：流程筛选/排序条件改为本地持久化，流程列表按 `当前 / 草稿 / 已提交` 分组展示。
 - PRD/Architecture 收口流程 IA：移除独立 `FlowListPage` 页面口径，改为由 `FlowEditorPanel` 左侧侧栏统一承载流程列表、筛选、排序与新建流程。
 - PRD/Architecture 细化 `FlowEditorPanel` 移动端无障碍与摘要口径：流程抽屉补充焦点迁移规则，底部规划浮窗折叠态改为展示结构化最近消息摘要。
 - PRD/Architecture 补充 `FlowEditorPanel` 移动端交互：左侧流程列表改为工具栏触发的抽屉式侧栏，底部规划浮窗支持折叠/展开并在折叠态减少画布遮挡。
 - PRD/Architecture 调整流程编辑工作台：`FlowEditorPanel` 左侧改为流程列表侧栏，流程规划消息流与对话框回到画布底部悬浮窗口。
 - PRD/Architecture 补充页面壳治理口径：Summary/FlowList/InstanceFiles 页面壳样式收敛到共用 helper/token，减少宽度与留白漂移。
+- PRD 调整摘要页事件流交互：移除分类按钮组与“全部展开”动作，事件卡片默认展开并改为每页最多 10 条分页浏览。
+- PRD/Architecture 调整摘要页页面壳：移除独立顶部工具栏，主体直接承载统计曲线、审批列表与事件流。
+- PRD/Architecture 调整流程编辑页：移除顶部工具栏，流程主状态按钮改为画布右上角悬浮动作；泳道概念保留，用于按 Agent 分配节点。
+- PRD/Architecture 调整实例文件页布局：桌面端改为左侧贴边三级资源侧栏（实例/Agents/文件卡片）+ 右侧自适应主内容区，文件卡片需标注流程/节点产物或 Agent 文档来源。
+- PRD/Architecture 调整实例文件页导航：移除独立工具栏，实例选择/搜索/刷新合并进侧栏头部，资源列表改为按路径组织的树结构。
 - PRD/Architecture 调整页面壳口径：`SummaryPage` 的宽度与留白策略改为对齐 `InstanceFilesPage`，工具栏与主体内容共用同一受限页面壳。
 - PRD/Architecture 调整工具栏宽度口径：`KanbanShell` 与 `FlowEditorPanel` 顶部工具栏取消 `max-width` 限制，改为直接铺满可用横向空间。
 - PRD/Architecture 调整流程编辑页消息区口径：左侧消息流栏加宽，并增加更明显的左侧留白。

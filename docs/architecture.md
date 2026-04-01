@@ -27,23 +27,26 @@
 ## 3. 前端分层
 
 - `KanbanShell`：主页面容器，承接工具栏、视图切换（状态/agent/流程）、任务列渲染。
-- `SummaryPage`：摘要页（`/summary`），顶部展示 token 消耗趋势曲线；主体展示待审批卡片列表与事件流侧栏。
-- `SummaryPage`：审批卡片复用看板 `Task` 数据源与 `continue` 动作，不新增独立审批实体接口；事件流复用聚合层 `global_events`。
+- `SummaryPage`：摘要页（`/summary`）不再提供独立顶部工具栏；页面主体直接展示 token 消耗趋势曲线、待审批卡片列表与事件流侧栏。
+- `SummaryPage`：审批卡片复用看板 `Task` 数据源与 `continue` 动作，不新增独立审批实体接口；卡片内不再提供“打开看板”跳转。事件流复用聚合层 `global_events`。
 - `SummaryPage`：若实例支持 OpenClaw `usage.cost`，曲线展示 token 日序列；否则切换为任务节点数量时间序列，并在 UI 标明当前指标类型。
-- `SummaryPage`：事件流筛选与折叠完全在前端本地完成，不新增后端筛选接口；筛选维度至少包含 `全部/审批/执行/拓扑/Agent/异常 + 关键字`。
-- `SummaryPage`：移动端采用单列堆叠布局，审批列表与事件流保留各自的内部滚动区域；事件流筛选条使用横向滚动容器承载筛选 chips。
-- `SummaryPage`：事件卡片采用“折叠摘要 + 按需展开详情”模式；展开态展示实例、Agent 与完整描述，折叠态只保留一行摘要与元信息。
-- `SummaryPage`：整体页面壳对齐 `InstanceFilesPage`；工具栏与主体内容共享相同宽度与留白策略，普通桌面维持稳定留白，超宽屏时整体居中并限制最大宽度，避免统计图与左右分栏过度拉伸。
-- `FlowEditorPanel`：编辑流程页，承接泳道画布编排、流程状态按钮（`运行/中断/继续`）、重命名交互，以及“左侧流程列表侧栏 / 右侧画布 + 底部悬浮消息窗口”的工作台。
-- `FlowEditorPanel`：编辑流程页需订阅 board tasks SSE 任务事件并增量更新 `flowTasks`，由任务快照反向投影节点状态到画布；左侧流程侧栏复用 Flow 与草稿索引数据源，并承接筛选/排序/新建流程能力。
-- `FlowEditorPanel`：左侧流程侧栏需维护一份本地持久化的筛选状态（关键字、来源、排序）；状态写入浏览器存储并在后续进入编辑页时恢复。
+- `SummaryPage`：事件流筛选完全在前端本地完成，不新增后端筛选接口；仅保留关键字筛选，结果按分页展示，单页最多 10 条。
+- `SummaryPage`：移动端采用单列堆叠布局，审批列表与事件流保留各自的内部滚动区域；事件流筛选与分页控件允许在小屏下自然换行或堆叠。
+- `SummaryPage`：事件卡片默认展开，展示实例、Agent、类型与完整描述；不再提供分类按钮组或“全部展开”动作。
+- `SummaryPage`：整体页面壳与 `InstanceFilesPage` 主内容区对齐；普通桌面维持稳定留白，超宽屏时整体居中并限制最大内容宽度，避免统计图与左右分栏过度拉伸。
+- `FlowEditorPanel`：编辑流程页，不再提供顶部独立工具栏；画布右上角仅保留“运行”悬浮主按钮，流程级 `重命名/删除/运行/中断/继续` 收敛到左侧流程列表项的编辑弹窗。
+- `FlowEditorPanel`：编辑流程页需订阅 board tasks SSE 任务事件并增量更新 `flowTasks`，由任务快照反向投影节点状态到画布；左侧流程侧栏复用 Flow 与草稿索引数据源，并承接流程切换与新建流程能力。
 - `FlowEditorPanel`：流程列表渲染采用分组视图：`当前 / 草稿 / 已提交`；同一流程只允许落在一个分组中，当前流程优先级最高。
-- `FlowEditorPanel`：移动端不依赖双击手势承载核心编辑能力；工具栏需暴露显式节点动作入口，至少覆盖 `新建节点/编辑已选节点`。
+- `FlowEditorPanel`：左侧流程侧栏头部仅保留标题与同行右侧“新建”按钮，不再保留筛选器、排序器或补充说明文案。
+- `FlowEditorPanel`：移动端不依赖双击手势承载核心编辑能力；画布内需暴露显式节点动作入口，至少覆盖 `新建节点/编辑已选节点/打开流程列表`。
 - `FlowEditorPanel`：流程新建弹窗固定使用 `claw3` 作为拆解 Agent（后续可通过配置切换，不在 UI 暴露选择器）。
-- `FlowEditorPanel`：移动端将左侧流程列表改为抽屉式侧栏，默认收起；工具栏负责打开/关闭抽屉，抽屉内部继续复用桌面端的流程切换、筛选、排序与新建动作。
-- `FlowEditorPanel`：移动端流程抽屉需处理焦点迁移：打开时聚焦当前流程项（若不存在则聚焦抽屉内首个可操作按钮），关闭时将焦点还给工具栏触发按钮。
-- `FlowEditorPanel`：底部悬浮规划窗口在移动端支持 `collapsed/expanded` 两态；折叠态仅保留标题与状态摘要，展开态才渲染完整消息流与输入框，桌面端维持常驻展开。
-- `FlowEditorPanel`：移动端规划浮窗折叠态需渲染结构化摘要（消息来源/条数/最近文本预览），不能退化为纯占位按钮。
+- `FlowEditorPanel`：移动端将左侧流程列表改为抽屉式侧栏，默认收起；画布内显式入口负责打开/关闭抽屉，抽屉内部继续复用桌面端的流程切换与新建动作。
+- `FlowEditorPanel`：移动端流程抽屉需处理焦点迁移：打开时聚焦当前流程项（若不存在则聚焦抽屉内首个可操作按钮），关闭时将焦点还给画布内的流程列表触发按钮。
+- `FlowEditorPanel`：底部悬浮规划窗口改为“紧凑对话框 + 按需展开消息流”模式；不再展示 title/描述文案，焦点进入浮窗或消息流时自动展开，焦点回到画布等区域时自动收起。
+- `FlowEditorPanel`：流程规划消息流不再依赖 `flow.generate` 响应里的静态 `messages` 字段，改为在发送前确定 `planner_session_key`，随后通过 SSE 订阅该 planner session 的增量消息。
+- `FlowEditorPanel`：折叠态仅保留半透明单输入框，placeholder 固定为 `输入您的需求，自动规划流程`，且不再渲染额外外层边框；展开态中消息流位于输入框上方，若无历史消息则保持空白，发送按钮位于输入框下一行最右侧，左侧展示 `Enter 发送 / Shift+Enter 换行` 灰色说明。
+- `FlowEditorPanel`：规划浮窗在展开或收到新消息时需自动滚动到底部；页面布局不得因浮窗常驻而制造额外底部留白，画布可视区需尽量填满剩余空间。
+- `FlowEditorPanel`：发送规划请求期间，发送按钮需禁用并显示“思考中...”，同时画布显示半透明遮罩，明确当前处于规划中。
 - `KanbanShell` 在“按流程分列”模式下，列头需展示流程状态并提供主动作（`中断流程/继续流程/运行流程`）；删除流程统一留在 `FlowEditorPanel` 当前流程详情中处理。
 - `KanbanShell` 支持按列维度维护折叠状态；双击列头可在“完整列 / 折叠列”间切换，折叠态收敛为半透明窄列并移除列头，仅在顶部保留纵向省略号与渐隐背景，不卸载整页横向滚动容器。
 - `KanbanShell` 未折叠列采用“内容包裹 + 列体内滚动”布局：轨道顶部对齐，列本身只增长到当前工作区可用高度上限，超出部分由列内卡片列表承担纵向滚动。
@@ -53,6 +56,11 @@
 - `Layout`：移动端主导航不得换成隐藏菜单；保留同一行主导航，但导航区本身需成为横向滚动容器，品牌区与账户入口固定在两侧。
 - `Layout`：全站滚动所有权归 `main` 工作区；`html/body/#root` 只承担满高，不再直接滚动，避免移动端双滚动冲突影响看板/流程/摘要等内部滚动区域。
 - `InstanceFilesPage`：实例文件页（`/instance-files`），按实例聚合任务产出文件与 Agent 文档，提供搜索、预览、下载与关联任务跳转。
+- `InstanceFilesPage`：不再提供独立工具栏；实例选择、搜索与刷新动作合并进左侧资源侧栏头部。
+- `InstanceFilesPage`：左侧资源侧栏头部固定为两行：首行是实例选择下拉与右侧刷新按钮，次行是搜索框；下方资源树以“实例名”为根节点映射工作区真实路径，并支持目录递归展开。
+- `InstanceFilesPage`：桌面端侧栏宽度允许用户通过拖拽分隔条手动调整；预览区头部仅保留文件信息与下载动作，不再提供“回看板”快捷操作。
+- `InstanceFilesPage`：文件树叶子节点采用紧凑树项样式，仅展示文件类型图标与文件名；`配置/产出`、流程、节点、Agent、路径、更新时间等附加信息收敛到右侧预览头部与元信息区，不再在左侧做卡片化展示。
+- `InstanceFilesPage`：右侧主内容区占满侧栏之外的剩余空间，但预览内容本身需要受单独 `max-width` 约束并水平居中，避免文本/图片在超宽屏失控拉伸。
 - `InstanceFilesPage`：任务产物与 Agent 文档是两条数据链，前者走 Linpo 任务文件作用域校验，后者走 OpenClaw `agents.files.list/get` 白名单文档转调。
 - `MessageCenterModal`：导航栏账户下拉菜单触发的消息中心弹窗，承接“消息列表 + 详情 + 回执确认跳转”。
 - `MessageCenterModal`：通过 portal 挂载到 `document.body`，避免受局部层级与滚动容器影响导致不可见。
@@ -66,11 +74,13 @@
 - `PairingTutorialPage`：页面内容来自仓库内 Markdown 静态文件，不再维护独立的样式化说明卡片。
 - OpenClaw 读取入口使用静态文件路径 `/pairing/tutorial.md`，返回纯 Markdown 文本；`/pairing/tutorial` 仅作为人类用户导航提示页。
 - 兼容路径：`/pairing/tutorial` 进入后立即执行前端重定向到 `/pairing/tutorial.md`，避免路由漏写后缀导致读取错误格式。
-- 三个主工作页（`SummaryPage/KanbanShell/FlowEditorPanel`）共用贴顶扁平工具栏样式 token，保持一致的视觉与层级。
-- `SummaryPage/InstanceFilesPage` 共用一组页面宽度 token：`page gutter + content max-width + toolbar width`；工具栏与主体内容共同受限宽约束，避免页面壳宽度漂移。
-- `KanbanShell/FlowEditorPanel` 顶部工具栏不再受 `max-width` 约束：工具栏内容直接铺满可用横向空间，仅保留页面内边距与移动端换行/横滑能力。
+- 两个主工作页（`KanbanShell/FlowEditorPanel`）曾共用贴顶扁平工具栏样式 token；当前仅 `KanbanShell` 继续保留顶栏，`FlowEditorPanel` 改为画布内悬浮动作。
+- `SummaryPage` 维持受限宽页面壳：`page gutter + content max-width` 共用一组 token，避免统计页在超宽屏过度拉伸。
+- `InstanceFilesPage` 不再复用 `SummaryPage` 的桌面壳宽约束；桌面端以贴边侧栏 + 自适应主内容区为主，移动端再退化为单列。
+- `KanbanShell` 顶部工具栏不再受 `max-width` 约束：工具栏内容直接铺满可用横向空间，仅保留页面内边距与移动端换行/横滑能力。
 - 页面壳样式应收敛到共用 helper/token（如 `page / shell / inner width`），避免 Summary、InstanceFiles 再次出现宽度与留白漂移。
 - `KanbanShell/FlowEditorPanel/InstanceFilesPage` 在移动端共享一组页面壳约束：工具栏允许换行或内部横滑承载控件，主体优先退化为单列布局，重内容区域通过局部滚动保持可操作。
+- 全站表单控件尺寸约束需统一：`input/textarea/select` 默认采用 `box-sizing: border-box`、`min-width: 0`、`max-width: 100%`，避免在 flex/grid 容器中向右溢出。
 - `ArtifactPreviewPanel`：卡片产出详情与文件预览。
 
 ## 4. 调度与执行模型
@@ -83,16 +93,15 @@
 - 拆解策略：`FlowDecompositionService` 提示词需优先生成“可并行”的分支结构，并在节点描述中给出“可委派 subagent 并行执行”的建议，避免过度串行化。
 - 拆解策略：`FlowDecompositionService` 提示词需补充“路径可访问性”约束，要求节点交接文件优先使用指定临时路径，若路径受沙箱限制需提供可访问替代路径与回传说明。
 - 前端 `FlowEditorPanel` 必须支持节点/连接的本地编辑能力：`node create/update/delete` 与 `edge create/delete`，确认入板时提交最新画布状态。
-- 流程画布采用“横向泳道列 + 顶部冻结泳道标题行”；双击顶部空白区创建泳道，双击泳道标题编辑泳道名称与委派 Agent。
+- 流程画布继续保留泳道列，用于承载不同 Agent 负责的节点；节点在所属泳道内编辑、拖拽与连线。
 - 节点以双击画布弹窗创建、双击节点弹窗编辑；节点上下左右提供连接点用于连线。
-- 触屏环境保留双击快捷操作但不能依赖它作为唯一入口；需提供工具栏显式按钮触发节点创建与节点编辑，单击节点用于选中后再编辑。
+- 触屏环境保留双击快捷操作但不能依赖它作为唯一入口；需提供画布内显式按钮触发节点创建与节点编辑，单击节点用于选中后再编辑。
 - 节点字段最小集包含 `title + description`，其中 `description` 用于执行上下文与任务摘要补充。
-- 节点创建坐标决定归属泳道；泳道宽度按内部节点占用自适应，右侧泳道顺延。
-- 节点拖拽允许跨泳道移动；跨泳道时同步更新节点泳道归属与默认执行 Agent。
 - 连线交互采用连接点拖拽，边渲染按节点相对位置动态选择最短接入点组合。
 - 流程编辑页左侧改为流程列表侧栏；发送规划指令时需携带当前 `nodes/edges` 作为上下文，并在请求期间冻结画布编辑。
-- 流程规划消息流与输入框回到画布底部悬浮窗口：同一浮层内承载消息流与输入框，不再占据左侧主列。
-- 移动端流程规划浮层需与画布争抢更少高度：画布在折叠态下只预留紧凑底部安全间距，在展开态下再增加底部滚动留白，避免节点被长期遮挡。
+- 流程规划消息流与输入框回到画布底部悬浮窗口：同一浮层内承载消息流与输入框，不再占据左侧主列，也不再展示额外标题或说明文本。
+- 浮层与画布的空间分配遵循“最小常驻占位”原则：收起态仅保留紧凑输入区，展开态按内容浮起显示，不为页面制造固定大块底部留白。
+- 浮层展开结构固定为“消息流在上、输入框在下”；消息流为空时不渲染占位提示文案。
 - 前端不再提供 `L1~Lx` 手工编辑；`layer` 仅作为兼容字段，在运行流程前由拓扑算法动态回填。
 - 节点间数据交换约束为临时文件通道（`temp file`），执行提示词与任务元数据保持一致。
 - 单流程即单实例：`运行`将流程节点写入看板并进入运行态，不再创建多实例记录。
@@ -156,7 +165,8 @@
 - `GET /api/v1/boards/{board_id}/tasks`：返回当前登录用户在指定看板可见任务列表，作为看板主数据源。
 - `GET /sse/boards/{board_id}/tasks`：看板任务 SSE 实时事件通道（按当前登录用户隔离），推送 `snapshot_ready/tasks_changed/error` 事件；看板页与流程编辑页统一使用该通道同步任务与节点状态。
 - `POST /api/v1/boards/{board_id}/tasks`：创建任务并记录指派信息，创建成功后由应用层触发 OpenClaw `chat.send`。
-- `POST /api/v1/boards/{board_id}/tasks/flow/generate`：根据需求生成流程图节点/边草稿，不落看板任务；支持可选 `current_nodes/current_edges/planner_session_key` 以在已有流程上增量改图。
+- `POST /api/v1/boards/{board_id}/tasks/flow/generate`：根据需求生成流程图节点/边草稿，不落看板任务；支持可选 `current_nodes/current_edges/planner_session_key` 以在已有流程上增量改图，后端固定以 `claw3` 作为 planner 目标。
+- `GET /api/v1/boards/{board_id}/tasks/flow/planner-sse?sessionKey=...`：流程规划消息 SSE 通道；固定连接 `FlowDecompositionService` 的 `claw3` planner session，推送 `snapshot_ready/planner_messages_updated/error` 事件，供流程页浮窗增量展示消息流。
 - `POST /api/v1/boards/{board_id}/tasks/flow/confirm`：确认草稿后创建 `queued` 任务并触发队列调度。
 - `POST /api/v1/boards/{board_id}/tasks/{task_id}/interrupt`：中断指定任务；若任务处于运行态，后端请求 OpenClaw `chat.pause` 并将任务落为终态，再触发队列推进。
 - `POST /api/v1/boards/{board_id}/tasks/{task_id}/continue`：继续阻塞任务；中断型阻塞恢复为 `queued` 并重新调度，审批型阻塞标记为 `completed` 并推进后续节点。
@@ -195,7 +205,8 @@
 - 实例文件接口必须做任务作用域校验：仅允许当前用户、当前实例、当前看板下任务关联路径，不开放任意绝对路径访问。
 - Agent 文档接口必须只暴露 OpenClaw 白名单文件名：`AGENTS.md`、`SOUL.md`、`TOOLS.md`、`IDENTITY.md`、`USER.md`、`HEARTBEAT.md`、`BOOTSTRAP.md`、`MEMORY.md`、`memory.md`；Linpo 不自行接受任意路径输入。
 - `flow.generate` 为流程页面分配专用 session：`planner:claw3`、`manager`、`execution` 前缀，用于流程拆解和任务调度链路。
-- 流程拆解逻辑不在前端执行，统一由后端 `FlowDecompositionService` 通过 `claw3`（OpenClaw 实例）产出结构化节点 JSON。
+- 流程拆解逻辑不在前端执行，统一由后端 `FlowDecompositionService` 通过 `claw3`（OpenClaw 实例）产出结构化节点 JSON；若前端传入 planner agent，后端仅接受 `claw3` 并按该目标发起请求，不得静默回退到其他 agent。
+- 流程规划消息流走独立 SSE 通道：前端在发送 `flow.generate` 前确定 `planner_session_key`，随后订阅 `/api/v1/boards/{board_id}/tasks/flow/planner-sse`；后端通过 `ProviderApplicationService.chat_history` 轮询 planner session 历史消息，并向前端推送 `planner_messages_updated` 增量。
 - 流程创建入口由 `FlowEditorPanel` 左侧流程侧栏中的新建弹窗承接；`FlowEditorPanel` 底部悬浮对话框用于后续增量改图（同样调用 `flow.generate`）。
 - 配对入口支持用户自有 OpenClaw（如 `claw2`）；Linpo 不要求用户先配置多页面，只需完成一次实例配对即可进入看板与流程主链。
 - 调度策略：每次入队后立即从 `queued` 取一个“依赖满足”的任务投放执行；任务完成后再推进下一项。未完成任务保持 `running`，敏感终态进入 `blocked_by_approval`。
