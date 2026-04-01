@@ -229,4 +229,48 @@ describe('SummaryPage', () => {
       expect(screen.getByTestId('summary-events-rail')).toHaveTextContent('Alpha Agent 开始执行审批后的下游节点。');
     });
   });
+
+  it('filters and expands events in event rail', async () => {
+    renderPage();
+
+    await screen.findByTestId('summary-events-rail');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Agent' }));
+    expect(screen.getByTestId('summary-events-rail')).toHaveTextContent('Alpha Agent 完成了上游整理。');
+
+    await userEvent.click(screen.getByRole('button', { name: '全部展开' }));
+    expect(screen.getByTestId('summary-events-rail')).toHaveTextContent('类型 · status_changed');
+
+    await userEvent.type(screen.getByPlaceholderText('筛选关键字'), '不存在');
+    expect(screen.getByTestId('summary-events-rail')).toHaveTextContent('当前没有可展示的事件');
+  });
+
+  it('uses compact toolbar metrics on mobile', async () => {
+    const originalWidth = window.innerWidth;
+    await act(async () => {
+      window.innerWidth = 480;
+      window.dispatchEvent(new Event('resize'));
+    });
+
+    renderPage();
+
+    await screen.findByTestId('summary-chart');
+
+    const toolbar = screen.getByRole('toolbar', { name: '摘要工具栏' });
+    expect(toolbar).toHaveTextContent('待审批 1 项');
+    expect(toolbar).toHaveTextContent('事件 1/1 条');
+    expect(toolbar).not.toHaveTextContent('指标: Token');
+
+    await act(async () => {
+      window.innerWidth = originalWidth;
+      window.dispatchEvent(new Event('resize'));
+    });
+  });
+
+  it('keeps summary content within constrained desktop frame width', async () => {
+    renderPage();
+
+    const contentFrame = await screen.findByTestId('summary-content-frame');
+    expect(contentFrame).toHaveStyle({ maxWidth: '1520px' });
+  });
 });

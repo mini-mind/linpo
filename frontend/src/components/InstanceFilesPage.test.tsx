@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToastProvider } from '../hooks/useToast';
@@ -154,5 +154,28 @@ describe('InstanceFilesPage', () => {
     });
     expect(screen.getByText('Soul')).toBeInTheDocument();
     expect(screen.getByText('Agent mission profile.')).toBeInTheDocument();
+  });
+
+  it('uses compact stats and full-width controls on mobile', async () => {
+    const originalWidth = window.innerWidth;
+    await act(async () => {
+      window.innerWidth = 480;
+      window.dispatchEvent(new Event('resize'));
+    });
+
+    renderPage();
+
+    await screen.findByRole('button', { name: '查看任务文件 out.json' });
+    expect(screen.getByText('总文件数 1')).toBeInTheDocument();
+    expect(screen.getByText('可访问 1')).toBeInTheDocument();
+    expect(screen.queryByText('任务产物 1')).not.toBeInTheDocument();
+    expect(screen.queryByText('Agent 文档 0')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('选择实例')).toHaveStyle({ width: '100%' });
+    expect(screen.getByLabelText('搜索实例文件')).toHaveStyle({ width: '100%' });
+
+    await act(async () => {
+      window.innerWidth = originalWidth;
+      window.dispatchEvent(new Event('resize'));
+    });
   });
 });

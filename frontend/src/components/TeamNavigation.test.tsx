@@ -22,7 +22,7 @@ function renderLayout(initialPath = '/kanban') {
       <Routes>
         <Route element={<Layout />}>
           <Route path="/kanban" element={<div>kanban-page</div>} />
-          <Route path="/flow" element={<div>flow-page</div>} />
+          <Route path="/flow/edit/:flowId" element={<div>flow-page</div>} />
         </Route>
       </Routes>
     </MemoryRouter>
@@ -35,7 +35,7 @@ describe('navigation entries', () => {
 
     const kanbanLink = screen.getByRole('link', { name: '看板' });
     expect(kanbanLink).toHaveAttribute('href', '/kanban');
-    expect(screen.getByRole('link', { name: '流程' })).toHaveAttribute('href', '/flow');
+    expect(screen.getByRole('link', { name: '流程' })).toHaveAttribute('href', '/flow/edit/new');
   });
 
   it('hides legacy menu trigger in navigation', () => {

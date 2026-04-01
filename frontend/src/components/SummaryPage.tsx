@@ -25,6 +25,14 @@ import { buildAgentDetailChannel } from '../api/types';
 import { useCurrentInstanceId } from '../hooks/useCurrentInstance';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
+import {
+  getWorkspaceBodyInnerStyle,
+  getWorkspaceBodyShellStyle,
+  getWorkspaceFrameStyle,
+  getWorkspacePageStyle,
+  WORKSPACE_CONTENT_MAX_WIDTH_PX,
+  WORKSPACE_TOOLBAR_MAX_WIDTH_PX,
+} from './workspaceLayout';
 
 type SummaryMetricKind = 'tokens' | 'tasks';
 
@@ -47,14 +55,25 @@ type SummaryMetric = {
 type SummaryEventItem = {
   id: string;
   type: string;
+  category: SummaryEventFilter;
   instanceName: string;
   agentName: string | null;
   timestamp: string;
   description: string;
 };
 
+type SummaryEventFilter = 'all' | 'approval' | 'execution' | 'topology' | 'agent' | 'exception';
+
 const BOARD_REALTIME_ID = 'default';
 const SERIES_COLORS = ['#0f766e', '#0284c7', '#f97316', '#dc2626', '#7c3aed', '#65a30d'];
+const EVENT_FILTER_OPTIONS: Array<{ value: SummaryEventFilter; label: string }> = [
+  { value: 'all', label: '全部' },
+  { value: 'approval', label: '审批' },
+  { value: 'execution', label: '执行' },
+  { value: 'topology', label: '拓扑' },
+  { value: 'agent', label: 'Agent' },
+  { value: 'exception', label: '异常' },
+];
 
 export function SummaryPage(): JSX.Element {
   const isMobile = useIsMobile(960);
@@ -68,6 +87,9 @@ export function SummaryPage(): JSX.Element {
   const [overviewError, setOverviewError] = useState<Error | null>(null);
   const [tasksError, setTasksError] = useState<string | null>(null);
   const [continuingTaskId, setContinuingTaskId] = useState<string | null>(null);
+  const [eventFilter, setEventFilter] = useState<SummaryEventFilter>('all');
+  const [eventQuery, setEventQuery] = useState('');
+  const [expandedEventIds, setExpandedEventIds] = useState<string[]>([]);
   const boardRealtimeRef = useRef<ReturnType<typeof createBoardTasksSseClient> | null>(null);
   const agentsListRealtimeRef = useRef<ObserverRealtimeClient | null>(null);
   const agentRealtimeRefs = useRef<Map<string, ObserverRealtimeClient>>(new Map());
@@ -103,6 +125,37 @@ export function SummaryPage(): JSX.Element {
     }
   }, [loadOverview, loadTasks]);
 
+  const currentInstanceName = useMemo(() => {
+    if (!currentInstanceId) {
+      return null;
+    }
+    const byTask = tasks.find((task) => task.instance_id === currentInstanceId);
+    if (byTask) {
+      const value = String(byTask.extras.instance_name ?? '').trim();
+      if (value) {
+        return value;
+      }
+    }
+    const byAgent = overview?.agents.find((item) => item.instance_id === currentInstanceId);
+    return byAgent?.instance_name ?? null;
+  }, [currentInstanceId, overview?.agents, tasks]);
+
+  const currentInstanceAgentMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const item of overview?.agents ?? []) {
+      if (currentInstanceId && item.instance_id !== currentInstanceId) {
+        continue;
+      }
+      map.set(item.agent_id, item.agent_name);
+    }
+    return map;
+  }, [currentInstanceId, overview?.agents]);
+
+  const currentInstanceAgentIds = useMemo(
+    () => [...currentInstanceAgentMap.keys()].sort((left, right) => left.localeCompare(right)),
+    [currentInstanceAgentMap]
+  );
+
   useEffect(() => {
     void loadPage();
   }, [loadPage]);
@@ -121,6 +174,14 @@ export function SummaryPage(): JSX.Element {
     (message: BoardRealtimeMessage) => {
       if (message.type === 'error') {
         setTasksError(message.payload.detail || '审批任务实时同步失败');
+        appendSummaryEvent(setEvents, {
+          id: `board-error:${Date.now()}`,
+          type: 'error',
+          timestamp: new Date().toISOString(),
+          instanceName: currentInstanceName ?? '当前实例',
+          agentName: null,
+          description: message.payload.detail || '审批任务实时同步失败',
+        });
         return;
       }
       if (message.type !== 'tasks_changed') {
@@ -145,7 +206,7 @@ export function SummaryPage(): JSX.Element {
         scheduleOverviewRefresh();
       }
     },
-    [scheduleOverviewRefresh]
+    [currentInstanceName, scheduleOverviewRefresh]
   );
 
   useEffect(() => {
@@ -216,59 +277,23 @@ export function SummaryPage(): JSX.Element {
     };
   }, []);
 
-  const currentInstanceName = useMemo(() => {
-    if (!currentInstanceId) {
-      return null;
-    }
-    const byTask = tasks.find((task) => task.instance_id === currentInstanceId);
-    if (byTask) {
-      const value = String(byTask.extras.instance_name ?? '').trim();
-      if (value) {
-        return value;
-      }
-    }
-    const byAgent = overview?.agents.find((item) => item.instance_id === currentInstanceId);
-    return byAgent?.instance_name ?? null;
-  }, [currentInstanceId, overview?.agents, tasks]);
-
-  const currentInstanceAgentMap = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const item of overview?.agents ?? []) {
-      if (currentInstanceId && item.instance_id !== currentInstanceId) {
-        continue;
-      }
-      map.set(item.agent_id, item.agent_name);
-    }
-    return map;
-  }, [currentInstanceId, overview?.agents]);
-
-  const currentInstanceAgentIds = useMemo(
-    () => [...currentInstanceAgentMap.keys()].sort((left, right) => left.localeCompare(right)),
-    [currentInstanceAgentMap]
-  );
-
   useEffect(() => {
     if (!overview) {
       return;
     }
     const baselineKey = currentInstanceId ?? '__all__';
-    if (eventBaselineInstanceRef.current === baselineKey) {
-      return;
-    }
-    eventBaselineInstanceRef.current = baselineKey;
-    setEvents(buildInitialEvents(overview.global_events, currentInstanceId));
+    const incoming = buildInitialEvents(overview.global_events, currentInstanceId);
+    setEvents((current) => {
+      if (eventBaselineInstanceRef.current !== baselineKey) {
+        eventBaselineInstanceRef.current = baselineKey;
+        return sortSummaryEvents(incoming);
+      }
+      return mergeSummaryEvents(current, incoming);
+    });
   }, [currentInstanceId, overview]);
 
   const appendRealtimeEvent = useCallback((item: SummaryEventItem) => {
-    setEvents((current) => {
-      const next = [item, ...current.filter((entry) => entry.id !== item.id)];
-      next.sort((left, right) => {
-        const leftTs = Date.parse(left.timestamp);
-        const rightTs = Date.parse(right.timestamp);
-        return (Number.isFinite(rightTs) ? rightTs : 0) - (Number.isFinite(leftTs) ? leftTs : 0);
-      });
-      return next.slice(0, 80);
-    });
+    appendSummaryEvent(setEvents, item);
   }, []);
 
   const closeRealtimeConnections = useCallback(() => {
@@ -290,10 +315,36 @@ export function SummaryPage(): JSX.Element {
       dataSource: 'openclaw',
       instanceId: currentInstanceId,
       channel: 'agents:list',
-      onMessage: (message) => {
-        if (message.type !== 'agent_summary_updated') {
-          return;
-        }
+        onMessage: (message) => {
+          if (message.type === 'error') {
+            appendRealtimeEvent(
+              toSummaryEventFromObserver({
+                id: `observer-error:${message.channel}:${message.seq}`,
+                type: 'error',
+                timestamp: message.timestamp,
+                instanceName: currentInstanceName ?? '当前实例',
+                agentName: null,
+                description: message.payload.detail || '实例事件订阅失败',
+              })
+            );
+            return;
+          }
+          if (message.type === 'resync_required') {
+            appendRealtimeEvent(
+              toSummaryEventFromObserver({
+                id: `observer-resync:${message.channel}:${message.seq}`,
+                type: 'resync_required',
+                timestamp: message.timestamp,
+                instanceName: currentInstanceName ?? '当前实例',
+                agentName: null,
+                description: message.payload.reason || '实例事件需要重新同步',
+              })
+            );
+            return;
+          }
+          if (message.type !== 'agent_summary_updated') {
+            return;
+          }
         appendRealtimeEvent(
           toSummaryEventFromObserver({
             id: `agent-summary:${message.channel}:${message.seq}`,
@@ -380,6 +431,45 @@ export function SummaryPage(): JSX.Element {
 
   const metric = useMemo(() => buildSummaryMetric(overview?.token_groups ?? [], tasks), [overview?.token_groups, tasks]);
 
+  const filteredEvents = useMemo(
+    () => events.filter((item) => matchesEventFilter(item, eventFilter, eventQuery)),
+    [eventFilter, eventQuery, events]
+  );
+
+  const toolbarMetrics = isMobile
+    ? [`待审批 ${approvalTasks.length} 项`, `事件 ${filteredEvents.length}/${events.length} 条`]
+    : [
+        `待审批 ${approvalTasks.length} 项`,
+        `事件 ${filteredEvents.length}/${events.length} 条`,
+        metric.kind === 'tokens' ? '指标: Token' : '指标: 任务节点',
+      ];
+
+  useEffect(() => {
+    setExpandedEventIds((current) => current.filter((id) => filteredEvents.some((item) => item.id === id)));
+  }, [filteredEvents]);
+
+  const handleToggleEvent = useCallback((eventId: string) => {
+    setExpandedEventIds((current) =>
+      current.includes(eventId) ? current.filter((item) => item !== eventId) : [...current, eventId]
+    );
+  }, []);
+
+  const handleToggleAllFilteredEvents = useCallback(() => {
+    setExpandedEventIds((current) => {
+      const visibleIds = filteredEvents.map((item) => item.id);
+      const allExpanded =
+        visibleIds.length > 0 && visibleIds.every((eventId) => current.includes(eventId));
+      if (allExpanded) {
+        return current.filter((eventId) => !visibleIds.includes(eventId));
+      }
+      const next = new Set(current);
+      for (const eventId of visibleIds) {
+        next.add(eventId);
+      }
+      return [...next];
+    });
+  }, [filteredEvents]);
+
   const handleContinueTask = useCallback(
     async (taskId: string) => {
       try {
@@ -398,84 +488,115 @@ export function SummaryPage(): JSX.Element {
 
   if (isLoading) {
     return (
-      <div style={pageStyle}>
-        <header style={isMobile ? { ...toolbarStyle, ...toolbarMobileStyle } : toolbarStyle}>
-          <div style={toolbarLeftStyle}>
-            <span style={toolbarTitleStyle}>摘要</span>
-            <span style={toolbarMetaStyle}>正在汇总审批与统计…</span>
-          </div>
-        </header>
-        <div style={contentStyle}>
-          <section style={chartCardStyle}>正在加载统计曲线…</section>
-          <div style={getBodyLayoutStyle(isMobile)}>
-            <section style={approvalPaneStyle}>正在加载审批项…</section>
-            <aside style={getEventsPaneStyle(isMobile)}>正在加载事件流…</aside>
+      <section style={getWorkspacePageStyle()}>
+        <div style={getWorkspaceFrameStyle({ isMobile, maxWidthPx: WORKSPACE_TOOLBAR_MAX_WIDTH_PX })}>
+          <header style={isMobile ? { ...toolbarStyle, ...toolbarMobileStyle } : toolbarStyle}>
+            <div style={toolbarLeftStyle}>
+              <span style={toolbarTitleStyle}>摘要</span>
+              <span style={toolbarMetaStyle}>正在汇总审批与统计…</span>
+            </div>
+          </header>
+        </div>
+        <div style={getWorkspaceBodyShellStyle({ isMobile, extra: isMobile ? bodyShellMobileStyle : bodyShellStyle })}>
+          <div style={getWorkspaceBodyInnerStyle({ isMobile, maxWidthPx: WORKSPACE_CONTENT_MAX_WIDTH_PX, extra: getBodyStyle(isMobile) })} data-testid="summary-content-frame">
+            <div style={getContentStyle(isMobile)}>
+              <section style={getChartCardStyle(isMobile)}>正在加载统计曲线…</section>
+              <div style={getBodyLayoutStyle(isMobile)}>
+                <section style={getApprovalPaneStyle(isMobile)}>正在加载审批项…</section>
+                <aside style={getEventsPaneStyle(isMobile)}>正在加载事件流…</aside>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      </section>
     );
   }
 
   if (overviewError && !overview) {
     const envelope = overviewError instanceof ApiError ? overviewError.envelope : null;
     return (
-      <div style={pageStyle}>
-        <div style={contentStyle}>
-          <section style={fatalErrorCardStyle}>
-            <h2 style={fatalErrorTitleStyle}>摘要暂时不可用</h2>
-            <p style={fatalErrorTextStyle}>{overviewError.message}</p>
-            {envelope ? <EnvelopeErrorSummary envelope={envelope} /> : null}
-            <button type="button" style={primaryButtonStyle} onClick={() => void loadPage()}>
-              重试
-            </button>
-          </section>
+      <section style={getWorkspacePageStyle()}>
+        <div style={getWorkspaceBodyShellStyle({ isMobile, extra: isMobile ? bodyShellMobileStyle : bodyShellStyle })}>
+          <div style={getWorkspaceBodyInnerStyle({ isMobile, maxWidthPx: WORKSPACE_CONTENT_MAX_WIDTH_PX, extra: getBodyStyle(isMobile) })} data-testid="summary-content-frame">
+            <div style={getContentStyle(isMobile)}>
+              <section style={fatalErrorCardStyle}>
+                <h2 style={fatalErrorTitleStyle}>摘要暂时不可用</h2>
+                <p style={fatalErrorTextStyle}>{overviewError.message}</p>
+                {envelope ? <EnvelopeErrorSummary envelope={envelope} /> : null}
+                <button type="button" style={primaryButtonStyle} onClick={() => void loadPage()}>
+                  重试
+                </button>
+              </section>
+            </div>
+          </div>
         </div>
-      </div>
+      </section>
     );
   }
 
   return (
-    <div style={pageStyle}>
-      <header style={isMobile ? { ...toolbarStyle, ...toolbarMobileStyle } : toolbarStyle} role="toolbar" aria-label="摘要工具栏">
-        <div style={toolbarLeftStyle}>
-          <span style={toolbarTitleStyle}>摘要</span>
-          <span style={toolbarMetaStyle}>待审批 {approvalTasks.length} 项</span>
-          <span style={toolbarMetaStyle}>事件 {events.length} 条</span>
-          <span style={toolbarMetaStyle}>{metric.kind === 'tokens' ? '指标: Token' : '指标: 任务节点'}</span>
-        </div>
-        <div style={toolbarActionsStyle}>
-          <button type="button" style={ghostButtonStyle} onClick={() => void loadPage()}>
-            刷新
-          </button>
-        </div>
-      </header>
+    <section style={getWorkspacePageStyle()}>
+      <div style={getWorkspaceFrameStyle({ isMobile, maxWidthPx: WORKSPACE_TOOLBAR_MAX_WIDTH_PX })}>
+        <header style={isMobile ? { ...toolbarStyle, ...toolbarMobileStyle } : toolbarStyle} role="toolbar" aria-label="摘要工具栏">
+          <div style={toolbarLeftStyle}>
+            <span style={toolbarTitleStyle}>摘要</span>
+            {toolbarMetrics.map((item) => (
+              <span key={item} style={toolbarMetaStyle}>
+                {item}
+              </span>
+            ))}
+          </div>
+          <div style={toolbarActionsStyle}>
+            <button type="button" style={ghostButtonStyle} onClick={() => void loadPage()}>
+              刷新
+            </button>
+          </div>
+        </header>
+      </div>
 
-      <div style={contentStyle}>
-        <SummaryChart metric={metric} />
-        <div style={getBodyLayoutStyle(isMobile)}>
-          <ApprovalPane
-            approvalTasks={approvalTasks}
-            tasksError={tasksError}
-            continuingTaskId={continuingTaskId}
-            onContinueTask={handleContinueTask}
-            onOpenKanban={() => navigate('/kanban')}
-          />
-          <EventsPane events={events} isMobile={isMobile} />
+      <div style={getWorkspaceBodyShellStyle({ isMobile, extra: isMobile ? bodyShellMobileStyle : bodyShellStyle })}>
+        <div style={getWorkspaceBodyInnerStyle({ isMobile, maxWidthPx: WORKSPACE_CONTENT_MAX_WIDTH_PX, extra: getBodyStyle(isMobile) })} data-testid="summary-content-frame">
+          <div style={getContentStyle(isMobile)}>
+            <SummaryChart metric={metric} isMobile={isMobile} />
+            <div style={getBodyLayoutStyle(isMobile)}>
+              <ApprovalPane
+                approvalTasks={approvalTasks}
+                tasksError={tasksError}
+                continuingTaskId={continuingTaskId}
+                onContinueTask={handleContinueTask}
+                onOpenKanban={() => navigate('/kanban')}
+                isMobile={isMobile}
+              />
+              <EventsPane
+                events={filteredEvents}
+                totalCount={events.length}
+                activeFilter={eventFilter}
+                query={eventQuery}
+                expandedEventIds={expandedEventIds}
+                isMobile={isMobile}
+                onFilterChange={setEventFilter}
+                onQueryChange={setEventQuery}
+                onToggleEvent={handleToggleEvent}
+                onToggleAll={handleToggleAllFilteredEvents}
+              />
+            </div>
+          </div>
         </div>
       </div>
-    </div>
+    </section>
   );
 }
 
-function SummaryChart({ metric }: { metric: SummaryMetric }): JSX.Element {
+function SummaryChart({ metric, isMobile }: { metric: SummaryMetric; isMobile: boolean }): JSX.Element {
   const maxValue = Math.max(1, ...metric.series.flatMap((item) => item.values));
   const pointCount = Math.max(1, metric.labels.length - 1);
   const viewBoxWidth = 100;
   const viewBoxHeight = 36;
+  const visibleLabels = getVisibleMetricLabels(metric.labels, isMobile);
 
   return (
-    <section style={chartCardStyle} data-testid="summary-chart">
-      <div style={chartHeaderStyle}>
+    <section style={getChartCardStyle(isMobile)} data-testid="summary-chart">
+      <div style={getChartHeaderStyle(isMobile)}>
         <div>
           <h2 style={sectionTitleStyle}>{metric.title}</h2>
           <p style={sectionHintStyle}>{metric.hint}</p>
@@ -495,7 +616,7 @@ function SummaryChart({ metric }: { metric: SummaryMetric }): JSX.Element {
               </span>
             ))}
           </div>
-          <div style={chartViewportStyle}>
+          <div style={getChartViewportStyle(isMobile)}>
             <svg viewBox={`0 0 ${viewBoxWidth} ${viewBoxHeight}`} preserveAspectRatio="none" style={chartSvgStyle} aria-label={metric.title}>
               <defs>
                 <linearGradient id="summary-grid" x1="0%" y1="0%" x2="0%" y2="100%">
@@ -544,7 +665,7 @@ function SummaryChart({ metric }: { metric: SummaryMetric }): JSX.Element {
             </svg>
           </div>
           <div style={chartLabelsStyle}>
-            {metric.labels.map((label) => (
+            {visibleLabels.map((label) => (
               <span key={label} style={chartLabelStyle}>
                 {formatShortLabel(label)}
               </span>
@@ -562,16 +683,18 @@ function ApprovalPane({
   continuingTaskId,
   onContinueTask,
   onOpenKanban,
+  isMobile,
 }: {
   approvalTasks: KanbanTaskItem[];
   tasksError: string | null;
   continuingTaskId: string | null;
   onContinueTask: (taskId: string) => void;
   onOpenKanban: () => void;
+  isMobile: boolean;
 }): JSX.Element {
   return (
-    <section style={approvalPaneStyle} data-testid="summary-approval-list">
-      <div style={sectionHeaderStyle}>
+    <section style={getApprovalPaneStyle(isMobile)} data-testid="summary-approval-list">
+      <div style={getSectionHeaderStyle(isMobile)}>
         <div>
           <h2 style={sectionTitleStyle}>审批项</h2>
           <p style={sectionHintStyle}>集中处理被敏感操作阻塞的任务节点。</p>
@@ -585,7 +708,7 @@ function ApprovalPane({
       {approvalTasks.length === 0 ? (
         <div style={emptyStateStyle}>当前没有待审批任务</div>
       ) : (
-        <div style={approvalListStyle}>
+        <div style={getApprovalListStyle(isMobile)}>
           {approvalTasks.map((task) => {
             const requirementTitle = String(task.extras.requirement_title ?? '').trim() || '未命名流程';
             const dependencyLabel = String(task.extras.dependencies ?? task.extras.dependency_titles ?? '').trim();
@@ -638,36 +761,102 @@ function ApprovalPane({
 
 function EventsPane({
   events,
+  totalCount,
+  activeFilter,
+  query,
+  expandedEventIds,
   isMobile,
+  onFilterChange,
+  onQueryChange,
+  onToggleEvent,
+  onToggleAll,
 }: {
   events: SummaryEventItem[];
+  totalCount: number;
+  activeFilter: SummaryEventFilter;
+  query: string;
+  expandedEventIds: string[];
   isMobile: boolean;
+  onFilterChange: (value: SummaryEventFilter) => void;
+  onQueryChange: (value: string) => void;
+  onToggleEvent: (eventId: string) => void;
+  onToggleAll: () => void;
 }): JSX.Element {
+  const allExpanded =
+    events.length > 0 && events.every((item) => expandedEventIds.includes(item.id));
+
   return (
     <aside style={getEventsPaneStyle(isMobile)} data-testid="summary-events-rail">
-      <div style={sectionHeaderStyle}>
+      <div style={getSectionHeaderStyle(isMobile)}>
         <div>
           <h2 style={sectionTitleStyle}>事件流</h2>
-          <p style={sectionHintStyle}>保留最近的实例活动、异常与执行线索。</p>
+          <p style={sectionHintStyle}>
+            保留最近的实例活动、异常与执行线索。
+            {totalCount > events.length ? ` 当前筛选后 ${events.length}/${totalCount} 条。` : ''}
+          </p>
         </div>
+        <button type="button" style={ghostButtonStyle} onClick={onToggleAll} disabled={events.length === 0}>
+          {allExpanded ? '全部收起' : '全部展开'}
+        </button>
+      </div>
+      <div style={eventsToolbarStyle}>
+        <div style={getEventFilterRowStyle(isMobile)}>
+          {EVENT_FILTER_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              style={getEventFilterChipStyle(activeFilter === option.value)}
+              onClick={() => onFilterChange(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        <label style={eventSearchWrapStyle}>
+          <span style={srOnlyStyle}>筛选事件关键字</span>
+          <input
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder="筛选关键字"
+            style={eventSearchInputStyle}
+          />
+        </label>
       </div>
       {events.length === 0 ? (
         <div style={emptyStateStyle}>当前没有可展示的事件</div>
       ) : (
-        <div style={eventsListStyle}>
-          {events.map((event, index) => (
-            <article key={`${event.id}:${index}`} style={eventCardStyle}>
-              <div style={eventCardHeaderStyle}>
-                <span style={eventTypeStyle}>{event.type}</span>
-                <span style={eventTimeStyle}>{formatDateTime(event.timestamp)}</span>
-              </div>
-              <p style={eventInstanceStyle}>
-                {event.instanceName}
-                {event.agentName ? ` · ${event.agentName}` : ''}
-              </p>
-              <p style={eventDescriptionStyle}>{event.description}</p>
-            </article>
-          ))}
+        <div style={getEventsListStyle(isMobile)}>
+          {events.map((event) => {
+            const isExpanded = expandedEventIds.includes(event.id);
+            return (
+              <article key={event.id} style={eventCardStyle}>
+                <button
+                  type="button"
+                  style={eventCardToggleStyle}
+                  onClick={() => onToggleEvent(event.id)}
+                  aria-expanded={isExpanded}
+                >
+                  <div style={eventCardHeaderStyle}>
+                    <span style={getEventTypeStyle(event.category)}>{getEventTypeLabel(event)}</span>
+                    <span style={eventTimeStyle}>{formatDateTime(event.timestamp)}</span>
+                  </div>
+                  <p style={eventInstanceStyle}>
+                    {event.instanceName}
+                    {event.agentName ? ` · ${event.agentName}` : ''}
+                  </p>
+                  <p style={isExpanded ? eventDescriptionStyle : collapsedEventDescriptionStyle}>
+                    {event.description}
+                  </p>
+                </button>
+                {isExpanded ? (
+                  <div style={eventExpandedMetaStyle}>
+                    <span style={eventMetaPillStyle}>类别 · {getEventFilterLabel(event.category)}</span>
+                    <span style={eventMetaPillStyle}>类型 · {event.type}</span>
+                  </div>
+                ) : null}
+              </article>
+            );
+          })}
         </div>
       )}
     </aside>
@@ -682,6 +871,32 @@ function handleAgentDetailRealtimeMessage(params: {
   appendRealtimeEvent: (item: SummaryEventItem) => void;
 }): void {
   const { message, agentId, agentName, instanceName, appendRealtimeEvent } = params;
+  if (message.type === 'error') {
+    appendRealtimeEvent(
+      toSummaryEventFromObserver({
+        id: `detail-error:${message.channel}:${message.seq}`,
+        type: 'error',
+        timestamp: message.timestamp,
+        instanceName,
+        agentName,
+        description: message.payload.detail || `${agentName} 事件订阅失败`,
+      })
+    );
+    return;
+  }
+  if (message.type === 'resync_required') {
+    appendRealtimeEvent(
+      toSummaryEventFromObserver({
+        id: `detail-resync:${message.channel}:${message.seq}`,
+        type: 'resync_required',
+        timestamp: message.timestamp,
+        instanceName,
+        agentName,
+        description: message.payload.reason || `${agentName} 事件需要重新同步`,
+      })
+    );
+    return;
+  }
   if (message.type === 'topology_updated') {
     appendRealtimeEvent(
       toSummaryEventFromObserver({
@@ -722,6 +937,7 @@ function toSummaryEventFromObserver(item: {
   return {
     id: item.id,
     type: item.type,
+    category: classifyEvent(item.type, item.description),
     timestamp: item.timestamp,
     instanceName: item.instanceName,
     agentName: item.agentName,
@@ -738,11 +954,125 @@ function buildInitialEvents(
     .map((item) => ({
       id: item.id,
       type: item.type,
+      category: classifyEvent(item.type, item.description),
       timestamp: item.timestamp,
       instanceName: item.instance_name,
       agentName: item.agent_name,
       description: item.description,
     }));
+}
+
+function classifyEvent(type: string, description: string): SummaryEventFilter {
+  const normalized = `${type} ${description}`.toLowerCase();
+  if (
+    normalized.includes('error') ||
+    normalized.includes('failed') ||
+    normalized.includes('异常') ||
+    normalized.includes('错误') ||
+    normalized.includes('resync')
+  ) {
+    return 'exception';
+  }
+  if (
+    normalized.includes('approval') ||
+    normalized.includes('approve') ||
+    normalized.includes('审批') ||
+    normalized.includes('blocked_by_approval')
+  ) {
+    return 'approval';
+  }
+  if (normalized.includes('topology') || normalized.includes('拓扑')) {
+    return 'topology';
+  }
+  if (
+    normalized.includes('agent_summary') ||
+    normalized.includes('agent_created') ||
+    normalized.includes('subagent_created') ||
+    normalized.includes('status_changed')
+  ) {
+    return 'agent';
+  }
+  return 'execution';
+}
+
+function appendSummaryEvent(
+  setEvents: React.Dispatch<React.SetStateAction<SummaryEventItem[]>>,
+  item: Omit<SummaryEventItem, 'category'> & { category?: SummaryEventFilter }
+): void {
+  setEvents((current) =>
+    mergeSummaryEvents(current, [
+      {
+        ...item,
+        category: item.category ?? classifyEvent(item.type, item.description),
+      },
+    ])
+  );
+}
+
+function mergeSummaryEvents(current: SummaryEventItem[], incoming: SummaryEventItem[]): SummaryEventItem[] {
+  const map = new Map<string, SummaryEventItem>();
+  for (const item of [...incoming, ...current]) {
+    map.set(item.id, item);
+  }
+  return sortSummaryEvents([...map.values()]);
+}
+
+function sortSummaryEvents(events: SummaryEventItem[]): SummaryEventItem[] {
+  const next = [...events];
+  next.sort((left, right) => {
+    const leftTs = Date.parse(left.timestamp);
+    const rightTs = Date.parse(right.timestamp);
+    return (Number.isFinite(rightTs) ? rightTs : 0) - (Number.isFinite(leftTs) ? leftTs : 0);
+  });
+  return next.slice(0, 80);
+}
+
+function matchesEventFilter(
+  item: SummaryEventItem,
+  filter: SummaryEventFilter,
+  query: string
+): boolean {
+  if (filter !== 'all' && item.category !== filter) {
+    return false;
+  }
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return true;
+  }
+  const haystack = [
+    item.type,
+    item.description,
+    item.instanceName,
+    item.agentName ?? '',
+    getEventTypeLabel(item),
+    getEventFilterLabel(item.category),
+  ]
+    .join(' ')
+    .toLowerCase();
+  return haystack.includes(normalizedQuery);
+}
+
+function getEventTypeLabel(item: SummaryEventItem): string {
+  const known: Record<string, string> = {
+    agent_created: 'Agent 创建',
+    subagent_created: '子 Agent 创建',
+    activity_started: '开始执行',
+    activity_stopped: '停止执行',
+    status_changed: '状态更新',
+    node_finished: '节点完成',
+    task_started: '任务开始',
+    task_finished: '任务结束',
+    task_interrupted: '任务中断',
+    topology_updated: '拓扑更新',
+    agent_summary_updated: 'Agent 更新',
+    resync_required: '需要重同步',
+    error: '异常',
+  };
+  return known[item.type] ?? item.type;
+}
+
+function getEventFilterLabel(value: SummaryEventFilter): string {
+  return EVENT_FILTER_OPTIONS.find((item) => item.value === value)?.label ?? value;
 }
 
 function EnvelopeErrorSummary({ envelope }: { envelope: ErrorEnvelope }): JSX.Element {
@@ -826,29 +1156,33 @@ function formatShortLabel(label: string): string {
   return label.length > 5 ? label.slice(5) : label;
 }
 
-const pageStyle: React.CSSProperties = {
-  minHeight: '100%',
-  display: 'flex',
-  flexDirection: 'column',
-};
+function getVisibleMetricLabels(labels: string[], isMobile: boolean): string[] {
+  if (!isMobile || labels.length <= 4) {
+    return labels;
+  }
+  const next = labels.filter((_, index) => index === 0 || index === labels.length - 1 || index % 2 === 1);
+  return next.length > 0 ? next : labels;
+}
 
 const toolbarStyle: React.CSSProperties = {
   position: 'sticky',
   top: 0,
-  zIndex: 20,
+  zIndex: 60,
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
-  gap: '0.9rem',
-  padding: '0.72rem 1rem',
-  borderBottom: '1px solid rgba(148, 163, 184, 0.22)',
-  background: 'rgba(248, 250, 252, 0.82)',
-  backdropFilter: 'blur(14px)',
+  gap: '0.65rem',
+  flexWrap: 'wrap',
+  padding: '0.55rem 0.65rem',
+  border: '1px solid rgba(15, 23, 42, 0.1)',
+  borderRadius: '0.4rem',
+  background: 'rgba(255, 255, 255, 0.44)',
+  backdropFilter: 'blur(8px)',
 };
 
 const toolbarMobileStyle: React.CSSProperties = {
-  flexDirection: 'column',
-  alignItems: 'stretch',
+  padding: '0.45rem 0.5rem',
+  gap: '0.45rem',
 };
 
 const toolbarLeftStyle: React.CSSProperties = {
@@ -875,47 +1209,73 @@ const toolbarActionsStyle: React.CSSProperties = {
   justifyContent: 'flex-end',
 };
 
-const contentStyle: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '1rem',
-  padding: '0.9rem 1rem 1rem',
-  minHeight: 0,
-};
+const bodyShellStyle: React.CSSProperties = {};
+
+const bodyShellMobileStyle: React.CSSProperties = {};
+
+function getContentStyle(isMobile: boolean): React.CSSProperties {
+  return {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: isMobile ? '0.85rem' : '1rem',
+    padding: isMobile ? '0.72rem 0 0.9rem' : '0.9rem 0 1rem',
+    minHeight: 0,
+  };
+}
+
+function getBodyStyle(isMobile: boolean): React.CSSProperties {
+  return {
+    width: '100%',
+    maxWidth: isMobile ? '100%' : `${WORKSPACE_CONTENT_MAX_WIDTH_PX}px`,
+    minHeight: 0,
+    display: 'flex',
+    flexDirection: 'column',
+    flex: 1,
+    overflow: 'hidden',
+  };
+}
 
 function getBodyLayoutStyle(isMobile: boolean): React.CSSProperties {
   return {
     display: 'grid',
-    gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) 320px',
+    gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1.35fr) minmax(320px, 360px)',
     gap: '1rem',
     minHeight: 0,
     alignItems: 'start',
   };
 }
 
-const chartCardStyle: React.CSSProperties = {
-  border: '1px solid rgba(148, 163, 184, 0.2)',
-  borderRadius: '1rem',
-  background: 'linear-gradient(180deg, rgba(255,255,255,0.9) 0%, rgba(241,245,249,0.78) 100%)',
-  boxShadow: '0 18px 48px rgba(15, 23, 42, 0.08)',
-  padding: '1rem',
-};
+function getChartCardStyle(isMobile: boolean): React.CSSProperties {
+  return {
+    border: '1px solid rgba(148, 163, 184, 0.2)',
+    borderRadius: '1rem',
+    background: 'linear-gradient(180deg, rgba(255,255,255,0.9) 0%, rgba(241,245,249,0.78) 100%)',
+    boxShadow: '0 18px 48px rgba(15, 23, 42, 0.08)',
+    padding: isMobile ? '0.88rem' : '1rem',
+  };
+}
 
-const chartHeaderStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'flex-start',
-  justifyContent: 'space-between',
-  gap: '1rem',
-  marginBottom: '0.85rem',
-};
+function getChartHeaderStyle(isMobile: boolean): React.CSSProperties {
+  return {
+    display: 'flex',
+    flexDirection: isMobile ? 'column' : 'row',
+    alignItems: isMobile ? 'stretch' : 'flex-start',
+    justifyContent: 'space-between',
+    gap: '0.72rem',
+    marginBottom: '0.85rem',
+  };
+}
 
-const sectionHeaderStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'flex-start',
-  justifyContent: 'space-between',
-  gap: '0.8rem',
-  marginBottom: '0.8rem',
-};
+function getSectionHeaderStyle(isMobile: boolean): React.CSSProperties {
+  return {
+    display: 'flex',
+    flexDirection: isMobile ? 'column' : 'row',
+    alignItems: isMobile ? 'stretch' : 'flex-start',
+    justifyContent: 'space-between',
+    gap: '0.8rem',
+    marginBottom: '0.8rem',
+  };
+}
 
 const sectionTitleStyle: React.CSSProperties = {
   margin: 0,
@@ -962,14 +1322,16 @@ const legendDotStyle: React.CSSProperties = {
   display: 'inline-block',
 };
 
-const chartViewportStyle: React.CSSProperties = {
-  width: '100%',
-  height: '220px',
-  borderRadius: '0.9rem',
-  overflow: 'hidden',
-  border: '1px solid rgba(148, 163, 184, 0.16)',
-  background: 'rgba(248, 250, 252, 0.86)',
-};
+function getChartViewportStyle(isMobile: boolean): React.CSSProperties {
+  return {
+    width: '100%',
+    height: isMobile ? '176px' : '220px',
+    borderRadius: '0.9rem',
+    overflow: 'hidden',
+    border: '1px solid rgba(148, 163, 184, 0.16)',
+    background: 'rgba(248, 250, 252, 0.86)',
+  };
+}
 
 const chartSvgStyle: React.CSSProperties = {
   width: '100%',
@@ -990,16 +1352,19 @@ const chartLabelStyle: React.CSSProperties = {
   textAlign: 'center',
 };
 
-const approvalPaneStyle: React.CSSProperties = {
-  border: '1px solid rgba(148, 163, 184, 0.2)',
-  borderRadius: '1rem',
-  background: 'rgba(255,255,255,0.82)',
-  boxShadow: '0 18px 42px rgba(15, 23, 42, 0.06)',
-  padding: '1rem',
-  minHeight: '420px',
-  display: 'flex',
-  flexDirection: 'column',
-};
+function getApprovalPaneStyle(isMobile: boolean): React.CSSProperties {
+  return {
+    border: '1px solid rgba(148, 163, 184, 0.2)',
+    borderRadius: '1rem',
+    background: 'rgba(255,255,255,0.82)',
+    boxShadow: '0 18px 42px rgba(15, 23, 42, 0.06)',
+    padding: isMobile ? '0.88rem' : '1rem',
+    minHeight: isMobile ? '280px' : '420px',
+    maxHeight: isMobile ? '56vh' : 'calc(100vh - 14rem)',
+    display: 'flex',
+    flexDirection: 'column',
+  };
+}
 
 function getEventsPaneStyle(isMobile: boolean): React.CSSProperties {
   return {
@@ -1007,22 +1372,24 @@ function getEventsPaneStyle(isMobile: boolean): React.CSSProperties {
     borderRadius: '1rem',
     background: 'rgba(255,255,255,0.78)',
     boxShadow: '0 18px 42px rgba(15, 23, 42, 0.06)',
-    padding: '1rem',
+    padding: isMobile ? '0.88rem' : '1rem',
     display: 'flex',
     flexDirection: 'column',
-    minHeight: isMobile ? '320px' : '420px',
-    maxHeight: isMobile ? 'none' : 'calc(100vh - 14rem)',
+    minHeight: isMobile ? '300px' : '420px',
+    maxHeight: isMobile ? '60vh' : 'calc(100vh - 14rem)',
   };
 }
 
-const approvalListStyle: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '0.9rem',
-  minHeight: 0,
-  overflowY: 'auto',
-  paddingRight: '0.15rem',
-};
+function getApprovalListStyle(isMobile: boolean): React.CSSProperties {
+  return {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.9rem',
+    minHeight: 0,
+    overflowY: 'auto',
+    paddingRight: isMobile ? 0 : '0.15rem',
+  };
+}
 
 const approvalCardStyle: React.CSSProperties = {
   border: '1px solid rgba(148, 163, 184, 0.18)',
@@ -1113,23 +1480,53 @@ const approvalActionsStyle: React.CSSProperties = {
   justifyContent: 'flex-end',
 };
 
-const eventsListStyle: React.CSSProperties = {
+const eventsToolbarStyle: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  gap: '0.72rem',
-  minHeight: 0,
-  overflowY: 'auto',
-  paddingRight: '0.12rem',
+  gap: '0.6rem',
+  marginBottom: '0.8rem',
 };
+
+function getEventFilterRowStyle(isMobile: boolean): React.CSSProperties {
+  return {
+    display: 'flex',
+    gap: '0.45rem',
+    overflowX: 'auto',
+    paddingBottom: isMobile ? '0.1rem' : 0,
+    scrollbarWidth: 'thin',
+  };
+}
+
+function getEventsListStyle(isMobile: boolean): React.CSSProperties {
+  return {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.72rem',
+    minHeight: 0,
+    overflowY: 'auto',
+    paddingRight: isMobile ? 0 : '0.12rem',
+  };
+}
 
 const eventCardStyle: React.CSSProperties = {
   border: '1px solid rgba(148, 163, 184, 0.16)',
   borderRadius: '0.86rem',
   background: 'rgba(248, 250, 252, 0.9)',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.35rem',
+};
+
+const eventCardToggleStyle: React.CSSProperties = {
+  width: '100%',
+  border: 'none',
+  background: 'transparent',
   padding: '0.82rem',
   display: 'flex',
   flexDirection: 'column',
   gap: '0.35rem',
+  textAlign: 'left',
+  cursor: 'pointer',
 };
 
 const eventCardHeaderStyle: React.CSSProperties = {
@@ -1138,12 +1535,27 @@ const eventCardHeaderStyle: React.CSSProperties = {
   gap: '0.55rem',
 };
 
-const eventTypeStyle: React.CSSProperties = {
-  fontSize: '0.68rem',
-  fontWeight: 700,
-  color: '#0f766e',
-  textTransform: 'uppercase',
-};
+function getEventTypeStyle(category: SummaryEventFilter): React.CSSProperties {
+  const palette: Record<SummaryEventFilter, { bg: string; text: string }> = {
+    all: { bg: 'rgba(15, 118, 110, 0.1)', text: '#0f766e' },
+    approval: { bg: 'rgba(245, 158, 11, 0.12)', text: '#b45309' },
+    execution: { bg: 'rgba(2, 132, 199, 0.12)', text: '#0369a1' },
+    topology: { bg: 'rgba(99, 102, 241, 0.12)', text: '#4f46e5' },
+    agent: { bg: 'rgba(34, 197, 94, 0.12)', text: '#15803d' },
+    exception: { bg: 'rgba(239, 68, 68, 0.12)', text: '#b91c1c' },
+  };
+  const tone = palette[category];
+  return {
+    display: 'inline-flex',
+    alignItems: 'center',
+    padding: '0.16rem 0.44rem',
+    borderRadius: '999px',
+    background: tone.bg,
+    color: tone.text,
+    fontSize: '0.68rem',
+    fontWeight: 700,
+  };
+}
 
 const eventTimeStyle: React.CSSProperties = {
   fontSize: '0.68rem',
@@ -1161,6 +1573,74 @@ const eventDescriptionStyle: React.CSSProperties = {
   fontSize: '0.78rem',
   color: '#10212f',
   lineHeight: 1.55,
+};
+
+const collapsedEventDescriptionStyle: React.CSSProperties = {
+  ...eventDescriptionStyle,
+  display: '-webkit-box',
+  WebkitLineClamp: 1,
+  WebkitBoxOrient: 'vertical',
+  overflow: 'hidden',
+};
+
+const eventExpandedMetaStyle: React.CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '0.45rem',
+  padding: '0 0.82rem 0.82rem',
+};
+
+const eventMetaPillStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  padding: '0.18rem 0.45rem',
+  borderRadius: '999px',
+  background: 'rgba(226, 232, 240, 0.65)',
+  color: '#475569',
+  fontSize: '0.68rem',
+  fontWeight: 600,
+};
+
+function getEventFilterChipStyle(isActive: boolean): React.CSSProperties {
+  return {
+    border: '1px solid rgba(148, 163, 184, 0.22)',
+    borderRadius: '999px',
+    padding: '0.42rem 0.7rem',
+    background: isActive ? 'rgba(15, 118, 110, 0.12)' : 'rgba(255, 255, 255, 0.72)',
+    color: isActive ? '#0f766e' : '#475569',
+    fontSize: '0.74rem',
+    fontWeight: isActive ? 700 : 600,
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    flexShrink: 0,
+  };
+}
+
+const eventSearchWrapStyle: React.CSSProperties = {
+  display: 'block',
+};
+
+const eventSearchInputStyle: React.CSSProperties = {
+  width: '100%',
+  border: '1px solid rgba(148, 163, 184, 0.24)',
+  borderRadius: '0.78rem',
+  background: 'rgba(255, 255, 255, 0.92)',
+  color: '#10212f',
+  fontSize: '0.8rem',
+  padding: '0.58rem 0.72rem',
+  outline: 'none',
+};
+
+const srOnlyStyle: React.CSSProperties = {
+  position: 'absolute',
+  width: '1px',
+  height: '1px',
+  padding: 0,
+  margin: '-1px',
+  overflow: 'hidden',
+  clip: 'rect(0, 0, 0, 0)',
+  whiteSpace: 'nowrap',
+  border: 0,
 };
 
 const emptyStateStyle: React.CSSProperties = {

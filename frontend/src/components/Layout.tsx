@@ -34,11 +34,11 @@ export function Layout(): JSX.Element {
   const isKanbanRoute = location.pathname.startsWith('/kanban');
   const isInstanceFilesRoute = location.pathname.startsWith('/instance-files');
   const mainRef = useRef<HTMLElement | null>(null);
-  const [flowNavTarget, setFlowNavTarget] = useState('/flow');
+  const [flowNavTarget, setFlowNavTarget] = useState('/flow/edit/new');
 
   useEffect(() => {
     const cached = loadLastFlowEntryPath();
-    setFlowNavTarget(cached ?? '/flow');
+    setFlowNavTarget(cached ?? '/flow/edit/new');
   }, []);
 
   useEffect(() => {
@@ -67,8 +67,8 @@ export function Layout(): JSX.Element {
     <div style={shellStyle}>
       <style>{`${toastAnimationStyle}\n${navLinkHoverStyle}`}</style>
       <ToastContainer />
-      <header style={toolbarStyle}>
-        <div style={toolbarLeftStyle}>
+      <header style={getToolbarStyle(isMobile)}>
+        <div style={getToolbarLeftStyle(isMobile)}>
           <Link to="/landing" style={isMobile ? brandBlockMobileStyle : brandBlockStyle} aria-label="灵盘">
             <img src="/assets/brand/linpo-flame-icon.svg" alt="" aria-hidden="true" style={brandIconStyle} />
             <div>
@@ -79,7 +79,7 @@ export function Layout(): JSX.Element {
             </div>
           </Link>
 
-          <nav style={toolbarNavStyle} aria-label="主导航">
+          <nav style={getToolbarNavStyle(isMobile)} aria-label="主导航" data-testid="layout-main-nav">
             <NavLink
               to="/summary"
               className="linpo-nav-link"
@@ -139,12 +139,12 @@ function normalizeFlowEntryPath(rawPath: string | null | undefined): string | nu
     return null;
   }
   if (value === '/flow' || value.startsWith('/flow?') || value.startsWith('/flow#')) {
-    return '/flow';
+    return '/flow/edit/new';
   }
-  if (value.startsWith('/flow/edit/')) {
+  if (/^\/flow\/edit\/[^/?#]+(?:[?#].*)?$/.test(value)) {
     return value;
   }
-  return '/flow';
+  return '/flow/edit/new';
 }
 
 function loadLastFlowEntryPath(): string | null {
@@ -167,34 +167,39 @@ const shellStyle: React.CSSProperties = {
   height: '100%',
   display: 'flex',
   flexDirection: 'column',
+  overflow: 'hidden',
   background:
     'radial-gradient(1000px 700px at 10% -10%, rgba(16, 185, 129, 0.23), transparent 65%), radial-gradient(900px 700px at 95% 0%, rgba(14, 165, 233, 0.2), transparent 62%), linear-gradient(180deg, #f0f8fa 0%, #eef6f2 52%, #f6f8ef 100%)',
   color: '#10212f',
   fontFamily: '"IBM Plex Sans", "Noto Sans SC", "PingFang SC", sans-serif',
 };
 
-const toolbarStyle: React.CSSProperties = {
-  height: '56px',
-  position: 'relative',
-  zIndex: 80,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  gap: '1rem',
-  padding: '0 0.85rem',
-  borderBottom: '1px solid rgba(15, 23, 42, 0.08)',
-  backdropFilter: 'blur(10px)',
-  background: 'rgba(255, 255, 255, 0.36)',
-  overflow: 'visible',
-};
+function getToolbarStyle(isMobile: boolean): React.CSSProperties {
+  return {
+    height: '56px',
+    position: 'relative',
+    zIndex: 80,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: isMobile ? '0.55rem' : '1rem',
+    padding: isMobile ? '0 0.6rem' : '0 0.85rem',
+    borderBottom: '1px solid rgba(15, 23, 42, 0.08)',
+    backdropFilter: 'blur(10px)',
+    background: 'rgba(255, 255, 255, 0.36)',
+    overflow: 'visible',
+  };
+}
 
-const toolbarLeftStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '1.2rem',
-  flex: 1,
-  minWidth: 0,
-};
+function getToolbarLeftStyle(isMobile: boolean): React.CSSProperties {
+  return {
+    display: 'flex',
+    alignItems: 'center',
+    gap: isMobile ? '0.5rem' : '1.2rem',
+    flex: 1,
+    minWidth: 0,
+  };
+}
 
 const brandBlockStyle: React.CSSProperties = {
   display: 'flex',
@@ -209,6 +214,7 @@ const brandBlockMobileStyle: React.CSSProperties = {
   ...brandBlockStyle,
   minWidth: 'auto',
   gap: '0.4rem',
+  flexShrink: 0,
 };
 
 const brandIconStyle: React.CSSProperties = {
@@ -240,16 +246,27 @@ const brandSloganStyle: React.CSSProperties = {
   lineHeight: 1.2,
 };
 
-const toolbarNavStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'stretch',
-  gap: '0.18rem',
-  justifyContent: 'flex-start',
-  alignSelf: 'stretch',
-  borderLeft: '1px solid rgba(148, 163, 184, 0.35)',
-  borderRight: '1px solid rgba(148, 163, 184, 0.35)',
-  padding: '0 0.55rem',
-};
+function getToolbarNavStyle(isMobile: boolean): React.CSSProperties {
+  return {
+    display: 'flex',
+    alignItems: 'stretch',
+    gap: '0.18rem',
+    justifyContent: 'flex-start',
+    alignSelf: 'stretch',
+    flex: 1,
+    minWidth: 0,
+    overflowX: isMobile ? 'auto' : 'visible',
+    overflowY: 'hidden',
+    WebkitOverflowScrolling: 'touch',
+    scrollbarWidth: isMobile ? 'none' : 'auto',
+    msOverflowStyle: isMobile ? 'none' : undefined,
+    touchAction: isMobile ? 'pan-x' : 'auto',
+    whiteSpace: 'nowrap',
+    borderLeft: '1px solid rgba(148, 163, 184, 0.35)',
+    borderRight: '1px solid rgba(148, 163, 184, 0.35)',
+    padding: isMobile ? '0 0.3rem' : '0 0.55rem',
+  };
+}
 
 const toolbarNavDividerStyle: React.CSSProperties = {
   width: '1px',

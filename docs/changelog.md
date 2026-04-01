@@ -2,6 +2,24 @@
 
 ## 2026-04-01
 
+- PRD/Architecture 细化 `FlowEditorPanel` 侧栏行为：流程筛选/排序条件改为本地持久化，流程列表按 `当前 / 草稿 / 已提交` 分组展示。
+- PRD/Architecture 收口流程 IA：移除独立 `FlowListPage` 页面口径，改为由 `FlowEditorPanel` 左侧侧栏统一承载流程列表、筛选、排序与新建流程。
+- PRD/Architecture 细化 `FlowEditorPanel` 移动端无障碍与摘要口径：流程抽屉补充焦点迁移规则，底部规划浮窗折叠态改为展示结构化最近消息摘要。
+- PRD/Architecture 补充 `FlowEditorPanel` 移动端交互：左侧流程列表改为工具栏触发的抽屉式侧栏，底部规划浮窗支持折叠/展开并在折叠态减少画布遮挡。
+- PRD/Architecture 调整流程编辑工作台：`FlowEditorPanel` 左侧改为流程列表侧栏，流程规划消息流与对话框回到画布底部悬浮窗口。
+- PRD/Architecture 补充页面壳治理口径：Summary/FlowList/InstanceFiles 页面壳样式收敛到共用 helper/token，减少宽度与留白漂移。
+- PRD/Architecture 调整页面壳口径：`SummaryPage` 的宽度与留白策略改为对齐 `InstanceFilesPage`，工具栏与主体内容共用同一受限页面壳。
+- PRD/Architecture 调整工具栏宽度口径：`KanbanShell` 与 `FlowEditorPanel` 顶部工具栏取消 `max-width` 限制，改为直接铺满可用横向空间。
+- PRD/Architecture 调整流程编辑页消息区口径：左侧消息流栏加宽，并增加更明显的左侧留白。
+- PRD/Architecture 调整工作台口径：`FlowEditorPanel` 从“底部悬浮对话框 + 纯画布主区”改为“左侧消息流与对话框 + 右侧画布”的双栏布局。
+- PRD/Architecture 回滚看板超宽居中方案：看板轨道恢复左对齐，超宽屏不再额外居中，但看板工作区继续保持满高。
+- PRD/Architecture 补充统一页面宽度口径：`摘要/看板/流程列表/流程编辑/文件` 共享内容 `max-width` 与工具栏内部内容 `max-width` 约束；工具栏外层保持全宽，超宽屏仅内层内容居中。
+- PRD/Architecture 补充看板三档响应式口径：超宽居中、普通横滑、超窄移动端单列并支持左右手势切换。
+- PRD/Architecture 补充摘要页宽度口径：统计图与审批/事件分栏在超宽屏下限制最大宽度，避免内容过度拉伸。
+- PRD/Architecture 补充 `FlowEditorPanel` 移动端交互口径：不得依赖双击作为唯一入口，工具栏需提供显式 `新建节点/编辑已选节点` 动作。
+- PRD/Architecture 补充主工作页移动端细节约束：`看板/流程列表/流程编辑/文件` 在小屏下统一要求“工具栏不裁主动作、主体优先单列、重内容区独立滚动”。
+- PRD/Architecture 补充全局移动端壳约束：主导航在小屏下改为可横向滑动的同栏导航，全站滚动统一收敛到应用 `main` 容器，移除 `body` 直接滚动口径。
+- PRD/Architecture 补充摘要页交互：新增移动端单列收纳口径，事件流支持前端本地筛选（全部/审批/执行/拓扑/Agent/异常 + 关键字）与默认折叠卡片。
 - PRD/Architecture 新增 `摘要` 主导航页：主工作区升级为 `摘要/看板/流程列表/流程编辑/文件`，摘要页承接审批中心。
 - PRD/Architecture 调整审批边界：v0.7 从“仅看板承载审批”升级为“摘要页审批卡片 + 看板就地操作”双入口，共享同一 `blocked_by_approval` 状态机。
 - PRD/Architecture 新增摘要统计口径：顶部曲线优先展示 OpenClaw token 消耗，若不可用则降级为任务节点数量时间序列。

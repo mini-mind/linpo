@@ -30,9 +30,6 @@ const SummaryPage = lazy(() =>
   import('./components/SummaryPage').then((module) => ({ default: module.SummaryPage }))
 );
 const CollabPage = lazy(() => import('./components/CollabPage'));
-const FlowListPage = lazy(() =>
-  import('./components/FlowListPage').then((module) => ({ default: module.FlowListPage }))
-);
 const FlowPage = lazy(() =>
   import('./components/FlowPage').then((module) => ({ default: module.FlowPage }))
 );
@@ -64,7 +61,7 @@ function App(): JSX.Element {
                   <Route index element={<RedirectToOverview />} />
                   <Route path="summary" element={<SummaryPage />} />
                   <Route path="kanban" element={<CollabPage />} />
-                  <Route path="flow" element={<FlowListPage />} />
+                  <Route path="flow" element={<Navigate to="/flow/edit/new" replace />} />
                   <Route path="flow/edit/:flowId" element={<FlowPage />} />
                   <Route path="instance-files" element={<InstanceFilesPage />} />
                   <Route path="pairing" element={<PairingPage />} />

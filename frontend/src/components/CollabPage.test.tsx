@@ -128,17 +128,27 @@ function renderPage(initial = '/kanban') {
       <ToastProvider>
         <Routes>
           <Route path="/kanban" element={<CollabPage />} />
-          <Route path="/flow" element={<div>flow-page</div>} />
+          <Route path="/flow/edit/:flowId" element={<div>flow-page</div>} />
         </Routes>
       </ToastProvider>
     </MemoryRouter>
   );
 }
 
+function setViewportWidth(width: number): void {
+  Object.defineProperty(window, 'innerWidth', {
+    configurable: true,
+    writable: true,
+    value: width,
+  });
+  window.dispatchEvent(new Event('resize'));
+}
+
 describe('CollabPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.removeItem('linpo.v07.flow_tasks');
+    setViewportWidth(1280);
     mockListKanbanTasks.mockResolvedValue([]);
     mockCreateKanbanTask.mockResolvedValue(buildKanbanTask());
     mockContinueFlowRequirement.mockResolvedValue({
@@ -268,6 +278,18 @@ describe('CollabPage', () => {
     expect(track).toHaveStyle({ alignItems: 'flex-start' });
     expect(article).toHaveStyle({ maxHeight: '100%', alignSelf: 'flex-start', overflow: 'hidden' });
     expect(body).toHaveStyle({ overflowY: 'auto' });
+  });
+
+  it('keeps the kanban track left-aligned on ultrawide screens', async () => {
+    setViewportWidth(1800);
+    mockGetAggregateOverview.mockResolvedValue(buildOverview({ agents: [buildAgent()] }));
+
+    renderPage();
+
+    const board = await screen.findByTestId('kanban-board');
+    const track = board.firstElementChild as HTMLElement;
+    expect(track).toHaveStyle({ justifyContent: 'flex-start' });
+    expect(track).toHaveStyle({ minWidth: 'max-content' });
   });
 
   it('supports flow grouping', async () => {

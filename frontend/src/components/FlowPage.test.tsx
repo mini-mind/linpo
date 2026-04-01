@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AggregateOverviewResponse, FlowConfirmResponse, FlowGenerateResponse, KanbanTaskItem } from '../api/types';
 import { ToastProvider } from '../hooks/useToast';
 import { FlowPage } from './FlowPage';
+import { upsertFlowDraft } from './flowDraftStore';
 
 const {
   mockGetAggregateOverview,
@@ -164,6 +165,15 @@ function renderFlowPage(initialPath = '/flow/edit/new') {
   );
 }
 
+function setViewportWidth(width: number): void {
+  Object.defineProperty(window, 'innerWidth', {
+    configurable: true,
+    writable: true,
+    value: width,
+  });
+  window.dispatchEvent(new Event('resize'));
+}
+
 async function createNodeByCanvasDoubleClick(title: string, description = ''): Promise<void> {
   fireEvent.doubleClick(screen.getByTestId('flow-canvas-viewport'), { clientX: 540, clientY: 260 });
   await screen.findByRole('dialog', { name: '创建节点' });
@@ -182,6 +192,7 @@ describe('FlowPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
+    setViewportWidth(1280);
     mockGetAggregateOverview.mockResolvedValue(buildOverview());
     mockGenerateFlowFromRequirement.mockResolvedValue(buildGenerateResponse());
     mockConfirmFlowToKanban.mockResolvedValue(buildConfirmResponse());
@@ -308,9 +319,9 @@ describe('FlowPage', () => {
 
     await userEvent.click(screen.getByRole('button', { name: '流程节点-节点A' }));
     const sourceConnector = screen.getByRole('button', { name: '节点 节点A 右侧连接点' });
-    fireEvent.mouseDown(sourceConnector);
+    fireEvent.pointerDown(sourceConnector, { pointerId: 1, pointerType: 'mouse', button: 0, isPrimary: true, clientX: 620, clientY: 280 });
     const targetConnector = screen.getByRole('button', { name: '节点 节点B 左侧连接点' });
-    fireEvent.mouseUp(targetConnector);
+    fireEvent.pointerUp(targetConnector, { pointerId: 1, pointerType: 'mouse', button: 0, isPrimary: true, clientX: 470, clientY: 430 });
 
     await userEvent.click(screen.getByRole('button', { name: '运行' }));
     expect(screen.getByRole('dialog', { name: '确认运行流程' })).toBeInTheDocument();
@@ -364,9 +375,9 @@ describe('FlowPage', () => {
 
     await userEvent.click(screen.getByRole('button', { name: '流程节点-节点A' }));
     const sourceConnector = screen.getByRole('button', { name: '节点 节点A 右侧连接点' });
-    fireEvent.mouseDown(sourceConnector);
+    fireEvent.pointerDown(sourceConnector, { pointerId: 3, pointerType: 'mouse', button: 0, isPrimary: true, clientX: 620, clientY: 280 });
     const targetConnector = screen.getByRole('button', { name: '节点 节点B 左侧连接点' });
-    fireEvent.mouseUp(targetConnector);
+    fireEvent.pointerUp(targetConnector, { pointerId: 3, pointerType: 'mouse', button: 0, isPrimary: true, clientX: 470, clientY: 430 });
 
     expect(screen.queryByRole('button', { name: /删除连接/ })).not.toBeInTheDocument();
     expect(document.querySelectorAll('[data-flow-edge-path="true"]').length).toBe(1);
@@ -379,6 +390,187 @@ describe('FlowPage', () => {
     await waitFor(() => {
       expect(document.querySelector('[data-flow-edge-path="true"]')).toBeNull();
     });
+  });
+
+  it('removes selected edge by Delete key on mobile without dedicated edge delete button', async () => {
+    setViewportWidth(390);
+    renderFlowPage('/flow/edit/new');
+    await screen.findByRole('toolbar', { name: '流程编辑工具栏' });
+
+    await createNodeByCanvasDoubleClick('节点A');
+    await createNodeByCanvasDoubleClick('节点B');
+
+    await userEvent.click(screen.getByRole('button', { name: '流程节点-节点A' }));
+    const sourceConnector = screen.getByRole('button', { name: '节点 节点A 右侧连接点' });
+    fireEvent.pointerDown(sourceConnector, { pointerId: 9, pointerType: 'touch', button: 0, isPrimary: true, clientX: 620, clientY: 280 });
+    const targetConnector = screen.getByRole('button', { name: '节点 节点B 左侧连接点' });
+    fireEvent.pointerUp(targetConnector, { pointerId: 9, pointerType: 'touch', button: 0, isPrimary: true, clientX: 470, clientY: 430 });
+
+    const edgePath = document.querySelector('[data-flow-edge-path="true"]');
+    expect(edgePath).not.toBeNull();
+    fireEvent.click(edgePath as Element);
+    expect(screen.queryByRole('button', { name: '删除所选连线' })).not.toBeInTheDocument();
+    await userEvent.keyboard('{Delete}');
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-flow-edge-path="true"]')).toBeNull();
+    });
+  });
+
+  it('opens mobile flow list as drawer from toolbar', async () => {
+    setViewportWidth(390);
+    mockListKanbanTasks.mockResolvedValue([
+      buildKanbanTask({
+        id: 'task-drawer-1',
+        extras: {
+          requirement_id: 'req-flow-drawer',
+          requirement_title: '移动流程',
+          flow_node: 'drawer_1',
+          dependencies: 'none',
+          sensitive: 'false',
+        },
+      }),
+    ]);
+
+    renderFlowPage('/flow/edit/req-flow-drawer');
+    await screen.findByRole('toolbar', { name: '流程编辑工具栏' });
+
+    expect(screen.queryByLabelText('流程列表侧栏')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '流程列表' }));
+
+    expect(await screen.findByRole('dialog', { name: '流程列表抽屉' })).toBeInTheDocument();
+    expect(screen.getByLabelText('流程列表侧栏')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '切换流程-移动流程' })).toBeInTheDocument();
+  });
+
+  it('persists sidebar filters across remounts', async () => {
+    upsertFlowDraft({
+      id: 'draft-filter-a',
+      name: '草稿流程甲',
+      requirement: '',
+      nodes: [],
+      edges: [],
+      lanes: [],
+      node_lane_by_id: {},
+      planner_session_key: null,
+      execution_session_prefix: null,
+      executor_agent_id: null,
+      created_at: '2026-03-29T08:00:00Z',
+      updated_at: '2026-03-29T08:00:00Z',
+    });
+
+    const firstRender = renderFlowPage('/flow/edit/new');
+    await screen.findByRole('toolbar', { name: '流程编辑工具栏' });
+
+    const filterInput = screen.getByLabelText('流程筛选');
+    await userEvent.clear(filterInput);
+    await userEvent.type(filterInput, '草稿');
+    await userEvent.selectOptions(screen.getByLabelText('来源筛选'), 'draft');
+    await userEvent.selectOptions(screen.getByLabelText('流程排序'), 'name_asc');
+
+    firstRender.unmount();
+
+    renderFlowPage('/flow/edit/new');
+    await screen.findByRole('toolbar', { name: '流程编辑工具栏' });
+
+    expect(screen.getByLabelText('流程筛选')).toHaveValue('草稿');
+    expect(screen.getByLabelText('来源筛选')).toHaveValue('draft');
+    expect(screen.getByLabelText('流程排序')).toHaveValue('name_asc');
+  });
+
+  it('groups sidebar flows into 当前 草稿 已提交 sections', async () => {
+    mockListKanbanTasks.mockResolvedValue([
+      buildKanbanTask({
+        id: 'task-current',
+        extras: {
+          requirement_id: 'req-flow-a',
+          requirement_title: '流程A',
+          flow_node: 'a_1',
+          dependencies: 'none',
+          sensitive: 'false',
+        },
+      }),
+      buildKanbanTask({
+        id: 'task-submitted',
+        extras: {
+          requirement_id: 'req-flow-b',
+          requirement_title: '流程B',
+          flow_node: 'b_1',
+          dependencies: 'none',
+          sensitive: 'false',
+        },
+      }),
+    ]);
+    upsertFlowDraft({
+      id: 'draft-group-c',
+      name: '草稿流程C',
+      requirement: '',
+      nodes: [],
+      edges: [],
+      lanes: [],
+      node_lane_by_id: {},
+      planner_session_key: null,
+      execution_session_prefix: null,
+      executor_agent_id: null,
+      created_at: '2026-03-29T08:00:00Z',
+      updated_at: '2026-03-29T08:00:00Z',
+    });
+
+    renderFlowPage('/flow/edit/req-flow-a');
+    await screen.findByRole('toolbar', { name: '流程编辑工具栏' });
+
+    expect(screen.getByLabelText('流程分组-当前')).toHaveTextContent('流程A');
+    expect(screen.getByLabelText('流程分组-草稿')).toHaveTextContent('草稿流程C');
+    expect(screen.getByLabelText('流程分组-已提交')).toHaveTextContent('流程B');
+    expect(screen.getAllByRole('button', { name: '切换流程-流程A' })).toHaveLength(1);
+  });
+
+  it('supports collapse and expand for mobile floating planner window', async () => {
+    setViewportWidth(390);
+    renderFlowPage('/flow/edit/new');
+    await screen.findByRole('toolbar', { name: '流程编辑工具栏' });
+
+    expect(screen.queryByTestId('flow-planner-input')).not.toBeInTheDocument();
+    expect(screen.getByText(/规划摘要/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '展开规划窗口' }));
+
+    expect(await screen.findByTestId('flow-planner-input')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '收起规划窗口' })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '收起规划窗口' }));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('flow-planner-input')).not.toBeInTheDocument();
+    });
+  });
+
+  it('supports explicit mobile node create and edit actions from toolbar', async () => {
+    setViewportWidth(390);
+    renderFlowPage('/flow/edit/new');
+    await screen.findByRole('toolbar', { name: '流程编辑工具栏' });
+
+    await userEvent.click(screen.getByRole('button', { name: '新建节点' }));
+    await screen.findByRole('dialog', { name: '创建节点' });
+    const createTitleInput = screen.getByPlaceholderText('输入节点标题');
+    await userEvent.clear(createTitleInput);
+    await userEvent.type(createTitleInput, '移动端节点');
+    await userEvent.click(screen.getByRole('button', { name: '保存节点' }));
+
+    const nodeButton = await screen.findByRole('button', { name: '流程节点-移动端节点' });
+    await userEvent.click(nodeButton);
+
+    const editButton = screen.getByRole('button', { name: '编辑已选节点' });
+    expect(editButton).toBeEnabled();
+    await userEvent.click(editButton);
+
+    await screen.findByRole('dialog', { name: '编辑节点' });
+    const titleInput = screen.getByPlaceholderText('输入节点标题');
+    await userEvent.clear(titleInput);
+    await userEvent.type(titleInput, '移动端修订节点');
+    await userEvent.click(screen.getByRole('button', { name: '保存节点' }));
+
+    expect(await screen.findByRole('button', { name: '流程节点-移动端修订节点' })).toBeInTheDocument();
   });
 
   it('hides unconnected handles on unselected nodes', async () => {

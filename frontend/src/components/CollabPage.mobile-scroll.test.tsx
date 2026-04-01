@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -76,6 +76,8 @@ describe('CollabPage mobile scroll', () => {
     vi.clearAllMocks();
     window.localStorage.removeItem('linpo.v07.flow_tasks');
     mockListKanbanTasks.mockResolvedValue([]);
+    window.innerWidth = 640;
+    window.dispatchEvent(new Event('resize'));
   });
 
   it('keeps kanban viewport scrollable with horizontal touch-pan for mobile', async () => {
@@ -87,5 +89,64 @@ describe('CollabPage mobile scroll', () => {
     expect(board).toHaveStyle({ overflowX: 'auto' });
     expect(board).toHaveStyle({ overflowY: 'auto' });
     expect(board).toHaveStyle({ touchAction: 'pan-x' });
+  });
+
+  it('switches to single-column swipe mode on narrow mobile screens', async () => {
+    window.innerWidth = 390;
+    window.dispatchEvent(new Event('resize'));
+    mockGetAggregateOverview.mockResolvedValue(buildOverview());
+    mockListKanbanTasks.mockResolvedValue([
+      {
+        id: 'task-queued',
+        board_id: 'default',
+        title: '排队任务',
+        summary: '待执行',
+        status: 'queued',
+        source: 'flow',
+        agent_id: 'agent-a',
+        agent_name: 'Agent A',
+        artifacts: [],
+        extras: {},
+        instance_id: 'instance-a',
+        created_at: '2026-03-27T00:00:00Z',
+        updated_at: '2026-03-27T00:00:00Z',
+      },
+      {
+        id: 'task-running',
+        board_id: 'default',
+        title: '运行任务',
+        summary: '执行中',
+        status: 'running',
+        source: 'flow',
+        agent_id: 'agent-a',
+        agent_name: 'Agent A',
+        artifacts: [],
+        extras: {},
+        instance_id: 'instance-a',
+        created_at: '2026-03-27T00:00:00Z',
+        updated_at: '2026-03-27T00:00:00Z',
+      },
+    ]);
+
+    renderPage();
+
+    const board = await screen.findByTestId('kanban-board');
+    expect(board).toHaveStyle({ overflowX: 'hidden' });
+    expect(board).toHaveStyle({ touchAction: 'pan-y' });
+    expect(screen.getByText('1 / 6')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '待调度', level: 3 })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '进行中', level: 3 })).not.toBeInTheDocument();
+
+    fireEvent.touchStart(board, {
+      touches: [{ clientX: 220, clientY: 120 }],
+    });
+    fireEvent.touchEnd(board, {
+      changedTouches: [{ clientX: 80, clientY: 120 }],
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('2 / 6')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: '进行中', level: 3 })).toBeInTheDocument();
+    });
   });
 });

@@ -35,6 +35,11 @@ import type { BoardTask, BoardViewMode, TaskStatus } from './kanbanTypes';
 import { MarkdownMessage } from './MarkdownMessage';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
+import {
+  getWorkspaceFrameStyle,
+  WORKSPACE_KANBAN_MAX_WIDTH_PX,
+  WORKSPACE_NARROW_MOBILE_BREAKPOINT_PX,
+} from './workspaceLayout';
 
 type StatusColumnKey = TaskStatus | 'blocked';
 
@@ -85,6 +90,7 @@ export default function CollabPage(): JSX.Element {
   const navigate = useNavigate();
   const isMobile = useIsMobile(960);
   const { addToast } = useToast();
+  const [viewportWidth, setViewportWidth] = useState(() => (typeof window === 'undefined' ? 1280 : window.innerWidth));
   const [overview, setOverview] = useState<AggregateOverviewResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -115,6 +121,18 @@ export default function CollabPage(): JSX.Element {
   const [newAgentName, setNewAgentName] = useState('');
   const [customAgentNames, setCustomAgentNames] = useState<string[]>([]);
   const [collapsedColumnIds, setCollapsedColumnIds] = useState<string[]>([]);
+  const [mobileVisibleColumnIndex, setMobileVisibleColumnIndex] = useState(0);
+  const boardTouchStartXRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setViewportWidth(window.innerWidth);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, []);
 
   const loadOverview = useCallback(async () => {
     try {
@@ -399,6 +417,22 @@ export default function CollabPage(): JSX.Element {
     }));
   }, [allAgentNames, allTasks, viewMode]);
 
+  const isNarrowMobileBoard = viewportWidth < WORKSPACE_NARROW_MOBILE_BREAKPOINT_PX;
+  const visibleBoardColumns = isNarrowMobileBoard
+    ? columns.length > 0
+      ? [columns[Math.min(mobileVisibleColumnIndex, columns.length - 1)]]
+      : []
+    : columns;
+
+  useEffect(() => {
+    setMobileVisibleColumnIndex((current) => {
+      if (columns.length === 0) {
+        return 0;
+      }
+      return Math.min(current, columns.length - 1);
+    });
+  }, [columns.length]);
+
   const selectedAgent = useMemo(
     () => assignableAgents.find((item) => item.key === selectedAgentKey) ?? null,
     [assignableAgents, selectedAgentKey]
@@ -465,7 +499,7 @@ export default function CollabPage(): JSX.Element {
     const draftFlowName = requirement ? (requirement.length <= 8 ? requirement : `${requirement.slice(0, 8)}...`) : '';
     setIsCreateModalOpen(false);
     setRequirementInput('');
-    navigate('/flow', {
+    navigate('/flow/edit/new', {
       state: {
         open_create_modal: true,
         draft_requirement: requirement || undefined,
@@ -815,32 +849,63 @@ export default function CollabPage(): JSX.Element {
     setIsOutputPreviewLoading(false);
   }, []);
 
+  const handleBoardTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    if (!isNarrowMobileBoard || event.touches.length !== 1) {
+      boardTouchStartXRef.current = null;
+      return;
+    }
+    boardTouchStartXRef.current = event.touches[0]?.clientX ?? null;
+  }, [isNarrowMobileBoard]);
+
+  const handleBoardTouchEnd = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    if (!isNarrowMobileBoard || columns.length <= 1 || boardTouchStartXRef.current === null) {
+      boardTouchStartXRef.current = null;
+      return;
+    }
+    const endX = event.changedTouches[0]?.clientX ?? boardTouchStartXRef.current;
+    const deltaX = endX - boardTouchStartXRef.current;
+    boardTouchStartXRef.current = null;
+    if (Math.abs(deltaX) < 48) {
+      return;
+    }
+    if (deltaX < 0) {
+      setMobileVisibleColumnIndex((current) => Math.min(current + 1, columns.length - 1));
+      return;
+    }
+    setMobileVisibleColumnIndex((current) => Math.max(current - 1, 0));
+  }, [columns.length, isNarrowMobileBoard]);
+
   return (
     <section style={pageStyle} aria-label="kanban-workbench">
       <header style={isMobile ? { ...flatToolbarStyle, ...flatToolbarMobileStyle } : flatToolbarStyle}>
-        <div style={isMobile ? { ...toolbarStatsStyle, ...toolbarStatsMobileStyle } : toolbarStatsStyle} aria-label="看板统计">
-          <span style={statsItemStyle}>流程数量 {requirementCount}</span>
-        </div>
-        <div style={isMobile ? { ...toolbarGroupStyle, ...toolbarGroupMobileStyle } : toolbarGroupStyle}>
-          <button
-            type="button"
-            style={flatActionButtonStyle}
-            onClick={() => setIsCreateModalOpen(true)}
-            aria-label="➕任务"
-          >
-            ➕任务
-          </button>
-          <select
-            id="view-mode"
-            aria-label="分列方式"
-            value={viewMode}
-            onChange={(event) => setViewMode(event.target.value as BoardViewMode)}
-            style={viewSelectStyle}
-          >
-            <option value="status">按状态分列</option>
-            <option value="agent">按 Agent 分列</option>
-            <option value="flow">按流程分列</option>
-          </select>
+        <div style={isMobile ? { ...toolbarInnerStyle, ...toolbarInnerMobileStyle } : toolbarInnerStyle}>
+          <div style={isMobile ? { ...toolbarStatsStyle, ...toolbarStatsMobileStyle } : toolbarStatsStyle} aria-label="看板统计">
+            <span style={statsItemStyle}>流程数量 {requirementCount}</span>
+            {isNarrowMobileBoard && columns.length > 0 ? (
+              <span style={statsItemStyle}>{mobileVisibleColumnIndex + 1} / {columns.length}</span>
+            ) : null}
+          </div>
+          <div style={isMobile ? { ...toolbarGroupStyle, ...toolbarGroupMobileStyle } : toolbarGroupStyle}>
+            <button
+              type="button"
+              style={isMobile ? { ...flatActionButtonStyle, ...flatActionButtonMobileStyle } : flatActionButtonStyle}
+              onClick={() => setIsCreateModalOpen(true)}
+              aria-label="➕任务"
+            >
+              ➕任务
+            </button>
+            <select
+              id="view-mode"
+              aria-label="分列方式"
+              value={viewMode}
+              onChange={(event) => setViewMode(event.target.value as BoardViewMode)}
+              style={isMobile ? { ...viewSelectStyle, ...viewSelectMobileStyle } : viewSelectStyle}
+            >
+              <option value="status">按状态分列</option>
+              <option value="agent">按 Agent 分列</option>
+              <option value="flow">按流程分列</option>
+            </select>
+          </div>
         </div>
       </header>
 
@@ -935,19 +1000,19 @@ export default function CollabPage(): JSX.Element {
       ) : null}
 
       {selectedTask ? (
-        <div style={modalOverlayStyle} role="dialog" aria-modal="true" aria-label="任务详情">
-          <div style={taskDetailCardStyle}>
-            <div style={taskDetailTopRowStyle}>
+        <div style={isMobile ? { ...modalOverlayStyle, ...modalOverlayMobileStyle } : modalOverlayStyle} role="dialog" aria-modal="true" aria-label="任务详情">
+          <div style={isMobile ? { ...taskDetailCardStyle, ...taskDetailCardMobileStyle } : taskDetailCardStyle}>
+            <div style={isMobile ? { ...taskDetailTopRowStyle, ...taskDetailTopRowMobileStyle } : taskDetailTopRowStyle}>
               <div style={taskDetailTopTitleBlockStyle}>
                 <h3 style={modalTitleStyle}>任务详情</h3>
                 <p style={taskDetailTitleStyle}>{selectedTask.title}</p>
               </div>
-              <button type="button" style={flatActionButtonStyle} onClick={() => setSelectedTask(null)}>
+              <button type="button" style={isMobile ? { ...flatActionButtonStyle, ...flatActionButtonMobileStyle } : flatActionButtonStyle} onClick={() => setSelectedTask(null)}>
                 关闭
               </button>
             </div>
 
-            <div style={taskDetailTabsStyle} role="tablist" aria-label="任务详情标签">
+            <div style={isMobile ? { ...taskDetailTabsStyle, ...taskDetailTabsMobileStyle } : taskDetailTabsStyle} role="tablist" aria-label="任务详情标签">
               <button
                 type="button"
                 role="tab"
@@ -1187,6 +1252,21 @@ export default function CollabPage(): JSX.Element {
         </div>
       ) : null}
 
+      <div
+        style={getWorkspaceFrameStyle({
+          isMobile,
+          maxWidthPx: WORKSPACE_KANBAN_MAX_WIDTH_PX,
+          desktopPadding: '0 0.85rem 0.85rem',
+          mobilePadding: '0 0.5rem 0.5rem',
+          extra: {
+            flex: 1,
+            minHeight: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            margin: isMobile ? '0 auto' : '0 auto 0 0',
+          },
+        })}
+      >
       <div style={isMobile ? boardShellMobileStyle : boardShellStyle}>
         {loadError ? (
           <div style={errorPanelStyle}>
@@ -1195,20 +1275,27 @@ export default function CollabPage(): JSX.Element {
           </div>
         ) : null}
 
-        <div style={isMobile ? mobileBoardViewportStyle : boardViewportStyle} data-testid="kanban-board">
-          <div style={isMobile ? mobileBoardTrackStyle : boardTrackStyle}>
-            {columns.map((column) => {
-              const isCollapsed = collapsedColumnIds.includes(column.id);
+        <div
+          style={getBoardViewportStyle({ isMobile, isNarrowMobileBoard })}
+          data-testid="kanban-board"
+          onTouchStart={handleBoardTouchStart}
+          onTouchEnd={handleBoardTouchEnd}
+        >
+          <div style={getBoardTrackStyle({ isMobile, isNarrowMobileBoard })}>
+            {visibleBoardColumns.map((column) => {
+              const isCollapsed = isNarrowMobileBoard ? false : collapsedColumnIds.includes(column.id);
               return (
               <article
                 key={column.id}
                 style={
                   isCollapsed
                     ? (isMobile ? mobileCollapsedColumnStyle : collapsedColumnStyle)
-                    : (isMobile ? mobileColumnStyle : columnStyle)
+                    : isNarrowMobileBoard
+                      ? singleColumnStyle
+                      : (isMobile ? mobileColumnStyle : columnStyle)
                 }
                 data-column-collapsed={isCollapsed ? 'true' : 'false'}
-                onDoubleClick={isCollapsed ? () => toggleColumnCollapsed(column.id) : undefined}
+                onDoubleClick={!isNarrowMobileBoard && isCollapsed ? () => toggleColumnCollapsed(column.id) : undefined}
                 title={isCollapsed ? `展开列 ${column.title}` : undefined}
               >
                 {isCollapsed ? (
@@ -1224,8 +1311,8 @@ export default function CollabPage(): JSX.Element {
                   <>
                     <header
                       style={columnHeaderStyle}
-                      onDoubleClick={() => toggleColumnCollapsed(column.id)}
-                      title={`折叠列 ${column.title}`}
+                      onDoubleClick={!isNarrowMobileBoard ? () => toggleColumnCollapsed(column.id) : undefined}
+                      title={!isNarrowMobileBoard ? `折叠列 ${column.title}` : undefined}
                     >
                       <h3 style={columnTitleStyle}>{column.title}</h3>
                       <div style={columnHeaderActionStyle}>
@@ -1328,7 +1415,7 @@ export default function CollabPage(): JSX.Element {
               );
             })}
 
-            {viewMode === 'agent' ? (
+              {viewMode === 'agent' && !isNarrowMobileBoard ? (
               <article style={isMobile ? mobileAddAgentColumnStyle : addAgentColumnStyle}>
                 <header style={columnHeaderStyle}>
                   <h3 style={columnTitleStyle}>新增 Agent</h3>
@@ -1345,9 +1432,10 @@ export default function CollabPage(): JSX.Element {
                   <p style={addAgentHintStyle}>创建主 Agent 列，后续任务可直接投放。</p>
                 </div>
               </article>
-            ) : null}
+              ) : null}
           </div>
         </div>
+      </div>
       </div>
     </section>
   );
@@ -2033,7 +2121,7 @@ const boardShellStyle: React.CSSProperties = {
   flex: 1,
   minHeight: 0,
   width: '100%',
-  padding: '0 0.85rem 0.85rem',
+  padding: '0 0 0.85rem',
   display: 'flex',
   flexDirection: 'column',
   gap: '0.7rem',
@@ -2042,7 +2130,7 @@ const boardShellStyle: React.CSSProperties = {
 
 const boardShellMobileStyle: React.CSSProperties = {
   ...boardShellStyle,
-  padding: '0 0.5rem 0.5rem',
+  padding: '0 0 0.5rem',
   gap: '0.55rem',
 };
 
@@ -2051,10 +2139,21 @@ const flatToolbarStyle: React.CSSProperties = {
   top: 0,
   zIndex: 60,
   border: '1px solid rgba(15, 23, 42, 0.1)',
-  borderRadius: '0.4rem',
+  borderRadius: 0,
   background: 'rgba(255, 255, 255, 0.44)',
   backdropFilter: 'blur(8px)',
-  padding: '0.55rem 0.65rem',
+  borderLeft: 'none',
+  borderRight: 'none',
+  display: 'block',
+  padding: '0.55rem 0.85rem',
+};
+
+const flatToolbarMobileStyle: React.CSSProperties = {
+  borderRadius: 0,
+  padding: '0.45rem 0.5rem',
+};
+
+const toolbarInnerStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
@@ -2062,8 +2161,7 @@ const flatToolbarStyle: React.CSSProperties = {
   flexWrap: 'wrap',
 };
 
-const flatToolbarMobileStyle: React.CSSProperties = {
-  padding: '0.45rem 0.5rem',
+const toolbarInnerMobileStyle: React.CSSProperties = {
   gap: '0.45rem',
 };
 
@@ -2077,7 +2175,8 @@ const toolbarGroupStyle: React.CSSProperties = {
 
 const toolbarGroupMobileStyle: React.CSSProperties = {
   width: '100%',
-  justifyContent: 'space-between',
+  justifyContent: 'stretch',
+  alignItems: 'stretch',
 };
 
 const toolbarStatsStyle: React.CSSProperties = {
@@ -2112,6 +2211,11 @@ const flatActionButtonStyle: React.CSSProperties = {
   cursor: 'pointer',
 };
 
+const flatActionButtonMobileStyle: React.CSSProperties = {
+  flex: '0 0 auto',
+  whiteSpace: 'nowrap',
+};
+
 const modalLabelStyle: React.CSSProperties = {
   fontSize: '0.8rem',
   color: '#334155',
@@ -2126,6 +2230,11 @@ const viewSelectStyle: React.CSSProperties = {
   background: 'rgba(255, 255, 255, 0.72)',
 };
 
+const viewSelectMobileStyle: React.CSSProperties = {
+  flex: '1 1 0',
+  minWidth: 0,
+};
+
 const modalOverlayStyle: React.CSSProperties = {
   position: 'fixed',
   inset: 0,
@@ -2134,6 +2243,12 @@ const modalOverlayStyle: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'center',
   zIndex: 140,
+};
+
+const modalOverlayMobileStyle: React.CSSProperties = {
+  alignItems: 'flex-start',
+  overflowY: 'auto',
+  padding: '0.75rem',
 };
 
 const modalCardStyle: React.CSSProperties = {
@@ -2189,6 +2304,14 @@ const taskDetailCardStyle: React.CSSProperties = {
   gap: '0.65rem',
 };
 
+const taskDetailCardMobileStyle: React.CSSProperties = {
+  width: '100%',
+  height: 'auto',
+  minHeight: 'calc(100vh - 1.5rem)',
+  maxHeight: 'calc(100vh - 1.5rem)',
+  padding: '0.72rem',
+};
+
 const taskDetailTitleStyle: React.CSSProperties = {
   margin: '0',
   fontSize: '0.98rem',
@@ -2204,6 +2327,11 @@ const taskDetailTopRowStyle: React.CSSProperties = {
   flexShrink: 0,
 };
 
+const taskDetailTopRowMobileStyle: React.CSSProperties = {
+  alignItems: 'stretch',
+  flexDirection: 'column',
+};
+
 const taskDetailTopTitleBlockStyle: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
@@ -2217,6 +2345,11 @@ const taskDetailTabsStyle: React.CSSProperties = {
   gap: '0.42rem',
   flexWrap: 'wrap',
   flexShrink: 0,
+};
+
+const taskDetailTabsMobileStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
 };
 
 const taskDetailTabButtonStyle: React.CSSProperties = {
@@ -2704,8 +2837,21 @@ const mobileBoardViewportStyle: React.CSSProperties = {
   overscrollBehavior: 'contain',
 };
 
+function getBoardViewportStyle(params: { isMobile: boolean; isNarrowMobileBoard: boolean }): React.CSSProperties {
+  const { isMobile, isNarrowMobileBoard } = params;
+  if (isNarrowMobileBoard) {
+    return {
+      ...mobileBoardViewportStyle,
+      overflowX: 'hidden',
+      touchAction: 'pan-y',
+    };
+  }
+  return isMobile ? mobileBoardViewportStyle : boardViewportStyle;
+}
+
 const boardTrackStyle: React.CSSProperties = {
   height: '100%',
+  width: 'max-content',
   minWidth: 'max-content',
   display: 'flex',
   gap: '0.65rem',
@@ -2724,6 +2870,27 @@ const mobileBoardTrackStyle: React.CSSProperties = {
   paddingBottom: '0.25rem',
   paddingRight: '0.25rem',
 };
+
+function getBoardTrackStyle(params: {
+  isMobile: boolean;
+  isNarrowMobileBoard: boolean;
+}): React.CSSProperties {
+  const { isMobile, isNarrowMobileBoard } = params;
+  if (isNarrowMobileBoard) {
+    return {
+      ...mobileBoardTrackStyle,
+      width: '100%',
+      minWidth: '100%',
+      paddingRight: 0,
+      justifyContent: 'stretch',
+    };
+  }
+  return {
+    ...(isMobile ? mobileBoardTrackStyle : boardTrackStyle),
+    minWidth: 'max-content',
+    justifyContent: 'flex-start',
+  };
+}
 
 const columnStyle: React.CSSProperties = {
   width: `${KANBAN_COLUMN_WIDTH_PX}px`,
@@ -2747,6 +2914,14 @@ const mobileColumnStyle: React.CSSProperties = {
   minWidth: `${KANBAN_MOBILE_COLUMN_MIN_PX}px`,
   maxWidth: `${KANBAN_MOBILE_COLUMN_MAX_PX}px`,
   flex: `0 0 ${KANBAN_MOBILE_COLUMN_VW}vw`,
+};
+
+const singleColumnStyle: React.CSSProperties = {
+  ...columnStyle,
+  width: '100%',
+  minWidth: 0,
+  maxWidth: '100%',
+  flex: '0 0 100%',
 };
 
 const collapsedColumnStyle: React.CSSProperties = {

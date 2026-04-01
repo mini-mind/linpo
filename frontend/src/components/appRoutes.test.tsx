@@ -33,10 +33,6 @@ vi.mock('./FlowPage', () => ({
   FlowPage: () => <div>flow-page</div>,
 }));
 
-vi.mock('./FlowListPage', () => ({
-  FlowListPage: () => <div>flow-list-page</div>,
-}));
-
 vi.mock('./LandingPage', () => ({
   LandingPage: () => <div>landing-page</div>,
 }));
@@ -114,7 +110,7 @@ describe('app routes', () => {
     expect(screen.getByText('summary-page')).toBeInTheDocument();
   });
 
-  it('renders /flow as first-class app route', async () => {
+  it('redirects /flow to /flow/edit/new', async () => {
     document.body.innerHTML = '<div id="root"></div>';
     window.history.pushState({}, '', '/flow');
 
@@ -123,10 +119,10 @@ describe('app routes', () => {
     });
 
     await waitFor(() => {
-      expect(window.location.pathname).toBe('/flow');
+      expect(window.location.pathname).toBe('/flow/edit/new');
     });
 
-    expect(screen.getByText('flow-list-page')).toBeInTheDocument();
+    expect(screen.getByText('flow-page')).toBeInTheDocument();
   });
 
   it('renders /flow/edit/:flowId as first-class app route', async () => {

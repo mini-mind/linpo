@@ -20,6 +20,14 @@ import { useCurrentInstanceId } from '../hooks/useCurrentInstance';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
 import { MarkdownMessage } from './MarkdownMessage';
+import {
+  getWorkspaceBodyInnerStyle,
+  getWorkspaceBodyShellStyle,
+  getWorkspaceFrameStyle,
+  getWorkspacePageStyle,
+  WORKSPACE_CONTENT_MAX_WIDTH_PX,
+  WORKSPACE_TOOLBAR_MAX_WIDTH_PX,
+} from './workspaceLayout';
 
 const DEFAULT_BOARD_ID = 'default';
 type SelectedResource =
@@ -249,58 +257,64 @@ export function InstanceFilesPage(): JSX.Element {
   const totalCount = taskItems.length + agentDocs.length;
   const existingCount =
     taskItems.filter((item) => item.exists).length + agentDocs.filter((item) => item.exists).length;
+  const toolbarStatItems = isMobile
+    ? [`总文件数 ${totalCount}`, `可访问 ${existingCount}`]
+    : [`总文件数 ${totalCount}`, `可访问 ${existingCount}`, `任务产物 ${taskItems.length}`, `Agent 文档 ${agentDocs.length}`];
 
   return (
-    <section style={pageStyle} aria-label="instance-files-page">
-      <header style={isMobile ? { ...toolbarStyle, ...toolbarMobileStyle } : toolbarStyle}>
-        <div style={isMobile ? { ...toolbarStatsStyle, ...toolbarStatsMobileStyle } : toolbarStatsStyle}>
-          <span style={statTextStyle}>总文件数 {totalCount}</span>
-          <span style={statTextStyle}>可访问 {existingCount}</span>
-          <span style={statTextStyle}>任务产物 {taskItems.length}</span>
-          <span style={statTextStyle}>Agent 文档 {agentDocs.length}</span>
-        </div>
-        <div style={isMobile ? { ...toolbarActionsStyle, ...toolbarActionsMobileStyle } : toolbarActionsStyle}>
-          <select
-            value={selectedInstanceId}
-            onChange={(event) => setSelectedInstanceId(event.target.value)}
-            style={isMobile ? { ...controlStyle, ...controlMobileStyle } : controlStyle}
-            aria-label="选择实例"
-          >
-            {instances.length === 0 ? <option value="">暂无实例</option> : null}
-            {instances.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name}
-              </option>
+    <section style={getWorkspacePageStyle()} aria-label="instance-files-page">
+      <div style={getWorkspaceFrameStyle({ isMobile, maxWidthPx: WORKSPACE_TOOLBAR_MAX_WIDTH_PX })}>
+        <header style={isMobile ? { ...toolbarStyle, ...toolbarMobileStyle } : toolbarStyle}>
+          <div style={isMobile ? { ...toolbarStatsStyle, ...toolbarStatsMobileStyle } : toolbarStatsStyle}>
+            {toolbarStatItems.map((item) => (
+              <span key={item} style={statTextStyle}>
+                {item}
+              </span>
             ))}
-          </select>
-          <input
-            value={keyword}
-            onChange={(event) => setKeyword(event.target.value)}
-            placeholder="搜索路径/任务/文档"
-            style={isMobile ? { ...searchInputStyle, ...searchInputMobileStyle } : searchInputStyle}
-            aria-label="搜索实例文件"
-          />
-          <label style={isMobile ? { ...checkboxLabelStyle, ...checkboxLabelMobileStyle } : checkboxLabelStyle}>
+          </div>
+          <div style={isMobile ? { ...toolbarActionsStyle, ...toolbarActionsMobileStyle } : toolbarActionsStyle}>
+            <select
+              value={selectedInstanceId}
+              onChange={(event) => setSelectedInstanceId(event.target.value)}
+              style={isMobile ? { ...controlStyle, ...controlMobileStyle } : controlStyle}
+              aria-label="选择实例"
+            >
+              {instances.length === 0 ? <option value="">暂无实例</option> : null}
+              {instances.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
             <input
-              type="checkbox"
-              checked={onlyExisting}
-              onChange={(event) => setOnlyExisting(event.target.checked)}
+              value={keyword}
+              onChange={(event) => setKeyword(event.target.value)}
+              placeholder="搜索路径/任务/文档"
+              style={isMobile ? { ...searchInputStyle, ...searchInputMobileStyle } : searchInputStyle}
+              aria-label="搜索实例文件"
             />
-            <span>仅可访问</span>
-          </label>
-          <button
-            type="button"
-            style={isMobile ? { ...buttonStyle, ...buttonMobileStyle } : buttonStyle}
-            onClick={() => void loadFiles()}
-            disabled={isLoading}
-          >
-            {isLoading ? '刷新中...' : '刷新'}
-          </button>
-        </div>
-      </header>
+            <label style={isMobile ? { ...checkboxLabelStyle, ...checkboxLabelMobileStyle } : checkboxLabelStyle}>
+              <input
+                type="checkbox"
+                checked={onlyExisting}
+                onChange={(event) => setOnlyExisting(event.target.checked)}
+              />
+              <span>仅可访问</span>
+            </label>
+            <button
+              type="button"
+              style={isMobile ? { ...buttonStyle, ...buttonMobileStyle } : buttonStyle}
+              onClick={() => void loadFiles()}
+              disabled={isLoading}
+            >
+              {isLoading ? '刷新中...' : '刷新'}
+            </button>
+          </div>
+        </header>
+      </div>
 
-      <div style={isMobile ? bodyShellMobileStyle : bodyShellStyle}>
-        <div style={getBodyStyle(isMobile)}>
+      <div style={getWorkspaceBodyShellStyle({ isMobile, extra: isMobile ? bodyShellMobileStyle : bodyShellStyle })}>
+        <div style={getWorkspaceBodyInnerStyle({ isMobile, maxWidthPx: WORKSPACE_CONTENT_MAX_WIDTH_PX, extra: getBodyStyle(isMobile) })}>
           <aside style={listPanelStyle}>
             {selectedInstance ? <p style={panelTitleStyle}>实例：{selectedInstance.name}</p> : null}
             {loadError ? <p style={errorTextStyle}>{loadError}</p> : null}
@@ -389,20 +403,20 @@ export function InstanceFilesPage(): JSX.Element {
                     </button>
                   </div>
                 </div>
-                <div style={metaGridStyle}>
-                  <span style={metaItemStyle}>路径：{selectedTaskFile?.path ?? selectedAgentDoc?.path ?? '-'}</span>
-                  <span style={metaItemStyle}>
+                <div style={isMobile ? { ...metaGridStyle, ...metaGridMobileStyle } : metaGridStyle}>
+                  <span style={isMobile ? { ...metaItemStyle, ...metaItemMobileStyle } : metaItemStyle}>路径：{selectedTaskFile?.path ?? selectedAgentDoc?.path ?? '-'}</span>
+                  <span style={isMobile ? { ...metaItemStyle, ...metaItemMobileStyle } : metaItemStyle}>
                     大小：{formatSize(selectedTaskFile?.size_bytes ?? selectedAgentDoc?.size_bytes ?? null)}
                   </span>
-                  <span style={metaItemStyle}>更新时间：{selectedTaskFile?.updated_at ?? selectedAgentDoc?.updated_at ?? '-'}</span>
+                  <span style={isMobile ? { ...metaItemStyle, ...metaItemMobileStyle } : metaItemStyle}>更新时间：{selectedTaskFile?.updated_at ?? selectedAgentDoc?.updated_at ?? '-'}</span>
                   {selectedTaskFile ? (
                     <>
-                      <span style={metaItemStyle}>任务：{selectedTaskFile.task_title}</span>
-                      <span style={metaItemStyle}>状态：{selectedTaskFile.task_status}</span>
+                      <span style={isMobile ? { ...metaItemStyle, ...metaItemMobileStyle } : metaItemStyle}>任务：{selectedTaskFile.task_title}</span>
+                      <span style={isMobile ? { ...metaItemStyle, ...metaItemMobileStyle } : metaItemStyle}>状态：{selectedTaskFile.task_status}</span>
                     </>
                   ) : null}
                   {selectedAgentDoc ? (
-                    <span style={metaItemStyle}>Agent：{selectedAgentDoc.agent_name || selectedAgentDoc.agent_id}</span>
+                    <span style={isMobile ? { ...metaItemStyle, ...metaItemMobileStyle } : metaItemStyle}>Agent：{selectedAgentDoc.agent_name || selectedAgentDoc.agent_id}</span>
                   ) : null}
                 </div>
                 <div style={previewBodyStyle}>
@@ -444,16 +458,6 @@ function formatSize(sizeBytes: number | null): string {
   if (sizeBytes < 1024 * 1024) return `${(sizeBytes / 1024).toFixed(1)} KB`;
   return `${(sizeBytes / (1024 * 1024)).toFixed(2)} MB`;
 }
-
-const pageStyle: React.CSSProperties = {
-  width: '100%',
-  height: '100%',
-  minHeight: 0,
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '0.55rem',
-  overflow: 'hidden',
-};
 
 const toolbarStyle: React.CSSProperties = {
   position: 'sticky',
@@ -549,6 +553,8 @@ const checkboxLabelStyle: React.CSSProperties = {
 
 const checkboxLabelMobileStyle: React.CSSProperties = {
   minHeight: '2.1rem',
+  justifyContent: 'space-between',
+  width: '100%',
 };
 
 const buttonStyle: React.CSSProperties = {
@@ -563,32 +569,22 @@ const buttonStyle: React.CSSProperties = {
 };
 
 const buttonMobileStyle: React.CSSProperties = {
-  marginLeft: 'auto',
-};
-
-const bodyShellStyle: React.CSSProperties = {
-  flex: 1,
-  minHeight: 0,
   width: '100%',
-  padding: '0 0.85rem 0.85rem',
-  display: 'flex',
-  justifyContent: 'center',
-  boxSizing: 'border-box',
+  marginLeft: 0,
 };
 
-const bodyShellMobileStyle: React.CSSProperties = {
-  ...bodyShellStyle,
-  padding: '0 0.5rem 0.5rem',
-};
+const bodyShellStyle: React.CSSProperties = {};
+
+const bodyShellMobileStyle: React.CSSProperties = {};
 
 function getBodyStyle(isMobile: boolean): React.CSSProperties {
   return {
     width: '100%',
-    maxWidth: isMobile ? '100%' : '1680px',
+    maxWidth: isMobile ? '100%' : `${WORKSPACE_CONTENT_MAX_WIDTH_PX}px`,
     minHeight: 0,
     display: 'grid',
     gridTemplateColumns: isMobile ? '1fr' : 'minmax(380px, 460px) minmax(0, 1fr)',
-    gridTemplateRows: isMobile ? 'minmax(220px, 32vh) minmax(0, 1fr)' : undefined,
+    gridTemplateRows: isMobile ? 'minmax(180px, 28vh) minmax(0, 1fr)' : undefined,
     gap: '0.62rem',
     overflow: 'hidden',
     flex: 1,
@@ -638,6 +634,8 @@ const listWrapStyle: React.CSSProperties = {
   gap: '0.42rem',
   overflowY: 'auto',
   minHeight: 0,
+  WebkitOverflowScrolling: 'touch',
+  touchAction: 'pan-y',
 };
 
 function getRowStyle(active: boolean): React.CSSProperties {
@@ -749,12 +747,24 @@ const metaGridStyle: React.CSSProperties = {
   gap: '0.36rem',
 };
 
+const metaGridMobileStyle: React.CSSProperties = {
+  gridTemplateColumns: '1fr',
+};
+
 const metaItemStyle: React.CSSProperties = {
   fontSize: '0.72rem',
   color: '#334155',
   whiteSpace: 'nowrap',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
+};
+
+const metaItemMobileStyle: React.CSSProperties = {
+  whiteSpace: 'normal',
+  overflow: 'visible',
+  textOverflow: 'clip',
+  overflowWrap: 'anywhere',
+  wordBreak: 'break-word',
 };
 
 const previewBodyStyle: React.CSSProperties = {
@@ -765,6 +775,8 @@ const previewBodyStyle: React.CSSProperties = {
   background: 'rgba(248, 250, 252, 0.8)',
   padding: '0.58rem',
   overflow: 'auto',
+  WebkitOverflowScrolling: 'touch',
+  touchAction: 'pan-y',
 };
 
 const jsonStyle: React.CSSProperties = {

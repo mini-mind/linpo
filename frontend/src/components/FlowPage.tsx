@@ -6,6 +6,7 @@ import {
   type BoardRealtimeMessage,
 } from '../api/realtimeClient';
 import {
+  deleteKanbanRequirementTasks,
   continueFlowRequirement,
   confirmFlowToKanban,
   generateFlowFromRequirement,
@@ -19,6 +20,7 @@ import type {
   AggregateOverviewAgentItem,
   AggregateOverviewResponse,
   FlowCanvasEdge,
+  FlowChatMessageItem,
   FlowCanvasNode,
   FlowConfirmResponse,
   FlowGenerateResponse,
@@ -27,15 +29,19 @@ import type {
 } from '../api/types';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
+import { MarkdownMessage } from './MarkdownMessage';
 import {
   buildDraftFlowName,
   deleteFlowDraft,
   getFlowDraftById,
+  listFlowDrafts,
   upsertFlowDraft,
 } from './flowDraftStore';
 import type { FlowDraftLaneRecord, FlowDraftRecord } from './flowDraftStore';
 
 type FlowRouteState = {
+  open_create_modal?: boolean;
+  draft_flow_name?: string;
   draft_requirement?: string;
   draft_executor_agent_id?: string;
   draft_flow_id?: string;
@@ -114,6 +120,7 @@ type LaneModalState = {
 };
 
 type DragState = {
+  pointerId: number;
   startX: number;
   startY: number;
   nodeIds: string[];
@@ -127,6 +134,7 @@ type ConnectorHandle = {
 };
 
 type ConnectionDragState = {
+  pointerId: number;
   from: ConnectorHandle;
   currentX: number;
   currentY: number;
@@ -145,8 +153,40 @@ const NODE_DEFAULT_MARGIN = 24;
 const NODE_VERTICAL_GAP = 160;
 const FIXED_FLOW_PLANNER_AGENT_ID = 'claw3';
 const FLOW_BOARD_REALTIME_ID = 'default';
+const FLOW_SIDEBAR_PREFERENCES_STORAGE_KEY = 'linpo.flow-sidebar-preferences.v1';
 
 type FlowRuntimeState = 'idle' | 'running' | 'blocked';
+
+type FlowSidebarItem = {
+  id: string;
+  name: string;
+  source: 'submitted' | 'draft' | 'current';
+  updatedAt: string;
+  statusLabel: string;
+  nodeCount: number;
+  hasSubmitted: boolean;
+  hasDraft: boolean;
+};
+
+type PlannerCollapsedSummaryMeta = {
+  label: string;
+  text: string;
+};
+
+type FlowFilterSource = 'all' | 'submitted' | 'draft';
+type FlowSortMode = 'updated_desc' | 'updated_asc' | 'name_asc' | 'name_desc' | 'node_desc';
+
+type FlowSidebarPreferences = {
+  keyword: string;
+  source: FlowFilterSource;
+  sort: FlowSortMode;
+};
+
+type FlowSidebarSection = {
+  key: 'current' | 'draft' | 'submitted';
+  label: string;
+  items: FlowSidebarItem[];
+};
 
 export function FlowPage(): JSX.Element {
   const navigate = useNavigate();
@@ -177,11 +217,21 @@ export function FlowPage(): JSX.Element {
   const [isSubmitConfirmOpen, setIsSubmitConfirmOpen] = useState(false);
 
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [flowDisplayName, setFlowDisplayName] = useState('未命名流程');
   const [flowNameInput, setFlowNameInput] = useState('未命名流程');
   const [flowRequirement, setFlowRequirement] = useState('');
+  const [createFlowNameInput, setCreateFlowNameInput] = useState('');
+  const [createRequirementInput, setCreateRequirementInput] = useState('');
   const [plannerInput, setPlannerInput] = useState('');
+  const [plannerMessages, setPlannerMessages] = useState<FlowChatMessageItem[]>([]);
   const [isPlanning, setIsPlanning] = useState(false);
+  const [isGeneratingFlow, setIsGeneratingFlow] = useState(false);
+  const [isMobileFlowSidebarOpen, setIsMobileFlowSidebarOpen] = useState(false);
+  const [isMobilePlannerExpanded, setIsMobilePlannerExpanded] = useState(false);
+  const [flowFilterKeyword, setFlowFilterKeyword] = useState(() => loadFlowSidebarPreferences().keyword);
+  const [flowFilterSource, setFlowFilterSource] = useState<FlowFilterSource>(() => loadFlowSidebarPreferences().source);
+  const [flowSortMode, setFlowSortMode] = useState<FlowSortMode>(() => loadFlowSidebarPreferences().sort);
 
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
@@ -211,11 +261,26 @@ export function FlowPage(): JSX.Element {
   const blockedSyncSignatureRef = useRef('');
   const blockedSyncTimerRef = useRef<number | null>(null);
   const boardRealtimeRef = useRef<ReturnType<typeof createBoardTasksSseClient> | null>(null);
+  const mobileFlowSidebarTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const activeDrawerFlowButtonRef = useRef<HTMLButtonElement | null>(null);
+  const mobileDrawerCloseButtonRef = useRef<HTMLButtonElement | null>(null);
+  const flowSidebarFilterInputRef = useRef<HTMLInputElement | null>(null);
+  const wasMobileDrawerOpenRef = useRef(false);
 
   const routeState = useMemo<FlowRouteState | null>(() => {
     const value = location.state as FlowRouteState | null;
     return value ?? null;
   }, [location.state]);
+
+  useEffect(() => {
+    if (!routeState?.open_create_modal) {
+      return;
+    }
+    setIsCreateModalOpen(true);
+    setCreateRequirementInput(String(routeState.draft_requirement ?? ''));
+    setCreateFlowNameInput(String(routeState.draft_flow_name ?? ''));
+    navigate(`${location.pathname}${location.search}${location.hash}`, { replace: true, state: null });
+  }, [location.hash, location.pathname, location.search, navigate, routeState]);
 
   const resolvedFlowId = (params.flowId ?? '').trim();
   const isNewFlowRoute = resolvedFlowId === '' || resolvedFlowId === 'new';
@@ -356,6 +421,12 @@ export function FlowPage(): JSX.Element {
     }
   }, [selectedExecutorAgentId, uniqueAgents]);
 
+  useEffect(() => {
+    if (!isMobile) {
+      setIsMobileFlowSidebarOpen(false);
+    }
+  }, [isMobile]);
+
   const flowCatalog = useMemo(() => {
     const grouped = groupTasksByRequirement(flowTasks);
     const snapshots = new Map<string, FlowSnapshot>();
@@ -365,6 +436,434 @@ export function FlowPage(): JSX.Element {
     return snapshots;
   }, [flowTasks, uniqueAgents]);
 
+  const flowTasksByRequirement = useMemo(() => groupTasksByRequirement(flowTasks), [flowTasks]);
+
+  const flowSidebarItems = useMemo<FlowSidebarItem[]>(() => {
+    const items = new Map<string, FlowSidebarItem>();
+
+    for (const draft of listFlowDrafts()) {
+      items.set(draft.id, {
+        id: draft.id,
+        name: draft.name.trim() || '未命名流程',
+        source: 'draft',
+        updatedAt: draft.updated_at,
+        statusLabel: '草稿',
+        nodeCount: draft.nodes.length,
+        hasSubmitted: false,
+        hasDraft: true,
+      });
+    }
+
+    for (const [requirementId, snapshot] of flowCatalog.entries()) {
+      const runtime = resolveFlowRuntimeState(flowTasksByRequirement.get(requirementId) ?? []);
+      const nodeCount = flowTasksByRequirement.get(requirementId)?.length ?? snapshot.nodes.length;
+      const existingDraft = items.get(requirementId);
+      items.set(requirementId, {
+        id: requirementId,
+        name: snapshot.requirementTitle.trim() || '未命名流程',
+        source: 'submitted',
+        updatedAt: snapshot.updatedAt,
+        statusLabel: getFlowRuntimeStateLabel(runtime),
+        nodeCount,
+        hasSubmitted: true,
+        hasDraft: existingDraft?.hasDraft ?? false,
+      });
+    }
+
+    const currentId = currentFlowId.trim();
+    if (currentId && !items.has(currentId)) {
+      const currentTasks = flowTasksByRequirement.get(currentId) ?? [];
+      items.set(currentId, {
+        id: currentId,
+        name: flowDisplayName.trim() || '未命名流程',
+        source: isSubmittedFlow ? 'submitted' : 'current',
+        updatedAt: new Date().toISOString(),
+        statusLabel: isSubmittedFlow ? getFlowRuntimeStateLabel(resolveFlowRuntimeState(currentTasks)) : '当前草稿',
+        nodeCount: flowNodes.length,
+        hasSubmitted: isSubmittedFlow,
+        hasDraft: !isSubmittedFlow,
+      });
+    }
+
+    return Array.from(items.values()).sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+  }, [currentFlowId, flowCatalog, flowDisplayName, flowNodes.length, flowTasksByRequirement, isSubmittedFlow]);
+
+  const filteredFlowSidebarItems = useMemo(() => {
+    const keyword = flowFilterKeyword.trim().toLowerCase();
+    const filtered = flowSidebarItems.filter((item) => {
+      if (flowFilterSource === 'draft' && !item.hasDraft) {
+        return false;
+      }
+      if (flowFilterSource === 'submitted' && !item.hasSubmitted) {
+        return false;
+      }
+      if (!keyword) {
+        return true;
+      }
+      return item.name.toLowerCase().includes(keyword) || item.id.toLowerCase().includes(keyword);
+    });
+    filtered.sort((left, right) => {
+      if (flowSortMode === 'updated_asc') {
+        return Date.parse(left.updatedAt) - Date.parse(right.updatedAt);
+      }
+      if (flowSortMode === 'name_asc') {
+        return left.name.localeCompare(right.name, 'zh-CN');
+      }
+      if (flowSortMode === 'name_desc') {
+        return right.name.localeCompare(left.name, 'zh-CN');
+      }
+      if (flowSortMode === 'node_desc') {
+        return right.nodeCount - left.nodeCount || Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+      }
+      return Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+    });
+    return filtered;
+  }, [flowFilterKeyword, flowFilterSource, flowSidebarItems, flowSortMode]);
+
+  const flowSidebarSections = useMemo<FlowSidebarSection[]>(() => {
+    const currentFlowItems: FlowSidebarItem[] = [];
+    const draftFlowItems: FlowSidebarItem[] = [];
+    const submittedFlowItems: FlowSidebarItem[] = [];
+    const activeFlowId = currentFlowId.trim();
+
+    for (const item of filteredFlowSidebarItems) {
+      if (item.id === activeFlowId) {
+        currentFlowItems.push(item);
+        continue;
+      }
+      if (item.hasDraft) {
+        draftFlowItems.push(item);
+        continue;
+      }
+      submittedFlowItems.push(item);
+    }
+
+    const sections: FlowSidebarSection[] = [
+      { key: 'current', label: '当前', items: currentFlowItems },
+      { key: 'draft', label: '草稿', items: draftFlowItems },
+      { key: 'submitted', label: '已提交', items: submittedFlowItems },
+    ];
+    return sections.filter((section) => section.items.length > 0);
+  }, [currentFlowId, filteredFlowSidebarItems]);
+
+  const flowPlannerAgent = useMemo(() => {
+    const directMatch = overview?.agents.find((agent) => agent.agent_id.trim() === FIXED_FLOW_PLANNER_AGENT_ID) ?? null;
+    if (directMatch) {
+      return directMatch;
+    }
+    return overview?.agents[0] ?? null;
+  }, [overview?.agents]);
+
+  const isPlannerExpanded = !isMobile || isMobilePlannerExpanded;
+  const plannerCollapsedSummary = useMemo<PlannerCollapsedSummaryMeta>(() => {
+    if (isPlanning) {
+      return {
+        label: '规划中',
+        text: '正在等待后端返回新的流程草图。',
+      };
+    }
+    const latestMessage = plannerMessages[plannerMessages.length - 1];
+    const latestText = latestMessage?.content?.trim().replace(/\s+/g, ' ') ?? '';
+    if (latestText) {
+      return {
+        label: latestMessage?.role === 'user' ? `最近输入 · ${plannerMessages.length} 条消息` : `最近规划 · ${plannerMessages.length} 条消息`,
+        text: latestText.length > 72 ? `${latestText.slice(0, 72)}...` : latestText,
+      };
+    }
+    const draftInput = plannerInput.trim().replace(/\s+/g, ' ');
+    if (draftInput) {
+      return {
+        label: '未发送草稿',
+        text: draftInput.length > 72 ? `${draftInput.slice(0, 72)}...` : draftInput,
+      };
+    }
+    return {
+      label: '等待规划',
+      text: '点击展开后输入规划指令。',
+    };
+  }, [isPlanning, plannerInput, plannerMessages]);
+
+  useEffect(() => {
+    if (!isMobile) {
+      wasMobileDrawerOpenRef.current = false;
+      return;
+    }
+    if (isMobileFlowSidebarOpen) {
+      window.requestAnimationFrame(() => {
+        if (activeDrawerFlowButtonRef.current) {
+          activeDrawerFlowButtonRef.current.focus();
+          return;
+        }
+        mobileDrawerCloseButtonRef.current?.focus();
+      });
+      wasMobileDrawerOpenRef.current = true;
+      return;
+    }
+    if (wasMobileDrawerOpenRef.current) {
+      window.requestAnimationFrame(() => {
+        mobileFlowSidebarTriggerRef.current?.focus();
+      });
+      wasMobileDrawerOpenRef.current = false;
+    }
+  }, [isMobile, isMobileFlowSidebarOpen]);
+
+  useEffect(() => {
+    persistFlowSidebarPreferences({
+      keyword: flowFilterKeyword,
+      source: flowFilterSource,
+      sort: flowSortMode,
+    });
+  }, [flowFilterKeyword, flowFilterSource, flowSortMode]);
+
+  const navigateToFlowEditor = useCallback(
+    (flowId: string) => {
+      setIsMobileFlowSidebarOpen(false);
+      navigate(`/flow/edit/${encodeURIComponent(flowId)}`);
+    },
+    [navigate]
+  );
+
+  const handleOpenCreateModal = useCallback(() => {
+    setIsCreateModalOpen(true);
+    setCreateFlowNameInput('');
+    setCreateRequirementInput('');
+  }, []);
+
+  const handleCreateFlow = useCallback(async () => {
+    const requirement = createRequirementInput.trim();
+    const rawName = createFlowNameInput.trim();
+    const createdAt = new Date().toISOString();
+    const draftId = `draft_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const resolvedName = rawName || buildDraftFlowName(requirement);
+
+    if (!requirement) {
+      const fallbackLanes = buildInitialLanesFromAgent(flowPlannerAgent?.agent_id ?? '', overview?.agents ?? []);
+      upsertFlowDraft({
+        id: draftId,
+        name: resolvedName,
+        requirement: '',
+        nodes: [],
+        edges: [],
+        lanes: fallbackLanes.map((lane) => ({
+          id: lane.id,
+          name: lane.name,
+          agent_id: lane.agentId,
+          created_at: lane.createdAt,
+        })),
+        node_lane_by_id: {},
+        planner_session_key: null,
+        execution_session_prefix: null,
+        executor_agent_id: flowPlannerAgent?.agent_id ?? null,
+        created_at: createdAt,
+        updated_at: createdAt,
+      });
+      setIsCreateModalOpen(false);
+      setIsMobileFlowSidebarOpen(false);
+      navigate(`/flow/edit/${encodeURIComponent(draftId)}`);
+      return;
+    }
+
+    if (!flowPlannerAgent) {
+      addToast(`当前缺少固定流程 Agent（${FIXED_FLOW_PLANNER_AGENT_ID}），无法生成流程`, 'warning');
+      return;
+    }
+
+    setIsGeneratingFlow(true);
+    try {
+      const generated = await generateFlowFromRequirement(
+        {
+          requirement,
+          instance_id: flowPlannerAgent.instance_id,
+          executor_agent_id: flowPlannerAgent.agent_id,
+          planner_agent_id: FIXED_FLOW_PLANNER_AGENT_ID,
+          manager_agent_id: flowPlannerAgent.agent_id,
+        },
+        { instanceId: flowPlannerAgent.instance_id },
+        'default'
+      );
+      const lanePayload = buildLanesAndNodeLaneMapFromNodes(
+        generated.nodes,
+        overview?.agents ?? [],
+        flowPlannerAgent.agent_id
+      );
+      upsertFlowDraft({
+        id: draftId,
+        name: resolvedName,
+        requirement,
+        nodes: generated.nodes,
+        edges: generated.edges,
+        lanes: lanePayload.lanes.map((lane) => ({
+          id: lane.id,
+          name: lane.name,
+          agent_id: lane.agentId,
+          created_at: lane.createdAt,
+        })),
+        node_lane_by_id: lanePayload.nodeLaneById,
+        planner_session_key: generated.planner_session_key,
+        execution_session_prefix: generated.execution_session_prefix,
+        executor_agent_id: flowPlannerAgent.agent_id,
+        created_at: createdAt,
+        updated_at: createdAt,
+      });
+      setIsCreateModalOpen(false);
+      setIsMobileFlowSidebarOpen(false);
+      navigate(`/flow/edit/${encodeURIComponent(draftId)}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '流程生成失败';
+      addToast(message, 'error');
+    } finally {
+      setIsGeneratingFlow(false);
+    }
+  }, [addToast, createFlowNameInput, createRequirementInput, flowPlannerAgent, navigate, overview?.agents]);
+
+  const handleDeleteCurrentFlow = useCallback(async () => {
+    const flowId = currentFlowId.trim();
+    if (!flowId) {
+      return;
+    }
+    const currentName = flowDisplayName.trim() || '未命名流程';
+    const confirmed = window.confirm(`确认删除流程「${currentName}」吗？`);
+    if (!confirmed) {
+      return;
+    }
+    try {
+      if (isSubmittedFlow) {
+        await deleteKanbanRequirementTasks(flowId, undefined, 'default');
+      }
+      deleteFlowDraft(flowId);
+      setIsDetailOpen(false);
+      addToast('流程已删除', 'success');
+      await refreshFlowTasks();
+      navigate('/flow/edit/new', { replace: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '流程删除失败';
+      addToast(message, 'error');
+    }
+  }, [addToast, currentFlowId, flowDisplayName, isSubmittedFlow, navigate, refreshFlowTasks]);
+
+  const renderFlowSidebarContent = useCallback(
+    (mode: 'desktop' | 'drawer') => {
+      const isDrawerMode = mode === 'drawer';
+      return (
+      <>
+        <div style={isDrawerMode ? { ...flowSidebarHeaderStyle, ...flowSidebarHeaderDrawerStyle } : flowSidebarHeaderStyle}>
+          <div style={flowSidebarTitleWrapStyle}>
+            <h2 style={isDrawerMode ? { ...flowSidebarTitleStyle, ...flowSidebarTitleDrawerStyle } : flowSidebarTitleStyle}>流程列表</h2>
+            <p style={isDrawerMode ? { ...flowSidebarHintStyle, ...flowSidebarHintDrawerStyle } : flowSidebarHintStyle}>筛选、排序并切换草稿与已提交流程。</p>
+          </div>
+          <div style={isDrawerMode ? { ...flowSidebarFiltersStyle, ...flowSidebarFiltersDrawerStyle } : flowSidebarFiltersStyle}>
+            <input
+              ref={flowSidebarFilterInputRef}
+              value={flowFilterKeyword}
+              onChange={(event) => setFlowFilterKeyword(event.target.value)}
+              placeholder="筛选流程（名称/ID）"
+              style={isDrawerMode ? { ...flowSidebarInputStyle, ...flowSidebarInputDrawerStyle } : flowSidebarInputStyle}
+              aria-label="流程筛选"
+            />
+            <div style={isDrawerMode ? { ...flowSidebarSelectRowStyle, ...flowSidebarSelectRowDrawerStyle } : flowSidebarSelectRowStyle}>
+              <select
+                value={flowFilterSource}
+                onChange={(event) => setFlowFilterSource(event.target.value as FlowFilterSource)}
+                style={isDrawerMode ? { ...flowSidebarSelectStyle, ...flowSidebarInputDrawerStyle } : flowSidebarSelectStyle}
+                aria-label="来源筛选"
+              >
+                <option value="all">全部来源</option>
+                <option value="submitted">已提交</option>
+                <option value="draft">草稿</option>
+              </select>
+              <select
+                value={flowSortMode}
+                onChange={(event) => setFlowSortMode(event.target.value as FlowSortMode)}
+                style={isDrawerMode ? { ...flowSidebarSelectStyle, ...flowSidebarInputDrawerStyle } : flowSidebarSelectStyle}
+                aria-label="流程排序"
+              >
+                <option value="updated_desc">更新: 新到旧</option>
+                <option value="updated_asc">更新: 旧到新</option>
+                <option value="name_asc">名称: A-Z</option>
+                <option value="name_desc">名称: Z-A</option>
+                <option value="node_desc">节点: 多到少</option>
+              </select>
+            </div>
+          </div>
+          <div style={isDrawerMode ? { ...flowSidebarHeaderActionsStyle, ...flowSidebarHeaderActionsDrawerStyle } : flowSidebarHeaderActionsStyle}>
+            <button
+              type="button"
+              style={isDrawerMode ? { ...sidebarPrimaryButtonStyle, ...sidebarButtonDrawerStyle } : sidebarPrimaryButtonStyle}
+              onClick={handleOpenCreateModal}
+            >
+              新建流程
+            </button>
+            {mode === 'drawer' ? (
+              <button
+                type="button"
+                style={{ ...sidebarGhostButtonStyle, ...sidebarButtonDrawerStyle }}
+                onClick={() => setIsMobileFlowSidebarOpen(false)}
+                ref={mobileDrawerCloseButtonRef}
+              >
+                关闭
+              </button>
+            ) : null}
+          </div>
+        </div>
+        <div style={isDrawerMode ? { ...flowSidebarListStyle, ...flowSidebarListDrawerStyle } : flowSidebarListStyle}>
+          {flowSidebarSections.length === 0 ? (
+            <div style={isDrawerMode ? { ...flowSidebarEmptyStyle, ...flowSidebarEmptyDrawerStyle } : flowSidebarEmptyStyle}>暂无匹配流程，调整筛选条件或直接新建。</div>
+          ) : (
+            flowSidebarSections.map((section) => (
+              <section
+                key={section.key}
+                style={isDrawerMode ? { ...flowSidebarSectionStyle, ...flowSidebarSectionDrawerStyle } : flowSidebarSectionStyle}
+                aria-label={`流程分组-${section.label}`}
+              >
+                <div style={flowSidebarSectionHeaderStyle}>
+                  <span style={isDrawerMode ? { ...flowSidebarSectionTitleStyle, ...flowSidebarSectionTitleDrawerStyle } : flowSidebarSectionTitleStyle}>
+                    {section.label}
+                  </span>
+                  <span style={isDrawerMode ? { ...flowSidebarSectionCountStyle, ...flowSidebarSectionCountDrawerStyle } : flowSidebarSectionCountStyle}>
+                    {section.items.length}
+                  </span>
+                </div>
+                <div style={flowSidebarSectionListStyle}>
+                  {section.items.map((item) => {
+                    const isActive = item.id === currentFlowId.trim();
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        style={
+                          isActive
+                            ? {
+                                ...(isDrawerMode ? { ...flowSidebarItemStyle, ...flowSidebarItemDrawerStyle } : flowSidebarItemStyle),
+                                ...flowSidebarItemActiveStyle,
+                              }
+                            : isDrawerMode
+                              ? { ...flowSidebarItemStyle, ...flowSidebarItemDrawerStyle }
+                              : flowSidebarItemStyle
+                        }
+                        onClick={() => navigateToFlowEditor(item.id)}
+                        aria-label={`切换流程-${item.name}`}
+                        aria-current={isActive ? 'page' : undefined}
+                        ref={mode === 'drawer' && isActive ? activeDrawerFlowButtonRef : undefined}
+                      >
+                        <span style={isDrawerMode ? { ...flowSidebarItemTitleStyle, ...flowSidebarItemTitleDrawerStyle } : flowSidebarItemTitleStyle}>{item.name}</span>
+                        <span style={isDrawerMode ? { ...flowSidebarItemMetaStyle, ...flowSidebarItemMetaDrawerStyle } : flowSidebarItemMetaStyle}>
+                          {(item.hasSubmitted && item.hasDraft) ? '已提交 + 草稿' : item.hasSubmitted ? '已提交' : '草稿'} · {item.statusLabel}
+                        </span>
+                        <span style={isDrawerMode ? { ...flowSidebarItemMetaStyle, ...flowSidebarItemMetaDrawerStyle } : flowSidebarItemMetaStyle}>节点 {item.nodeCount}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            ))
+          )}
+        </div>
+      </>
+    );
+    },
+    [currentFlowId, flowFilterKeyword, flowFilterSource, flowSidebarSections, flowSortMode, handleOpenCreateModal, navigateToFlowEditor]
+  );
+
   const applyDraftRecord = useCallback((draft: FlowDraftRecord) => {
     const normalizedName = draft.name.trim() || '未命名流程';
     setCurrentFlowId(draft.id);
@@ -373,7 +872,7 @@ export function FlowPage(): JSX.Element {
     setFlowRequirement(draft.requirement);
     setFlowNodes(draft.nodes);
     setFlowEdges(draft.edges);
-    setLastResponse(
+    const restoredResponse =
       draft.planner_session_key || draft.execution_session_prefix
         ? {
             board_id: 'default',
@@ -385,8 +884,9 @@ export function FlowPage(): JSX.Element {
             messages: [],
             created_task_ids: [],
           }
-        : null
-    );
+        : null;
+    setLastResponse(restoredResponse);
+    setPlannerMessages(restoredResponse?.messages ?? []);
     if (draft.executor_agent_id?.trim()) {
       setSelectedExecutorAgentId((current) => current || draft.executor_agent_id?.trim() || '');
     }
@@ -424,6 +924,7 @@ export function FlowPage(): JSX.Element {
     setLanes(snapshot.lanes);
     setNodeLaneById(snapshot.nodeLaneById);
     setLastResponse(snapshot.lastResponse);
+    setPlannerMessages(snapshot.lastResponse.messages ?? []);
     if (snapshot.executorAgentId.trim()) {
       setSelectedExecutorAgentId((current) => current || snapshot.executorAgentId.trim());
     }
@@ -454,7 +955,8 @@ export function FlowPage(): JSX.Element {
           applyDraftRecord(existingDraft);
         } else {
           const routeRequirement = String(routeState?.draft_requirement ?? '');
-          const normalizedName = routeRequirement.trim() ? buildDraftFlowName(routeRequirement) : '未命名流程';
+          const routeDraftName = String(routeState?.draft_flow_name ?? '').trim();
+          const normalizedName = routeDraftName || (routeRequirement.trim() ? buildDraftFlowName(routeRequirement) : '未命名流程');
           const routeAgentId = String(routeState?.draft_executor_agent_id ?? '').trim();
           const fallbackLanes = buildInitialLanesFromAgent(routeAgentId, uniqueAgents);
 
@@ -467,6 +969,7 @@ export function FlowPage(): JSX.Element {
           setLanes(fallbackLanes);
           setNodeLaneById({});
           setLastResponse(null);
+          setPlannerMessages([]);
           if (routeAgentId) {
             setSelectedExecutorAgentId((current) => current || routeAgentId);
           }
@@ -495,6 +998,7 @@ export function FlowPage(): JSX.Element {
             setLanes(fallbackLanes);
             setNodeLaneById({});
             setLastResponse(null);
+            setPlannerMessages([]);
             setIsDraftCanvas(true);
             setIsSubmittedFlow(false);
             setSelectedNodeIds([]);
@@ -528,6 +1032,7 @@ export function FlowPage(): JSX.Element {
         setLanes(snapshot.lanes);
         setNodeLaneById(snapshot.nodeLaneById);
         setLastResponse(snapshot.lastResponse);
+        setPlannerMessages(snapshot.lastResponse.messages ?? []);
       }
     }
   }, [
@@ -645,6 +1150,7 @@ export function FlowPage(): JSX.Element {
   const laneById = useMemo(() => new Map(normalizedLanes.map((lane) => [lane.id, lane])), [normalizedLanes]);
   const nodeById = useMemo(() => new Map(flowNodes.map((node) => [node.id, node])), [flowNodes]);
   const selectedNodeIdSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
+  const selectedSingleNodeId = selectedNodeIds.length === 1 ? selectedNodeIds[0] : null;
 
   const nodesByLane = useMemo(() => {
     const grouped = new Map<string, FlowCanvasNode[]>();
@@ -788,6 +1294,27 @@ export function FlowPage(): JSX.Element {
     });
   }, [addToast, laneLayoutById, laneLayouts, normalizedLanes]);
 
+  const openNodeCreateFromViewport = useCallback(() => {
+    const selectedLayout = selectedSingleNodeId ? nodeRenderLayoutById.get(selectedSingleNodeId) : null;
+    if (selectedLayout) {
+      openNodeCreateModal({
+        x: selectedLayout.left + NODE_WIDTH / 2,
+        y: selectedLayout.top + NODE_HEIGHT + NODE_VERTICAL_GAP / 2,
+      });
+      return;
+    }
+    const viewport = canvasViewportRef.current;
+    if (!viewport) {
+      addToast('画布尚未就绪，请稍后重试', 'warning');
+      return;
+    }
+    const rect = viewport.getBoundingClientRect();
+    openNodeCreateModal({
+      x: viewport.scrollLeft + Math.max(rect.width / 2, LANE_SIDE_PADDING + NODE_WIDTH / 2),
+      y: viewport.scrollTop + Math.max(rect.height / 2, HEADER_HEIGHT + NODE_DEFAULT_MARGIN + NODE_HEIGHT / 2),
+    });
+  }, [addToast, nodeRenderLayoutById, openNodeCreateModal, selectedSingleNodeId]);
+
   const openNodeEditModal = useCallback((nodeId: string) => {
     const node = nodeById.get(nodeId);
     if (!node) {
@@ -806,6 +1333,14 @@ export function FlowPage(): JSX.Element {
       sensitive: node.sensitive,
     });
   }, [nodeById, nodeLaneById, normalizedLanes]);
+
+  const openSelectedNodeForEdit = useCallback(() => {
+    if (!selectedSingleNodeId) {
+      addToast('请先选中一个节点', 'warning');
+      return;
+    }
+    openNodeEditModal(selectedSingleNodeId);
+  }, [addToast, openNodeEditModal, selectedSingleNodeId]);
 
   const openLaneCreateModal = useCallback(() => {
     setLaneModal({
@@ -851,7 +1386,7 @@ export function FlowPage(): JSX.Element {
     openNodeCreateModal(point);
   }, [canEdit, openLaneCreateModal, openNodeCreateModal]);
 
-  const handleCanvasMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+  const handleCanvasPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
     if (
       target.closest('[data-flow-node-card="true"]') ||
@@ -1017,41 +1552,20 @@ export function FlowPage(): JSX.Element {
     setIsSubmittedFlow(false);
   }, [addToast, canEdit]);
 
-  const handleConnectorMouseDown = useCallback((event: React.MouseEvent<HTMLButtonElement>, handle: ConnectorHandle) => {
-    event.stopPropagation();
-    event.preventDefault();
-    if (!canEdit) {
-      addToast('正在规划中，请稍后编辑', 'warning');
-      return;
-    }
-    const point = toCanvasPoint(canvasViewportRef.current, event.clientX, event.clientY);
-    if (!point) {
-      return;
-    }
-    setConnectionDrag({
-      from: handle,
-      currentX: point.x,
-      currentY: point.y,
-    });
-    setSelectedEdgeId(null);
-  }, [addToast, canEdit]);
-
-  const handleConnectorMouseUp = useCallback((event: React.MouseEvent<HTMLButtonElement>, handle: ConnectorHandle) => {
-    event.stopPropagation();
-    event.preventDefault();
+  const commitConnectionToHandle = useCallback((handle: ConnectorHandle) => {
     if (!connectionDrag) {
-      return;
+      return false;
     }
     const sourceNodeId = connectionDrag.from.nodeId;
     if (sourceNodeId === handle.nodeId) {
       setConnectionDrag(null);
-      return;
+      return true;
     }
     const duplicated = flowEdges.some((edge) => edge.source === sourceNodeId && edge.target === handle.nodeId);
     if (duplicated) {
       setConnectionDrag(null);
       addToast('连接已存在', 'warning');
-      return;
+      return true;
     }
     setFlowEdges((current) => [
       ...current,
@@ -1065,10 +1579,43 @@ export function FlowPage(): JSX.Element {
     setIsDraftCanvas(true);
     setIsSubmittedFlow(false);
     setConnectionDrag(null);
+    return true;
   }, [addToast, connectionDrag, flowEdges]);
 
-  const handleNodeMouseDown = useCallback((event: React.MouseEvent<HTMLElement>, nodeId: string) => {
-    if (!canEdit || event.button !== 0) {
+  const handleConnectorPointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>, handle: ConnectorHandle) => {
+    event.stopPropagation();
+    event.preventDefault();
+    if (!canEdit) {
+      addToast('正在规划中，请稍后编辑', 'warning');
+      return;
+    }
+    const point = toCanvasPoint(canvasViewportRef.current, event.clientX, event.clientY);
+    if (!point) {
+      return;
+    }
+    setConnectionDrag({
+      pointerId: event.pointerId,
+      from: handle,
+      currentX: point.x,
+      currentY: point.y,
+    });
+    setSelectedEdgeId(null);
+  }, [addToast, canEdit]);
+
+  const handleConnectorPointerUp = useCallback((event: React.PointerEvent<HTMLButtonElement>, handle: ConnectorHandle) => {
+    event.stopPropagation();
+    event.preventDefault();
+    if (!connectionDrag) {
+      return;
+    }
+    if (event.pointerId !== connectionDrag.pointerId) {
+      return;
+    }
+    commitConnectionToHandle(handle);
+  }, [commitConnectionToHandle, connectionDrag]);
+
+  const handleNodePointerDown = useCallback((event: React.PointerEvent<HTMLElement>, nodeId: string) => {
+    if (!canEdit || (event.pointerType === 'mouse' && event.button !== 0) || event.isPrimary === false) {
       return;
     }
     const target = event.target as HTMLElement;
@@ -1110,6 +1657,7 @@ export function FlowPage(): JSX.Element {
       };
     }
     setDragState({
+      pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
       nodeIds: selectedIds,
@@ -1122,7 +1670,10 @@ export function FlowPage(): JSX.Element {
     if (!dragState) {
       return;
     }
-    const handleMouseMove = (event: MouseEvent) => {
+    const handlePointerMove = (event: PointerEvent) => {
+      if (event.pointerId !== dragState.pointerId) {
+        return;
+      }
       const deltaX = event.clientX - dragState.startX;
       const deltaY = event.clientY - dragState.startY;
       const laneUpdates: Record<string, string> = {};
@@ -1154,17 +1705,22 @@ export function FlowPage(): JSX.Element {
       }
     };
 
-    const handleMouseUp = () => {
+    const handlePointerUp = (event: PointerEvent) => {
+      if (event.pointerId !== dragState.pointerId) {
+        return;
+      }
       setDragState(null);
       setIsDraftCanvas(true);
       setIsSubmittedFlow(false);
     };
 
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
     return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
     };
   }, [dragState]);
 
@@ -1173,7 +1729,10 @@ export function FlowPage(): JSX.Element {
       return;
     }
 
-    const handleMouseMove = (event: MouseEvent) => {
+    const handlePointerMove = (event: PointerEvent) => {
+      if (event.pointerId !== connectionDrag.pointerId) {
+        return;
+      }
       const point = toCanvasPoint(canvasViewportRef.current, event.clientX, event.clientY);
       if (!point) {
         return;
@@ -1181,17 +1740,26 @@ export function FlowPage(): JSX.Element {
       setConnectionDrag((current) => (current ? { ...current, currentX: point.x, currentY: point.y } : current));
     };
 
-    const handleMouseUp = () => {
+    const handlePointerUp = (event: PointerEvent) => {
+      if (event.pointerId !== connectionDrag.pointerId) {
+        return;
+      }
+      const targetHandle = resolveConnectorHandleAtClientPoint(event.clientX, event.clientY);
+      if (targetHandle && commitConnectionToHandle(targetHandle)) {
+        return;
+      }
       setConnectionDrag(null);
     };
 
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
     return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
     };
-  }, [connectionDrag]);
+  }, [commitConnectionToHandle, connectionDrag]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1342,6 +1910,14 @@ export function FlowPage(): JSX.Element {
     }
 
     setPlannerInput('');
+    setPlannerMessages((current) => [
+      ...current,
+      {
+        role: 'user',
+        content: instruction,
+        created_at: new Date().toISOString(),
+      },
+    ]);
     setIsPlanning(true);
     try {
       const response = await generateFlowFromRequirement(
@@ -1366,6 +1942,19 @@ export function FlowPage(): JSX.Element {
       setLanes(lanePayload.lanes);
       setNodeLaneById(lanePayload.nodeLaneById);
       setLastResponse(response);
+      setPlannerMessages((current) => {
+        if (response.messages.length > 0) {
+          return response.messages;
+        }
+        return [
+          ...current,
+          {
+            role: 'assistant',
+            content: '流程草图已更新。',
+            created_at: new Date().toISOString(),
+          },
+        ];
+      });
       setSelectedNodeIds([]);
       setSelectedEdgeId(null);
       setConnectionDrag(null);
@@ -1382,6 +1971,14 @@ export function FlowPage(): JSX.Element {
       addToast('流程草图已更新', 'success');
     } catch (error) {
       const message = error instanceof Error ? error.message : '流程规划失败';
+      setPlannerMessages((current) => [
+        ...current,
+        {
+          role: 'assistant',
+          content: `流程规划失败：${message}`,
+          created_at: new Date().toISOString(),
+        },
+      ]);
       addToast(message, 'error');
     } finally {
       setIsPlanning(false);
@@ -1647,55 +2244,140 @@ export function FlowPage(): JSX.Element {
     : flowRuntimeState === 'blocked'
       ? (isFlowActioning || isPlanning)
       : (!canConfirm || isSubmittingFlow || isPlanning || isFlowActioning);
+  const showMobileDeleteAction = isMobile && canEdit && selectedNodeIds.length > 0;
+  const showMobileNodeActions = isMobile;
 
   return (
     <section style={pageStyle} aria-label="flow-page">
       <style>{flowCanvasAnimationStyleText}</style>
       <header style={isMobile ? { ...topToolbarStyle, ...topToolbarMobileStyle } : topToolbarStyle} role="toolbar" aria-label="流程编辑工具栏">
-        <div style={isMobile ? { ...toolbarLeftStyle, ...toolbarLeftMobileStyle } : toolbarLeftStyle}>
-          <button type="button" style={breadcrumbRootButtonStyle} onClick={() => navigate('/flow')} aria-label="我的流程">
-            我的流程
-          </button>
-          <span style={breadcrumbSeparatorStyle}>/</span>
-          <button
-            type="button"
-            style={isMobile ? { ...breadcrumbCurrentButtonStyle, ...breadcrumbCurrentButtonMobileStyle } : breadcrumbCurrentButtonStyle}
-            onClick={() => {
-              setFlowNameInput(displayFlowName);
-              setIsDetailOpen((open) => !open);
-            }}
-            aria-label="当前流程信息"
-            title={displayFlowName}
-          >
-            {displayFlowName}
-          </button>
-        </div>
-        <div style={isMobile ? { ...toolbarRightStyle, ...toolbarRightMobileStyle } : toolbarRightStyle}>
-          <span style={isMobile ? { ...flowStateBadgeStyle, ...flowStateBadgeMobileStyle } : flowStateBadgeStyle}>{flowStateLabel}</span>
-          {isSyncingBlockedFlow ? <span style={flowSyncBadgeStyle}>同步中...</span> : null}
-          <button
-            type="button"
-            style={flowActionButtonStyle}
-            onClick={() => {
-              if (flowRuntimeState === 'running') {
-                void handleStopFlow();
-                return;
-              }
-              if (flowRuntimeState === 'blocked') {
-                void handleContinueFlow();
-                return;
-              }
-              setIsSubmitConfirmOpen(true);
-            }}
-            disabled={flowActionDisabled}
-          >
-            {flowActionButtonLabel}
-          </button>
+        <div style={isMobile ? { ...toolbarInnerStyle, ...toolbarInnerMobileStyle } : toolbarInnerStyle}>
+          <div style={isMobile ? { ...toolbarLeftStyle, ...toolbarLeftMobileStyle } : toolbarLeftStyle}>
+            <button
+              type="button"
+              style={breadcrumbRootButtonStyle}
+              onClick={() => {
+                if (isMobile) {
+                  setIsMobileFlowSidebarOpen(true);
+                  return;
+                }
+                flowSidebarFilterInputRef.current?.focus();
+              }}
+              aria-label="流程"
+            >
+              流程
+            </button>
+            <span style={breadcrumbSeparatorStyle}>/</span>
+            <button
+              type="button"
+              style={isMobile ? { ...breadcrumbCurrentButtonStyle, ...breadcrumbCurrentButtonMobileStyle } : breadcrumbCurrentButtonStyle}
+              onClick={() => {
+                setFlowNameInput(displayFlowName);
+                setIsDetailOpen((open) => !open);
+              }}
+              aria-label="当前流程信息"
+              title={displayFlowName}
+            >
+              {displayFlowName}
+            </button>
+          </div>
+          <div style={isMobile ? { ...toolbarRightStyle, ...toolbarRightMobileStyle } : toolbarRightStyle}>
+            {isMobile ? (
+              <button
+                type="button"
+                style={secondaryButtonStyle}
+                onClick={() => setIsMobileFlowSidebarOpen(true)}
+                aria-label="流程列表"
+                ref={mobileFlowSidebarTriggerRef}
+              >
+                流程列表
+              </button>
+            ) : null}
+            <span style={isMobile ? { ...flowStateBadgeStyle, ...flowStateBadgeMobileStyle } : flowStateBadgeStyle}>{flowStateLabel}</span>
+            {isSyncingBlockedFlow ? <span style={flowSyncBadgeStyle}>同步中...</span> : null}
+            {showMobileNodeActions ? (
+              <button
+                type="button"
+                style={secondaryButtonStyle}
+                onClick={openNodeCreateFromViewport}
+                disabled={!canEdit}
+                aria-label="新建节点"
+              >
+                新建节点
+              </button>
+            ) : null}
+            {showMobileNodeActions ? (
+              <button
+                type="button"
+                style={secondaryButtonStyle}
+                onClick={openSelectedNodeForEdit}
+                disabled={!canEdit || !selectedSingleNodeId}
+                aria-label="编辑已选节点"
+              >
+                编辑节点
+              </button>
+            ) : null}
+            {showMobileDeleteAction ? (
+              <button
+                type="button"
+                style={dangerButtonStyle}
+                onClick={() => {
+                  handleDeleteNodes(selectedNodeIds);
+                }}
+                aria-label="删除所选节点"
+              >
+                删除节点
+              </button>
+            ) : null}
+            <button
+              type="button"
+              style={flowActionButtonStyle}
+              onClick={() => {
+                if (flowRuntimeState === 'running') {
+                  void handleStopFlow();
+                  return;
+                }
+                if (flowRuntimeState === 'blocked') {
+                  void handleContinueFlow();
+                  return;
+                }
+                setIsSubmitConfirmOpen(true);
+              }}
+              disabled={flowActionDisabled}
+            >
+              {flowActionButtonLabel}
+            </button>
+          </div>
         </div>
       </header>
 
+      {isMobile && isMobileFlowSidebarOpen ? (
+        <div
+          style={flowSidebarDrawerOverlayStyle}
+          role="dialog"
+          aria-modal="true"
+          aria-label="流程列表抽屉"
+          onClick={() => setIsMobileFlowSidebarOpen(false)}
+        >
+          <aside
+            style={flowSidebarDrawerStyle}
+            aria-label="流程列表侧栏"
+            data-testid="flow-sidebar"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                setIsMobileFlowSidebarOpen(false);
+              }
+            }}
+          >
+            {renderFlowSidebarContent('drawer')}
+          </aside>
+        </div>
+      ) : null}
+
       {isDetailOpen ? (
-        <div style={flowDetailCardStyle} role="dialog" aria-modal="false" aria-label="流程详情卡片">
+        <div style={isMobile ? { ...flowDetailCardStyle, ...flowDetailCardMobileStyle } : flowDetailCardStyle} role="dialog" aria-modal="false" aria-label="流程详情卡片">
           <h3 style={flowDetailTitleStyle}>流程详情</h3>
           <label style={formFieldStyle}>
             <span style={formLabelStyle}>流程名称</span>
@@ -1708,6 +2390,14 @@ export function FlowPage(): JSX.Element {
             />
           </label>
           <div style={actionRowStyle}>
+            <button
+              type="button"
+              style={dangerButtonStyle}
+              onClick={() => void handleDeleteCurrentFlow()}
+              disabled={isSubmittingFlow || isFlowActioning || isPlanning}
+            >
+              删除流程
+            </button>
             <button
               type="button"
               style={secondaryButtonStyle}
@@ -1728,19 +2418,68 @@ export function FlowPage(): JSX.Element {
         </div>
       ) : null}
 
+      {isCreateModalOpen ? (
+        <div style={isMobile ? { ...confirmOverlayStyle, ...confirmOverlayMobileStyle } : confirmOverlayStyle} role="dialog" aria-modal="true" aria-label="新建流程">
+          <div style={isMobile ? { ...modalCardStyle, ...confirmCardMobileStyle } : modalCardStyle}>
+            <h3 style={confirmTitleStyle}>新建流程</h3>
+            <p style={confirmTextStyle}>流程名和需求都可以留空；有需求会先自动拆解，再切换到新流程。</p>
+            <label style={formFieldStyle}>
+              <span style={formLabelStyle}>流程名（可选）</span>
+              <input
+                value={createFlowNameInput}
+                onChange={(event) => setCreateFlowNameInput(event.target.value)}
+                style={formInputStyle}
+                placeholder="默认自动命名（未命名流程 / 需求前 8 字）"
+                disabled={isGeneratingFlow}
+              />
+            </label>
+            <label style={formFieldStyle}>
+              <span style={formLabelStyle}>需求（可选）</span>
+              <textarea
+                value={createRequirementInput}
+                onChange={(event) => setCreateRequirementInput(event.target.value)}
+                style={formTextareaStyle}
+                placeholder="可留空，留空则创建空流程"
+                disabled={isGeneratingFlow}
+              />
+            </label>
+            <p style={confirmTextStyle}>固定拆解 Agent：{FIXED_FLOW_PLANNER_AGENT_ID}</p>
+            {isGeneratingFlow ? <p style={confirmTextStyle}>流程拆解中，请稍候...</p> : null}
+            <div style={isMobile ? { ...actionRowStyle, ...actionRowMobileStyle } : actionRowStyle}>
+              <button
+                type="button"
+                style={isMobile ? { ...secondaryButtonStyle, ...secondaryButtonMobileStyle } : secondaryButtonStyle}
+                onClick={() => setIsCreateModalOpen(false)}
+                disabled={isGeneratingFlow}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                style={isMobile ? { ...primaryButtonStyle, ...primaryButtonMobileStyle } : primaryButtonStyle}
+                onClick={() => void handleCreateFlow()}
+                disabled={isGeneratingFlow}
+              >
+                {isGeneratingFlow ? '生成中...' : '创建并进入编辑'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {isSubmitConfirmOpen ? (
-        <div style={confirmOverlayStyle} role="dialog" aria-modal="true" aria-label="确认运行流程">
-          <div style={confirmCardStyle}>
+        <div style={isMobile ? { ...confirmOverlayStyle, ...confirmOverlayMobileStyle } : confirmOverlayStyle} role="dialog" aria-modal="true" aria-label="确认运行流程">
+          <div style={isMobile ? { ...confirmCardStyle, ...confirmCardMobileStyle } : confirmCardStyle}>
             <h3 style={confirmTitleStyle}>确认运行流程</h3>
             <p style={confirmTextStyle}>运行后将按当前画布把该流程加入看板队列并开始调度，确认继续？</p>
             {hasExistingFlowOutputs ? (
               <p style={confirmWarningTextStyle}>检测到该流程已有产出文件，再次运行可能覆盖历史产物。</p>
             ) : null}
-            <div style={actionRowStyle}>
-              <button type="button" style={secondaryButtonStyle} onClick={() => setIsSubmitConfirmOpen(false)} disabled={isSubmittingFlow || isPlanning}>
+            <div style={isMobile ? { ...actionRowStyle, ...actionRowMobileStyle } : actionRowStyle}>
+              <button type="button" style={isMobile ? { ...secondaryButtonStyle, ...secondaryButtonMobileStyle } : secondaryButtonStyle} onClick={() => setIsSubmitConfirmOpen(false)} disabled={isSubmittingFlow || isPlanning}>
                 取消
               </button>
-              <button type="button" style={primaryButtonStyle} onClick={() => void handleConfirm()} disabled={isSubmittingFlow || isPlanning}>
+              <button type="button" style={isMobile ? { ...primaryButtonStyle, ...primaryButtonMobileStyle } : primaryButtonStyle} onClick={() => void handleConfirm()} disabled={isSubmittingFlow || isPlanning}>
                 {isSubmittingFlow ? '运行中...' : '确认运行'}
               </button>
             </div>
@@ -1749,8 +2488,8 @@ export function FlowPage(): JSX.Element {
       ) : null}
 
       {nodeModal.open ? (
-        <div style={confirmOverlayStyle} role="dialog" aria-modal="true" aria-label={nodeModal.mode === 'create' ? '创建节点' : '编辑节点'}>
-          <div style={modalCardStyle}>
+        <div style={isMobile ? { ...confirmOverlayStyle, ...confirmOverlayMobileStyle } : confirmOverlayStyle} role="dialog" aria-modal="true" aria-label={nodeModal.mode === 'create' ? '创建节点' : '编辑节点'}>
+          <div style={isMobile ? { ...modalCardStyle, ...confirmCardMobileStyle } : modalCardStyle}>
             <h3 style={confirmTitleStyle}>{nodeModal.mode === 'create' ? '创建任务节点' : '编辑任务节点'}</h3>
             <label style={formFieldStyle}>
               <span style={formLabelStyle}>节点标题</span>
@@ -1783,11 +2522,11 @@ export function FlowPage(): JSX.Element {
               />
               <span style={formLabelStyle}>敏感节点（完成后进入审批）</span>
             </label>
-            <div style={actionRowStyle}>
-              <button type="button" style={secondaryButtonStyle} onClick={() => setNodeModal((current) => ({ ...current, open: false }))}>
+            <div style={isMobile ? { ...actionRowStyle, ...actionRowMobileStyle } : actionRowStyle}>
+              <button type="button" style={isMobile ? { ...secondaryButtonStyle, ...secondaryButtonMobileStyle } : secondaryButtonStyle} onClick={() => setNodeModal((current) => ({ ...current, open: false }))}>
                 取消
               </button>
-              <button type="button" style={primaryButtonStyle} onClick={handleSaveNodeModal}>
+              <button type="button" style={isMobile ? { ...primaryButtonStyle, ...primaryButtonMobileStyle } : primaryButtonStyle} onClick={handleSaveNodeModal}>
                 保存节点
               </button>
             </div>
@@ -1796,8 +2535,8 @@ export function FlowPage(): JSX.Element {
       ) : null}
 
       {laneModal.open ? (
-        <div style={confirmOverlayStyle} role="dialog" aria-modal="true" aria-label={laneModal.mode === 'create' ? '创建泳道' : '编辑泳道'}>
-          <div style={modalCardStyle}>
+        <div style={isMobile ? { ...confirmOverlayStyle, ...confirmOverlayMobileStyle } : confirmOverlayStyle} role="dialog" aria-modal="true" aria-label={laneModal.mode === 'create' ? '创建泳道' : '编辑泳道'}>
+          <div style={isMobile ? { ...modalCardStyle, ...confirmCardMobileStyle } : modalCardStyle}>
             <h3 style={confirmTitleStyle}>{laneModal.mode === 'create' ? '创建泳道' : '编辑泳道'}</h3>
             <label style={formFieldStyle}>
               <span style={formLabelStyle}>泳道名称</span>
@@ -1824,11 +2563,11 @@ export function FlowPage(): JSX.Element {
                 ))}
               </select>
             </label>
-            <div style={actionRowStyle}>
-              <button type="button" style={secondaryButtonStyle} onClick={() => setLaneModal((current) => ({ ...current, open: false }))}>
+            <div style={isMobile ? { ...actionRowStyle, ...actionRowMobileStyle } : actionRowStyle}>
+              <button type="button" style={isMobile ? { ...secondaryButtonStyle, ...secondaryButtonMobileStyle } : secondaryButtonStyle} onClick={() => setLaneModal((current) => ({ ...current, open: false }))}>
                 取消
               </button>
-              <button type="button" style={primaryButtonStyle} onClick={handleSaveLaneModal}>
+              <button type="button" style={isMobile ? { ...primaryButtonStyle, ...primaryButtonMobileStyle } : primaryButtonStyle} onClick={handleSaveLaneModal}>
                 保存泳道
               </button>
             </div>
@@ -1836,14 +2575,30 @@ export function FlowPage(): JSX.Element {
         </div>
       ) : null}
 
-      <div
-        ref={canvasViewportRef}
-        style={canvasViewportStyle}
-        data-testid="flow-canvas-viewport"
-        onDoubleClick={handleCanvasDoubleClick}
-        onMouseDown={handleCanvasMouseDown}
-      >
-        <div style={{ ...canvasSurfaceStyle, width: `${canvasWidth}px`, height: `${canvasHeight}px` }}>
+      <div style={isMobile ? flowWorkspaceMobileStyle : flowWorkspaceStyle}>
+        {!isMobile ? (
+          <aside style={flowSidebarStyle} aria-label="流程列表侧栏" data-testid="flow-sidebar">
+            {renderFlowSidebarContent('desktop')}
+          </aside>
+        ) : null}
+
+        <div style={canvasPaneStyle}>
+          <div
+            ref={canvasViewportRef}
+            style={
+              isMobile
+                ? {
+                    ...canvasViewportStyle,
+                    ...canvasViewportMobileStyle,
+                    paddingBottom: isPlannerExpanded ? '300px' : '96px',
+                  }
+                : canvasViewportStyle
+            }
+            data-testid="flow-canvas-viewport"
+            onDoubleClick={handleCanvasDoubleClick}
+            onPointerDown={handleCanvasPointerDown}
+          >
+            <div style={{ ...canvasSurfaceStyle, width: `${canvasWidth}px`, height: `${canvasHeight}px` }}>
           <div style={{ ...stickyHeaderStyle, width: `${canvasWidth}px` }}>
             {laneLayouts.map((layout) => (
               <button
@@ -1869,7 +2624,7 @@ export function FlowPage(): JSX.Element {
                 <span style={laneHeaderAgentStyle}>{layout.lane.agentId ? (agentNameById.get(layout.lane.agentId) ?? layout.lane.agentId) : '未委派 Agent'}</span>
               </button>
             ))}
-            <p style={laneHeaderHintStyle}>双击顶部空白可新增泳道</p>
+            {!isMobile ? <p style={laneHeaderHintStyle}>双击顶部空白可新增泳道</p> : null}
           </div>
 
           <div style={{ ...laneBodyStyle, height: `${bodyHeight}px` }}>
@@ -1993,7 +2748,7 @@ export function FlowPage(): JSX.Element {
                     }
                     openNodeEditModal(node.id);
                   }}
-                  onMouseDown={(event) => handleNodeMouseDown(event, node.id)}
+                  onPointerDown={(event) => handleNodePointerDown(event, node.id)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') {
                       event.preventDefault();
@@ -2016,8 +2771,8 @@ export function FlowPage(): JSX.Element {
                       data-node-id={node.id}
                       data-side="top"
                       style={{ ...connectorStyle, ...connectorTopStyle, borderColor: connectionDrag?.from.nodeId === node.id && connectionDrag.from.side === 'top' ? '#0284c7' : connectorStyle.borderColor }}
-                      onMouseDown={(event) => handleConnectorMouseDown(event, { nodeId: node.id, side: 'top' })}
-                      onMouseUp={(event) => handleConnectorMouseUp(event, { nodeId: node.id, side: 'top' })}
+                      onPointerDown={(event) => handleConnectorPointerDown(event, { nodeId: node.id, side: 'top' })}
+                      onPointerUp={(event) => handleConnectorPointerUp(event, { nodeId: node.id, side: 'top' })}
                       aria-label={`节点 ${node.title} 顶部连接点`}
                       disabled={!canEdit}
                     />
@@ -2029,8 +2784,8 @@ export function FlowPage(): JSX.Element {
                       data-node-id={node.id}
                       data-side="right"
                       style={{ ...connectorStyle, ...connectorRightStyle, borderColor: connectionDrag?.from.nodeId === node.id && connectionDrag.from.side === 'right' ? '#0284c7' : connectorStyle.borderColor }}
-                      onMouseDown={(event) => handleConnectorMouseDown(event, { nodeId: node.id, side: 'right' })}
-                      onMouseUp={(event) => handleConnectorMouseUp(event, { nodeId: node.id, side: 'right' })}
+                      onPointerDown={(event) => handleConnectorPointerDown(event, { nodeId: node.id, side: 'right' })}
+                      onPointerUp={(event) => handleConnectorPointerUp(event, { nodeId: node.id, side: 'right' })}
                       aria-label={`节点 ${node.title} 右侧连接点`}
                       disabled={!canEdit}
                     />
@@ -2042,8 +2797,8 @@ export function FlowPage(): JSX.Element {
                       data-node-id={node.id}
                       data-side="bottom"
                       style={{ ...connectorStyle, ...connectorBottomStyle, borderColor: connectionDrag?.from.nodeId === node.id && connectionDrag.from.side === 'bottom' ? '#0284c7' : connectorStyle.borderColor }}
-                      onMouseDown={(event) => handleConnectorMouseDown(event, { nodeId: node.id, side: 'bottom' })}
-                      onMouseUp={(event) => handleConnectorMouseUp(event, { nodeId: node.id, side: 'bottom' })}
+                      onPointerDown={(event) => handleConnectorPointerDown(event, { nodeId: node.id, side: 'bottom' })}
+                      onPointerUp={(event) => handleConnectorPointerUp(event, { nodeId: node.id, side: 'bottom' })}
                       aria-label={`节点 ${node.title} 底部连接点`}
                       disabled={!canEdit}
                     />
@@ -2055,8 +2810,8 @@ export function FlowPage(): JSX.Element {
                       data-node-id={node.id}
                       data-side="left"
                       style={{ ...connectorStyle, ...connectorLeftStyle, borderColor: connectionDrag?.from.nodeId === node.id && connectionDrag.from.side === 'left' ? '#0284c7' : connectorStyle.borderColor }}
-                      onMouseDown={(event) => handleConnectorMouseDown(event, { nodeId: node.id, side: 'left' })}
-                      onMouseUp={(event) => handleConnectorMouseUp(event, { nodeId: node.id, side: 'left' })}
+                      onPointerDown={(event) => handleConnectorPointerDown(event, { nodeId: node.id, side: 'left' })}
+                      onPointerUp={(event) => handleConnectorPointerUp(event, { nodeId: node.id, side: 'left' })}
                       aria-label={`节点 ${node.title} 左侧连接点`}
                       disabled={!canEdit}
                     />
@@ -2071,31 +2826,95 @@ export function FlowPage(): JSX.Element {
               <p style={emptyCanvasTextStyle}>双击顶部创建泳道，双击画布创建节点，节点连接后即可运行流程。</p>
             </div>
           ) : null}
-        </div>
-      </div>
+            </div>
+          </div>
 
-      <div style={plannerComposerShellStyle}>
-        <div style={plannerComposerCardStyle} role="group" aria-label="流程规划对话框">
-          <textarea
-            value={plannerInput}
-            onChange={(event) => setPlannerInput(event.target.value)}
-            onKeyDown={handlePlannerInputKeyDown}
-            style={plannerComposerTextareaStyle}
-            placeholder="输入规划指令：例如“把验收拆成并行节点，并补全每个节点的输入输出”"
-            aria-label="流程规划输入框"
-            data-testid="flow-planner-input"
-            disabled={!canEdit}
-          />
-          <div style={plannerComposerFooterStyle}>
-            <span style={plannerComposerHintStyle}>Enter 发送 · Shift+Enter 换行</span>
-            <button
-              type="button"
-              style={primaryButtonStyle}
-              onClick={() => void handlePlanByInstruction()}
-              disabled={!canEdit || plannerInput.trim() === ''}
+          <div style={isMobile ? floatingPlannerShellMobileStyle : floatingPlannerShellStyle}>
+            <div
+              style={
+                isMobile
+                  ? {
+                      ...floatingPlannerCardStyle,
+                      ...(isPlannerExpanded ? floatingPlannerCardMobileStyle : floatingPlannerCardCollapsedMobileStyle),
+                    }
+                  : floatingPlannerCardStyle
+              }
             >
-              {isPlanning ? '正在规划...' : '发送'}
-            </button>
+              <div style={isMobile ? { ...floatingPlannerHeaderStyle, ...floatingPlannerHeaderMobileStyle } : floatingPlannerHeaderStyle}>
+                <div style={plannerRailTitleWrapStyle}>
+                  <h2 style={plannerRailTitleStyle}>流程规划</h2>
+                  <p style={plannerRailHintTextStyle}>围绕当前画布持续拆解和修订流程。</p>
+                </div>
+                <div style={plannerHeaderActionsStyle}>
+                  {lastResponse?.planner_session_key ? (
+                    <span style={plannerRailMetaStyle}>{lastResponse.planner_session_key}</span>
+                  ) : null}
+                  {isMobile ? (
+                    <button
+                      type="button"
+                      style={plannerToggleButtonStyle}
+                      onClick={() => setIsMobilePlannerExpanded((current) => !current)}
+                      aria-expanded={isPlannerExpanded}
+                      aria-label={isPlannerExpanded ? '收起规划窗口' : '展开规划窗口'}
+                    >
+                      {isPlannerExpanded ? '收起' : '展开'}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+              {!isPlannerExpanded ? (
+                <button
+                  type="button"
+                  style={plannerCollapsedSummaryButtonStyle}
+                  onClick={() => setIsMobilePlannerExpanded(true)}
+                  aria-label="查看规划摘要"
+                >
+                  <span style={plannerCollapsedSummaryLabelStyle}>规划摘要 · {plannerCollapsedSummary.label}</span>
+                  <span style={plannerCollapsedSummaryTextStyle}>{plannerCollapsedSummary.text}</span>
+                </button>
+              ) : (
+                <>
+                  <div style={floatingPlannerMessagesStyle} data-testid="flow-planner-messages">
+                    {plannerMessages.length === 0 ? (
+                      <div style={plannerMessageEmptyStyle}>当前还没有规划消息，输入指令后会在这里展示上下文。</div>
+                    ) : (
+                      plannerMessages.map((message, index) => (
+                        <article
+                          key={`${message.created_at}-${message.role}-${index}`}
+                          style={message.role === 'user' ? plannerMessageUserCardStyle : plannerMessageAssistantCardStyle}
+                        >
+                          <span style={plannerMessageRoleStyle}>{message.role === 'user' ? '用户' : '规划 Agent'}</span>
+                          <MarkdownMessage text={message.content} style={plannerMessageTextStyle} />
+                        </article>
+                      ))
+                    )}
+                  </div>
+                  <div style={plannerComposerInlineStyle} role="group" aria-label="流程规划对话框">
+                    <textarea
+                      value={plannerInput}
+                      onChange={(event) => setPlannerInput(event.target.value)}
+                      onKeyDown={handlePlannerInputKeyDown}
+                      style={plannerComposerTextareaInlineStyle}
+                      placeholder="输入规划指令：例如“把验收拆成并行节点，并补全每个节点的输入输出”"
+                      aria-label="流程规划输入框"
+                      data-testid="flow-planner-input"
+                      disabled={!canEdit}
+                    />
+                    <div style={isMobile ? { ...plannerComposerFooterStyle, ...plannerComposerFooterMobileStyle } : plannerComposerFooterStyle}>
+                      <span style={isMobile ? { ...plannerComposerHintStyle, ...plannerComposerHintMobileStyle } : plannerComposerHintStyle}>Enter 发送 · Shift+Enter 换行</span>
+                      <button
+                        type="button"
+                        style={isMobile ? { ...primaryButtonStyle, ...primaryButtonMobileStyle } : primaryButtonStyle}
+                        onClick={() => void handlePlanByInstruction()}
+                        disabled={!canEdit || plannerInput.trim() === ''}
+                      >
+                        {isPlanning ? '正在规划...' : '发送'}
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -2387,6 +3206,16 @@ function resolveFlowRuntimeState(tasks: KanbanTaskItem[]): FlowRuntimeState {
   return 'idle';
 }
 
+function getFlowRuntimeStateLabel(state: FlowRuntimeState): string {
+  if (state === 'running') {
+    return '运行中';
+  }
+  if (state === 'blocked') {
+    return '阻塞';
+  }
+  return '空闲';
+}
+
 function toEpochMillis(value: string): number {
   const ts = Date.parse(value);
   return Number.isFinite(ts) ? ts : 0;
@@ -2515,6 +3344,56 @@ function resolveNodeLaneId(nodeId: string, nodeLaneById: Record<string, string>,
   return lanes[0]?.id ?? '';
 }
 
+function loadFlowSidebarPreferences(): FlowSidebarPreferences {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return {
+      keyword: '',
+      source: 'all',
+      sort: 'updated_desc',
+    };
+  }
+  try {
+    const raw = window.localStorage.getItem(FLOW_SIDEBAR_PREFERENCES_STORAGE_KEY);
+    if (!raw) {
+      return {
+        keyword: '',
+        source: 'all',
+        sort: 'updated_desc',
+      };
+    }
+    const parsed = JSON.parse(raw) as Partial<FlowSidebarPreferences>;
+    const source = parsed.source === 'draft' || parsed.source === 'submitted' ? parsed.source : 'all';
+    const sort = parsed.sort === 'updated_asc'
+      || parsed.sort === 'name_asc'
+      || parsed.sort === 'name_desc'
+      || parsed.sort === 'node_desc'
+      ? parsed.sort
+      : 'updated_desc';
+    return {
+      keyword: String(parsed.keyword ?? ''),
+      source,
+      sort,
+    };
+  } catch {
+    return {
+      keyword: '',
+      source: 'all',
+      sort: 'updated_desc',
+    };
+  }
+}
+
+function persistFlowSidebarPreferences(preferences: FlowSidebarPreferences): void {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+  try {
+    window.localStorage.setItem(FLOW_SIDEBAR_PREFERENCES_STORAGE_KEY, JSON.stringify(preferences));
+  } catch {
+    // ignore storage failures
+  }
+}
+
 function findLaneIdByPointX(pointX: number, laneLayouts: LaneLayout[]): string | null {
   for (const layout of laneLayouts) {
     if (pointX >= layout.left && pointX <= layout.left + layout.width) {
@@ -2561,6 +3440,32 @@ function findLaneLayoutForCenterX(
     return laneLayouts[0];
   }
   return laneLayouts[laneLayouts.length - 1];
+}
+
+function getConnectorHandleFromElement(element: Element | null): ConnectorHandle | null {
+  const connector = element?.closest('[data-flow-connector="true"]');
+  if (!(connector instanceof HTMLElement)) {
+    return null;
+  }
+  const nodeId = connector.dataset.nodeId?.trim() ?? '';
+  const side = connector.dataset.side as ConnectorSide | undefined;
+  if (!nodeId || !side) {
+    return null;
+  }
+  return { nodeId, side };
+}
+
+function resolveConnectorHandleAtClientPoint(clientX: number, clientY: number): ConnectorHandle | null {
+  const elements = typeof document.elementsFromPoint === 'function'
+    ? document.elementsFromPoint(clientX, clientY)
+    : [document.elementFromPoint(clientX, clientY)].filter((element): element is Element => element !== null);
+  for (const element of elements) {
+    const handle = getConnectorHandleFromElement(element);
+    if (handle) {
+      return handle;
+    }
+  }
+  return null;
 }
 
 function getNodeConnectorPoint(layout: NodeRenderLayout, side: ConnectorSide): { x: number; y: number } {
@@ -2755,17 +3660,26 @@ const topToolbarStyle: React.CSSProperties = {
   borderRadius: '0.4rem',
   background: 'rgba(255, 255, 255, 0.44)',
   backdropFilter: 'blur(8px)',
-  padding: '0.55rem 0.65rem',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  gap: '0.65rem',
-  flexWrap: 'wrap',
+  padding: '0.55rem 0.95rem',
+  display: 'block',
   flexShrink: 0,
 };
 
 const topToolbarMobileStyle: React.CSSProperties = {
   padding: '0.45rem 0.5rem',
+  gap: '0.45rem',
+};
+
+const toolbarInnerStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '0.65rem',
+  flexWrap: 'wrap',
+};
+
+const toolbarInnerMobileStyle: React.CSSProperties = {
+  ...toolbarInnerStyle,
   gap: '0.45rem',
 };
 
@@ -2791,7 +3705,9 @@ const toolbarRightStyle: React.CSSProperties = {
 
 const toolbarRightMobileStyle: React.CSSProperties = {
   width: '100%',
-  justifyContent: 'space-between',
+  justifyContent: 'flex-start',
+  alignItems: 'stretch',
+  flexDirection: 'column',
 };
 
 const breadcrumbRootButtonStyle: React.CSSProperties = {
@@ -2856,6 +3772,10 @@ const primaryButtonStyle: React.CSSProperties = {
   cursor: 'pointer',
 };
 
+const primaryButtonMobileStyle: React.CSSProperties = {
+  width: '100%',
+};
+
 const flowStopButtonStyle: React.CSSProperties = {
   ...primaryButtonStyle,
   border: '1px solid rgba(220, 38, 38, 0.46)',
@@ -2879,6 +3799,494 @@ const flowSyncBadgeStyle: React.CSSProperties = {
   whiteSpace: 'nowrap',
 };
 
+const flowWorkspaceStyle: React.CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  display: 'grid',
+  gridTemplateColumns: '280px minmax(0, 1fr)',
+  gap: '0.75rem',
+  padding: '0 0.85rem 0.85rem',
+};
+
+const flowWorkspaceMobileStyle: React.CSSProperties = {
+  ...flowWorkspaceStyle,
+  gridTemplateColumns: '1fr',
+  gridTemplateRows: 'minmax(0, 1fr)',
+  padding: '0 0.5rem 0.5rem',
+};
+
+const flowSidebarStyle: React.CSSProperties = {
+  minWidth: 0,
+  minHeight: 0,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.55rem',
+  border: '1px solid rgba(148, 163, 184, 0.24)',
+  borderRadius: '0.72rem',
+  background: 'rgba(248, 250, 252, 0.78)',
+  padding: '0.75rem 0.7rem 0.7rem 0.95rem',
+  overflow: 'hidden',
+};
+
+const flowSidebarMobileStyle: React.CSSProperties = {
+  ...flowSidebarStyle,
+  padding: '0.55rem',
+};
+
+const flowSidebarDrawerOverlayStyle: React.CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  zIndex: 85,
+  background: 'rgba(15, 23, 42, 0.3)',
+  display: 'flex',
+  justifyContent: 'flex-start',
+};
+
+const flowSidebarDrawerStyle: React.CSSProperties = {
+  ...flowSidebarMobileStyle,
+  width: 'min(286px, calc(100vw - 1.2rem))',
+  height: '100%',
+  borderRadius: 0,
+  borderTop: 'none',
+  borderBottom: 'none',
+  borderLeft: 'none',
+  background: 'rgba(248, 250, 252, 0.98)',
+  boxShadow: '18px 0 42px -34px rgba(15, 23, 42, 0.9)',
+};
+
+const flowSidebarHeaderStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.5rem',
+  flexShrink: 0,
+};
+
+const flowSidebarHeaderDrawerStyle: React.CSSProperties = {
+  gap: '0.38rem',
+};
+
+const flowSidebarTitleWrapStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.18rem',
+};
+
+const flowSidebarTitleStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.92rem',
+  fontWeight: 700,
+  color: '#0f172a',
+};
+
+const flowSidebarTitleDrawerStyle: React.CSSProperties = {
+  fontSize: '0.84rem',
+};
+
+const flowSidebarHintStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.74rem',
+  color: '#475569',
+  lineHeight: 1.45,
+};
+
+const flowSidebarHintDrawerStyle: React.CSSProperties = {
+  fontSize: '0.68rem',
+  lineHeight: 1.35,
+};
+
+const flowSidebarFiltersStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.42rem',
+};
+
+const flowSidebarFiltersDrawerStyle: React.CSSProperties = {
+  gap: '0.34rem',
+};
+
+const flowSidebarInputStyle: React.CSSProperties = {
+  width: '100%',
+  border: '1px solid rgba(148, 163, 184, 0.3)',
+  borderRadius: '0.45rem',
+  background: 'rgba(255, 255, 255, 0.88)',
+  color: '#0f172a',
+  padding: '0.4rem 0.55rem',
+  fontSize: '0.76rem',
+};
+
+const flowSidebarInputDrawerStyle: React.CSSProperties = {
+  padding: '0.34rem 0.46rem',
+  fontSize: '0.72rem',
+  borderRadius: '0.4rem',
+};
+
+const flowSidebarSelectRowStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+  gap: '0.42rem',
+};
+
+const flowSidebarSelectRowDrawerStyle: React.CSSProperties = {
+  gridTemplateColumns: '1fr',
+  gap: '0.34rem',
+};
+
+const flowSidebarSelectStyle: React.CSSProperties = {
+  ...flowSidebarInputStyle,
+  appearance: 'none',
+};
+
+const flowSidebarHeaderActionsStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '0.42rem',
+  flexWrap: 'wrap',
+};
+
+const flowSidebarHeaderActionsDrawerStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: '1fr 1fr',
+  gap: '0.34rem',
+};
+
+const sidebarGhostButtonStyle: React.CSSProperties = {
+  border: '1px solid rgba(148, 163, 184, 0.38)',
+  borderRadius: '0.42rem',
+  background: 'rgba(255, 255, 255, 0.86)',
+  color: '#334155',
+  padding: '0.3rem 0.56rem',
+  fontSize: '0.74rem',
+  fontWeight: 700,
+  cursor: 'pointer',
+};
+
+const sidebarPrimaryButtonStyle: React.CSSProperties = {
+  ...sidebarGhostButtonStyle,
+  border: '1px solid rgba(14, 116, 144, 0.42)',
+  background: 'rgba(239, 246, 255, 0.92)',
+  color: '#0f766e',
+};
+
+const sidebarButtonDrawerStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '0.34rem 0.46rem',
+  fontSize: '0.72rem',
+  borderRadius: '0.4rem',
+};
+
+const flowSidebarListStyle: React.CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  overflowY: 'auto',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.42rem',
+  paddingRight: '0.08rem',
+};
+
+const flowSidebarListDrawerStyle: React.CSSProperties = {
+  gap: '0.32rem',
+  paddingRight: '0.02rem',
+};
+
+const flowSidebarSectionStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.34rem',
+};
+
+const flowSidebarSectionDrawerStyle: React.CSSProperties = {
+  gap: '0.24rem',
+};
+
+const flowSidebarSectionHeaderStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '0.45rem',
+};
+
+const flowSidebarSectionTitleStyle: React.CSSProperties = {
+  fontSize: '0.72rem',
+  fontWeight: 700,
+  color: '#334155',
+  letterSpacing: '0.02em',
+};
+
+const flowSidebarSectionTitleDrawerStyle: React.CSSProperties = {
+  fontSize: '0.66rem',
+};
+
+const flowSidebarSectionCountStyle: React.CSSProperties = {
+  fontSize: '0.68rem',
+  color: '#64748b',
+  fontWeight: 700,
+};
+
+const flowSidebarSectionCountDrawerStyle: React.CSSProperties = {
+  fontSize: '0.62rem',
+};
+
+const flowSidebarSectionListStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.34rem',
+};
+
+const flowSidebarEmptyStyle: React.CSSProperties = {
+  border: '1px dashed rgba(148, 163, 184, 0.32)',
+  borderRadius: '0.55rem',
+  background: 'rgba(255, 255, 255, 0.72)',
+  padding: '0.62rem',
+  fontSize: '0.76rem',
+  color: '#64748b',
+  lineHeight: 1.5,
+};
+
+const flowSidebarEmptyDrawerStyle: React.CSSProperties = {
+  padding: '0.5rem',
+  fontSize: '0.72rem',
+  borderRadius: '0.45rem',
+  lineHeight: 1.4,
+};
+
+const flowSidebarItemStyle: React.CSSProperties = {
+  border: '1px solid rgba(148, 163, 184, 0.22)',
+  borderRadius: '0.55rem',
+  background: 'rgba(255, 255, 255, 0.82)',
+  padding: '0.55rem 0.58rem',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.22rem',
+  textAlign: 'left',
+  cursor: 'pointer',
+};
+
+const flowSidebarItemDrawerStyle: React.CSSProperties = {
+  padding: '0.42rem 0.46rem',
+  gap: '0.16rem',
+  borderRadius: '0.46rem',
+};
+
+const flowSidebarItemActiveStyle: React.CSSProperties = {
+  borderColor: 'rgba(14, 116, 144, 0.42)',
+  background: 'rgba(239, 246, 255, 0.92)',
+};
+
+const flowSidebarItemTitleStyle: React.CSSProperties = {
+  fontSize: '0.8rem',
+  fontWeight: 700,
+  color: '#0f172a',
+  lineHeight: 1.4,
+};
+
+const flowSidebarItemTitleDrawerStyle: React.CSSProperties = {
+  fontSize: '0.74rem',
+  lineHeight: 1.3,
+};
+
+const flowSidebarItemMetaStyle: React.CSSProperties = {
+  fontSize: '0.72rem',
+  color: '#52616f',
+  lineHeight: 1.45,
+};
+
+const flowSidebarItemMetaDrawerStyle: React.CSSProperties = {
+  fontSize: '0.66rem',
+  lineHeight: 1.35,
+};
+
+const plannerRailTitleWrapStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.16rem',
+};
+
+const plannerRailTitleStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.9rem',
+  fontWeight: 700,
+  color: '#0f172a',
+};
+
+const plannerRailHintTextStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.74rem',
+  color: '#475569',
+  lineHeight: 1.45,
+};
+
+const plannerRailMetaStyle: React.CSSProperties = {
+  fontSize: '0.68rem',
+  color: '#64748b',
+  fontFamily: 'ui-monospace, SFMono-Regular, "SFMono-Regular", Consolas, monospace',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+};
+
+const floatingPlannerMessagesStyle: React.CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  overflowY: 'auto',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.45rem',
+  paddingRight: '0.1rem',
+};
+
+const plannerMessageEmptyStyle: React.CSSProperties = {
+  border: '1px dashed rgba(148, 163, 184, 0.32)',
+  borderRadius: '0.55rem',
+  background: 'rgba(255, 255, 255, 0.72)',
+  padding: '0.62rem',
+  fontSize: '0.76rem',
+  color: '#64748b',
+  lineHeight: 1.5,
+};
+
+const plannerMessageBaseCardStyle: React.CSSProperties = {
+  borderRadius: '0.55rem',
+  border: '1px solid rgba(148, 163, 184, 0.22)',
+  padding: '0.52rem 0.58rem',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.26rem',
+};
+
+const plannerMessageUserCardStyle: React.CSSProperties = {
+  ...plannerMessageBaseCardStyle,
+  background: 'rgba(239, 246, 255, 0.92)',
+};
+
+const plannerMessageAssistantCardStyle: React.CSSProperties = {
+  ...plannerMessageBaseCardStyle,
+  background: 'rgba(236, 253, 245, 0.9)',
+};
+
+const plannerMessageRoleStyle: React.CSSProperties = {
+  fontSize: '0.68rem',
+  fontWeight: 700,
+  color: '#0f172a',
+};
+
+const plannerMessageTextStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.76rem',
+  lineHeight: 1.5,
+  color: '#1e293b',
+};
+
+const canvasPaneStyle: React.CSSProperties = {
+  position: 'relative',
+  minWidth: 0,
+  minHeight: 0,
+  display: 'flex',
+  flexDirection: 'column',
+  overflow: 'hidden',
+};
+
+const floatingPlannerShellStyle: React.CSSProperties = {
+  position: 'absolute',
+  left: '50%',
+  bottom: '1rem',
+  transform: 'translateX(-50%)',
+  width: 'min(760px, calc(100% - 1.5rem))',
+  pointerEvents: 'none',
+  zIndex: 55,
+};
+
+const floatingPlannerShellMobileStyle: React.CSSProperties = {
+  ...floatingPlannerShellStyle,
+  left: '0.5rem',
+  right: '0.5rem',
+  bottom: '0.5rem',
+  width: 'auto',
+  transform: 'none',
+};
+
+const floatingPlannerCardStyle: React.CSSProperties = {
+  width: '100%',
+  border: '1px solid rgba(14, 116, 144, 0.28)',
+  borderRadius: '0.7rem',
+  background: 'rgba(248, 250, 252, 0.9)',
+  backdropFilter: 'blur(10px)',
+  boxShadow: '0 22px 42px -34px rgba(15, 23, 42, 0.95)',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.45rem',
+  pointerEvents: 'auto',
+  height: 'min(340px, 38vh)',
+  padding: '0.68rem',
+};
+
+const floatingPlannerCardMobileStyle: React.CSSProperties = {
+  height: 'min(300px, 42vh)',
+  padding: '0.55rem',
+};
+
+const floatingPlannerCardCollapsedMobileStyle: React.CSSProperties = {
+  padding: '0.5rem 0.55rem',
+  height: 'auto',
+  minHeight: 0,
+};
+
+const floatingPlannerHeaderStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.28rem',
+  flexShrink: 0,
+};
+
+const floatingPlannerHeaderMobileStyle: React.CSSProperties = {
+  gap: '0.4rem',
+};
+
+const plannerHeaderActionsStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '0.45rem',
+  minWidth: 0,
+};
+
+const plannerToggleButtonStyle: React.CSSProperties = {
+  border: '1px solid rgba(148, 163, 184, 0.42)',
+  borderRadius: '999px',
+  background: 'rgba(255, 255, 255, 0.86)',
+  color: '#0f172a',
+  padding: '0.22rem 0.58rem',
+  fontSize: '0.72rem',
+  fontWeight: 700,
+  cursor: 'pointer',
+  whiteSpace: 'nowrap',
+};
+
+const plannerCollapsedSummaryButtonStyle: React.CSSProperties = {
+  border: '1px dashed rgba(14, 116, 144, 0.28)',
+  borderRadius: '0.58rem',
+  background: 'rgba(255, 255, 255, 0.78)',
+  color: '#0f172a',
+  padding: '0.5rem 0.58rem',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.18rem',
+  textAlign: 'left',
+  cursor: 'pointer',
+};
+
+const plannerCollapsedSummaryLabelStyle: React.CSSProperties = {
+  fontSize: '0.68rem',
+  fontWeight: 700,
+  color: '#0f766e',
+};
+
+const plannerCollapsedSummaryTextStyle: React.CSSProperties = {
+  fontSize: '0.74rem',
+  lineHeight: 1.45,
+  color: '#334155',
+};
+
 const secondaryButtonStyle: React.CSSProperties = {
   border: '1px solid rgba(148, 163, 184, 0.5)',
   background: 'rgba(255, 255, 255, 0.84)',
@@ -2888,6 +4296,17 @@ const secondaryButtonStyle: React.CSSProperties = {
   fontSize: '0.8rem',
   fontWeight: 600,
   cursor: 'pointer',
+};
+
+const secondaryButtonMobileStyle: React.CSSProperties = {
+  width: '100%',
+};
+
+const dangerButtonStyle: React.CSSProperties = {
+  ...secondaryButtonStyle,
+  border: '1px solid rgba(220, 38, 38, 0.34)',
+  background: 'rgba(254, 242, 242, 0.92)',
+  color: '#b91c1c',
 };
 
 const flowDetailCardStyle: React.CSSProperties = {
@@ -2904,6 +4323,15 @@ const flowDetailCardStyle: React.CSSProperties = {
   flexDirection: 'column',
   gap: '0.55rem',
   zIndex: 80,
+};
+
+const flowDetailCardMobileStyle: React.CSSProperties = {
+  top: '3.2rem',
+  left: '0.5rem',
+  right: '0.5rem',
+  width: 'auto',
+  maxHeight: 'calc(100vh - 5rem)',
+  overflowY: 'auto',
 };
 
 const flowDetailTitleStyle: React.CSSProperties = {
@@ -2963,8 +4391,12 @@ const actionRowStyle: React.CSSProperties = {
   gap: '0.45rem',
 };
 
+const actionRowMobileStyle: React.CSSProperties = {
+  flexDirection: 'column-reverse',
+};
+
 const confirmOverlayStyle: React.CSSProperties = {
-  position: 'absolute',
+  position: 'fixed',
   inset: 0,
   zIndex: 90,
   background: 'rgba(15, 23, 42, 0.28)',
@@ -2972,6 +4404,12 @@ const confirmOverlayStyle: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'center',
   padding: '1rem',
+};
+
+const confirmOverlayMobileStyle: React.CSSProperties = {
+  alignItems: 'flex-start',
+  overflowY: 'auto',
+  padding: '0.75rem',
 };
 
 const confirmCardStyle: React.CSSProperties = {
@@ -2984,6 +4422,12 @@ const confirmCardStyle: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   gap: '0.6rem',
+};
+
+const confirmCardMobileStyle: React.CSSProperties = {
+  width: '100%',
+  maxHeight: 'calc(100vh - 1.5rem)',
+  overflowY: 'auto',
 };
 
 const modalCardStyle: React.CSSProperties = {
@@ -3016,16 +4460,6 @@ const confirmWarningTextStyle: React.CSSProperties = {
   lineHeight: 1.45,
 };
 
-const plannerComposerShellStyle: React.CSSProperties = {
-  position: 'absolute',
-  left: '50%',
-  bottom: '0.9rem',
-  transform: 'translateX(-50%)',
-  zIndex: 70,
-  width: 'min(820px, calc(100vw - 1.6rem))',
-  pointerEvents: 'none',
-};
-
 const plannerComposerCardStyle: React.CSSProperties = {
   width: '100%',
   border: '1px solid rgba(14, 116, 144, 0.28)',
@@ -3038,6 +4472,10 @@ const plannerComposerCardStyle: React.CSSProperties = {
   flexDirection: 'column',
   gap: '0.45rem',
   pointerEvents: 'auto',
+};
+
+const plannerComposerCardMobileStyle: React.CSSProperties = {
+  padding: '0.5rem',
 };
 
 const plannerComposerTextareaStyle: React.CSSProperties = {
@@ -3053,11 +4491,32 @@ const plannerComposerTextareaStyle: React.CSSProperties = {
   color: '#0f172a',
 };
 
+const plannerComposerTextareaMobileStyle: React.CSSProperties = {
+  minHeight: '76px',
+};
+
+const plannerComposerInlineStyle: React.CSSProperties = {
+  ...plannerComposerCardStyle,
+  boxShadow: 'none',
+  padding: '0.5rem',
+  flexShrink: 0,
+};
+
+const plannerComposerTextareaInlineStyle: React.CSSProperties = {
+  ...plannerComposerTextareaStyle,
+  minHeight: '96px',
+};
+
 const plannerComposerFooterStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
   gap: '0.52rem',
+};
+
+const plannerComposerFooterMobileStyle: React.CSSProperties = {
+  flexDirection: 'column',
+  alignItems: 'stretch',
 };
 
 const plannerComposerHintStyle: React.CSSProperties = {
@@ -3067,16 +4526,25 @@ const plannerComposerHintStyle: React.CSSProperties = {
   whiteSpace: 'nowrap',
 };
 
+const plannerComposerHintMobileStyle: React.CSSProperties = {
+  whiteSpace: 'normal',
+};
+
 const canvasViewportStyle: React.CSSProperties = {
   position: 'relative',
   width: '100%',
   height: '100%',
   overflow: 'auto',
   boxSizing: 'border-box',
-  paddingBottom: '156px',
+  paddingBottom: '340px',
   background:
     'radial-gradient(circle at 30px 30px, rgba(15, 118, 110, 0.08) 1px, transparent 1px), radial-gradient(circle at 30px 30px, rgba(148, 163, 184, 0.07) 0.5px, transparent 0.5px), linear-gradient(160deg, rgba(255, 255, 255, 0.72), rgba(240, 253, 250, 0.6))',
   backgroundSize: '38px 38px, 19px 19px, cover',
+};
+
+const canvasViewportMobileStyle: React.CSSProperties = {
+  paddingBottom: '300px',
+  WebkitOverflowScrolling: 'touch',
 };
 
 const canvasSurfaceStyle: React.CSSProperties = {
@@ -3222,6 +4690,7 @@ const flowNodeCardStyle: React.CSSProperties = {
   cursor: 'pointer',
   zIndex: 10,
   userSelect: 'none',
+  touchAction: 'none',
 };
 
 const nodeHeaderStyle: React.CSSProperties = {
@@ -3285,6 +4754,7 @@ const connectorStyle: React.CSSProperties = {
   padding: 0,
   cursor: 'crosshair',
   zIndex: 18,
+  touchAction: 'none',
 };
 
 const connectorTopStyle: React.CSSProperties = {

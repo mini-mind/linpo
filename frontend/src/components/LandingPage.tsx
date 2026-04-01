@@ -28,7 +28,7 @@ export function LandingPage(): JSX.Element {
             <span style={brandTextStyle}>灵盘</span>
           </Link>
           <div style={navActionStyle}>
-            <Link to="/flow" style={ghostButtonStyle}>
+            <Link to="/flow/edit/new" style={ghostButtonStyle}>
               创建流程
             </Link>
             <Link to="/kanban" style={solidButtonStyle}>
