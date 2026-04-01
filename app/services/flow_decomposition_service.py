@@ -21,11 +21,12 @@ from app.services.provider_application_service import (
 _DEFAULT_DECOMPOSITION_BASE_URL = "ws://175.178.213.10:38789"
 _DEFAULT_DECOMPOSITION_ORIGIN = "http://127.0.0.1:38789"
 _DEFAULT_DECOMPOSITION_GATEWAY_TOKEN = "OuWJnOh9wo_8wLkIQv262NPc0tgnjo1G4yCMh9v-RAg"
-_DEFAULT_DECOMPOSITION_AGENT_ID = "main"
+_DEFAULT_DECOMPOSITION_AGENT_ID = "claw3"
 _DEFAULT_HISTORY_LIMIT = 60
 _DEFAULT_MAX_NODES = 12
 _DEFAULT_POLL_TIMES = 40
 _DEFAULT_POLL_INTERVAL_SECONDS = 0.6
+_DEFAULT_JSON_REPAIR_ATTEMPTS = 2
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,7 @@ class FlowDecompositionService:
         *,
         requirement: str,
         board_id: str,
+        planner_agent_id: str | None = None,
         planner_session_key: str | None = None,
         flow_name: str | None = None,
         current_nodes: list[dict[str, Any]] | None = None,
@@ -65,6 +67,7 @@ class FlowDecompositionService:
         if normalized_requirement == "":
             raise HTTPException(status_code=400, detail="requirement is required")
 
+        normalized_planner_agent_id = self._resolve_planner_agent_id(planner_agent_id)
         context = self._build_claw3_execution_context()
         normalized_planner_session_key = (
             planner_session_key.strip()
@@ -84,7 +87,7 @@ class FlowDecompositionService:
             self._provider_application_service.send_chat_message(
                 data_source="openclaw",
                 execution_context=context,
-                agent_id=self._decomposition_agent_id(),
+                agent_id=normalized_planner_agent_id,
                 message=prompt,
                 session_key=normalized_planner_session_key,
             )
@@ -96,12 +99,16 @@ class FlowDecompositionService:
         assistant_message = self._wait_for_assistant_json(
             context=context,
             session_key=normalized_planner_session_key,
+            planner_agent_id=normalized_planner_agent_id,
         )
         nodes = self._parse_nodes_from_message(assistant_message, current_nodes=normalized_nodes)
         return FlowDecompositionResult(
             nodes=nodes,
             planner_session_key=normalized_planner_session_key,
         )
+
+    def build_realtime_execution_context(self) -> ProviderExecutionContext:
+        return self._build_claw3_execution_context()
 
     def _build_claw3_execution_context(self) -> ProviderExecutionContext:
         base_url = self._decomposition_base_url()
@@ -133,14 +140,23 @@ class FlowDecompositionService:
         *,
         context: ProviderExecutionContext,
         session_key: str,
+        planner_agent_id: str,
     ) -> str:
+        repaired_signatures: set[str] = set()
+        repair_attempts = 0
         for _ in range(_DEFAULT_POLL_TIMES):
-            payload = self._provider_application_service.chat_history(
-                data_source="openclaw",
-                execution_context=context,
-                session_key=session_key,
-                limit=_DEFAULT_HISTORY_LIMIT,
-            )
+            try:
+                payload = self._provider_application_service.chat_history(
+                    data_source="openclaw",
+                    execution_context=context,
+                    session_key=session_key,
+                    limit=_DEFAULT_HISTORY_LIMIT,
+                )
+            except HTTPException as exc:
+                if self._is_retryable_history_error(exc):
+                    time.sleep(_DEFAULT_POLL_INTERVAL_SECONDS)
+                    continue
+                raise
             messages = payload.get("messages", [])
             if isinstance(messages, list):
                 for message in reversed(messages):
@@ -154,6 +170,21 @@ class FlowDecompositionService:
                         continue
                     if self._extract_json_candidates(text):
                         return text
+                    signature = self._assistant_message_signature(message, text=text)
+                    if (
+                        signature not in repaired_signatures
+                        and repair_attempts < _DEFAULT_JSON_REPAIR_ATTEMPTS
+                    ):
+                        self._provider_application_service.send_chat_message(
+                            data_source="openclaw",
+                            execution_context=context,
+                            agent_id=planner_agent_id,
+                            message=self._build_json_repair_prompt(text),
+                            session_key=session_key,
+                        )
+                        repaired_signatures.add(signature)
+                        repair_attempts += 1
+                        break
             time.sleep(_DEFAULT_POLL_INTERVAL_SECONDS)
 
         raise HTTPException(
@@ -295,6 +326,34 @@ class FlowDecompositionService:
             return "\n".join(text_parts)
         return ""
 
+    def _assistant_message_signature(self, item: dict[str, Any], *, text: str) -> str:
+        timestamp = item.get("timestamp")
+        if isinstance(timestamp, (int, float)):
+            return f"{timestamp}:{text}"
+        return text
+
+    def _build_json_repair_prompt(self, invalid_reply: str) -> str:
+        preview = invalid_reply.strip()
+        if len(preview) > 400:
+            preview = f"{preview[:400]}..."
+        return (
+            "你上一条回复不符合流程拆解协议。"
+            "不要解释，不要提问，不要 markdown，不要代码块。"
+            '现在仅输出一个合法 JSON 对象，顶层必须是 {"nodes":[...]}。'
+            "每个节点必须包含 id/title/description/depends_on/sensitive。"
+            "若上一条回复内容与需求冲突，以当前会话中的用户需求为准，直接给出完整 nodes。"
+            f"上一条无效回复参考：{preview}"
+        )
+
+    def _is_retryable_history_error(self, exc: HTTPException) -> bool:
+        if exc.status_code != 503:
+            return False
+        detail = str(exc.detail).lower()
+        return (
+            "too many non-target control messages" in detail
+            or "control response timed out" in detail
+        )
+
     def _normalize_node_id(self, raw: Any, *, fallback_index: int, seen_ids: set[str]) -> str:
         value = str(raw).strip() if isinstance(raw, str) else ""
         if value == "":
@@ -408,7 +467,13 @@ class FlowDecompositionService:
         )
 
     def _decomposition_agent_id(self) -> str:
-        return (
-            os.getenv("FLOW_DECOMPOSITION_AGENT_ID", "").strip()
-            or _DEFAULT_DECOMPOSITION_AGENT_ID
-        )
+        return _DEFAULT_DECOMPOSITION_AGENT_ID
+
+    def _resolve_planner_agent_id(self, planner_agent_id: str | None) -> str:
+        expected = self._decomposition_agent_id()
+        candidate = (planner_agent_id or "").strip()
+        if candidate == "":
+            return expected
+        if candidate != expected:
+            raise HTTPException(status_code=400, detail=f"planner_agent_id must be {expected}")
+        return expected

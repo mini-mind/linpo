@@ -65,7 +65,7 @@ export function Layout(): JSX.Element {
 
   return (
     <div style={shellStyle}>
-      <style>{`${toastAnimationStyle}\n${navLinkHoverStyle}`}</style>
+      <style>{`${toastAnimationStyle}\n${navLinkHoverStyle}\n${globalFormControlStyle}`}</style>
       <ToastContainer />
       <header style={getToolbarStyle(isMobile)}>
         <div style={getToolbarLeftStyle(isMobile)}>
@@ -80,6 +80,7 @@ export function Layout(): JSX.Element {
           </Link>
 
           <nav style={getToolbarNavStyle(isMobile)} aria-label="主导航" data-testid="layout-main-nav">
+            <span aria-hidden="true" style={toolbarNavDividerStyle} data-testid="toolbar-nav-divider" />
             <NavLink
               to="/summary"
               className="linpo-nav-link"
@@ -103,6 +104,7 @@ export function Layout(): JSX.Element {
             >
               文件
             </NavLink>
+            <span aria-hidden="true" style={toolbarNavDividerStyle} data-testid="toolbar-nav-divider" />
           </nav>
         </div>
 
@@ -262,8 +264,6 @@ function getToolbarNavStyle(isMobile: boolean): React.CSSProperties {
     msOverflowStyle: isMobile ? 'none' : undefined,
     touchAction: isMobile ? 'pan-x' : 'auto',
     whiteSpace: 'nowrap',
-    borderLeft: '1px solid rgba(148, 163, 184, 0.35)',
-    borderRight: '1px solid rgba(148, 163, 184, 0.35)',
     padding: isMobile ? '0 0.3rem' : '0 0.55rem',
   };
 }
@@ -378,5 +378,13 @@ const toastAnimationStyle = `
 const navLinkHoverStyle = `
   .linpo-nav-link:hover {
     background: rgba(15, 118, 110, 0.12);
+  }
+`;
+
+const globalFormControlStyle = `
+  :where(input, textarea, select) {
+    box-sizing: border-box !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
   }
 `;

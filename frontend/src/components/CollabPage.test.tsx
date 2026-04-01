@@ -211,6 +211,7 @@ describe('CollabPage', () => {
     expect(screen.getByText('流程数量 0')).toBeInTheDocument();
     expect(screen.queryByText('分列方式')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '➕任务' })).toBeInTheDocument();
+    expect(screen.getByTestId('kanban-frame')).toHaveStyle({ width: '100%' });
     expect(screen.getByTestId('kanban-board')).toHaveStyle({ overflowX: 'auto' });
   });
 

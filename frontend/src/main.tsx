@@ -47,6 +47,7 @@ function App(): JSX.Element {
   return (
     <AuthProvider>
       <ToastProvider>
+        <style>{globalFormControlStyleText}</style>
         <BrowserRouter>
           <Suspense fallback={<RouteFallback />}>
             <Routes>
@@ -77,6 +78,21 @@ function App(): JSX.Element {
     </AuthProvider>
   );
 }
+
+const globalFormControlStyleText = `
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+
+  input,
+  textarea,
+  select {
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
+    font: inherit;
+  }
+`;
 
 function RouteFallback(): JSX.Element {
   return (

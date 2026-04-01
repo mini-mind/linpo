@@ -1,5 +1,6 @@
 import { resolveCurrentInstanceId } from '../hooks/useCurrentInstance';
 import {
+  type FlowChatMessageItem,
   type KanbanTaskItem,
   type RealtimeObserverChannel,
   type ObserverRealtimeMessage,
@@ -88,6 +89,57 @@ export interface BoardRealtimeSseClient {
   close: () => void;
 }
 
+export interface FlowPlannerSnapshotPayload {
+  status: 'ok';
+}
+
+export interface FlowPlannerMessagesUpdatedPayload {
+  session_key: string;
+  messages: FlowChatMessageItem[];
+}
+
+export interface FlowPlannerErrorPayload {
+  detail: string;
+}
+
+export type FlowPlannerRealtimeMessage =
+  | {
+      type: 'snapshot_ready';
+      channel: `session:${string}:messages`;
+      seq: number;
+      timestamp: string;
+      payload: FlowPlannerSnapshotPayload;
+    }
+  | {
+      type: 'planner_messages_updated';
+      channel: `session:${string}:messages`;
+      seq: number;
+      timestamp: string;
+      payload: FlowPlannerMessagesUpdatedPayload;
+    }
+  | {
+      type: 'error';
+      channel: `session:${string}:messages`;
+      seq: number;
+      timestamp: string;
+      payload: FlowPlannerErrorPayload;
+    };
+
+export interface FlowPlannerSseClientOptions {
+  baseUrl?: string;
+  boardId: string;
+  sessionKey: string;
+  onMessage: (message: FlowPlannerRealtimeMessage) => void;
+  onParseError?: (raw: string, error: Error) => void;
+  onDisconnected?: () => void;
+  createEventSource?: (url: string) => EventSourceLike;
+}
+
+export interface FlowPlannerSseClient {
+  connect: () => void;
+  close: () => void;
+}
+
 const OBSERVER_WS_PATH = '/ws/observer';
 const BOARD_TASKS_SSE_PREFIX = '/sse/boards/';
 
@@ -128,6 +180,15 @@ function toBoardTasksSseUrl(apiBaseUrl: string, boardId: string): string {
   const encodedBoardId = encodeURIComponent(normalizedBoardId);
   const path = `${BOARD_TASKS_SSE_PREFIX}${encodedBoardId}/tasks`;
   return new URL(path, apiBaseUrl).toString();
+}
+
+function toFlowPlannerSseUrl(apiBaseUrl: string, boardId: string, sessionKey: string): string {
+  const normalizedBoardId = boardId.trim() || 'default';
+  const normalizedSessionKey = sessionKey.trim();
+  const encodedBoardId = encodeURIComponent(normalizedBoardId);
+  const url = new URL(`/api/v1/boards/${encodedBoardId}/tasks/flow/planner-sse`, apiBaseUrl);
+  url.searchParams.set('sessionKey', normalizedSessionKey);
+  return url.toString();
 }
 
 function assertRealtimeDataSource(dataSource: string, channel: RealtimeObserverChannel): void {
@@ -361,6 +422,88 @@ function parseBoardRealtimeMessage(raw: string): BoardRealtimeMessage {
   throw new Error('Invalid board realtime message');
 }
 
+function isFlowChatMessageItem(value: unknown): value is FlowChatMessageItem {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    (value.role === 'user' || value.role === 'assistant' || value.role === 'system') &&
+    typeof value.content === 'string' &&
+    typeof value.created_at === 'string'
+  );
+}
+
+function isSessionMessagesChannel(value: unknown): value is `session:${string}:messages` {
+  return typeof value === 'string' && value.startsWith('session:') && value.endsWith(':messages');
+}
+
+function parseFlowPlannerRealtimeMessage(raw: string): FlowPlannerRealtimeMessage {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('Invalid flow planner realtime message: malformed JSON');
+  }
+  if (!isRecord(parsed)) {
+    throw new Error('Invalid flow planner realtime message');
+  }
+
+  const { type, channel, seq, timestamp, payload } = parsed;
+  if (typeof type !== 'string' || !isSessionMessagesChannel(channel)) {
+    throw new Error('Invalid flow planner realtime message');
+  }
+  if (typeof seq !== 'number' || !Number.isInteger(seq) || seq < 0) {
+    throw new Error('Invalid flow planner realtime message');
+  }
+  if (typeof timestamp !== 'string' || !isRecord(payload)) {
+    throw new Error('Invalid flow planner realtime message');
+  }
+
+  if (type === 'snapshot_ready') {
+    if (payload.status !== 'ok') {
+      throw new Error('Invalid flow planner realtime message');
+    }
+    return { type, channel, seq, timestamp, payload: { status: 'ok' } };
+  }
+
+  if (type === 'planner_messages_updated') {
+    if (
+      typeof payload.session_key !== 'string' ||
+      !Array.isArray(payload.messages) ||
+      !payload.messages.every((item) => isFlowChatMessageItem(item))
+    ) {
+      throw new Error('Invalid flow planner realtime message');
+    }
+    return {
+      type,
+      channel,
+      seq,
+      timestamp,
+      payload: {
+        session_key: payload.session_key,
+        messages: payload.messages,
+      },
+    };
+  }
+
+  if (type === 'error') {
+    if (typeof payload.detail !== 'string') {
+      throw new Error('Invalid flow planner realtime message');
+    }
+    return {
+      type,
+      channel,
+      seq,
+      timestamp,
+      payload: {
+        detail: payload.detail,
+      },
+    };
+  }
+
+  throw new Error('Invalid flow planner realtime message');
+}
+
 export function createBoardTasksSseClient(
   options: BoardRealtimeSseClientOptions
 ): BoardRealtimeSseClient {
@@ -397,6 +540,78 @@ export function createBoardTasksSseClient(
         options.onParseError?.(
           raw,
           error instanceof Error ? error : new Error('Failed to parse board realtime message')
+        );
+      }
+    });
+
+    nextSource.addEventListener('error', () => {
+      if (!source) {
+        return;
+      }
+      source = null;
+      if (manuallyClosed) {
+        return;
+      }
+      options.onDisconnected?.();
+    });
+  };
+
+  const close = (): void => {
+    if (!source) {
+      return;
+    }
+    manuallyClosed = true;
+    source.close();
+    source = null;
+  };
+
+  return {
+    connect,
+    close,
+  };
+}
+
+export function createFlowPlannerSseClient(
+  options: FlowPlannerSseClientOptions
+): FlowPlannerSseClient {
+  if (!options.boardId.trim()) {
+    throw new Error('Realtime boardId is required');
+  }
+  if (!options.sessionKey.trim()) {
+    throw new Error('Realtime sessionKey is required');
+  }
+  const apiBaseUrl = resolveApiBaseUrl(options.baseUrl);
+  const createEventSource =
+    options.createEventSource ??
+    ((url: string): EventSourceLike => new EventSource(url, { withCredentials: true }));
+
+  let source: EventSourceLike | null = null;
+  let manuallyClosed = false;
+
+  const connect = (): void => {
+    if (source) {
+      return;
+    }
+    manuallyClosed = false;
+    const nextSource = createEventSource(
+      toFlowPlannerSseUrl(apiBaseUrl, options.boardId, options.sessionKey)
+    );
+    source = nextSource;
+
+    nextSource.addEventListener('message', (event) => {
+      const raw =
+        typeof event === 'object' && event !== null && 'data' in event
+          ? (event as { data?: unknown }).data
+          : undefined;
+      if (typeof raw !== 'string') {
+        return;
+      }
+      try {
+        options.onMessage(parseFlowPlannerRealtimeMessage(raw));
+      } catch (error) {
+        options.onParseError?.(
+          raw,
+          error instanceof Error ? error : new Error('Failed to parse flow planner realtime message')
         );
       }
     });

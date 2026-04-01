@@ -36,8 +36,6 @@ import { MarkdownMessage } from './MarkdownMessage';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
 import {
-  getWorkspaceFrameStyle,
-  WORKSPACE_KANBAN_MAX_WIDTH_PX,
   WORKSPACE_NARROW_MOBILE_BREAKPOINT_PX,
 } from './workspaceLayout';
 
@@ -1252,21 +1250,7 @@ export default function CollabPage(): JSX.Element {
         </div>
       ) : null}
 
-      <div
-        style={getWorkspaceFrameStyle({
-          isMobile,
-          maxWidthPx: WORKSPACE_KANBAN_MAX_WIDTH_PX,
-          desktopPadding: '0 0.85rem 0.85rem',
-          mobilePadding: '0 0.5rem 0.5rem',
-          extra: {
-            flex: 1,
-            minHeight: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            margin: isMobile ? '0 auto' : '0 auto 0 0',
-          },
-        })}
-      >
+      <div style={isMobile ? boardFrameMobileStyle : boardFrameStyle} data-testid="kanban-frame">
       <div style={isMobile ? boardShellMobileStyle : boardShellStyle}>
         {loadError ? (
           <div style={errorPanelStyle}>
@@ -2115,6 +2099,21 @@ const pageStyle: React.CSSProperties = {
   flexDirection: 'column',
   gap: '0.8rem',
   background: 'transparent',
+};
+
+const boardFrameStyle: React.CSSProperties = {
+  width: '100%',
+  flex: 1,
+  minHeight: 0,
+  display: 'flex',
+  flexDirection: 'column',
+  padding: '0 0.85rem 0.85rem',
+  boxSizing: 'border-box',
+};
+
+const boardFrameMobileStyle: React.CSSProperties = {
+  ...boardFrameStyle,
+  padding: '0 0.5rem 0.5rem',
 };
 
 const boardShellStyle: React.CSSProperties = {

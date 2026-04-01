@@ -1,6 +1,8 @@
+import asyncio
 import json
 import os
 
+from fastapi import HTTPException
 import pytest
 
 from ._asgi import request
@@ -784,6 +786,48 @@ def test_openclaw_client_chat_history_uses_default_limit_200(monkeypatch: Any) -
     assert result == {"ok": True, "payload": {}}
     assert captured["session_key"] == "agent:main:main"
     assert captured["limit"] == 200
+
+
+def test_openclaw_client_waits_for_target_control_response(monkeypatch: Any) -> None:
+    from app.services.openclaw_client import OpenClawClient
+
+    client = OpenClawClient.__new__(OpenClawClient)
+    messages = iter(
+        [
+            {"type": "event", "event": "health"},
+            {"type": "event", "event": "chat.delta"},
+            {"type": "res", "id": "target-1", "ok": True, "payload": {"status": "ok"}},
+        ]
+    )
+
+    async def fake_receive_message(_ws: Any, *, timeout_seconds: float = 5.0) -> dict[str, Any]:
+        del timeout_seconds
+        return next(messages)
+
+    monkeypatch.setattr(client, "_receive_message", fake_receive_message)
+
+    result = asyncio.run(client._expect_control_response_by_id(object(), expected_id="target-1"))
+
+    assert result["id"] == "target-1"
+    assert result["payload"] == {"status": "ok"}
+
+
+def test_openclaw_client_times_out_when_target_control_response_never_arrives(monkeypatch: Any) -> None:
+    from app.services import openclaw_client
+    from app.services.openclaw_client import OpenClawClient
+
+    client = OpenClawClient.__new__(OpenClawClient)
+    monkeypatch.setattr(openclaw_client, "_CONTROL_RESPONSE_TIMEOUT_SECONDS", 0.01)
+
+    async def fake_receive_message(_ws: Any, *, timeout_seconds: float = 5.0) -> dict[str, Any]:
+        del timeout_seconds
+        await asyncio.sleep(0)
+        return {"type": "event", "event": "health"}
+
+    monkeypatch.setattr(client, "_receive_message", fake_receive_message)
+
+    with pytest.raises(HTTPException, match="control response timed out"):
+        asyncio.run(client._expect_control_response_by_id(object(), expected_id="target-1"))
 
 
 def test_list_models_requires_openclaw_data_source() -> None:

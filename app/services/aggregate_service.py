@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import math
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -202,12 +203,24 @@ class AggregateService:
             key=lambda item: (item.name, str(item.id)),
         ):
             token_group = self._empty_token_group(instance)
+            execution_context: ProviderExecutionContext | None = None
             try:
                 execution_context = self._get_instance_execution_context(
                     db_session,
                     user_id=user_id,
                     instance_id=cast(UUID, instance.id),
                 )
+                token_group = self._safe_build_token_group(instance, execution_context)
+            except Exception:
+                execution_context = None
+
+            try:
+                if execution_context is None:
+                    execution_context = self._get_instance_execution_context(
+                        db_session,
+                        user_id=user_id,
+                        instance_id=cast(UUID, instance.id),
+                    )
                 data_source = self._resolve_instance_data_source(execution_context)
                 agents = sorted(data_source.list_agents(), key=lambda agent: (agent.name, agent.id))
                 global_events = self._list_instance_global_events(instance, agents, data_source)
@@ -215,7 +228,6 @@ class AggregateService:
                     self._get_topology_snapshot(data_source) if include_topology_snapshot else None
                 )
                 diagnostic = self._success_diagnostic(instance)
-                token_group = self._safe_build_token_group(instance, execution_context)
             except Exception as exc:
                 agents = []
                 global_events = []
@@ -348,11 +360,14 @@ class AggregateService:
         totals = payload.get("totals")
         total_tokens = None
         if isinstance(totals, dict):
-            raw_total = totals.get("totalTokens")
-            if isinstance(raw_total, int) and raw_total >= 0:
-                total_tokens = raw_total
+            total_tokens = self._read_non_negative_int(
+                totals,
+                keys=("totalTokens", "total_tokens", "total"),
+            )
 
         raw_daily = payload.get("daily")
+        if not isinstance(raw_daily, list):
+            raw_daily = payload.get("samples")
         normalized_samples: list[AggregateOverviewTokenSample] = []
         if isinstance(raw_daily, list):
             for entry in raw_daily:
@@ -360,16 +375,36 @@ class AggregateService:
                     continue
                 label = entry.get("date")
                 if not isinstance(label, str) or not label.strip():
+                    label = entry.get("label")
+                if not isinstance(label, str) or not label.strip():
+                    label = entry.get("day")
+                if not isinstance(label, str) or not label.strip():
                     continue
-                input_tokens = entry.get("input")
-                output_tokens = entry.get("output")
-                sample_total = entry.get("totalTokens")
+                input_tokens = self._read_non_negative_int(
+                    entry,
+                    keys=("input", "inputTokens", "input_tokens"),
+                )
+                output_tokens = self._read_non_negative_int(
+                    entry,
+                    keys=("output", "outputTokens", "output_tokens"),
+                )
+                sample_total = self._read_non_negative_int(
+                    entry,
+                    keys=("totalTokens", "total_tokens", "total"),
+                )
+                resolved_input = input_tokens if input_tokens is not None else 0
+                resolved_output = output_tokens if output_tokens is not None else 0
+                resolved_total = (
+                    sample_total
+                    if sample_total is not None
+                    else resolved_input + resolved_output
+                )
                 normalized_samples.append(
                     AggregateOverviewTokenSample(
                         label=label.strip(),
-                        input_tokens=input_tokens if isinstance(input_tokens, int) and input_tokens >= 0 else 0,
-                        output_tokens=output_tokens if isinstance(output_tokens, int) and output_tokens >= 0 else 0,
-                        total_tokens=sample_total if isinstance(sample_total, int) and sample_total >= 0 else 0,
+                        input_tokens=resolved_input,
+                        output_tokens=resolved_output,
+                        total_tokens=resolved_total,
                     )
                 )
         if total_tokens is None and normalized_samples:
@@ -381,6 +416,42 @@ class AggregateService:
             total_tokens=total_tokens,
             samples=normalized_samples,
         )
+
+    def _read_non_negative_int(
+        self,
+        payload: dict[str, object],
+        *,
+        keys: tuple[str, ...],
+    ) -> int | None:
+        for key in keys:
+            if key not in payload:
+                continue
+            normalized = self._to_non_negative_int(payload.get(key))
+            if normalized is not None:
+                return normalized
+        return None
+
+    def _to_non_negative_int(self, value: object) -> int | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value if value >= 0 else None
+        if isinstance(value, float):
+            if not math.isfinite(value) or value < 0:
+                return None
+            return int(value)
+        if isinstance(value, str):
+            raw = value.strip()
+            if raw == "":
+                return None
+            try:
+                parsed = float(raw)
+            except ValueError:
+                return None
+            if not math.isfinite(parsed) or parsed < 0:
+                return None
+            return int(parsed)
+        return None
 
     def _sort_global_events(
         self,

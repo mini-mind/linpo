@@ -101,6 +101,23 @@ function buildOverview(overrides: Partial<AggregateOverviewResponse> = {}): Aggr
   };
 }
 
+function buildEvent(
+  index: number,
+  overrides: Partial<AggregateOverviewResponse['global_events'][number]> = {}
+): AggregateOverviewResponse['global_events'][number] {
+  return {
+    id: `event-${index}`,
+    instance_id: 'instance-alpha',
+    instance_name: 'alpha-instance',
+    agent_id: 'agent-alpha',
+    agent_name: 'Alpha Agent',
+    type: index % 2 === 0 ? 'status_changed' : 'activity_started',
+    timestamp: `2026-04-${String((index % 28) + 1).padStart(2, '0')}T00:01:00Z`,
+    description: `事件 ${index} 号描述`,
+    ...overrides,
+  };
+}
+
 function buildTask(overrides: Partial<KanbanTaskItem> = {}): KanbanTaskItem {
   return {
     id: 'task-alpha',
@@ -176,6 +193,7 @@ describe('SummaryPage', () => {
     expect(screen.getByText('120 tokens')).toBeInTheDocument();
     expect(screen.getByTestId('summary-approval-list')).toHaveTextContent('审批任务 Alpha');
     expect(screen.getByTestId('summary-approval-list')).toHaveTextContent('周报流程');
+    expect(screen.queryByRole('button', { name: '打开看板' })).not.toBeInTheDocument();
     await waitFor(() => {
       expect(screen.getByTestId('summary-events-rail')).toHaveTextContent('Alpha Agent 完成了上游整理。');
     });
@@ -230,22 +248,37 @@ describe('SummaryPage', () => {
     });
   });
 
-  it('filters and expands events in event rail', async () => {
+  it('renders events expanded by default without category controls and supports pagination', async () => {
+    mockGetAggregateOverview.mockResolvedValue(
+      buildOverview({
+        global_events: Array.from({ length: 12 }, (_, index) =>
+          buildEvent(index + 1, {
+            description: index === 0 ? '目标关键字事件' : `事件 ${index + 1} 号描述`,
+          })
+        ),
+      })
+    );
+
     renderPage();
 
-    await screen.findByTestId('summary-events-rail');
+    const rail = await screen.findByTestId('summary-events-rail');
+    expect(rail).toHaveTextContent('类型 ·');
+    expect(screen.queryByRole('button', { name: '全部展开' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Agent' })).not.toBeInTheDocument();
+    expect(screen.getByText('第 1 / 2 页')).toBeInTheDocument();
+    expect(screen.queryByText('目标关键字事件')).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Agent' }));
-    expect(screen.getByTestId('summary-events-rail')).toHaveTextContent('Alpha Agent 完成了上游整理。');
+    await userEvent.click(screen.getByRole('button', { name: '下一页' }));
+    expect(screen.getByText('第 2 / 2 页')).toBeInTheDocument();
+    expect(screen.getByText('目标关键字事件')).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: '全部展开' }));
-    expect(screen.getByTestId('summary-events-rail')).toHaveTextContent('类型 · status_changed');
-
-    await userEvent.type(screen.getByPlaceholderText('筛选关键字'), '不存在');
-    expect(screen.getByTestId('summary-events-rail')).toHaveTextContent('当前没有可展示的事件');
+    await userEvent.clear(screen.getByPlaceholderText('筛选关键字'));
+    await userEvent.type(screen.getByPlaceholderText('筛选关键字'), '目标关键字');
+    expect(screen.getByText('第 1 / 1 页')).toBeInTheDocument();
+    expect(screen.getByText('目标关键字事件')).toBeInTheDocument();
   });
 
-  it('uses compact toolbar metrics on mobile', async () => {
+  it('does not render a separate top toolbar on mobile', async () => {
     const originalWidth = window.innerWidth;
     await act(async () => {
       window.innerWidth = 480;
@@ -256,10 +289,10 @@ describe('SummaryPage', () => {
 
     await screen.findByTestId('summary-chart');
 
-    const toolbar = screen.getByRole('toolbar', { name: '摘要工具栏' });
-    expect(toolbar).toHaveTextContent('待审批 1 项');
-    expect(toolbar).toHaveTextContent('事件 1/1 条');
-    expect(toolbar).not.toHaveTextContent('指标: Token');
+    expect(screen.queryByRole('toolbar', { name: '摘要工具栏' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('summary-chart')).toBeInTheDocument();
+    expect(screen.getByTestId('summary-approval-list')).toBeInTheDocument();
+    expect(screen.getByTestId('summary-events-rail')).toBeInTheDocument();
 
     await act(async () => {
       window.innerWidth = originalWidth;

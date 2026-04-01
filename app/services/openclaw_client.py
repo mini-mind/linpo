@@ -24,6 +24,9 @@ from app.domain.control_request import (
 
 T = TypeVar("T")
 
+_RECEIVE_MESSAGE_TIMEOUT_SECONDS = 5.0
+_CONTROL_RESPONSE_TIMEOUT_SECONDS = 15.0
+
 
 @dataclass(frozen=True)
 class OpenClawSnapshot:
@@ -343,17 +346,31 @@ class OpenClawClient:
         *,
         expected_id: str,
     ) -> dict[str, Any]:
-        skipped_messages = 0
-        while skipped_messages < 32:
-            message = await self._receive_message(ws)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _CONTROL_RESPONSE_TIMEOUT_SECONDS
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+            try:
+                message = await self._receive_message(
+                    ws,
+                    timeout_seconds=min(_RECEIVE_MESSAGE_TIMEOUT_SECONDS, remaining),
+                )
+            except TimeoutError:
+                continue
             if message.get("type") == "res" and message.get("id") == expected_id:
                 return message
-            skipped_messages += 1
 
-        raise HTTPException(status_code=503, detail="OpenClaw returned too many non-target control messages")
+        raise HTTPException(status_code=503, detail="OpenClaw control response timed out")
 
-    async def _receive_message(self, ws: websockets.ClientConnection) -> dict[str, Any]:
-        raw = await asyncio.wait_for(ws.recv(), timeout=5)
+    async def _receive_message(
+        self,
+        ws: websockets.ClientConnection,
+        *,
+        timeout_seconds: float = _RECEIVE_MESSAGE_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        raw = await asyncio.wait_for(ws.recv(), timeout=timeout_seconds)
         try:
             message = json.loads(raw)
         except json.JSONDecodeError as exc:

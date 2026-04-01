@@ -1,6 +1,5 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   ApiError,
   continueKanbanTask,
@@ -28,10 +27,8 @@ import { useToast } from '../hooks/useToast';
 import {
   getWorkspaceBodyInnerStyle,
   getWorkspaceBodyShellStyle,
-  getWorkspaceFrameStyle,
   getWorkspacePageStyle,
   WORKSPACE_CONTENT_MAX_WIDTH_PX,
-  WORKSPACE_TOOLBAR_MAX_WIDTH_PX,
 } from './workspaceLayout';
 
 type SummaryMetricKind = 'tokens' | 'tasks';
@@ -66,18 +63,10 @@ type SummaryEventFilter = 'all' | 'approval' | 'execution' | 'topology' | 'agent
 
 const BOARD_REALTIME_ID = 'default';
 const SERIES_COLORS = ['#0f766e', '#0284c7', '#f97316', '#dc2626', '#7c3aed', '#65a30d'];
-const EVENT_FILTER_OPTIONS: Array<{ value: SummaryEventFilter; label: string }> = [
-  { value: 'all', label: '全部' },
-  { value: 'approval', label: '审批' },
-  { value: 'execution', label: '执行' },
-  { value: 'topology', label: '拓扑' },
-  { value: 'agent', label: 'Agent' },
-  { value: 'exception', label: '异常' },
-];
+const EVENTS_PAGE_SIZE = 10;
 
 export function SummaryPage(): JSX.Element {
   const isMobile = useIsMobile(960);
-  const navigate = useNavigate();
   const { addToast } = useToast();
   const [currentInstanceId] = useCurrentInstanceId();
   const [overview, setOverview] = useState<AggregateOverviewResponse | null>(null);
@@ -87,9 +76,8 @@ export function SummaryPage(): JSX.Element {
   const [overviewError, setOverviewError] = useState<Error | null>(null);
   const [tasksError, setTasksError] = useState<string | null>(null);
   const [continuingTaskId, setContinuingTaskId] = useState<string | null>(null);
-  const [eventFilter, setEventFilter] = useState<SummaryEventFilter>('all');
   const [eventQuery, setEventQuery] = useState('');
-  const [expandedEventIds, setExpandedEventIds] = useState<string[]>([]);
+  const [eventPage, setEventPage] = useState(1);
   const boardRealtimeRef = useRef<ReturnType<typeof createBoardTasksSseClient> | null>(null);
   const agentsListRealtimeRef = useRef<ObserverRealtimeClient | null>(null);
   const agentRealtimeRefs = useRef<Map<string, ObserverRealtimeClient>>(new Map());
@@ -431,44 +419,20 @@ export function SummaryPage(): JSX.Element {
 
   const metric = useMemo(() => buildSummaryMetric(overview?.token_groups ?? [], tasks), [overview?.token_groups, tasks]);
 
-  const filteredEvents = useMemo(
-    () => events.filter((item) => matchesEventFilter(item, eventFilter, eventQuery)),
-    [eventFilter, eventQuery, events]
-  );
-
-  const toolbarMetrics = isMobile
-    ? [`待审批 ${approvalTasks.length} 项`, `事件 ${filteredEvents.length}/${events.length} 条`]
-    : [
-        `待审批 ${approvalTasks.length} 项`,
-        `事件 ${filteredEvents.length}/${events.length} 条`,
-        metric.kind === 'tokens' ? '指标: Token' : '指标: 任务节点',
-      ];
+  const filteredEvents = useMemo(() => events.filter((item) => matchesEventQuery(item, eventQuery)), [eventQuery, events]);
+  const totalEventPages = Math.max(1, Math.ceil(filteredEvents.length / EVENTS_PAGE_SIZE));
+  const pagedEvents = useMemo(() => {
+    const start = (eventPage - 1) * EVENTS_PAGE_SIZE;
+    return filteredEvents.slice(start, start + EVENTS_PAGE_SIZE);
+  }, [eventPage, filteredEvents]);
 
   useEffect(() => {
-    setExpandedEventIds((current) => current.filter((id) => filteredEvents.some((item) => item.id === id)));
-  }, [filteredEvents]);
+    setEventPage(1);
+  }, [eventQuery]);
 
-  const handleToggleEvent = useCallback((eventId: string) => {
-    setExpandedEventIds((current) =>
-      current.includes(eventId) ? current.filter((item) => item !== eventId) : [...current, eventId]
-    );
-  }, []);
-
-  const handleToggleAllFilteredEvents = useCallback(() => {
-    setExpandedEventIds((current) => {
-      const visibleIds = filteredEvents.map((item) => item.id);
-      const allExpanded =
-        visibleIds.length > 0 && visibleIds.every((eventId) => current.includes(eventId));
-      if (allExpanded) {
-        return current.filter((eventId) => !visibleIds.includes(eventId));
-      }
-      const next = new Set(current);
-      for (const eventId of visibleIds) {
-        next.add(eventId);
-      }
-      return [...next];
-    });
-  }, [filteredEvents]);
+  useEffect(() => {
+    setEventPage((current) => Math.min(current, totalEventPages));
+  }, [totalEventPages]);
 
   const handleContinueTask = useCallback(
     async (taskId: string) => {
@@ -489,14 +453,6 @@ export function SummaryPage(): JSX.Element {
   if (isLoading) {
     return (
       <section style={getWorkspacePageStyle()}>
-        <div style={getWorkspaceFrameStyle({ isMobile, maxWidthPx: WORKSPACE_TOOLBAR_MAX_WIDTH_PX })}>
-          <header style={isMobile ? { ...toolbarStyle, ...toolbarMobileStyle } : toolbarStyle}>
-            <div style={toolbarLeftStyle}>
-              <span style={toolbarTitleStyle}>摘要</span>
-              <span style={toolbarMetaStyle}>正在汇总审批与统计…</span>
-            </div>
-          </header>
-        </div>
         <div style={getWorkspaceBodyShellStyle({ isMobile, extra: isMobile ? bodyShellMobileStyle : bodyShellStyle })}>
           <div style={getWorkspaceBodyInnerStyle({ isMobile, maxWidthPx: WORKSPACE_CONTENT_MAX_WIDTH_PX, extra: getBodyStyle(isMobile) })} data-testid="summary-content-frame">
             <div style={getContentStyle(isMobile)}>
@@ -536,24 +492,6 @@ export function SummaryPage(): JSX.Element {
 
   return (
     <section style={getWorkspacePageStyle()}>
-      <div style={getWorkspaceFrameStyle({ isMobile, maxWidthPx: WORKSPACE_TOOLBAR_MAX_WIDTH_PX })}>
-        <header style={isMobile ? { ...toolbarStyle, ...toolbarMobileStyle } : toolbarStyle} role="toolbar" aria-label="摘要工具栏">
-          <div style={toolbarLeftStyle}>
-            <span style={toolbarTitleStyle}>摘要</span>
-            {toolbarMetrics.map((item) => (
-              <span key={item} style={toolbarMetaStyle}>
-                {item}
-              </span>
-            ))}
-          </div>
-          <div style={toolbarActionsStyle}>
-            <button type="button" style={ghostButtonStyle} onClick={() => void loadPage()}>
-              刷新
-            </button>
-          </div>
-        </header>
-      </div>
-
       <div style={getWorkspaceBodyShellStyle({ isMobile, extra: isMobile ? bodyShellMobileStyle : bodyShellStyle })}>
         <div style={getWorkspaceBodyInnerStyle({ isMobile, maxWidthPx: WORKSPACE_CONTENT_MAX_WIDTH_PX, extra: getBodyStyle(isMobile) })} data-testid="summary-content-frame">
           <div style={getContentStyle(isMobile)}>
@@ -564,20 +502,19 @@ export function SummaryPage(): JSX.Element {
                 tasksError={tasksError}
                 continuingTaskId={continuingTaskId}
                 onContinueTask={handleContinueTask}
-                onOpenKanban={() => navigate('/kanban')}
                 isMobile={isMobile}
               />
               <EventsPane
-                events={filteredEvents}
+                events={pagedEvents}
                 totalCount={events.length}
-                activeFilter={eventFilter}
+                filteredCount={filteredEvents.length}
+                currentPage={eventPage}
+                totalPages={totalEventPages}
                 query={eventQuery}
-                expandedEventIds={expandedEventIds}
                 isMobile={isMobile}
-                onFilterChange={setEventFilter}
                 onQueryChange={setEventQuery}
-                onToggleEvent={handleToggleEvent}
-                onToggleAll={handleToggleAllFilteredEvents}
+                onPrevPage={() => setEventPage((current) => Math.max(1, current - 1))}
+                onNextPage={() => setEventPage((current) => Math.min(totalEventPages, current + 1))}
               />
             </div>
           </div>
@@ -682,14 +619,12 @@ function ApprovalPane({
   tasksError,
   continuingTaskId,
   onContinueTask,
-  onOpenKanban,
   isMobile,
 }: {
   approvalTasks: KanbanTaskItem[];
   tasksError: string | null;
   continuingTaskId: string | null;
   onContinueTask: (taskId: string) => void;
-  onOpenKanban: () => void;
   isMobile: boolean;
 }): JSX.Element {
   return (
@@ -699,9 +634,6 @@ function ApprovalPane({
           <h2 style={sectionTitleStyle}>审批项</h2>
           <p style={sectionHintStyle}>集中处理被敏感操作阻塞的任务节点。</p>
         </div>
-        <button type="button" style={ghostButtonStyle} onClick={onOpenKanban}>
-          打开看板
-        </button>
       </div>
 
       {tasksError ? <div style={inlineErrorStyle}>{tasksError}</div> : null}
@@ -762,29 +694,26 @@ function ApprovalPane({
 function EventsPane({
   events,
   totalCount,
-  activeFilter,
+  filteredCount,
+  currentPage,
+  totalPages,
   query,
-  expandedEventIds,
   isMobile,
-  onFilterChange,
   onQueryChange,
-  onToggleEvent,
-  onToggleAll,
+  onPrevPage,
+  onNextPage,
 }: {
   events: SummaryEventItem[];
   totalCount: number;
-  activeFilter: SummaryEventFilter;
+  filteredCount: number;
+  currentPage: number;
+  totalPages: number;
   query: string;
-  expandedEventIds: string[];
   isMobile: boolean;
-  onFilterChange: (value: SummaryEventFilter) => void;
   onQueryChange: (value: string) => void;
-  onToggleEvent: (eventId: string) => void;
-  onToggleAll: () => void;
+  onPrevPage: () => void;
+  onNextPage: () => void;
 }): JSX.Element {
-  const allExpanded =
-    events.length > 0 && events.every((item) => expandedEventIds.includes(item.id));
-
   return (
     <aside style={getEventsPaneStyle(isMobile)} data-testid="summary-events-rail">
       <div style={getSectionHeaderStyle(isMobile)}>
@@ -792,26 +721,11 @@ function EventsPane({
           <h2 style={sectionTitleStyle}>事件流</h2>
           <p style={sectionHintStyle}>
             保留最近的实例活动、异常与执行线索。
-            {totalCount > events.length ? ` 当前筛选后 ${events.length}/${totalCount} 条。` : ''}
+            {totalCount > filteredCount ? ` 当前筛选后 ${filteredCount}/${totalCount} 条。` : ''}
           </p>
         </div>
-        <button type="button" style={ghostButtonStyle} onClick={onToggleAll} disabled={events.length === 0}>
-          {allExpanded ? '全部收起' : '全部展开'}
-        </button>
       </div>
       <div style={eventsToolbarStyle}>
-        <div style={getEventFilterRowStyle(isMobile)}>
-          {EVENT_FILTER_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              style={getEventFilterChipStyle(activeFilter === option.value)}
-              onClick={() => onFilterChange(option.value)}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
         <label style={eventSearchWrapStyle}>
           <span style={srOnlyStyle}>筛选事件关键字</span>
           <input
@@ -827,15 +741,9 @@ function EventsPane({
       ) : (
         <div style={getEventsListStyle(isMobile)}>
           {events.map((event) => {
-            const isExpanded = expandedEventIds.includes(event.id);
             return (
               <article key={event.id} style={eventCardStyle}>
-                <button
-                  type="button"
-                  style={eventCardToggleStyle}
-                  onClick={() => onToggleEvent(event.id)}
-                  aria-expanded={isExpanded}
-                >
+                <div style={eventCardBodyStyle}>
                   <div style={eventCardHeaderStyle}>
                     <span style={getEventTypeStyle(event.category)}>{getEventTypeLabel(event)}</span>
                     <span style={eventTimeStyle}>{formatDateTime(event.timestamp)}</span>
@@ -844,21 +752,28 @@ function EventsPane({
                     {event.instanceName}
                     {event.agentName ? ` · ${event.agentName}` : ''}
                   </p>
-                  <p style={isExpanded ? eventDescriptionStyle : collapsedEventDescriptionStyle}>
-                    {event.description}
-                  </p>
-                </button>
-                {isExpanded ? (
+                  <p style={eventDescriptionStyle}>{event.description}</p>
                   <div style={eventExpandedMetaStyle}>
                     <span style={eventMetaPillStyle}>类别 · {getEventFilterLabel(event.category)}</span>
                     <span style={eventMetaPillStyle}>类型 · {event.type}</span>
                   </div>
-                ) : null}
+                </div>
               </article>
             );
           })}
         </div>
       )}
+      <div style={eventsPaginationStyle}>
+        <button type="button" style={ghostButtonStyle} onClick={onPrevPage} disabled={currentPage <= 1}>
+          上一页
+        </button>
+        <span style={paginationTextStyle}>
+          第 {currentPage} / {totalPages} 页
+        </span>
+        <button type="button" style={ghostButtonStyle} onClick={onNextPage} disabled={currentPage >= totalPages}>
+          下一页
+        </button>
+      </div>
     </aside>
   );
 }
@@ -1027,14 +942,7 @@ function sortSummaryEvents(events: SummaryEventItem[]): SummaryEventItem[] {
   return next.slice(0, 80);
 }
 
-function matchesEventFilter(
-  item: SummaryEventItem,
-  filter: SummaryEventFilter,
-  query: string
-): boolean {
-  if (filter !== 'all' && item.category !== filter) {
-    return false;
-  }
+function matchesEventQuery(item: SummaryEventItem, query: string): boolean {
   const normalizedQuery = query.trim().toLowerCase();
   if (!normalizedQuery) {
     return true;
@@ -1072,7 +980,15 @@ function getEventTypeLabel(item: SummaryEventItem): string {
 }
 
 function getEventFilterLabel(value: SummaryEventFilter): string {
-  return EVENT_FILTER_OPTIONS.find((item) => item.value === value)?.label ?? value;
+  const labels: Record<SummaryEventFilter, string> = {
+    all: '全部',
+    approval: '审批',
+    execution: '执行',
+    topology: '拓扑',
+    agent: 'Agent',
+    exception: '异常',
+  };
+  return labels[value] ?? value;
 }
 
 function EnvelopeErrorSummary({ envelope }: { envelope: ErrorEnvelope }): JSX.Element {
@@ -1163,51 +1079,6 @@ function getVisibleMetricLabels(labels: string[], isMobile: boolean): string[] {
   const next = labels.filter((_, index) => index === 0 || index === labels.length - 1 || index % 2 === 1);
   return next.length > 0 ? next : labels;
 }
-
-const toolbarStyle: React.CSSProperties = {
-  position: 'sticky',
-  top: 0,
-  zIndex: 60,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  gap: '0.65rem',
-  flexWrap: 'wrap',
-  padding: '0.55rem 0.65rem',
-  border: '1px solid rgba(15, 23, 42, 0.1)',
-  borderRadius: '0.4rem',
-  background: 'rgba(255, 255, 255, 0.44)',
-  backdropFilter: 'blur(8px)',
-};
-
-const toolbarMobileStyle: React.CSSProperties = {
-  padding: '0.45rem 0.5rem',
-  gap: '0.45rem',
-};
-
-const toolbarLeftStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  flexWrap: 'wrap',
-  gap: '0.5rem 0.8rem',
-};
-
-const toolbarTitleStyle: React.CSSProperties = {
-  fontSize: '1rem',
-  fontWeight: 700,
-  color: '#10212f',
-};
-
-const toolbarMetaStyle: React.CSSProperties = {
-  fontSize: '0.78rem',
-  color: '#52616f',
-};
-
-const toolbarActionsStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'flex-end',
-};
 
 const bodyShellStyle: React.CSSProperties = {};
 
@@ -1487,21 +1358,12 @@ const eventsToolbarStyle: React.CSSProperties = {
   marginBottom: '0.8rem',
 };
 
-function getEventFilterRowStyle(isMobile: boolean): React.CSSProperties {
-  return {
-    display: 'flex',
-    gap: '0.45rem',
-    overflowX: 'auto',
-    paddingBottom: isMobile ? '0.1rem' : 0,
-    scrollbarWidth: 'thin',
-  };
-}
-
 function getEventsListStyle(isMobile: boolean): React.CSSProperties {
   return {
     display: 'flex',
     flexDirection: 'column',
     gap: '0.72rem',
+    flex: 1,
     minHeight: 0,
     overflowY: 'auto',
     paddingRight: isMobile ? 0 : '0.12rem',
@@ -1517,16 +1379,11 @@ const eventCardStyle: React.CSSProperties = {
   gap: '0.35rem',
 };
 
-const eventCardToggleStyle: React.CSSProperties = {
-  width: '100%',
-  border: 'none',
-  background: 'transparent',
+const eventCardBodyStyle: React.CSSProperties = {
   padding: '0.82rem',
   display: 'flex',
   flexDirection: 'column',
   gap: '0.35rem',
-  textAlign: 'left',
-  cursor: 'pointer',
 };
 
 const eventCardHeaderStyle: React.CSSProperties = {
@@ -1575,19 +1432,11 @@ const eventDescriptionStyle: React.CSSProperties = {
   lineHeight: 1.55,
 };
 
-const collapsedEventDescriptionStyle: React.CSSProperties = {
-  ...eventDescriptionStyle,
-  display: '-webkit-box',
-  WebkitLineClamp: 1,
-  WebkitBoxOrient: 'vertical',
-  overflow: 'hidden',
-};
-
 const eventExpandedMetaStyle: React.CSSProperties = {
   display: 'flex',
   flexWrap: 'wrap',
   gap: '0.45rem',
-  padding: '0 0.82rem 0.82rem',
+  paddingTop: '0.18rem',
 };
 
 const eventMetaPillStyle: React.CSSProperties = {
@@ -1600,21 +1449,6 @@ const eventMetaPillStyle: React.CSSProperties = {
   fontSize: '0.68rem',
   fontWeight: 600,
 };
-
-function getEventFilterChipStyle(isActive: boolean): React.CSSProperties {
-  return {
-    border: '1px solid rgba(148, 163, 184, 0.22)',
-    borderRadius: '999px',
-    padding: '0.42rem 0.7rem',
-    background: isActive ? 'rgba(15, 118, 110, 0.12)' : 'rgba(255, 255, 255, 0.72)',
-    color: isActive ? '#0f766e' : '#475569',
-    fontSize: '0.74rem',
-    fontWeight: isActive ? 700 : 600,
-    cursor: 'pointer',
-    whiteSpace: 'nowrap',
-    flexShrink: 0,
-  };
-}
 
 const eventSearchWrapStyle: React.CSSProperties = {
   display: 'block',
@@ -1652,6 +1486,23 @@ const emptyStateStyle: React.CSSProperties = {
   color: '#64748b',
   fontSize: '0.84rem',
   padding: '1rem',
+};
+
+const eventsPaginationStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '0.75rem',
+  marginTop: '0.8rem',
+  paddingTop: '0.8rem',
+  borderTop: '1px solid rgba(148, 163, 184, 0.16)',
+};
+
+const paginationTextStyle: React.CSSProperties = {
+  fontSize: '0.76rem',
+  color: '#52616f',
+  fontWeight: 600,
+  whiteSpace: 'nowrap',
 };
 
 const inlineErrorStyle: React.CSSProperties = {

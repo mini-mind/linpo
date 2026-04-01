@@ -676,6 +676,103 @@ def test_overview_returns_failed_freshness_when_all_instances_fail(
     ]
 
 
+def test_overview_keeps_token_groups_when_observer_snapshot_fails_but_usage_cost_is_available(
+    isolated_database_url: str,
+    auth_cookie: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+
+    instance = _create_instance(
+        auth_cookie,
+        name="token-only-instance",
+        endpoint="http://175.178.213.10:28797",
+        gateway_token="token-token-only",
+    )
+
+    _install_aggregate_data_source(
+        monkeypatch,
+        providers_by_token={
+            "token-token-only": HTTPException(
+                status_code=503,
+                detail="observer snapshot unavailable",
+            ),
+        },
+        usage_cost_by_token={
+            "token-token-only": {
+                "totals": {"totalTokens": 96},
+                "daily": [
+                    {
+                        "date": "2026-04-01",
+                        "input": 24,
+                        "output": 12,
+                        "totalTokens": 36,
+                    },
+                    {
+                        "date": "2026-04-02",
+                        "input": 40,
+                        "output": 20,
+                        "totalTokens": 60,
+                    },
+                ],
+            }
+        },
+    )
+
+    status_code, _, body = request("GET", "/aggregate/overview", headers={"cookie": auth_cookie})
+
+    assert status_code == 200
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload["partial_failure"] is True
+    assert payload["stats"] == {
+        "instance_count": 1,
+        "agent_count": 0,
+        "active_agent_count": 0,
+        "attention_instance_count": 1,
+        "total_tokens": 96,
+    }
+    assert payload["token_groups"] == [
+        {
+            "instance_id": instance["id"],
+            "instance_name": "token-only-instance",
+            "total_tokens": 96,
+            "samples": [
+                {
+                    "label": "2026-04-01",
+                    "input_tokens": 24,
+                    "output_tokens": 12,
+                    "total_tokens": 36,
+                },
+                {
+                    "label": "2026-04-02",
+                    "input_tokens": 40,
+                    "output_tokens": 20,
+                    "total_tokens": 60,
+                },
+            ],
+        }
+    ]
+    assert payload["diagnostics"] == [
+        {
+            "instance_id": instance["id"],
+            "instance_name": "token-only-instance",
+            "status": "failed",
+            "freshness": {
+                "status": "failed",
+                "checked_at": instance["last_check_at"],
+            },
+            "error": {
+                "code": "source_unavailable",
+                "message": "observer snapshot unavailable",
+                "request_id": payload["request_id"],
+                "recoverable": True,
+                "next_step": "检查实例连通性或网关 token 后重试",
+            },
+        }
+    ]
+
+
 def test_topology_returns_four_lane_relationships_with_sessions_and_tools(
     isolated_database_url: str,
     auth_cookie: str,

@@ -2,17 +2,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+import asyncio
 import json
 import mimetypes
 import os
 from pathlib import Path
 import re
-from typing import cast
+from typing import Any, cast
 from urllib.parse import quote, urlparse
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse
+from fastapi.responses import Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.api.schemas import (
@@ -56,6 +59,9 @@ router = APIRouter(prefix="/api/v1/boards/{board_id}/tasks", tags=["tasks"])
 _DEFAULT_STALE_RUNNING_SECONDS = 900
 _EVENT_KEY_MAX = 80
 _OUTPUT_PREVIEW_MAX_BYTES = 120_000
+_FLOW_PLANNER_AGENT_ID = "claw3"
+_FLOW_PLANNER_SSE_POLL_INTERVAL_SECONDS = 0.6
+_FLOW_PLANNER_SSE_KEEPALIVE_SECONDS = 12.0
 
 
 def get_task_service() -> TaskService:
@@ -170,6 +176,91 @@ def _normalize_agent_id(raw: str | None, fallback: str) -> str:
     if value:
         return value
     return fallback
+
+
+def _resolve_flow_planner_agent_id(raw: str | None) -> str:
+    value = (raw or "").strip()
+    if value == "":
+        return _FLOW_PLANNER_AGENT_ID
+    if value != _FLOW_PLANNER_AGENT_ID:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"planner_agent_id must be {_FLOW_PLANNER_AGENT_ID}",
+        )
+    return _FLOW_PLANNER_AGENT_ID
+
+
+def _normalize_flow_chat_role(raw: object) -> str:
+    if raw in {"user", "assistant", "system"}:
+        return str(raw)
+    return "assistant"
+
+
+def _extract_history_item_text(item: dict[str, object]) -> str:
+    text = item.get("text")
+    if isinstance(text, str):
+        return text
+
+    content = item.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        text_parts: list[str] = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            block_text = block.get("text")
+            if isinstance(block_text, str):
+                text_parts.append(block_text)
+        return "\n".join(text_parts)
+
+    return ""
+
+
+def _history_item_created_at(item: dict[str, object]) -> str:
+    timestamp = item.get("timestamp")
+    if isinstance(timestamp, (int, float)):
+        return datetime.fromtimestamp(float(timestamp) / 1000.0, tz=UTC).isoformat()
+    return datetime.now(tz=UTC).isoformat()
+
+
+def _normalize_flow_chat_messages(messages_raw: object) -> list[FlowChatMessageItem]:
+    if not isinstance(messages_raw, list):
+        return []
+
+    items: list[FlowChatMessageItem] = []
+    for item in messages_raw:
+        if not isinstance(item, dict):
+            continue
+        content = _extract_history_item_text(cast(dict[str, object], item)).strip()
+        if content == "":
+            continue
+        items.append(
+            FlowChatMessageItem(
+                role=cast(Any, _normalize_flow_chat_role(item.get("role"))),
+                content=content,
+                created_at=_history_item_created_at(cast(dict[str, object], item)),
+            )
+        )
+    return items
+
+
+def _flow_chat_messages_signature(messages: list[FlowChatMessageItem]) -> str:
+    return json.dumps([item.model_dump(mode="json") for item in messages], ensure_ascii=False, separators=(",", ":"))
+
+
+def _is_retryable_flow_history_error(exc: HTTPException) -> bool:
+    if exc.status_code != status.HTTP_503_SERVICE_UNAVAILABLE:
+        return False
+    detail = str(exc.detail).lower()
+    return (
+        "too many non-target control messages" in detail
+        or "control response timed out" in detail
+    )
+
+
+def _to_sse_data(payload: dict[str, object]) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
 def _parse_dependencies(raw: str | None) -> list[str]:
@@ -1045,10 +1136,12 @@ def generate_flow(
     requirement = payload.requirement.strip()
     if not requirement:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="requirement is required")
+    planner_agent_id = _resolve_flow_planner_agent_id(payload.planner_agent_id)
 
     decomposition = flow_decomposition_service.decompose(
         requirement=requirement,
         board_id=normalized_board_id,
+        planner_agent_id=planner_agent_id,
         planner_session_key=payload.planner_session_key,
         flow_name=payload.flow_name,
         current_nodes=[node.model_dump(mode="json") for node in payload.current_nodes],
@@ -1095,6 +1188,166 @@ def generate_flow(
         edges=canvas_edges,
         messages=messages,
         created_task_ids=[],
+    )
+
+
+@router.get("/flow/planner-sse")
+async def flow_planner_sse(
+    board_id: str,
+    request: Request,
+    session_key: str = Query(alias="sessionKey"),
+    snapshot_only: bool = Query(default=False, alias="snapshotOnly"),
+    flow_decomposition_service: FlowDecompositionService = Depends(get_flow_decomposition_service),
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
+) -> StreamingResponse:
+    del board_id
+    normalized_session_key = session_key.strip()
+    if normalized_session_key == "":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="sessionKey is required")
+
+    context = flow_decomposition_service._build_claw3_execution_context()
+    channel = f"session:{normalized_session_key}:messages"
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+
+    if snapshot_only:
+        snapshot_parts = [
+            _to_sse_data(
+                {
+                    "type": "snapshot_ready",
+                    "channel": channel,
+                    "seq": 0,
+                    "timestamp": datetime.now(tz=UTC).isoformat(),
+                    "payload": {"status": "ok"},
+                }
+            )
+        ]
+        try:
+            history_payload = provider_application_service.chat_history(
+                data_source="openclaw",
+                execution_context=context,
+                session_key=normalized_session_key,
+                limit=200,
+            )
+            snapshot_messages = _normalize_flow_chat_messages(history_payload.get("messages", []))
+            if snapshot_messages:
+                snapshot_parts.append(
+                    _to_sse_data(
+                        {
+                            "type": "planner_messages_updated",
+                            "channel": channel,
+                            "seq": 1,
+                            "timestamp": datetime.now(tz=UTC).isoformat(),
+                            "payload": {
+                                "session_key": normalized_session_key,
+                                "messages": [item.model_dump(mode="json") for item in snapshot_messages],
+                            },
+                        }
+                    )
+                )
+        except HTTPException as exc:
+            if not _is_retryable_flow_history_error(exc):
+                snapshot_parts.append(
+                    _to_sse_data(
+                        {
+                            "type": "error",
+                            "channel": channel,
+                            "seq": 1,
+                            "timestamp": datetime.now(tz=UTC).isoformat(),
+                            "payload": {"detail": str(exc.detail)},
+                        }
+                    )
+                )
+        return Response(
+            content="".join(snapshot_parts),
+            media_type="text/event-stream",
+            headers=headers,
+        )
+
+    async def event_stream() -> object:
+        seq = 0
+        keepalive_elapsed = 0.0
+        last_signature = ""
+        try:
+            yield _to_sse_data(
+                {
+                    "type": "snapshot_ready",
+                    "channel": channel,
+                    "seq": seq,
+                    "timestamp": datetime.now(tz=UTC).isoformat(),
+                    "payload": {"status": "ok"},
+                }
+            )
+
+            while True:
+                if await request.is_disconnected():
+                    return
+                try:
+                    history_payload = provider_application_service.chat_history(
+                        data_source="openclaw",
+                        execution_context=context,
+                        session_key=normalized_session_key,
+                        limit=200,
+                    )
+                except HTTPException as exc:
+                    if _is_retryable_flow_history_error(exc):
+                        await asyncio.sleep(_FLOW_PLANNER_SSE_POLL_INTERVAL_SECONDS)
+                        keepalive_elapsed += _FLOW_PLANNER_SSE_POLL_INTERVAL_SECONDS
+                        if keepalive_elapsed >= _FLOW_PLANNER_SSE_KEEPALIVE_SECONDS:
+                            keepalive_elapsed = 0.0
+                            yield ": keep-alive\n\n"
+                        continue
+                    seq += 1
+                    yield _to_sse_data(
+                        {
+                            "type": "error",
+                            "channel": channel,
+                            "seq": seq,
+                            "timestamp": datetime.now(tz=UTC).isoformat(),
+                            "payload": {"detail": str(exc.detail)},
+                        }
+                    )
+                    return
+
+                next_messages = _normalize_flow_chat_messages(history_payload.get("messages", []))
+                next_signature = _flow_chat_messages_signature(next_messages)
+                if next_signature != last_signature:
+                    seq += 1
+                    last_signature = next_signature
+                    keepalive_elapsed = 0.0
+                    yield _to_sse_data(
+                        {
+                            "type": "planner_messages_updated",
+                            "channel": channel,
+                            "seq": seq,
+                            "timestamp": datetime.now(tz=UTC).isoformat(),
+                            "payload": {
+                                "session_key": normalized_session_key,
+                                "messages": [item.model_dump(mode="json") for item in next_messages],
+                            },
+                        }
+                    )
+                elif snapshot_only:
+                    return
+                else:
+                    await asyncio.sleep(_FLOW_PLANNER_SSE_POLL_INTERVAL_SECONDS)
+                    keepalive_elapsed += _FLOW_PLANNER_SSE_POLL_INTERVAL_SECONDS
+                    if keepalive_elapsed >= _FLOW_PLANNER_SSE_KEEPALIVE_SECONDS:
+                        keepalive_elapsed = 0.0
+                        yield ": keep-alive\n\n"
+
+                if snapshot_only:
+                    return
+        except asyncio.CancelledError:
+            return
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers=headers,
     )
 
 

@@ -206,9 +206,12 @@ class InstanceDeleteResponse(BaseModel):
 class InstanceFileItem(BaseModel):
     id: str
     task_id: str
+    agent_id: str
+    agent_name: str
     task_title: str
     task_status: Literal["queued", "running", "blocked_by_approval", "failed", "completed"]
     requirement_id: str | None = None
+    requirement_title: str | None = None
     path: str
     name: str
     exists: bool

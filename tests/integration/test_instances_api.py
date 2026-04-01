@@ -204,8 +204,12 @@ def test_instance_files_list_preview_and_download(
     items = cast(list[dict[str, Any]], list_payload["items"])
     matched = next((item for item in items if item["task_id"] == str(task.id)), None)
     assert matched is not None
+    assert matched["agent_id"] == "agent-alpha"
+    assert matched["agent_name"] == "Alpha Agent"
     assert matched["path"] == str(output_path)
     assert matched["exists"] is True
+    assert matched["requirement_id"] == "req-files"
+    assert matched["requirement_title"] is None
 
     preview_status, _, preview_body = request(
         "GET",

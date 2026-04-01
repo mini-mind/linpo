@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createBoardTasksSseClient,
+  createFlowPlannerSseClient,
   type EventSourceLike,
   createObserverRealtimeClient,
   type WebSocketLike,
@@ -380,5 +381,73 @@ describe('board realtime sse client', () => {
     fakeSource.emitError();
 
     expect(onDisconnected).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('flow planner sse client', () => {
+  it('builds planner sse url with session key', () => {
+    const fakeSource = new FakeEventSource();
+    const sourceFactory = vi.fn(() => fakeSource);
+
+    const client = createFlowPlannerSseClient({
+      baseUrl: 'http://linpo.test:8000',
+      boardId: 'default',
+      sessionKey: 'linpo:flow:default:planner:claw3:test',
+      onMessage: vi.fn(),
+      createEventSource: sourceFactory,
+    });
+
+    client.connect();
+    expect(sourceFactory).toHaveBeenCalledWith(
+      'http://linpo.test:8000/api/v1/boards/default/tasks/flow/planner-sse?sessionKey=linpo%3Aflow%3Adefault%3Aplanner%3Aclaw3%3Atest'
+    );
+  });
+
+  it('parses planner message updates from sse stream', () => {
+    const fakeSource = new FakeEventSource();
+    const onMessage = vi.fn();
+    const client = createFlowPlannerSseClient({
+      baseUrl: 'http://linpo.test:8000',
+      boardId: 'default',
+      sessionKey: 'linpo:flow:default:planner:claw3:test',
+      onMessage,
+      createEventSource: () => fakeSource,
+    });
+
+    client.connect();
+    fakeSource.emitMessage(
+      JSON.stringify({
+        type: 'planner_messages_updated',
+        channel: 'session:linpo:flow:default:planner:claw3:test:messages',
+        seq: 3,
+        timestamp: '2026-04-01T00:00:00Z',
+        payload: {
+          session_key: 'linpo:flow:default:planner:claw3:test',
+          messages: [
+            {
+              role: 'assistant',
+              content: '流程草图已更新。',
+              created_at: '2026-04-01T00:00:00Z',
+            },
+          ],
+        },
+      })
+    );
+
+    expect(onMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'planner_messages_updated',
+        payload: {
+          session_key: 'linpo:flow:default:planner:claw3:test',
+          messages: [
+            {
+              role: 'assistant',
+              content: '流程草图已更新。',
+              created_at: '2026-04-01T00:00:00Z',
+            },
+          ],
+        },
+      })
+    );
   });
 });

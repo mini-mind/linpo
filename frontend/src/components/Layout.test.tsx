@@ -46,7 +46,7 @@ describe('Layout', () => {
     expect(screen.getByRole('link', { name: '流程' })).toHaveAttribute('href', '/flow/edit/new');
     expect(screen.getByRole('link', { name: '文件' })).toHaveAttribute('href', '/instance-files');
     expect(screen.queryByRole('link', { name: '实例' })).not.toBeInTheDocument();
-    expect(screen.getAllByTestId('toolbar-nav-divider')).toHaveLength(3);
+    expect(screen.getAllByTestId('toolbar-nav-divider')).toHaveLength(5);
     expect(screen.getByRole('navigation', { name: '主导航' })).toBeInTheDocument();
     expect(screen.getByRole('banner')).toHaveStyle({ position: 'relative', zIndex: '80', overflow: 'visible' });
     expect(screen.getByTestId('layout-main-shell')).toHaveTextContent('看板内容');

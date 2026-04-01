@@ -18,6 +18,7 @@ from tests.integration._asgi import request
 
 DEFAULT_TASKS_PATH = "/api/v1/boards/default/tasks"
 DEFAULT_FLOW_GENERATE_PATH = "/api/v1/boards/default/tasks/flow/generate"
+DEFAULT_FLOW_PLANNER_SSE_PATH = "/api/v1/boards/default/tasks/flow/planner-sse"
 DEFAULT_FLOW_CONFIRM_PATH = "/api/v1/boards/default/tasks/flow/confirm"
 DEFAULT_TASK_INTERRUPT_PATH = "/api/v1/boards/default/tasks/{task_id}/interrupt"
 DEFAULT_TASK_CONTINUE_PATH = "/api/v1/boards/default/tasks/{task_id}/continue"
@@ -481,7 +482,7 @@ def test_flow_generate_creates_canvas_and_tasks(
             "requirement": "拆分上线计划，执行主任务，最后审批",
             "instance_id": instance["id"],
             "executor_agent_id": "agent-executor",
-            "planner_agent_id": "agent-planner",
+            "planner_agent_id": "claw3",
             "manager_agent_id": "agent-manager",
         },
         auth_cookie,
@@ -497,6 +498,81 @@ def test_flow_generate_creates_canvas_and_tasks(
     assert list_status == 200
     list_payload = cast(list[dict[str, Any]], json.loads(list_body.decode("utf-8")))
     assert list_payload == []
+
+
+def test_flow_generate_rejects_non_claw3_planner_agent(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("flow-generate-planner-guard-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-flow-guard",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-guard",
+    )
+
+    status_code, _, payload = _request_json(
+        "POST",
+        DEFAULT_FLOW_GENERATE_PATH,
+        {
+            "requirement": "拆解上线计划",
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor",
+            "planner_agent_id": "main",
+            "manager_agent_id": "agent-manager",
+        },
+        auth_cookie,
+    )
+
+    assert status_code == 400
+    assert payload["detail"] == "planner_agent_id must be claw3"
+
+
+def test_flow_planner_sse_returns_latest_planner_messages_snapshot(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    auth_cookie = _register_and_login("flow-planner-sse-user")
+
+    monkeypatch.setattr(
+        "app.api.tasks.FlowDecompositionService._build_claw3_execution_context",
+        lambda self: object(),
+    )
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.chat_history",
+        lambda self, **kwargs: {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "请规划一个发布流程"}],
+                    "timestamp": 1775000000000,
+                },
+                {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "已生成初版流程节点。"}],
+                    "timestamp": 1775000001000,
+                },
+            ]
+        },
+    )
+
+    status_code, headers, body = request(
+        "GET",
+        f"{DEFAULT_FLOW_PLANNER_SSE_PATH}?sessionKey=linpo:flow:default:planner:claw3:test&snapshotOnly=1",
+        headers={"cookie": auth_cookie},
+    )
+
+    assert status_code == 200
+    assert headers["content-type"].startswith("text/event-stream")
+    text = body.decode("utf-8")
+    assert '"type": "snapshot_ready"' in text
+    assert '"type": "planner_messages_updated"' in text
+    assert '"session_key": "linpo:flow:default:planner:claw3:test"' in text
+    assert '已生成初版流程节点。' in text
 
 
 def test_flow_confirm_enqueues_tasks_then_dispatches_from_queue(

@@ -54,9 +54,12 @@ export interface InstanceDeleteResponse {
 export interface InstanceFileItem {
   id: string;
   task_id: string;
+  agent_id: string;
+  agent_name: string;
   task_title: string;
   task_status: 'queued' | 'running' | 'blocked_by_approval' | 'failed' | 'completed';
   requirement_id: string | null;
+  requirement_title: string | null;
   path: string;
   name: string;
   exists: boolean;

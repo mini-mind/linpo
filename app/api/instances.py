@@ -227,10 +227,14 @@ def _to_instance_file_items(tasks: list[Task]) -> list[InstanceFileItem]:
     items: list[InstanceFileItem] = []
     for task in tasks:
         requirement_id: str | None = None
+        requirement_title: str | None = None
         extras = task.extras if isinstance(task.extras, dict) else {}
         candidate_requirement_id = str(extras.get("requirement_id", "")).strip()
         if candidate_requirement_id:
             requirement_id = candidate_requirement_id
+        candidate_requirement_title = str(extras.get("requirement_title", "")).strip()
+        if candidate_requirement_title:
+            requirement_title = candidate_requirement_title
         updated_at = _to_utc_iso(task.updated_at)
         for path in _task_output_paths_for_instance_files(task):
             exists = path.exists() and path.is_file()
@@ -239,9 +243,12 @@ def _to_instance_file_items(tasks: list[Task]) -> list[InstanceFileItem]:
                 InstanceFileItem(
                     id=f"{task.id}:{path}",
                     task_id=str(task.id),
+                    agent_id=task.agent_id,
+                    agent_name=task.agent_name,
                     task_title=task.title,
                     task_status=task.status,
                     requirement_id=requirement_id,
+                    requirement_title=requirement_title,
                     path=str(path),
                     name=path.name,
                     exists=exists,
@@ -324,8 +331,10 @@ def list_instance_files(
             for item in items
             if keyword in item.path.lower()
             or keyword in item.name.lower()
+            or keyword in item.agent_name.lower()
             or keyword in item.task_title.lower()
             or keyword in (item.requirement_id or "").lower()
+            or keyword in (item.requirement_title or "").lower()
         ]
     if only_existing:
         items = [item for item in items if item.exists]
