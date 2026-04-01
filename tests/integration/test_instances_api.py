@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any, cast
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from uuid import UUID
 
 import pytest
@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import session as db_session
-from app.db.models import Instance
+from app.db.models import Instance, Task, User
 from app.main import app
 from app.services.crypto import decrypt_secret
 from app.services.instance_validator import (
@@ -151,6 +151,131 @@ def auth_cookie(isolated_database_url: str) -> str:
     del isolated_database_url
     return _register_and_login("alice")
 
+
+def test_instance_files_list_preview_and_download(
+    isolated_database_url: str,
+    auth_cookie: str,
+    db_handle: Session,
+) -> None:
+    del isolated_database_url
+    user = db_handle.execute(select(User).where(User.username == "alice")).scalar_one()
+    instance = Instance(
+        user_id=user.id,
+        name="claw1-files",
+        type="openclaw",
+        endpoint="http://127.0.0.1:28789",
+        gateway_token_enc="enc",
+        status="ok",
+    )
+    db_handle.add(instance)
+    db_handle.commit()
+    db_handle.refresh(instance)
+
+    output_path = Path("/tmp/linpo/test-instance-files/node_report.json")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text('{"decision":"buy","score":91}', encoding="utf-8")
+    task = Task(
+        user_id=user.id,
+        instance_id=instance.id,
+        title="生成决策简报",
+        summary="产出文件访问测试",
+        status="completed",
+        source="flow",
+        agent_id="agent-alpha",
+        agent_name="Alpha Agent",
+        artifacts=[f"artifact: {output_path}"],
+        extras={
+            "board_id": "default",
+            "requirement_id": "req-files",
+            "temp_output_path": str(output_path),
+        },
+    )
+    db_handle.add(task)
+    db_handle.commit()
+    db_handle.refresh(task)
+
+    list_status, _, list_body = request(
+        "GET",
+        f"/instances/{instance.id}/files?boardId=default",
+        headers={"cookie": auth_cookie},
+    )
+    assert list_status == 200
+    list_payload = cast(dict[str, Any], json.loads(list_body.decode("utf-8")))
+    items = cast(list[dict[str, Any]], list_payload["items"])
+    matched = next((item for item in items if item["task_id"] == str(task.id)), None)
+    assert matched is not None
+    assert matched["path"] == str(output_path)
+    assert matched["exists"] is True
+
+    preview_status, _, preview_body = request(
+        "GET",
+        f"/instances/{instance.id}/files/preview?taskId={task.id}&boardId=default&path={quote(str(output_path), safe='')}",
+        headers={"cookie": auth_cookie},
+    )
+    assert preview_status == 200
+    preview_payload = cast(dict[str, Any], json.loads(preview_body.decode("utf-8")))
+    assert preview_payload["path"] == str(output_path)
+    assert preview_payload["kind"] == "json"
+    assert '"decision": "buy"' in str(preview_payload["content"])
+
+    download_status, download_headers, download_body = request(
+        "GET",
+        f"/instances/{instance.id}/files/download?taskId={task.id}&boardId=default&path={quote(str(output_path), safe='')}&download=true",
+        headers={"cookie": auth_cookie},
+    )
+    assert download_status == 200
+    assert "application/json" in download_headers.get("content-type", "")
+    assert b'"decision":"buy"' in download_body
+
+
+def test_instance_files_preview_returns_clear_404_when_missing(
+    isolated_database_url: str,
+    auth_cookie: str,
+    db_handle: Session,
+) -> None:
+    del isolated_database_url
+    user = db_handle.execute(select(User).where(User.username == "alice")).scalar_one()
+    instance = Instance(
+        user_id=user.id,
+        name="claw1-files-missing",
+        type="openclaw",
+        endpoint="http://127.0.0.1:28789",
+        gateway_token_enc="enc",
+        status="ok",
+    )
+    db_handle.add(instance)
+    db_handle.commit()
+    db_handle.refresh(instance)
+
+    missing_path = "/tmp/linpo/test-instance-files/missing_report.json"
+    task = Task(
+        user_id=user.id,
+        instance_id=instance.id,
+        title="缺失产物节点",
+        summary="缺失文件访问测试",
+        status="completed",
+        source="flow",
+        agent_id="agent-alpha",
+        agent_name="Alpha Agent",
+        artifacts=[f"artifact: {missing_path}"],
+        extras={
+            "board_id": "default",
+            "requirement_id": "req-missing-files",
+            "temp_output_path": missing_path,
+        },
+    )
+    db_handle.add(task)
+    db_handle.commit()
+    db_handle.refresh(task)
+
+    preview_status, _, preview_body = request(
+        "GET",
+        f"/instances/{instance.id}/files/preview?taskId={task.id}&boardId=default&path={quote(missing_path, safe='')}",
+        headers={"cookie": auth_cookie},
+    )
+    assert preview_status == 404
+    preview_payload = cast(dict[str, Any], json.loads(preview_body.decode("utf-8")))
+    assert "file may still exist inside the agent instance" in preview_payload["detail"].lower()
 
 def test_validate_instance_returns_auth_failed_for_invalid_token(
     isolated_database_url: str,

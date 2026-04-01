@@ -7,7 +7,6 @@ import {
   continueKanbanTask,
   continueFlowRequirement,
   createKanbanTask,
-  deleteKanbanRequirementTasks,
   deleteKanbanTask,
   getDefaultObserverDataSource,
   getSessionHistory,
@@ -101,7 +100,6 @@ export default function CollabPage(): JSX.Element {
   const [isContinuingTaskId, setIsContinuingTaskId] = useState<string | null>(null);
   const [interruptingFlowId, setInterruptingFlowId] = useState<string | null>(null);
   const [continuingFlowId, setContinuingFlowId] = useState<string | null>(null);
-  const [deletingFlowId, setDeletingFlowId] = useState<string | null>(null);
   const [taskSessionItems, setTaskSessionItems] = useState<SessionPreviewItem[]>([]);
   const [isTaskSessionLoading, setIsTaskSessionLoading] = useState(false);
   const [taskSessionError, setTaskSessionError] = useState<string | null>(null);
@@ -116,6 +114,7 @@ export default function CollabPage(): JSX.Element {
   const [outputPreviewError, setOutputPreviewError] = useState<string | null>(null);
   const [newAgentName, setNewAgentName] = useState('');
   const [customAgentNames, setCustomAgentNames] = useState<string[]>([]);
+  const [collapsedColumnIds, setCollapsedColumnIds] = useState<string[]>([]);
 
   const loadOverview = useCallback(async () => {
     try {
@@ -410,6 +409,14 @@ export default function CollabPage(): JSX.Element {
 
   const canSubmitAgent = newAgentName.trim().length > 0;
 
+  const toggleColumnCollapsed = useCallback((columnId: string) => {
+    setCollapsedColumnIds((current) => (
+      current.includes(columnId)
+        ? current.filter((item) => item !== columnId)
+        : [...current, columnId]
+    ));
+  }, []);
+
   const handleConfirmCreateAgent = useCallback(() => {
     const name = newAgentName.trim();
     if (!name) {
@@ -505,29 +512,6 @@ export default function CollabPage(): JSX.Element {
       setInterruptingFlowId(null);
     }
   }, [addToast, loadOverview]);
-
-  const handleDeleteFlow = useCallback(async (targetRequirementId: string, targetTitle: string) => {
-    const confirmed = window.confirm(`确认删除流程「${targetTitle}」吗？将先中断流程再删除全部节点。`);
-    if (!confirmed) {
-      return;
-    }
-
-    setDeletingFlowId(targetRequirementId);
-    try {
-      await stopFlowRequirement(targetRequirementId, undefined, 'default');
-      await deleteKanbanRequirementTasks(targetRequirementId);
-      if (selectedTask && getRequirementId(selectedTask) === targetRequirementId) {
-        setSelectedTask(null);
-      }
-      addToast('流程已删除', 'success');
-      await loadOverview();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '删除流程失败';
-      addToast(message, 'error');
-    } finally {
-      setDeletingFlowId(null);
-    }
-  }, [addToast, loadOverview, selectedTask]);
 
   const handleContinueFlow = useCallback(async (targetRequirementId: string, targetTitle: string) => {
     const confirmed = window.confirm(`确认继续流程「${targetTitle}」吗？`);
@@ -833,11 +817,11 @@ export default function CollabPage(): JSX.Element {
 
   return (
     <section style={pageStyle} aria-label="kanban-workbench">
-      <header style={flatToolbarStyle}>
-        <div style={toolbarStatsStyle} aria-label="看板统计">
+      <header style={isMobile ? { ...flatToolbarStyle, ...flatToolbarMobileStyle } : flatToolbarStyle}>
+        <div style={isMobile ? { ...toolbarStatsStyle, ...toolbarStatsMobileStyle } : toolbarStatsStyle} aria-label="看板统计">
           <span style={statsItemStyle}>流程数量 {requirementCount}</span>
         </div>
-        <div style={toolbarGroupStyle}>
+        <div style={isMobile ? { ...toolbarGroupStyle, ...toolbarGroupMobileStyle } : toolbarGroupStyle}>
           <button
             type="button"
             style={flatActionButtonStyle}
@@ -1203,148 +1187,166 @@ export default function CollabPage(): JSX.Element {
         </div>
       ) : null}
 
-      {loadError ? (
-        <div style={errorPanelStyle}>
-          <p style={errorTitleStyle}>看板数据加载失败</p>
-          <p style={errorMessageStyle}>{loadError}</p>
-        </div>
-      ) : null}
+      <div style={isMobile ? boardShellMobileStyle : boardShellStyle}>
+        {loadError ? (
+          <div style={errorPanelStyle}>
+            <p style={errorTitleStyle}>看板数据加载失败</p>
+            <p style={errorMessageStyle}>{loadError}</p>
+          </div>
+        ) : null}
 
-      <div style={isMobile ? mobileBoardViewportStyle : boardViewportStyle} data-testid="kanban-board">
-        <div style={isMobile ? mobileBoardTrackStyle : boardTrackStyle}>
-          {columns.map((column) => (
-            <article key={column.id} style={isMobile ? mobileColumnStyle : columnStyle}>
-              <header style={columnHeaderStyle}>
-                <h3 style={columnTitleStyle}>{column.title}</h3>
-                <div style={columnHeaderActionStyle}>
-                  <span style={columnCountStyle}>{column.tasks.length}</span>
-                  {viewMode === 'flow' && column.flowId ? (
-                    <>
-                      <span style={flowColumnStatePillStyle}>
-                        {getFlowColumnStateLabel(column.flowState ?? resolveFlowColumnState(column.tasks))}
-                      </span>
-                      {(column.flowState ?? resolveFlowColumnState(column.tasks)) === 'running' ? (
-                        <button
-                          type="button"
-                          style={interruptFlowButtonStyle}
-                          aria-label={`中断流程 ${column.title}`}
-                          onClick={() => void handleInterruptFlow(column.flowId as string, column.title)}
-                          disabled={
-                            interruptingFlowId === column.flowId
-                            || continuingFlowId === column.flowId
-                            || deletingFlowId === column.flowId
-                          }
-                        >
-                          {interruptingFlowId === column.flowId ? '中断中...' : '中断流程'}
-                        </button>
-                      ) : null}
-                      {(column.flowState ?? resolveFlowColumnState(column.tasks)) === 'blocked' ? (
-                        <button
-                          type="button"
-                          style={continueFlowButtonStyle}
-                          aria-label={`继续流程 ${column.title}`}
-                          onClick={() => void handleContinueFlow(column.flowId as string, column.title)}
-                          disabled={
-                            continuingFlowId === column.flowId
-                            || interruptingFlowId === column.flowId
-                            || deletingFlowId === column.flowId
-                          }
-                        >
-                          {continuingFlowId === column.flowId ? '继续中...' : '继续流程'}
-                        </button>
-                      ) : null}
-                      {(column.flowState ?? resolveFlowColumnState(column.tasks)) === 'idle' ? (
-                        <button
-                          type="button"
-                          style={runFlowButtonStyle}
-                          aria-label={`运行流程 ${column.title}`}
-                          onClick={() => navigate(`/flow/edit/${encodeURIComponent(column.flowId as string)}`)}
-                          disabled={
-                            continuingFlowId === column.flowId
-                            || interruptingFlowId === column.flowId
-                            || deletingFlowId === column.flowId
-                          }
-                        >
-                          运行流程
-                        </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        style={deleteRequirementButtonStyle}
-                        aria-label={`删除流程 ${column.title}`}
-                        onClick={() => void handleDeleteFlow(column.flowId as string, column.title)}
-                        disabled={
-                          deletingFlowId === column.flowId
-                          || interruptingFlowId === column.flowId
-                          || continuingFlowId === column.flowId
-                        }
-                      >
-                        {deletingFlowId === column.flowId ? '删除中...' : '删除流程'}
-                      </button>
-                    </>
-                  ) : null}
-                </div>
-              </header>
-              <div style={isMobile ? mobileColumnBodyStyle : columnBodyStyle}>
-                {loading ? (
-                  <p style={emptyTextStyle}>同步中...</p>
-                ) : column.tasks.length === 0 ? (
-                  <p style={emptyTextStyle}>暂无任务</p>
+        <div style={isMobile ? mobileBoardViewportStyle : boardViewportStyle} data-testid="kanban-board">
+          <div style={isMobile ? mobileBoardTrackStyle : boardTrackStyle}>
+            {columns.map((column) => {
+              const isCollapsed = collapsedColumnIds.includes(column.id);
+              return (
+              <article
+                key={column.id}
+                style={
+                  isCollapsed
+                    ? (isMobile ? mobileCollapsedColumnStyle : collapsedColumnStyle)
+                    : (isMobile ? mobileColumnStyle : columnStyle)
+                }
+                data-column-collapsed={isCollapsed ? 'true' : 'false'}
+                onDoubleClick={isCollapsed ? () => toggleColumnCollapsed(column.id) : undefined}
+                title={isCollapsed ? `展开列 ${column.title}` : undefined}
+              >
+                {isCollapsed ? (
+                  <>
+                    <div style={collapsedColumnTopStyle}>
+                      <span style={collapsedColumnTopPlaceholderStyle}>...</span>
+                    </div>
+                    <div style={collapsedColumnBodyStyle} aria-hidden="true">
+                      <div style={collapsedColumnFadeStyle} />
+                    </div>
+                  </>
                 ) : (
-                  column.tasks.map((task) => (
-                    <article key={task.id} style={taskCardStyle}>
-                      <button
-                        type="button"
-                        style={taskCardButtonStyle}
-                        onClick={() => handleOpenTaskDetail(task)}
-                        aria-label={`查看任务 ${task.title}`}
-                      >
-                        <div style={taskCardHeaderStyle}>
-                          <span style={taskSourceTagStyle}>{task.source === 'flow' ? 'Flow' : 'Provider'}</span>
-                          <span style={taskStatusTextStyle}>{task.status}</span>
-                        </div>
-                        <h4 style={taskTitleStyle}>{task.title}</h4>
-                        <p style={taskSummaryStyle}>{task.summary}</p>
-                        <p style={taskMetaStyle}>Agent：{task.agentName}</p>
-                        {task.artifacts.length > 0 ? (
-                          <p style={taskArtifactStyle}>{task.artifacts[0]}</p>
+                  <>
+                    <header
+                      style={columnHeaderStyle}
+                      onDoubleClick={() => toggleColumnCollapsed(column.id)}
+                      title={`折叠列 ${column.title}`}
+                    >
+                      <h3 style={columnTitleStyle}>{column.title}</h3>
+                      <div style={columnHeaderActionStyle}>
+                      <span style={columnCountStyle}>{column.tasks.length}</span>
+                      {viewMode === 'flow' && column.flowId ? (
+                      <>
+                        <span style={flowColumnStatePillStyle}>
+                          {getFlowColumnStateLabel(column.flowState ?? resolveFlowColumnState(column.tasks))}
+                        </span>
+                        {(column.flowState ?? resolveFlowColumnState(column.tasks)) === 'running' ? (
+                          <button
+                            type="button"
+                            style={interruptFlowButtonStyle}
+                            aria-label={`中断流程 ${column.title}`}
+                            onClick={() => void handleInterruptFlow(column.flowId as string, column.title)}
+                            onDoubleClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                            }}
+                            disabled={
+                              interruptingFlowId === column.flowId
+                              || continuingFlowId === column.flowId
+                            }
+                          >
+                            {interruptingFlowId === column.flowId ? '中断中...' : '中断流程'}
+                          </button>
                         ) : null}
-                      </button>
-                      <div style={taskCardActionRowStyle}>
+                        {(column.flowState ?? resolveFlowColumnState(column.tasks)) === 'blocked' ? (
+                          <button
+                            type="button"
+                            style={continueFlowButtonStyle}
+                            aria-label={`继续流程 ${column.title}`}
+                            onClick={() => void handleContinueFlow(column.flowId as string, column.title)}
+                            onDoubleClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                            }}
+                            disabled={
+                              continuingFlowId === column.flowId
+                              || interruptingFlowId === column.flowId
+                            }
+                          >
+                            {continuingFlowId === column.flowId ? '继续中...' : '继续流程'}
+                          </button>
+                        ) : null}
+                        {(column.flowState ?? resolveFlowColumnState(column.tasks)) === 'idle' ? (
+                          <button
+                            type="button"
+                            style={runFlowButtonStyle}
+                            aria-label={`运行流程 ${column.title}`}
+                            onClick={() => navigate(`/flow/edit/${encodeURIComponent(column.flowId as string)}`)}
+                            onDoubleClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                            }}
+                            disabled={
+                              continuingFlowId === column.flowId
+                              || interruptingFlowId === column.flowId
+                            }
+                          >
+                            运行流程
+                          </button>
+                        ) : null}
+                      </>
+                      ) : null}
+                      </div>
+                    </header>
+                    <div style={isMobile ? mobileColumnBodyStyle : columnBodyStyle}>
+                  {loading ? (
+                    <p style={emptyTextStyle}>同步中...</p>
+                  ) : column.tasks.length === 0 ? (
+                    <p style={emptyTextStyle}>暂无任务</p>
+                  ) : (
+                    column.tasks.map((task) => (
+                      <article key={task.id} style={taskCardStyle}>
                         <button
                           type="button"
-                          style={taskCardDeleteButtonStyle}
-                          aria-label={`删除节点 ${task.title}`}
-                          onClick={() => void handleDeleteTaskNode(task)}
+                          style={taskCardButtonStyle}
+                          onClick={() => handleOpenTaskDetail(task)}
+                          aria-label={`查看任务 ${task.title}`}
                         >
-                          删除节点
+                          <div style={taskCardHeaderStyle}>
+                            <span style={taskSourceTagStyle}>{task.source === 'flow' ? 'Flow' : 'Provider'}</span>
+                            <span style={taskStatusTextStyle}>{task.status}</span>
+                          </div>
+                          <h4 style={taskTitleStyle}>{task.title}</h4>
+                          <p style={taskSummaryStyle}>{task.summary}</p>
+                          <p style={taskMetaStyle}>Agent：{task.agentName}</p>
+                          {task.artifacts.length > 0 ? (
+                            <p style={taskArtifactStyle}>{task.artifacts[0]}</p>
+                          ) : null}
                         </button>
-                      </div>
-                    </article>
-                  ))
+                      </article>
+                    ))
+                  )}
+                    </div>
+                  </>
                 )}
-              </div>
-            </article>
-          ))}
+              </article>
+              );
+            })}
 
-          {viewMode === 'agent' ? (
-            <article style={isMobile ? mobileAddAgentColumnStyle : addAgentColumnStyle}>
-              <header style={columnHeaderStyle}>
-                <h3 style={columnTitleStyle}>新增 Agent</h3>
-                <button
-                  type="button"
-                  style={addAgentHeaderButtonStyle}
-                  aria-label="打开新增 Agent"
-                  onClick={() => setIsAddAgentModalOpen(true)}
-                >
-                  + 新增
-                </button>
-              </header>
-              <div style={isMobile ? mobileAddAgentBodyStyle : addAgentBodyStyle}>
-                <p style={addAgentHintStyle}>创建主 Agent 列，后续任务可直接投放。</p>
-              </div>
-            </article>
-          ) : null}
+            {viewMode === 'agent' ? (
+              <article style={isMobile ? mobileAddAgentColumnStyle : addAgentColumnStyle}>
+                <header style={columnHeaderStyle}>
+                  <h3 style={columnTitleStyle}>新增 Agent</h3>
+                  <button
+                    type="button"
+                    style={addAgentHeaderButtonStyle}
+                    aria-label="打开新增 Agent"
+                    onClick={() => setIsAddAgentModalOpen(true)}
+                  >
+                    + 新增
+                  </button>
+                </header>
+                <div style={isMobile ? mobileAddAgentBodyStyle : addAgentBodyStyle}>
+                  <p style={addAgentHintStyle}>创建主 Agent 列，后续任务可直接投放。</p>
+                </div>
+              </article>
+            ) : null}
+          </div>
         </div>
       </div>
     </section>
@@ -1810,19 +1812,19 @@ function resolveStructuredMessageKind(
       return 'callback';
     }
 
-    const status = String(payload.status ?? '').toLowerCase();
-    const hasTool =
-      typeof payload.tool === 'string' ||
-      typeof payload.tool_name === 'string' ||
-      typeof payload.name === 'string' ||
-      typeof payload.tool_call_id === 'string' ||
-      String(payload.type ?? '').toLowerCase().includes('tool_call') ||
-      String(payload.type ?? '').toLowerCase().includes('function_call');
+    const status = String(payload.status ?? '').trim().toLowerCase();
+    const hasTool = isExplicitToolPayload(payload);
     const hasError = typeof payload.error === 'string';
+    const hasResult =
+      Object.prototype.hasOwnProperty.call(payload, 'result') ||
+      Object.prototype.hasOwnProperty.call(payload, 'response') ||
+      Object.prototype.hasOwnProperty.call(payload, 'output') ||
+      Object.prototype.hasOwnProperty.call(payload, 'message') ||
+      status !== '';
     if (hasTool && (hasError || status === 'error' || status === 'failed')) {
       return 'tool_error';
     }
-    if (hasTool || status === 'ok' || status === 'success') {
+    if (hasTool && hasResult) {
       return 'tool_feedback';
     }
 
@@ -1838,49 +1840,41 @@ function resolveStructuredMessageKind(
   }
   const payloadArray = tryParseJsonArray(text);
   if (payloadArray && payloadArray.length > 0) {
-    const hasToolCallItem = payloadArray.some((item) => {
+    const hasToolItem = payloadArray.some((item) => {
       if (!item || typeof item !== 'object' || Array.isArray(item)) {
         return false;
       }
       const candidate = item as Record<string, unknown>;
-      const type = String(candidate.type ?? '').toLowerCase();
-      return (
-        type.includes('tool_call') ||
-        type.includes('function_call') ||
-        typeof candidate.tool === 'string' ||
-        typeof candidate.name === 'string' ||
-        typeof candidate.tool_call_id === 'string'
-      );
+      return isExplicitToolPayload(candidate);
     });
-    if (hasToolCallItem) {
+    if (hasToolItem) {
+      const hasToolError = payloadArray.some((item) => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) {
+          return false;
+        }
+        const candidate = item as Record<string, unknown>;
+        const status = String(candidate.status ?? '').trim().toLowerCase();
+        return typeof candidate.error === 'string' || status === 'error' || status === 'failed';
+      });
+      if (hasToolError) {
+        return 'tool_error';
+      }
       return 'tool_feedback';
     }
   }
-
-  const normalized = text.toLowerCase();
-  if (normalized.includes('output file written successfully')) {
-    return 'tool_feedback';
-  }
-  if (
-    normalized.includes('"accepted"') &&
-    normalized.includes('"task_id"') &&
-    normalized.includes('"run_id"')
-  ) {
-    return 'callback';
-  }
-  if (
-    normalized.includes('tool_call') ||
-    normalized.includes('function_call') ||
-    normalized.includes('"tool":') ||
-    normalized.includes('"tool_name":') ||
-    normalized.includes('"tool-call"')
-  ) {
-    if (normalized.includes('"error"') || normalized.includes('"status":"error"')) {
-      return 'tool_error';
-    }
-    return 'tool_feedback';
-  }
   return 'other';
+}
+
+function isExplicitToolPayload(payload: Record<string, unknown>): boolean {
+  const toolName = String(payload.tool ?? payload.tool_name ?? payload.name ?? '').trim();
+  const toolCallId = String(payload.tool_call_id ?? '').trim();
+  const type = String(payload.type ?? '').trim().toLowerCase();
+  const explicitType =
+    type === 'tool_call' ||
+    type === 'function_call' ||
+    type === 'tool_result' ||
+    type === 'function_result';
+  return toolName !== '' || toolCallId !== '' || explicitType;
 }
 
 function isLongInstructionText(text: string): boolean {
@@ -1940,66 +1934,12 @@ function getMessageHint(role: SessionPreviewItem['role'] | string, text: string)
   return '反馈/错误信息';
 }
 
-function inferToolAction(text: string, toolName: string | null): string {
-  const normalizedText = text.toLowerCase();
-  const normalizedName = (toolName ?? '').toLowerCase();
-  const combined = `${normalizedText} ${normalizedName}`;
-
-  if (
-    combined.includes('http') ||
-    combined.includes('https') ||
-    combined.includes('fetch') ||
-    combined.includes('curl') ||
-    combined.includes('request') ||
-    combined.includes('api')
-  ) {
-    return '发送 HTTP 请求';
-  }
-  if (
-    combined.includes('read') ||
-    combined.includes('load') ||
-    combined.includes('tmp_file') ||
-    combined.includes('file_read') ||
-    combined.includes('download')
-  ) {
-    return '读取文件';
-  }
-  if (
-    combined.includes('write') ||
-    combined.includes('save') ||
-    combined.includes('append') ||
-    combined.includes('upload') ||
-    combined.includes('persist')
-  ) {
-    return '写入文件';
-  }
-  if (
-    combined.includes('shell') ||
-    combined.includes('bash') ||
-    combined.includes('command') ||
-    combined.includes('exec') ||
-    combined.includes('run')
-  ) {
-    return '执行命令';
-  }
-  if (
-    combined.includes('search') ||
-    combined.includes('query') ||
-    combined.includes('lookup') ||
-    combined.includes('grep')
-  ) {
-    return '检索信息';
-  }
-  return '调用工具';
-}
-
 function buildToolCallSummary(text: string): string {
   const toolName = extractToolCallName(text);
-  const action = inferToolAction(text, toolName);
   if (toolName) {
-    return `工具调用：${action}（${toolName}）`;
+    return `工具调用：${toolName}`;
   }
-  return `工具调用：${action}`;
+  return '工具调用';
 }
 
 function getToolNameFromPayload(payload: Record<string, unknown> | null): string {
@@ -2089,10 +2029,27 @@ const pageStyle: React.CSSProperties = {
   background: 'transparent',
 };
 
+const boardShellStyle: React.CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  width: '100%',
+  padding: '0 0.85rem 0.85rem',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.7rem',
+  boxSizing: 'border-box',
+};
+
+const boardShellMobileStyle: React.CSSProperties = {
+  ...boardShellStyle,
+  padding: '0 0.5rem 0.5rem',
+  gap: '0.55rem',
+};
+
 const flatToolbarStyle: React.CSSProperties = {
   position: 'sticky',
   top: 0,
-  zIndex: 50,
+  zIndex: 60,
   border: '1px solid rgba(15, 23, 42, 0.1)',
   borderRadius: '0.4rem',
   background: 'rgba(255, 255, 255, 0.44)',
@@ -2105,6 +2062,11 @@ const flatToolbarStyle: React.CSSProperties = {
   flexWrap: 'wrap',
 };
 
+const flatToolbarMobileStyle: React.CSSProperties = {
+  padding: '0.45rem 0.5rem',
+  gap: '0.45rem',
+};
+
 const toolbarGroupStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
@@ -2113,11 +2075,20 @@ const toolbarGroupStyle: React.CSSProperties = {
   justifyContent: 'flex-end',
 };
 
+const toolbarGroupMobileStyle: React.CSSProperties = {
+  width: '100%',
+  justifyContent: 'space-between',
+};
+
 const toolbarStatsStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: '0.4rem',
   flexWrap: 'wrap',
+};
+
+const toolbarStatsMobileStyle: React.CSSProperties = {
+  width: '100%',
 };
 
 const statsItemStyle: React.CSSProperties = {
@@ -2718,6 +2689,7 @@ const boardViewportStyle: React.CSSProperties = {
   minWidth: 0,
   flex: 1,
   minHeight: 0,
+  borderRadius: '0.6rem',
   overflowX: 'auto',
   overflowY: 'hidden',
   overscrollBehaviorX: 'contain',
@@ -2737,17 +2709,18 @@ const boardTrackStyle: React.CSSProperties = {
   minWidth: 'max-content',
   display: 'flex',
   gap: '0.65rem',
+  alignItems: 'flex-start',
 };
 
 const KANBAN_COLUMN_WIDTH_PX = 280;
 const KANBAN_MOBILE_COLUMN_VW = 57;
 const KANBAN_MOBILE_COLUMN_MIN_PX = 220;
 const KANBAN_MOBILE_COLUMN_MAX_PX = 374;
+const KANBAN_COLLAPSED_COLUMN_WIDTH_PX = 52;
+const KANBAN_MOBILE_COLLAPSED_COLUMN_WIDTH_PX = 46;
 
 const mobileBoardTrackStyle: React.CSSProperties = {
   ...boardTrackStyle,
-  height: 'auto',
-  alignItems: 'flex-start',
   paddingBottom: '0.25rem',
   paddingRight: '0.25rem',
 };
@@ -2756,12 +2729,16 @@ const columnStyle: React.CSSProperties = {
   width: `${KANBAN_COLUMN_WIDTH_PX}px`,
   flex: `0 0 ${KANBAN_COLUMN_WIDTH_PX}px`,
   minHeight: 0,
+  maxHeight: '100%',
+  alignSelf: 'flex-start',
   display: 'flex',
   flexDirection: 'column',
+  overflow: 'hidden',
   borderRadius: '0.65rem',
   border: '1px solid rgba(15, 23, 42, 0.1)',
   background: 'linear-gradient(160deg, rgba(255, 255, 255, 0.62) 0%, rgba(240, 253, 250, 0.42) 100%)',
   backdropFilter: 'blur(6px)',
+  transition: 'width 0.18s ease, flex-basis 0.18s ease, background 0.18s ease, border-color 0.18s ease',
 };
 
 const mobileColumnStyle: React.CSSProperties = {
@@ -2770,8 +2747,27 @@ const mobileColumnStyle: React.CSSProperties = {
   minWidth: `${KANBAN_MOBILE_COLUMN_MIN_PX}px`,
   maxWidth: `${KANBAN_MOBILE_COLUMN_MAX_PX}px`,
   flex: `0 0 ${KANBAN_MOBILE_COLUMN_VW}vw`,
-  minHeight: 'auto',
-  alignSelf: 'flex-start',
+};
+
+const collapsedColumnStyle: React.CSSProperties = {
+  ...columnStyle,
+  width: `${KANBAN_COLLAPSED_COLUMN_WIDTH_PX}px`,
+  flex: `0 0 ${KANBAN_COLLAPSED_COLUMN_WIDTH_PX}px`,
+  height: '100%',
+  border: '1px solid rgba(14, 116, 144, 0.22)',
+  background:
+    'linear-gradient(180deg, rgba(236, 253, 245, 0.52) 0%, rgba(240, 249, 255, 0.22) 30%, rgba(255, 255, 255, 0) 100%)',
+  boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.28)',
+  opacity: 0.52,
+  overflow: 'hidden',
+};
+
+const mobileCollapsedColumnStyle: React.CSSProperties = {
+  ...collapsedColumnStyle,
+  width: `${KANBAN_MOBILE_COLLAPSED_COLUMN_WIDTH_PX}px`,
+  minWidth: `${KANBAN_MOBILE_COLLAPSED_COLUMN_WIDTH_PX}px`,
+  maxWidth: `${KANBAN_MOBILE_COLLAPSED_COLUMN_WIDTH_PX}px`,
+  flex: `0 0 ${KANBAN_MOBILE_COLLAPSED_COLUMN_WIDTH_PX}px`,
 };
 
 const addAgentColumnStyle: React.CSSProperties = {
@@ -2794,6 +2790,7 @@ const columnHeaderStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
+  cursor: 'pointer',
 };
 
 const columnTitleStyle: React.CSSProperties = {
@@ -2819,17 +2816,6 @@ const columnHeaderActionStyle: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   gap: '0.42rem',
-};
-
-const deleteRequirementButtonStyle: React.CSSProperties = {
-  border: '1px solid rgba(185, 28, 28, 0.28)',
-  background: 'rgba(254, 242, 242, 0.92)',
-  color: '#991b1b',
-  borderRadius: '0.32rem',
-  padding: '0.16rem 0.44rem',
-  fontSize: '0.67rem',
-  fontWeight: 700,
-  cursor: 'pointer',
 };
 
 const interruptFlowButtonStyle: React.CSSProperties = {
@@ -2877,7 +2863,7 @@ const flowColumnStatePillStyle: React.CSSProperties = {
 };
 
 const columnBodyStyle: React.CSSProperties = {
-  flex: 1,
+  flex: '1 1 auto',
   minHeight: 0,
   overflowY: 'auto',
   overflowX: 'hidden',
@@ -2887,11 +2873,19 @@ const columnBodyStyle: React.CSSProperties = {
   padding: '0.58rem',
 };
 
+const collapsedColumnBodyStyle: React.CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  display: 'flex',
+  alignItems: 'flex-start',
+  justifyContent: 'center',
+  padding: 0,
+  overflow: 'hidden',
+};
+
 const mobileColumnBodyStyle: React.CSSProperties = {
   ...columnBodyStyle,
-  overflowY: 'visible',
-  minHeight: 'auto',
-  flex: '0 0 auto',
+  WebkitOverflowScrolling: 'touch',
 };
 
 const addAgentBodyStyle: React.CSSProperties = {
@@ -2948,23 +2942,6 @@ const taskCardButtonStyle: React.CSSProperties = {
   flexDirection: 'column',
   gap: '0.32rem',
   textAlign: 'left',
-  cursor: 'pointer',
-};
-
-const taskCardActionRowStyle: React.CSSProperties = {
-  display: 'flex',
-  justifyContent: 'flex-end',
-  padding: '0 0.55rem 0.45rem',
-};
-
-const taskCardDeleteButtonStyle: React.CSSProperties = {
-  border: '1px solid rgba(185, 28, 28, 0.26)',
-  background: 'rgba(254, 242, 242, 0.92)',
-  color: '#991b1b',
-  borderRadius: '0.3rem',
-  padding: '0.2rem 0.46rem',
-  fontSize: '0.68rem',
-  fontWeight: 700,
   cursor: 'pointer',
 };
 
@@ -3041,4 +3018,32 @@ const emptyTextStyle: React.CSSProperties = {
   margin: 0,
   fontSize: '0.75rem',
   color: '#64748b',
+};
+
+const collapsedColumnTopStyle: React.CSSProperties = {
+  width: '100%',
+  display: 'flex',
+  justifyContent: 'center',
+  alignItems: 'flex-start',
+  paddingTop: '0.38rem',
+  paddingBottom: '0.22rem',
+};
+
+const collapsedColumnTopPlaceholderStyle: React.CSSProperties = {
+  margin: 0,
+  color: 'rgba(8, 145, 178, 0.78)',
+  fontSize: '0.88rem',
+  fontWeight: 800,
+  letterSpacing: '0.12em',
+  lineHeight: 1,
+  writingMode: 'vertical-rl',
+  textOrientation: 'mixed',
+  userSelect: 'none',
+};
+
+const collapsedColumnFadeStyle: React.CSSProperties = {
+  width: '100%',
+  flex: 1,
+  background:
+    'linear-gradient(180deg, rgba(45, 212, 191, 0.14) 0%, rgba(45, 212, 191, 0.06) 28%, rgba(255, 255, 255, 0) 100%)',
 };

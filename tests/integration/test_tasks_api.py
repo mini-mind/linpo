@@ -1338,6 +1338,8 @@ def test_task_dispatch_prompt_contains_tasks_callback_path(
     assert expected_callback in captured_messages[0]
     assert "回调地址候选(按顺序尝试，直到返回 accepted=true):" in captured_messages[0]
     assert f"回调令牌: {callback_token}" in captured_messages[0]
+    assert "若无法落地到指定输出路径，不得回调 completed，必须回调 failed" in captured_messages[0]
+    assert "completed 事件请同时填写 artifact=最终输出文件绝对路径" in captured_messages[0]
 
 
 def test_task_dispatch_prompt_derives_public_callback_from_instance_endpoint(
@@ -2000,6 +2002,105 @@ def test_task_output_preview_and_download_with_task_scoped_path(
     assert "application/json" in file_headers.get("content-type", "")
     assert b'"result":"ok"' in file_body
     assert "attachment" in file_headers.get("content-disposition", "")
+
+
+def test_task_output_preview_falls_back_to_existing_path_when_requested_path_missing(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("task-output-fallback-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-task-output-fallback",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-task-output-fallback",
+    )
+
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
+        lambda self, **kwargs: {
+            "request_id": f"req-{kwargs['agent_id']}",
+            "agent_id": kwargs["agent_id"],
+            "status": "accepted",
+        },
+    )
+
+    confirm_status, _, _ = _request_json(
+        "POST",
+        DEFAULT_FLOW_CONFIRM_PATH,
+        {
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor",
+            "requirement_title": "任务产出回退测试",
+            "nodes": [
+                {
+                    "id": "node_source",
+                    "title": "上游节点",
+                    "x": 120,
+                    "y": 100,
+                    "layer": 1,
+                    "sensitive": False,
+                    "status": "queued",
+                    "agent_id": "agent-executor",
+                },
+                {
+                    "id": "node_output",
+                    "title": "输出节点",
+                    "x": 420,
+                    "y": 100,
+                    "layer": 2,
+                    "sensitive": False,
+                    "status": "queued",
+                    "agent_id": "agent-executor",
+                },
+            ],
+            "edges": [
+                {
+                    "id": "edge-node_source-node_output",
+                    "source": "node_source",
+                    "target": "node_output",
+                }
+            ],
+        },
+        auth_cookie,
+    )
+    assert confirm_status == 200
+
+    list_status, _, list_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
+    assert list_status == 200
+    tasks = cast(list[dict[str, Any]], json.loads(list_body.decode("utf-8")))
+    output_task = next(task for task in tasks if str(task.get("extras", {}).get("flow_node", "")) == "node_output")
+    output_task_id = str(output_task["id"])
+
+    output_path = Path(str(output_task["extras"]["temp_output_path"]))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text('{"result":"fallback-ok"}', encoding="utf-8")
+
+    missing_path = str(output_task["extras"]["temp_input_paths"]).split(",", 1)[0].strip()
+    assert missing_path.startswith("/tmp/")
+
+    preview_path = DEFAULT_TASK_OUTPUT_PREVIEW_PATH.format(task_id=output_task_id)
+    preview_status, _, preview_body = request(
+        "GET",
+        f"{preview_path}?path={quote(missing_path, safe='')}",
+        headers={"cookie": auth_cookie},
+    )
+    assert preview_status == 200
+    preview_payload = cast(dict[str, Any], json.loads(preview_body.decode("utf-8")))
+    assert preview_payload["path"] == str(output_path)
+    assert preview_payload["kind"] == "json"
+    assert '"fallback-ok"' in str(preview_payload["content"])
+
+    file_path = DEFAULT_TASK_OUTPUT_FILE_PATH.format(task_id=output_task_id)
+    file_status, _, file_body = request(
+        "GET",
+        f"{file_path}?path={quote(missing_path, safe='')}&download=true",
+        headers={"cookie": auth_cookie},
+    )
+    assert file_status == 200
+    assert b'"fallback-ok"' in file_body
 
 
 def test_task_output_preview_rejects_non_task_path(

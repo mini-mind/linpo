@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link, Navigate, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
@@ -30,6 +30,9 @@ export function Layout(): JSX.Element {
   const isMobile = useIsMobile(960);
   const location = useLocation();
   const isFlowRoute = location.pathname.startsWith('/flow');
+  const isKanbanRoute = location.pathname.startsWith('/kanban');
+  const isInstanceFilesRoute = location.pathname.startsWith('/instance-files');
+  const mainRef = useRef<HTMLElement | null>(null);
   const [flowNavTarget, setFlowNavTarget] = useState('/flow');
 
   useEffect(() => {
@@ -45,6 +48,19 @@ export function Layout(): JSX.Element {
     saveLastFlowEntryPath(candidate);
     setFlowNavTarget(candidate);
   }, [location.hash, location.pathname, location.search]);
+
+  useEffect(() => {
+    const mainElement = mainRef.current;
+    if (!mainElement) {
+      return;
+    }
+    if (typeof mainElement.scrollTo === 'function') {
+      mainElement.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+      return;
+    }
+    mainElement.scrollTop = 0;
+    mainElement.scrollLeft = 0;
+  }, [location.pathname, location.search]);
 
   return (
     <div style={shellStyle}>
@@ -70,6 +86,14 @@ export function Layout(): JSX.Element {
             <NavLink to={flowNavTarget} className="linpo-nav-link" style={() => getNavTextLinkStyle(isFlowRoute)}>
               流程
             </NavLink>
+            <span aria-hidden="true" style={toolbarNavDividerStyle} data-testid="toolbar-nav-divider" />
+            <NavLink
+              to="/instance-files"
+              className="linpo-nav-link"
+              style={({ isActive }) => getNavTextLinkStyle(isActive || isInstanceFilesRoute)}
+            >
+              文件
+            </NavLink>
           </nav>
         </div>
 
@@ -78,7 +102,11 @@ export function Layout(): JSX.Element {
         </div>
       </header>
 
-      <main style={getMainStyle(isFlowRoute)} data-testid="layout-main-shell">
+      <main
+        ref={mainRef}
+        style={getMainStyle(isFlowRoute || isKanbanRoute || isInstanceFilesRoute)}
+        data-testid="layout-main-shell"
+      >
         <Outlet />
       </main>
     </div>
@@ -243,13 +271,13 @@ const toolbarRightStyle: React.CSSProperties = {
   justifyContent: 'flex-end',
 };
 
-function getMainStyle(isFlowRoute: boolean): React.CSSProperties {
+function getMainStyle(isEdgeToEdgeRoute: boolean): React.CSSProperties {
   return {
   flex: 1,
   minWidth: 0,
   minHeight: 0,
   display: 'flex',
-  padding: isFlowRoute ? 0 : '0.8rem',
+  padding: isEdgeToEdgeRoute ? 0 : '0.8rem',
   background: 'transparent',
   overflowX: 'hidden',
   overflowY: 'auto',

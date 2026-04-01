@@ -110,6 +110,12 @@ async function buildApiError(response: Response): Promise<ApiError> {
   if (isErrorEnvelopePayload(payload)) {
     return new ApiError(response.status, payload.error.message, payload.error);
   }
+  if (payload && typeof payload === 'object') {
+    const detail = (payload as { detail?: unknown }).detail;
+    if (typeof detail === 'string' && detail.trim().length > 0) {
+      return new ApiError(response.status, detail.trim(), null);
+    }
+  }
 
   return new ApiError(response.status, `API error: ${response.status} ${response.statusText}`);
 }

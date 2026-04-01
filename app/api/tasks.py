@@ -311,6 +311,43 @@ def _task_output_allowed_paths(task: Task) -> set[Path]:
     return allowed
 
 
+def _task_output_candidate_paths(task: Task, requested_path: str | None) -> list[Path]:
+    allowed = _task_output_allowed_paths(task)
+    ordered: list[Path] = []
+    seen: set[Path] = set()
+
+    def add_candidate(raw: str | None) -> None:
+        if not isinstance(raw, str):
+            return
+        normalized = _normalize_output_path(raw)
+        if normalized is None:
+            return
+        if normalized not in allowed or normalized in seen:
+            return
+        seen.add(normalized)
+        ordered.append(normalized)
+
+    add_candidate(requested_path)
+    extras = task.extras if isinstance(task.extras, dict) else {}
+    add_candidate(str(extras.get("temp_output_path", "")).strip())
+    add_candidate(_task_temp_output_path(task))
+    for item in task.artifacts:
+        if not isinstance(item, str):
+            continue
+        for candidate in _extract_output_paths_from_artifact(item):
+            add_candidate(candidate)
+    for input_path in _task_temp_input_paths(task):
+        add_candidate(input_path)
+    return ordered
+
+
+def _pick_existing_task_output_path(task: Task, requested_path: str | None) -> Path | None:
+    for candidate in _task_output_candidate_paths(task, requested_path):
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return None
+
+
 def _resolve_task_output_path(task: Task, requested_path: str | None) -> Path:
     fallback = _task_temp_output_path(task)
     raw_candidate = requested_path if isinstance(requested_path, str) else ""
@@ -699,7 +736,11 @@ def _build_task_dispatch_prompt(
         "- 读取上游输入文件:\n"
         f"{input_lines}\n"
         f"- 当前节点输出文件: {output_path}\n"
-        "- 如任务成功，请在 completed 事件 message 中附带输出文件路径\n\n"
+        "- 如任务成功，请在 completed 事件 message 中附带输出文件路径\n"
+        "- 若默认输入/输出路径受沙箱限制无法直接访问，可先在可访问工作目录做中间处理\n"
+        f"- 但 completed 前必须把最终结果落地到“当前节点输出文件: {output_path}”\n"
+        "- 若无法落地到指定输出路径，不得回调 completed，必须回调 failed 并写明不可访问路径与原因\n"
+        "- completed 事件请同时填写 artifact=最终输出文件绝对路径，便于看板产出预览\n\n"
         "回调格式(JSON): "
         '{"eventType":"started|progress|need_approval|completed|failed|heartbeat",'
         '"callbackToken":"<token>","idempotencyKey":"<unique>","requestId":"<optional>",'
@@ -1438,6 +1479,14 @@ def preview_task_output(
         task_service=task_service,
     )
     output_path = _resolve_task_output_path(task, path)
+    if not output_path.exists() or not output_path.is_file():
+        fallback = _pick_existing_task_output_path(task, path)
+        if fallback is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Output file not found on Linpo host. The file may still exist inside the agent instance.",
+            )
+        output_path = fallback
     normalized_board_id = board_id.strip() or "default"
     return _build_task_output_preview(
         board_id=normalized_board_id,
@@ -1465,7 +1514,13 @@ def download_task_output_file(
     )
     output_path = _resolve_task_output_path(task, path)
     if not output_path.exists() or not output_path.is_file():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Output file not found")
+        fallback = _pick_existing_task_output_path(task, path)
+        if fallback is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Output file not found on Linpo host. The file may still exist inside the agent instance.",
+            )
+        output_path = fallback
 
     media_type = _guess_output_mime_type(output_path)
     if download:

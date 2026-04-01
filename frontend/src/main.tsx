@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import CollabPage from './components/CollabPage';
 import { FlowListPage } from './components/FlowListPage';
 import { FlowPage } from './components/FlowPage';
+import { InstanceFilesPage } from './components/InstanceFilesPage';
 import { LandingPage } from './components/LandingPage';
 import { Layout, RedirectToOverview } from './components/Layout';
 import { LoginPage } from './components/LoginPage';
@@ -39,6 +40,7 @@ function App(): JSX.Element {
                 <Route path="kanban" element={<CollabPage />} />
                 <Route path="flow" element={<FlowListPage />} />
                 <Route path="flow/edit/:flowId" element={<FlowPage />} />
+                <Route path="instance-files" element={<InstanceFilesPage />} />
                 <Route path="pairing" element={<PairingPage />} />
                 <Route path="profile" element={<ProfilePage />} />
                 <Route path="*" element={<Navigate to="/kanban" replace />} />

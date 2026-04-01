@@ -436,47 +436,51 @@ export function FlowListPage(): JSX.Element {
         </button>
       </header>
 
-      {loading ? <p style={hintStyle}>流程列表加载中...</p> : null}
-      {error ? <p style={errorStyle}>{error}</p> : null}
+      <div style={contentShellStyle}>
+        <div style={contentInnerStyle}>
+          {loading ? <p style={hintStyle}>流程列表加载中...</p> : null}
+          {error ? <p style={errorStyle}>{error}</p> : null}
 
-      {!loading && !error && filteredFlowItems.length === 0 ? (
-        <p style={hintStyle}>暂无流程，点击“新建流程”开始创建。</p>
-      ) : null}
+          {!loading && !error && filteredFlowItems.length === 0 ? (
+            <p style={hintStyle}>暂无流程，点击“新建流程”开始创建。</p>
+          ) : null}
 
-      {!loading && !error && filteredFlowItems.length > 0 ? (
-        <div style={listPanelStyle}>
-          <div style={listStyle}>
-            {filteredFlowItems.map((flow) => (
-              <article key={`${flow.source}:${flow.id}`} style={cardStyle}>
-                <button
-                  type="button"
-                  style={cardOpenButtonStyle}
-                  onClick={() => navigate(`/flow/edit/${encodeURIComponent(flow.id)}`)}
-                  aria-label={`打开流程-${flow.name}`}
-                >
-                  <div style={cardMainStyle}>
-                    <h2 style={cardTitleStyle}>{flow.name}</h2>
-                    <p style={cardMetaStyle}>
-                      {flow.source === 'draft' ? '草稿流程' : '已提交流程'} · 节点 {flow.nodeCount} · {flow.statusSummary}
-                    </p>
-                    <p style={cardMetaStyle}>更新时间 {new Date(flow.updatedAt).toLocaleString('zh-CN')}</p>
-                  </div>
-                </button>
-                <div style={cardActionGroupStyle}>
-                  <button
-                    type="button"
-                    style={secondaryButtonStyle}
-                    onClick={() => handleOpenEditModal(flow)}
-                    aria-label={`编辑流程-${flow.name}`}
-                  >
-                    编辑
-                  </button>
-                </div>
-              </article>
-            ))}
-          </div>
+          {!loading && !error && filteredFlowItems.length > 0 ? (
+            <div style={listPanelStyle}>
+              <div style={listStyle}>
+                {filteredFlowItems.map((flow) => (
+                  <article key={`${flow.source}:${flow.id}`} style={cardStyle}>
+                    <button
+                      type="button"
+                      style={cardOpenButtonStyle}
+                      onClick={() => navigate(`/flow/edit/${encodeURIComponent(flow.id)}`)}
+                      aria-label={`打开流程-${flow.name}`}
+                    >
+                      <div style={cardMainStyle}>
+                        <h2 style={cardTitleStyle}>{flow.name}</h2>
+                        <p style={cardMetaStyle}>
+                          {flow.source === 'draft' ? '草稿流程' : '已提交流程'} · 节点 {flow.nodeCount} · {flow.statusSummary}
+                        </p>
+                        <p style={cardMetaStyle}>更新时间 {new Date(flow.updatedAt).toLocaleString('zh-CN')}</p>
+                      </div>
+                    </button>
+                    <div style={cardActionGroupStyle}>
+                      <button
+                        type="button"
+                        style={secondaryButtonStyle}
+                        onClick={() => handleOpenEditModal(flow)}
+                        aria-label={`编辑流程-${flow.name}`}
+                      >
+                        编辑
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
-      ) : null}
+      </div>
 
       {editingFlow ? (
         <div style={modalOverlayStyle} role="dialog" aria-modal="true" aria-label="编辑流程">
@@ -728,6 +732,26 @@ const pageStyle: React.CSSProperties = {
   width: '100%',
   minWidth: 0,
   minHeight: 0,
+  overflow: 'hidden',
+};
+
+const contentShellStyle: React.CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  width: '100%',
+  padding: '0 0.85rem 0.85rem',
+  display: 'flex',
+  justifyContent: 'center',
+  boxSizing: 'border-box',
+};
+
+const contentInnerStyle: React.CSSProperties = {
+  width: '100%',
+  maxWidth: '1600px',
+  minHeight: 0,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.7rem',
 };
 
 const toolbarStyle: React.CSSProperties = {
@@ -774,11 +798,12 @@ const listPanelStyle: React.CSSProperties = {
   background: 'rgba(255, 255, 255, 0.32)',
   backdropFilter: 'blur(8px)',
   padding: '0.65rem',
+  minWidth: 0,
 };
 
 const listStyle: React.CSSProperties = {
   display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+  gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
   gap: '0.6rem',
 };
 

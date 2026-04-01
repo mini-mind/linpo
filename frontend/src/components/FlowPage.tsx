@@ -25,6 +25,7 @@ import type {
   KanbanTaskItem,
   TaskStatus,
 } from '../api/types';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
 import {
   buildDraftFlowName,
@@ -151,6 +152,7 @@ export function FlowPage(): JSX.Element {
   const navigate = useNavigate();
   const params = useParams<{ flowId: string }>();
   const location = useLocation();
+  const isMobile = useIsMobile(960);
   const { addToast } = useToast();
 
   const [overview, setOverview] = useState<AggregateOverviewResponse | null>(null);
@@ -623,6 +625,10 @@ export function FlowPage(): JSX.Element {
   }, [flowRequirementScopeId, flowTasks]);
   const flowRuntimeState = useMemo<FlowRuntimeState>(
     () => resolveFlowRuntimeState(currentRequirementTasks),
+    [currentRequirementTasks]
+  );
+  const hasExistingFlowOutputs = useMemo(
+    () => currentRequirementTasks.some(hasTaskExplicitOutputArtifact),
     [currentRequirementTasks]
   );
 
@@ -1645,15 +1651,15 @@ export function FlowPage(): JSX.Element {
   return (
     <section style={pageStyle} aria-label="flow-page">
       <style>{flowCanvasAnimationStyleText}</style>
-      <header style={topToolbarStyle} role="toolbar" aria-label="流程编辑工具栏">
-        <div style={toolbarLeftStyle}>
+      <header style={isMobile ? { ...topToolbarStyle, ...topToolbarMobileStyle } : topToolbarStyle} role="toolbar" aria-label="流程编辑工具栏">
+        <div style={isMobile ? { ...toolbarLeftStyle, ...toolbarLeftMobileStyle } : toolbarLeftStyle}>
           <button type="button" style={breadcrumbRootButtonStyle} onClick={() => navigate('/flow')} aria-label="我的流程">
             我的流程
           </button>
           <span style={breadcrumbSeparatorStyle}>/</span>
           <button
             type="button"
-            style={breadcrumbCurrentButtonStyle}
+            style={isMobile ? { ...breadcrumbCurrentButtonStyle, ...breadcrumbCurrentButtonMobileStyle } : breadcrumbCurrentButtonStyle}
             onClick={() => {
               setFlowNameInput(displayFlowName);
               setIsDetailOpen((open) => !open);
@@ -1664,8 +1670,8 @@ export function FlowPage(): JSX.Element {
             {displayFlowName}
           </button>
         </div>
-        <div style={toolbarRightStyle}>
-          <span style={flowStateBadgeStyle}>{flowStateLabel}</span>
+        <div style={isMobile ? { ...toolbarRightStyle, ...toolbarRightMobileStyle } : toolbarRightStyle}>
+          <span style={isMobile ? { ...flowStateBadgeStyle, ...flowStateBadgeMobileStyle } : flowStateBadgeStyle}>{flowStateLabel}</span>
           {isSyncingBlockedFlow ? <span style={flowSyncBadgeStyle}>同步中...</span> : null}
           <button
             type="button"
@@ -1727,6 +1733,9 @@ export function FlowPage(): JSX.Element {
           <div style={confirmCardStyle}>
             <h3 style={confirmTitleStyle}>确认运行流程</h3>
             <p style={confirmTextStyle}>运行后将按当前画布把该流程加入看板队列并开始调度，确认继续？</p>
+            {hasExistingFlowOutputs ? (
+              <p style={confirmWarningTextStyle}>检测到该流程已有产出文件，再次运行可能覆盖历史产物。</p>
+            ) : null}
             <div style={actionRowStyle}>
               <button type="button" style={secondaryButtonStyle} onClick={() => setIsSubmitConfirmOpen(false)} disabled={isSubmittingFlow || isPlanning}>
                 取消
@@ -2344,6 +2353,17 @@ function normalizeTaskStatus(value: string): TaskStatus {
   return 'queued';
 }
 
+function hasTaskExplicitOutputArtifact(task: KanbanTaskItem): boolean {
+  return task.artifacts.some((item) => {
+    const normalized = item.trim();
+    if (!normalized.toLowerCase().startsWith('artifact:')) {
+      return false;
+    }
+    const value = normalized.split(':', 2)[1]?.trim() ?? '';
+    return value.startsWith('/');
+  });
+}
+
 function resolveFlowRuntimeState(tasks: KanbanTaskItem[]): FlowRuntimeState {
   if (tasks.length === 0) {
     return 'idle';
@@ -2744,11 +2764,20 @@ const topToolbarStyle: React.CSSProperties = {
   flexShrink: 0,
 };
 
+const topToolbarMobileStyle: React.CSSProperties = {
+  padding: '0.45rem 0.5rem',
+  gap: '0.45rem',
+};
+
 const toolbarLeftStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: '0.42rem',
   minWidth: 0,
+};
+
+const toolbarLeftMobileStyle: React.CSSProperties = {
+  width: '100%',
 };
 
 const toolbarRightStyle: React.CSSProperties = {
@@ -2758,6 +2787,11 @@ const toolbarRightStyle: React.CSSProperties = {
   gap: '0.45rem',
   flexWrap: 'wrap',
   flexShrink: 0,
+};
+
+const toolbarRightMobileStyle: React.CSSProperties = {
+  width: '100%',
+  justifyContent: 'space-between',
 };
 
 const breadcrumbRootButtonStyle: React.CSSProperties = {
@@ -2791,6 +2825,10 @@ const breadcrumbCurrentButtonStyle: React.CSSProperties = {
   maxWidth: '280px',
 };
 
+const breadcrumbCurrentButtonMobileStyle: React.CSSProperties = {
+  maxWidth: '58vw',
+};
+
 const flowStateBadgeStyle: React.CSSProperties = {
   border: '1px solid rgba(148, 163, 184, 0.35)',
   borderRadius: '999px',
@@ -2800,6 +2838,11 @@ const flowStateBadgeStyle: React.CSSProperties = {
   color: '#334155',
   background: 'rgba(255, 255, 255, 0.74)',
   whiteSpace: 'nowrap',
+};
+
+const flowStateBadgeMobileStyle: React.CSSProperties = {
+  fontSize: '0.68rem',
+  padding: '0.08rem 0.45rem',
 };
 
 const primaryButtonStyle: React.CSSProperties = {
@@ -2960,6 +3003,17 @@ const confirmTextStyle: React.CSSProperties = {
   fontSize: '0.8rem',
   color: '#334155',
   lineHeight: 1.5,
+};
+
+const confirmWarningTextStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.78rem',
+  color: '#92400e',
+  background: 'rgba(254, 243, 199, 0.7)',
+  border: '1px solid rgba(217, 119, 6, 0.25)',
+  borderRadius: '0.5rem',
+  padding: '0.45rem 0.55rem',
+  lineHeight: 1.45,
 };
 
 const plannerComposerShellStyle: React.CSSProperties = {

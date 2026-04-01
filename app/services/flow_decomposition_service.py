@@ -328,7 +328,8 @@ class FlowDecompositionService:
             "3) 节点数 2-12；"
             "4) 优先识别可独立子任务，拆成可并行分支，不要线性化所有步骤；"
             "5) 每个节点 description 要写清执行要点；若节点可再拆分，请明确写出“可委派 subagent 并行执行”的建议；"
-            "6) 最终至少一个敏感节点 sensitive=true 用于审批。"
+            "6) 最终至少一个敏感节点 sensitive=true 用于审批；"
+            "7) 每个节点 description 需包含文件交接要求：明确输入/输出文件语义，并提醒执行阶段“若运行环境无法直接访问默认路径，可先在可访问工作目录处理中间文件，但 completed 前必须回写到指定输出路径；否则应 failed 并说明原因”。"
         )
         if not current_nodes and not current_edges:
             return f"{base_prompt}用户需求：{requirement}"

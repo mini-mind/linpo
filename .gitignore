@@ -19,3 +19,4 @@ htmlcov/
 node_modules
 .sisyphus/evidence/
 frontend/test-results/
+references/

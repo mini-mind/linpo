@@ -330,6 +330,31 @@ describe('FlowPage', () => {
     expect(layers.every((layer: number) => layer >= 1)).toBe(true);
   });
 
+  it('shows overwrite warning before running when flow already has output artifacts', async () => {
+    mockListKanbanTasks.mockResolvedValueOnce([
+      buildKanbanTask({
+        id: 'task-completed-with-output',
+        status: 'completed',
+        artifacts: ['artifact: /tmp/linpo/req-flow-a/node_report.json'],
+        extras: {
+          requirement_id: 'req-flow-a',
+          requirement_title: '流程A',
+          flow_node: 'node_existing',
+          dependencies: 'none',
+          sensitive: 'false',
+        },
+      }),
+    ]);
+
+    renderFlowPage('/flow/edit/req-flow-a');
+    await screen.findByRole('toolbar', { name: '流程编辑工具栏' });
+    await createNodeByCanvasDoubleClick('节点A');
+
+    await userEvent.click(screen.getByRole('button', { name: '运行' }));
+    expect(screen.getByRole('dialog', { name: '确认运行流程' })).toBeInTheDocument();
+    expect(screen.getByText('检测到该流程已有产出文件，再次运行可能覆盖历史产物。')).toBeInTheDocument();
+  });
+
   it('removes selected edge by Delete key without edge delete button', async () => {
     renderFlowPage('/flow/edit/new');
     await screen.findByRole('toolbar', { name: '流程编辑工具栏' });

@@ -1,27 +1,41 @@
 from __future__ import annotations
 
+from datetime import UTC
+from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
 
+from app.api.tasks import (
+    _build_task_output_preview,
+    _extract_output_paths_from_artifact,
+    _guess_output_mime_type,
+    _normalize_output_path,
+    _pick_existing_task_output_path,
+    _resolve_task_output_path,
+    _task_temp_output_path,
+)
 from app.api.schemas import (
     AgentMountRequestPayload,
     AgentReceiptConfirmResponse,
     AgentPairingRequestResponse,
     AgentUnmountRequestPayload,
     InstanceDeleteResponse,
+    InstanceFileItem,
+    InstanceFileListResponse,
     InstanceItem,
     InstancePairCodeRequest,
     InstancePatchRequest,
     InstanceValidationErrorResponse,
     InstanceValidationResponse,
     InstanceWriteRequest,
+    TaskOutputPreviewResponse,
     UserMessageItem,
     UserMessageReadResponse,
 )
-from app.db.models import Instance, User, UserMessage
+from app.db.models import Instance, Task, User, UserMessage
 from app.db.session import get_session
 from app.services.auth_service import get_authenticated_user
 from app.services.instance_service import (
@@ -38,6 +52,7 @@ from app.services.agent_self_pairing_service import (
     AgentUnmountStartInput,
 )
 from app.services.message_center_service import MessageCenterService, MessageNotFoundError
+from app.services.task_service import TaskService
 from app.services.pairing_receipt_service import (
     PairingReceiptConsumedError,
     PairingReceiptEmailMismatchError,
@@ -63,6 +78,10 @@ def get_agent_self_pairing_service() -> AgentSelfPairingService:
 
 def get_message_center_service() -> MessageCenterService:
     return MessageCenterService()
+
+
+def get_task_service() -> TaskService:
+    return TaskService()
 
 
 def get_current_user(
@@ -130,6 +149,97 @@ def _pair_code_to_create_input(payload: InstancePairCodeRequest) -> InstanceCrea
     )
 
 
+def _to_utc_iso(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    if hasattr(value, "astimezone"):
+        dt_value = value if getattr(value, "tzinfo", None) is not None else value.replace(tzinfo=UTC)
+        return dt_value.astimezone(UTC).isoformat()
+    return ""
+
+
+def _task_output_paths_for_instance_files(task: Task) -> list[Path]:
+    extras = task.extras if isinstance(task.extras, dict) else {}
+    candidates: list[str] = []
+    output_path = str(extras.get("temp_output_path", "")).strip()
+    if output_path:
+        candidates.append(output_path)
+    else:
+        candidates.append(_task_temp_output_path(task))
+    for item in task.artifacts:
+        if not isinstance(item, str):
+            continue
+        candidates.extend(_extract_output_paths_from_artifact(item))
+
+    ordered: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        normalized = _normalize_output_path(candidate)
+        if normalized is None:
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        ordered.append(normalized)
+    return ordered
+
+
+def _to_instance_file_items(tasks: list[Task]) -> list[InstanceFileItem]:
+    items: list[InstanceFileItem] = []
+    for task in tasks:
+        requirement_id: str | None = None
+        extras = task.extras if isinstance(task.extras, dict) else {}
+        candidate_requirement_id = str(extras.get("requirement_id", "")).strip()
+        if candidate_requirement_id:
+            requirement_id = candidate_requirement_id
+        updated_at = _to_utc_iso(task.updated_at)
+        for path in _task_output_paths_for_instance_files(task):
+            exists = path.exists() and path.is_file()
+            size_bytes: int | None = path.stat().st_size if exists else None
+            items.append(
+                InstanceFileItem(
+                    id=f"{task.id}:{path}",
+                    task_id=str(task.id),
+                    task_title=task.title,
+                    task_status=task.status,
+                    requirement_id=requirement_id,
+                    path=str(path),
+                    name=path.name,
+                    exists=exists,
+                    size_bytes=size_bytes,
+                    updated_at=updated_at,
+                )
+            )
+    items.sort(key=lambda item: (item.updated_at, item.task_id, item.path), reverse=True)
+    return items
+
+
+def _get_owned_instance_task(
+    *,
+    board_id: str,
+    instance_id: UUID,
+    task_id: UUID,
+    current_user: User,
+    db_session: Session,
+    task_service: TaskService,
+) -> Task:
+    task = task_service.get_task(
+        db_session,
+        user_id=current_user.id,
+        task_id=task_id,
+    )
+    if task is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    if task.instance_id != instance_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    extras = task.extras if isinstance(task.extras, dict) else {}
+    task_board_id = str(extras.get("board_id", "default")).strip() or "default"
+    normalized_board_id = board_id.strip() or "default"
+    if task_board_id != normalized_board_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    return task
+
+
 @router.get("", response_model=list[InstanceItem])
 def list_instances(
     current_user: User = Depends(get_current_user),
@@ -138,6 +248,139 @@ def list_instances(
 ) -> list[InstanceItem]:
     instances = instance_service.list_instances(db_session, user_id=current_user.id)
     return [_instance_to_item(instance) for instance in instances]
+
+
+@router.get("/{instance_id}/files", response_model=InstanceFileListResponse)
+def list_instance_files(
+    instance_id: UUID,
+    board_id: str = Query(default="default", alias="boardId"),
+    q: str | None = Query(default=None),
+    only_existing: bool = Query(default=False, alias="onlyExisting"),
+    current_user: User = Depends(get_current_user),
+    db_session: Session = Depends(get_session),
+    instance_service: InstanceService = Depends(get_instance_service),
+    task_service: TaskService = Depends(get_task_service),
+) -> InstanceFileListResponse:
+    owned = instance_service.get_owned_instance(
+        db_session,
+        user_id=current_user.id,
+        instance_id=instance_id,
+    )
+    if owned is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found")
+
+    normalized_board_id = board_id.strip() or "default"
+    tasks = task_service.list_tasks(
+        db_session,
+        user_id=current_user.id,
+        board_id=normalized_board_id,
+        instance_id=instance_id,
+    )
+    items = _to_instance_file_items(tasks)
+
+    keyword = (q or "").strip().lower()
+    if keyword:
+        items = [
+            item
+            for item in items
+            if keyword in item.path.lower()
+            or keyword in item.name.lower()
+            or keyword in item.task_title.lower()
+            or keyword in (item.requirement_id or "").lower()
+        ]
+    if only_existing:
+        items = [item for item in items if item.exists]
+
+    existing_count = sum(1 for item in items if item.exists)
+    return InstanceFileListResponse(items=items, total=len(items), existing_count=existing_count)
+
+
+@router.get("/{instance_id}/files/preview", response_model=TaskOutputPreviewResponse)
+def preview_instance_file(
+    instance_id: UUID,
+    task_id: UUID = Query(alias="taskId"),
+    board_id: str = Query(default="default", alias="boardId"),
+    path: str | None = Query(default=None),
+    current_user: User = Depends(get_current_user),
+    db_session: Session = Depends(get_session),
+    instance_service: InstanceService = Depends(get_instance_service),
+    task_service: TaskService = Depends(get_task_service),
+) -> TaskOutputPreviewResponse:
+    owned = instance_service.get_owned_instance(
+        db_session,
+        user_id=current_user.id,
+        instance_id=instance_id,
+    )
+    if owned is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found")
+
+    task = _get_owned_instance_task(
+        board_id=board_id,
+        instance_id=instance_id,
+        task_id=task_id,
+        current_user=current_user,
+        db_session=db_session,
+        task_service=task_service,
+    )
+    output_path = _resolve_task_output_path(task, path)
+    if not output_path.exists() or not output_path.is_file():
+        fallback = _pick_existing_task_output_path(task, path)
+        if fallback is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Output file not found on Linpo host. The file may still exist inside the agent instance.",
+            )
+        output_path = fallback
+    normalized_board_id = board_id.strip() or "default"
+    return _build_task_output_preview(
+        board_id=normalized_board_id,
+        task=task,
+        output_path=output_path,
+    )
+
+
+@router.get("/{instance_id}/files/download")
+def download_instance_file(
+    instance_id: UUID,
+    task_id: UUID = Query(alias="taskId"),
+    board_id: str = Query(default="default", alias="boardId"),
+    path: str | None = Query(default=None),
+    download: bool = Query(default=True),
+    current_user: User = Depends(get_current_user),
+    db_session: Session = Depends(get_session),
+    instance_service: InstanceService = Depends(get_instance_service),
+    task_service: TaskService = Depends(get_task_service),
+) -> FileResponse:
+    owned = instance_service.get_owned_instance(
+        db_session,
+        user_id=current_user.id,
+        instance_id=instance_id,
+    )
+    if owned is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found")
+
+    task = _get_owned_instance_task(
+        board_id=board_id,
+        instance_id=instance_id,
+        task_id=task_id,
+        current_user=current_user,
+        db_session=db_session,
+        task_service=task_service,
+    )
+    output_path = _resolve_task_output_path(task, path)
+    if not output_path.exists() or not output_path.is_file():
+        fallback = _pick_existing_task_output_path(task, path)
+        if fallback is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Output file not found on Linpo host. The file may still exist inside the agent instance.",
+            )
+        output_path = fallback
+
+    media_type = _guess_output_mime_type(output_path)
+    if download:
+        return FileResponse(output_path, media_type=media_type, filename=output_path.name)
+    return FileResponse(output_path, media_type=media_type)
 
 
 @router.post(

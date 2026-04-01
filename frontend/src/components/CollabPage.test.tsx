@@ -14,7 +14,6 @@ const {
   mockCreateKanbanTask,
   mockContinueFlowRequirement,
   mockDeleteKanbanTask,
-  mockDeleteKanbanRequirementTasks,
   mockContinueKanbanTask,
   mockInterruptKanbanTask,
   mockStopFlowRequirement,
@@ -28,7 +27,6 @@ const {
   mockCreateKanbanTask: vi.fn(),
   mockContinueFlowRequirement: vi.fn(),
   mockDeleteKanbanTask: vi.fn(),
-  mockDeleteKanbanRequirementTasks: vi.fn(),
   mockContinueKanbanTask: vi.fn(),
   mockInterruptKanbanTask: vi.fn(),
   mockStopFlowRequirement: vi.fn(),
@@ -47,7 +45,6 @@ vi.mock('../api/client', async () => {
     createKanbanTask: mockCreateKanbanTask,
     continueFlowRequirement: mockContinueFlowRequirement,
     deleteKanbanTask: mockDeleteKanbanTask,
-    deleteKanbanRequirementTasks: mockDeleteKanbanRequirementTasks,
     continueKanbanTask: mockContinueKanbanTask,
     interruptKanbanTask: mockInterruptKanbanTask,
     stopFlowRequirement: mockStopFlowRequirement,
@@ -150,7 +147,6 @@ describe('CollabPage', () => {
       dispatched_task_ids: [],
     });
     mockDeleteKanbanTask.mockResolvedValue({ deleted: true, deleted_task_ids: [] });
-    mockDeleteKanbanRequirementTasks.mockResolvedValue({ deleted: true, deleted_task_ids: [] });
     mockContinueKanbanTask.mockResolvedValue({
       accepted: true,
       task_id: 'task-alpha',
@@ -228,6 +224,50 @@ describe('CollabPage', () => {
 
     expect(await screen.findByRole('heading', { name: 'Running Agent', level: 3 })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Failed Agent', level: 3 })).toBeInTheDocument();
+  });
+
+  it('supports double-click collapse and expand on column header', async () => {
+    mockGetAggregateOverview.mockResolvedValue(buildOverview({ agents: [buildAgent()] }));
+    mockListKanbanTasks.mockResolvedValue([
+      buildKanbanTask({ id: 'task-running', title: '运行任务', status: 'running' }),
+    ]);
+
+    renderPage();
+
+    const heading = await screen.findByRole('heading', { name: '进行中', level: 3 });
+    const article = heading.closest('article');
+    const header = heading.closest('header');
+    expect(article).not.toBeNull();
+    expect(header).not.toBeNull();
+
+    await userEvent.dblClick(header as HTMLElement);
+    expect(article).toHaveAttribute('data-column-collapsed', 'true');
+    expect(within(article as HTMLElement).queryByRole('heading', { name: '进行中', level: 3 })).not.toBeInTheDocument();
+    expect((article as HTMLElement).querySelector('header')).toBeNull();
+    expect(within(article as HTMLElement).getAllByText('...')).toHaveLength(1);
+
+    await userEvent.dblClick(article as HTMLElement);
+    expect(article).toHaveAttribute('data-column-collapsed', 'false');
+    expect(within(article as HTMLElement).getByRole('heading', { name: '进行中', level: 3 })).toBeInTheDocument();
+  });
+
+  it('uses content-height columns with internal scrolling for expanded columns', async () => {
+    mockGetAggregateOverview.mockResolvedValue(buildOverview({ agents: [buildAgent()] }));
+    mockListKanbanTasks.mockResolvedValue([
+      buildKanbanTask({ id: 'task-running', title: '运行任务', status: 'running' }),
+    ]);
+
+    renderPage();
+
+    const board = await screen.findByTestId('kanban-board');
+    const track = board.firstElementChild as HTMLElement;
+    const heading = await screen.findByRole('heading', { name: '进行中', level: 3 });
+    const article = heading.closest('article') as HTMLElement;
+    const body = article.children[1] as HTMLElement;
+
+    expect(track).toHaveStyle({ alignItems: 'flex-start' });
+    expect(article).toHaveStyle({ maxHeight: '100%', alignSelf: 'flex-start', overflow: 'hidden' });
+    expect(body).toHaveStyle({ overflowY: 'auto' });
   });
 
   it('supports flow grouping', async () => {
@@ -587,7 +627,7 @@ describe('CollabPage', () => {
       });
     });
     expect(screen.getByText('已开始执行任务')).toBeInTheDocument();
-    expect(screen.getByText('工具调用：读取文件（read_tmp_file）')).toBeInTheDocument();
+    expect(screen.getByText('工具调用：read_tmp_file')).toBeInTheDocument();
     expect(screen.getByText('工具调用')).toBeInTheDocument();
 
     const realtimeOptions = mockCreateObserverRealtimeClient.mock.calls[0]?.[0];
@@ -704,7 +744,7 @@ describe('CollabPage', () => {
     expect(screen.getByText('暂无任务产出。请由 Agent 在完成回调中显式上报 artifact 文件路径。')).toBeInTheDocument();
   });
 
-  it('deletes one requirement node from task card action', async () => {
+  it('deletes one requirement node from detail modal basic-info controls', async () => {
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     mockGetAggregateOverview.mockResolvedValue(buildOverview({ agents: [buildAgent()] }));
     mockListKanbanTasks
@@ -723,51 +763,13 @@ describe('CollabPage', () => {
     renderPage();
 
     await screen.findByText('待删除节点');
-    await userEvent.click(screen.getByRole('button', { name: '删除节点 待删除节点' }));
+    await userEvent.click(screen.getByRole('button', { name: '查看任务 待删除节点' }));
+    await userEvent.click(screen.getByRole('button', { name: '删除节点' }));
 
     await waitFor(() => {
       expect(mockDeleteKanbanTask).toHaveBeenCalledWith('task-delete-node');
     });
     expect(screen.queryByText('待删除节点')).not.toBeInTheDocument();
-    confirmSpy.mockRestore();
-  });
-
-  it('deletes flow columns and interrupts before deletion', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    mockGetAggregateOverview.mockResolvedValue(buildOverview({ agents: [buildAgent()] }));
-    mockListKanbanTasks
-      .mockResolvedValueOnce([
-        buildKanbanTask({
-          id: 'task-rm-1',
-          title: '需求删除节点一',
-          extras: {
-            requirement_id: 'req-rm',
-            requirement_title: '删除需求A',
-          },
-        }),
-        buildKanbanTask({
-          id: 'task-rm-2',
-          title: '需求删除节点二',
-          extras: {
-            requirement_id: 'req-rm',
-            requirement_title: '删除需求A',
-          },
-        }),
-      ])
-      .mockResolvedValueOnce([]);
-
-    renderPage();
-
-    await screen.findByText('需求删除节点一');
-    await userEvent.selectOptions(screen.getByLabelText('分列方式'), 'flow');
-    await userEvent.click(screen.getByRole('button', { name: '删除流程 删除需求A' }));
-
-    await waitFor(() => {
-      expect(mockStopFlowRequirement).toHaveBeenCalledWith('req-rm', undefined, 'default');
-      expect(mockDeleteKanbanRequirementTasks).toHaveBeenCalledWith('req-rm');
-    });
-    expect(screen.queryByText('需求删除节点一')).not.toBeInTheDocument();
-    expect(screen.queryByText('需求删除节点二')).not.toBeInTheDocument();
     confirmSpy.mockRestore();
   });
 

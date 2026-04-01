@@ -32,11 +32,15 @@
 - `FlowEditorPanel`：编辑流程页，承接泳道画布编排、流程状态按钮（`运行/中断/继续`）、重命名交互与底部悬浮指令对话框（增量改图）。
 - `FlowEditorPanel`：编辑流程页需订阅 board tasks SSE 任务事件并增量更新 `flowTasks`，由任务快照反向投影节点状态到画布。
 - `KanbanShell` 在“按流程分列”模式下，列头需展示流程状态并提供主动作（`中断流程/继续流程/运行流程`）与删除动作。
+- `KanbanShell` 支持按列维度维护折叠状态；双击列头可在“完整列 / 折叠列”间切换，折叠态收敛为半透明窄列并移除列头，仅在顶部保留纵向省略号与渐隐背景，不卸载整页横向滚动容器。
+- `KanbanShell` 未折叠列采用“内容包裹 + 列体内滚动”布局：轨道顶部对齐，列本身只增长到当前工作区可用高度上限，超出部分由列内卡片列表承担纵向滚动。
 - `Layout`：维护流程导航入口缓存（`linpo.lastFlowEntryPath`），用于“点击导航栏流程时回到上次访问的编辑页”。
-- `Layout`：主导航仅保留 `看板/流程`；账户相关入口统一走导航栏用户信息下拉菜单，`/pairing` 保留兼容路由但不在主导航暴露。
+- `Layout`：主导航保留 `看板/流程/文件`；账户相关入口统一走导航栏用户信息下拉菜单，`/pairing` 保留兼容路由但不在主导航暴露。
+- `InstanceFilesPage`：实例文件页（`/instance-files`），按实例聚合任务产出文件，提供搜索、预览、下载与关联任务跳转。
 - `MessageCenterModal`：导航栏账户下拉菜单触发的消息中心弹窗，承接“消息列表 + 详情 + 回执确认跳转”。
 - `MessageCenterModal`：通过 portal 挂载到 `document.body`，避免受局部层级与滚动容器影响导致不可见。
 - `AccountMenu`：下拉菜单提供 `账户/消息/实例/退出` 菜单动作；`账户`打开 `UserProfileModal`（左侧 `基本信息/修改密码/会员` 侧边栏 + 右侧展示区）。
+- `AccountMenu`：下拉菜单提供 `账户/实例/消息/退出` 菜单动作。
 - `UserProfileModal`：`基本信息`页提供“头像更换按钮 + 用户名编辑按钮”；`修改密码`页提供密码更新表单；`会员`页展示充值渠道占位。
 - `InstanceListModal`：由账户下拉菜单“实例”触发，展示已配对实例列表、实例信息与拓扑（`实例 -> Agent -> Session`）。
 - `ProfilePage`：`/profile` 作为兼容入口保留，不再作为用户主导航路径。
@@ -59,6 +63,7 @@
 - 解析：构建 DAG，校验环路，按拓扑序动态分层并分配执行 Agent。
 - 输出：可并行任务批次，任务写入看板队列。
 - 拆解策略：`FlowDecompositionService` 提示词需优先生成“可并行”的分支结构，并在节点描述中给出“可委派 subagent 并行执行”的建议，避免过度串行化。
+- 拆解策略：`FlowDecompositionService` 提示词需补充“路径可访问性”约束，要求节点交接文件优先使用指定临时路径，若路径受沙箱限制需提供可访问替代路径与回传说明。
 - 前端 `FlowEditorPanel` 必须支持节点/连接的本地编辑能力：`node create/update/delete` 与 `edge create/delete`，确认入板时提交最新画布状态。
 - 流程画布采用“横向泳道列 + 顶部冻结泳道标题行”；双击顶部空白区创建泳道，双击泳道标题编辑泳道名称与委派 Agent。
 - 节点以双击画布弹窗创建、双击节点弹窗编辑；节点上下左右提供连接点用于连线。
@@ -89,6 +94,7 @@
 - 事件类型：`started / heartbeat / progress / need_approval / completed / failed`。
 - 幂等保障：事件携带 `idempotencyKey`，后端按 run 维度去重。
 - 调度推进：每次入队、每次终态事件（`completed/failed/need_approval`）后，只拉取一个可执行 `queued` 任务投放。
+- 调度提示词：执行端需优先写入任务指定 `temp_output_path`；若该路径不可访问，必须回退到可访问工作目录并在 `completed` 的 `artifact/message` 回传“实际路径 + 回退原因”。
 - 补偿副链：仅在 `running` 长时间无 heartbeat 时触发低频巡检，转 `failed(stale_timeout)` 后再推进下一任务。
 
 ## 5. 统一审批边界
@@ -134,6 +140,9 @@
 - `DELETE /api/v1/boards/{board_id}/tasks/{task_id}`：删除单个需求节点；若该节点被同需求下游节点依赖，后端移除对应依赖并重算可调度任务。
 - `DELETE /api/v1/boards/{board_id}/tasks/requirements/{requirement_id}`：删除整组需求节点（同 `requirement_id`）。
 - `GET/POST/PATCH/DELETE /instances*`：OpenClaw 实例配对管理契约，配对成功后前端写入 `linpo.currentInstanceId` 作为默认实例上下文。
+- `GET /instances/{instance_id}/files`：返回该实例下任务关联的可访问产出文件列表（含存在性与大小信息）。
+- `GET /instances/{instance_id}/files/preview`：按实例+任务上下文预览文件内容（文本/JSON/二进制占位）。
+- `GET /instances/{instance_id}/files/download`：按实例+任务上下文下载文件流。
 - `GET /aggregate/topology`：实例列表详情态用于构建关系树（实例节点、Agent 节点、Session 节点），前端按选中实例筛选并渲染。
 - `POST /instances/pair-code/validate`、`POST /instances/pair-code`：配对码校验与配对创建契约，后端负责将配对码解析为 `endpoint/gateway_token` 再复用实例校验与落库流程。
 - `POST /auth/register`：注册请求需包含 `username + email + password`，邮箱全局唯一。
@@ -149,6 +158,7 @@
 - v0.7 默认单看板，前端默认使用 `board_id=default`。
 - 任务状态机最小集遵循 `queued/running/blocked_by_approval/failed/completed`。
 - `session` 不作为任务主键来源，任务标识由 Linpo 侧生成并持久化。
+- 实例文件接口必须做任务作用域校验：仅允许当前用户、当前实例、当前看板下任务关联路径，不开放任意绝对路径访问。
 - `flow.generate` 为流程页面分配专用 session：`planner:claw3`、`manager`、`execution` 前缀，用于流程拆解和任务调度链路。
 - 流程拆解逻辑不在前端执行，统一由后端 `FlowDecompositionService` 通过 `claw3`（OpenClaw 实例）产出结构化节点 JSON。
 - 流程创建入口仍由 `FlowListPage` 新建弹窗承接；`FlowEditorPanel` 底部悬浮对话框用于后续增量改图（同样调用 `flow.generate`）。

@@ -47,6 +47,7 @@ def test_decompose_returns_nodes_from_claw3_history_payload() -> None:
     assert len(fake.send_calls) == 1
     assert fake.send_calls[0]["agent_id"] == "main"
     assert "可委派 subagent 并行执行" in cast(str, fake.send_calls[0]["message"])
+    assert "必须回写到指定输出路径" in cast(str, fake.send_calls[0]["message"])
 
 
 def test_decompose_marks_last_node_sensitive_when_missing_flag() -> None:

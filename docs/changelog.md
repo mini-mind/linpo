@@ -1,5 +1,15 @@
 # Linpo 文档变更记录
 
+## 2026-04-01
+
+- PRD/Architecture 补充看板列高度口径：未折叠列按内部卡片自然包裹，超出页面高度后仅列内列表滚动，不再把所有列统一拉满高度。
+- PRD/Architecture 补充看板列折叠交互：支持双击列头折叠/展开列，折叠态收敛为半透明窄列并移除列头，仅在顶部展示纵向省略号与渐隐背景。
+- PRD/Architecture 调整导航 IA：`实例文件` 入口从账户下拉迁移到顶部导航，主导航改为 `看板/流程/文件`。
+- PRD/Architecture 补充提示词约束：流程拆解与任务投放提示词新增“路径不可访问兜底”口径，要求回传实际产物路径与回退原因。
+- PRD/Architecture 新增“实例文件页”能力：新增受保护路由 `/instance-files`，并从账户下拉菜单提供“实例文件”入口。
+- PRD/Architecture 明确实例文件访问边界：仅允许访问任务关联产物路径（`artifact` / `temp_output_path` 等），不开放任意系统路径浏览。
+- Architecture 补充实例文件接口契约：`GET /instances/{instance_id}/files`、`GET /instances/{instance_id}/files/preview`、`GET /instances/{instance_id}/files/download`。
+
 ## 2026-03-31
 
 - 后端下线看板 board websocket 通道：移除 `WS /ws/boards/{board_id}/tasks` 路由与集成测试，仅保留 `GET /sse/boards/{board_id}/tasks` 作为唯一看板实时通道。

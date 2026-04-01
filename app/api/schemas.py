@@ -203,6 +203,25 @@ class InstanceDeleteResponse(BaseModel):
     deleted: bool
 
 
+class InstanceFileItem(BaseModel):
+    id: str
+    task_id: str
+    task_title: str
+    task_status: Literal["queued", "running", "blocked_by_approval", "failed", "completed"]
+    requirement_id: str | None = None
+    path: str
+    name: str
+    exists: bool
+    size_bytes: int | None = None
+    updated_at: str
+
+
+class InstanceFileListResponse(BaseModel):
+    items: list[InstanceFileItem]
+    total: int
+    existing_count: int
+
+
 class AgentMountRequestPayload(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 

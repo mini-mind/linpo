@@ -51,6 +51,25 @@ export interface InstanceDeleteResponse {
   deleted: boolean;
 }
 
+export interface InstanceFileItem {
+  id: string;
+  task_id: string;
+  task_title: string;
+  task_status: 'queued' | 'running' | 'blocked_by_approval' | 'failed' | 'completed';
+  requirement_id: string | null;
+  path: string;
+  name: string;
+  exists: boolean;
+  size_bytes: number | null;
+  updated_at: string;
+}
+
+export interface InstanceFileListResponse {
+  items: InstanceFileItem[];
+  total: number;
+  existing_count: number;
+}
+
 export interface UserMessageLinkItem {
   label?: string | null;
   href: string;
