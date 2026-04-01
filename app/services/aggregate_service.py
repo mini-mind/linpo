@@ -14,6 +14,7 @@ from app.api.schemas import (
     AggregateOverviewGlobalEvent,
     AggregateOverviewResponse,
     AggregateOverviewStats,
+    AggregateOverviewTokenSample,
     AggregateOverviewTokenGroup,
     AggregateTopologyAgentItem,
     AggregateTopologyEdgeItem,
@@ -30,6 +31,7 @@ from app.domain.event import EventRecord
 from app.services.instance_service import InstanceService
 from app.services.observer_data import ObserverDataSource
 from app.services.provider_application_service import ProviderApplicationService
+from app.services.provider_application_service import ProviderExecutionContext
 
 
 @dataclass(frozen=True)
@@ -38,6 +40,7 @@ class InstanceAggregateSnapshot:
     agents: list[Agent]
     diagnostic: AggregateInstanceDiagnostic
     global_events: list[AggregateOverviewGlobalEvent]
+    token_group: AggregateOverviewTokenGroup
     topology_snapshot: dict[str, Any] | None = None
 
 
@@ -80,7 +83,7 @@ class AggregateService:
                 for agent in snapshot.agents
             ],
             stats=self._build_overview_stats(snapshots),
-            token_groups=[self._build_token_group(snapshot.instance) for snapshot in snapshots],
+            token_groups=[snapshot.token_group for snapshot in snapshots],
             global_events=self._sort_global_events(
                 [event for snapshot in snapshots for event in snapshot.global_events]
             ),
@@ -198,18 +201,21 @@ class AggregateService:
             self._instance_service.list_instances(db_session, user_id=user_id),
             key=lambda item: (item.name, str(item.id)),
         ):
+            token_group = self._empty_token_group(instance)
             try:
-                data_source = self._get_instance_data_source(
+                execution_context = self._get_instance_execution_context(
                     db_session,
                     user_id=user_id,
                     instance_id=cast(UUID, instance.id),
                 )
+                data_source = self._resolve_instance_data_source(execution_context)
                 agents = sorted(data_source.list_agents(), key=lambda agent: (agent.name, agent.id))
                 global_events = self._list_instance_global_events(instance, agents, data_source)
                 topology_snapshot = (
                     self._get_topology_snapshot(data_source) if include_topology_snapshot else None
                 )
                 diagnostic = self._success_diagnostic(instance)
+                token_group = self._safe_build_token_group(instance, execution_context)
             except Exception as exc:
                 agents = []
                 global_events = []
@@ -222,27 +228,31 @@ class AggregateService:
                     agents=agents,
                     diagnostic=diagnostic,
                     global_events=global_events,
+                    token_group=token_group,
                     topology_snapshot=topology_snapshot,
                 )
             )
 
         return snapshots
 
-    def _get_instance_data_source(
+    def _get_instance_execution_context(
         self,
         db_session: Session,
         *,
         user_id: UUID,
         instance_id: UUID,
-    ) -> ObserverDataSource:
+    ) -> ProviderExecutionContext:
         instance_context = self._instance_service.get_openclaw_context(
             db_session,
             user_id=user_id,
             instance_id=instance_id,
         )
-        execution_context = self._provider_application_service.build_execution_context(
-            instance_context
-        )
+        return self._provider_application_service.build_execution_context(instance_context)
+
+    def _resolve_instance_data_source(
+        self,
+        execution_context: ProviderExecutionContext,
+    ) -> ObserverDataSource:
         data_source = self._provider_application_service.resolve_observer_data_source(
             "openclaw",
             execution_context,
@@ -296,6 +306,11 @@ class AggregateService:
         self,
         snapshots: list[InstanceAggregateSnapshot],
     ) -> AggregateOverviewStats:
+        token_totals = [
+            snapshot.token_group.total_tokens
+            for snapshot in snapshots
+            if isinstance(snapshot.token_group.total_tokens, int)
+        ]
         return AggregateOverviewStats(
             instance_count=len(snapshots),
             agent_count=sum(len(snapshot.agents) for snapshot in snapshots),
@@ -305,15 +320,66 @@ class AggregateService:
             attention_instance_count=sum(
                 1 for snapshot in snapshots if snapshot.diagnostic.status == "failed"
             ),
-            total_tokens=None,
+            total_tokens=sum(token_totals) if token_totals else None,
         )
 
-    def _build_token_group(self, instance: Instance) -> AggregateOverviewTokenGroup:
+    def _empty_token_group(self, instance: Instance) -> AggregateOverviewTokenGroup:
         return AggregateOverviewTokenGroup(
             instance_id=str(instance.id),
             instance_name=instance.name,
             total_tokens=None,
             samples=[],
+        )
+
+    def _safe_build_token_group(
+        self,
+        instance: Instance,
+        execution_context: ProviderExecutionContext,
+    ) -> AggregateOverviewTokenGroup:
+        try:
+            payload = self._provider_application_service.usage_cost_summary(
+                data_source="openclaw",
+                execution_context=execution_context,
+                days=7,
+            )
+        except Exception:
+            return self._empty_token_group(instance)
+
+        totals = payload.get("totals")
+        total_tokens = None
+        if isinstance(totals, dict):
+            raw_total = totals.get("totalTokens")
+            if isinstance(raw_total, int) and raw_total >= 0:
+                total_tokens = raw_total
+
+        raw_daily = payload.get("daily")
+        normalized_samples: list[AggregateOverviewTokenSample] = []
+        if isinstance(raw_daily, list):
+            for entry in raw_daily:
+                if not isinstance(entry, dict):
+                    continue
+                label = entry.get("date")
+                if not isinstance(label, str) or not label.strip():
+                    continue
+                input_tokens = entry.get("input")
+                output_tokens = entry.get("output")
+                sample_total = entry.get("totalTokens")
+                normalized_samples.append(
+                    AggregateOverviewTokenSample(
+                        label=label.strip(),
+                        input_tokens=input_tokens if isinstance(input_tokens, int) and input_tokens >= 0 else 0,
+                        output_tokens=output_tokens if isinstance(output_tokens, int) and output_tokens >= 0 else 0,
+                        total_tokens=sample_total if isinstance(sample_total, int) and sample_total >= 0 else 0,
+                    )
+                )
+        if total_tokens is None and normalized_samples:
+            total_tokens = sum(item.total_tokens for item in normalized_samples)
+
+        return AggregateOverviewTokenGroup(
+            instance_id=str(instance.id),
+            instance_name=instance.name,
+            total_tokens=total_tokens,
+            samples=normalized_samples,
         )
 
     def _sort_global_events(

@@ -828,6 +828,21 @@ class OpenClawClient:
         request = self._build_models_list_request()
         return self._run_sync(self._send_control_request(request))
 
+    def _build_usage_cost_request(self, *, days: int) -> dict[str, Any]:
+        bounded_days = max(1, min(90, days))
+        return {
+            "type": "req",
+            "id": f"usage-cost-{uuid4().hex[:8]}",
+            "method": "usage.cost",
+            "params": {
+                "days": bounded_days,
+            },
+        }
+
+    def usage_cost(self, *, days: int = 7) -> dict[str, Any]:
+        request = self._build_usage_cost_request(days=days)
+        return self._run_sync(self._send_control_request(request))
+
     def _next_control_request_id(self) -> str:
         return f"control-{uuid4().hex[:12]}"
 

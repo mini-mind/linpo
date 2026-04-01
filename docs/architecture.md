@@ -4,7 +4,7 @@
 
 ## 1. 架构目标
 
-在 v0.7 内，Linpo 以“看板 + 流程列表 + 流程编辑”承接编排主链。
+在 v0.7 内，Linpo 以“摘要 + 看板 + 流程列表 + 流程编辑 + 文件”承接编排主链。
 
 核心目标：
 
@@ -14,7 +14,7 @@
 
 ## 2. 系统边界
 
-- Linpo 前端：任务看板、流程列表、流程编辑、消息中心、实例/账户弹窗、产出预览。
+- Linpo 前端：摘要页、任务看板、流程列表、流程编辑、消息中心、实例/账户弹窗、产出预览。
 - Linpo 后端：聚合数据、调度编排、审批状态管理、OpenClaw 协议适配。
 - OpenClaw：agent 生命周期、消息执行、会话与工具调用。
 
@@ -27,6 +27,9 @@
 ## 3. 前端分层
 
 - `KanbanShell`：主页面容器，承接工具栏、视图切换（状态/agent/流程）、任务列渲染。
+- `SummaryPage`：摘要页（`/summary`），顶部展示 token 消耗趋势曲线；主体展示待审批卡片列表与事件流侧栏。
+- `SummaryPage`：审批卡片复用看板 `Task` 数据源与 `continue` 动作，不新增独立审批实体接口；事件流复用聚合层 `global_events`。
+- `SummaryPage`：若实例支持 OpenClaw `usage.cost`，曲线展示 token 日序列；否则切换为任务节点数量时间序列，并在 UI 标明当前指标类型。
 - `FlowListPage`：所有流程列表页（我的流程目录），承接“工具栏筛选/排序 + 新建流程弹窗 + 卡片级编辑动作（重命名/删除）+ 需求拆解等待态”。
 - `FlowListPage` 新建流程时，需求拆解 Agent 固定为 `claw3`（通过配置项可调整，不在 UI 暴露选择器）。
 - `FlowEditorPanel`：编辑流程页，承接泳道画布编排、流程状态按钮（`运行/中断/继续`）、重命名交互与底部悬浮指令对话框（增量改图）。
@@ -35,7 +38,7 @@
 - `KanbanShell` 支持按列维度维护折叠状态；双击列头可在“完整列 / 折叠列”间切换，折叠态收敛为半透明窄列并移除列头，仅在顶部保留纵向省略号与渐隐背景，不卸载整页横向滚动容器。
 - `KanbanShell` 未折叠列采用“内容包裹 + 列体内滚动”布局：轨道顶部对齐，列本身只增长到当前工作区可用高度上限，超出部分由列内卡片列表承担纵向滚动。
 - `Layout`：维护流程导航入口缓存（`linpo.lastFlowEntryPath`），用于“点击导航栏流程时回到上次访问的编辑页”。
-- `Layout`：主导航保留 `看板/流程/文件`；账户相关入口统一走导航栏用户信息下拉菜单，`/pairing` 保留兼容路由但不在主导航暴露。
+- `Layout`：主导航保留 `摘要/看板/流程/文件`；账户相关入口统一走导航栏用户信息下拉菜单，`/pairing` 保留兼容路由但不在主导航暴露。
 - `InstanceFilesPage`：实例文件页（`/instance-files`），按实例聚合任务产出文件与 Agent 文档，提供搜索、预览、下载与关联任务跳转。
 - `InstanceFilesPage`：任务产物与 Agent 文档是两条数据链，前者走 Linpo 任务文件作用域校验，后者走 OpenClaw `agents.files.list/get` 白名单文档转调。
 - `MessageCenterModal`：导航栏账户下拉菜单触发的消息中心弹窗，承接“消息列表 + 详情 + 回执确认跳转”。
@@ -50,7 +53,7 @@
 - `PairingTutorialPage`：页面内容来自仓库内 Markdown 静态文件，不再维护独立的样式化说明卡片。
 - OpenClaw 读取入口使用静态文件路径 `/pairing/tutorial.md`，返回纯 Markdown 文本；`/pairing/tutorial` 仅作为人类用户导航提示页。
 - 兼容路径：`/pairing/tutorial` 进入后立即执行前端重定向到 `/pairing/tutorial.md`，避免路由漏写后缀导致读取错误格式。
-- 三个主工作页（`KanbanShell/FlowListPage/FlowEditorPanel`）共用贴顶扁平工具栏样式 token，保持一致的视觉与层级。
+- 四个主工作页（`SummaryPage/KanbanShell/FlowListPage/FlowEditorPanel`）共用贴顶扁平工具栏样式 token，保持一致的视觉与层级。
 - `ArtifactPreviewPanel`：卡片产出详情与文件预览。
 
 ## 4. 调度与执行模型
@@ -98,11 +101,19 @@
 ## 5. 统一审批边界
 
 - 所有敏感动作由后端统一归口为 `ApprovalRequest`。
-- v0.7 不单独实现“审批中心”页面；审批入口落在看板节点状态与流程主动作中，由 `blocked_by_approval` 状态承载。
+- v0.7 实现独立“摘要/审批中心”页面；审批入口同时落在摘要页审批卡片与看板节点状态中，由同一 `blocked_by_approval` 状态承载。
 - 看板中只展示可读摘要，不透出原始敏感载荷。
 - 审批动作写入审计日志，支持回放。
 
-## 6. 任务卡片扩展契约
+## 6. 聚合与摘要统计
+
+- `AggregateService` 继续作为摘要页聚合入口，输出实例诊断、事件流与统计曲线。
+- token 统计优先通过 Provider 主链转调 OpenClaw `usage.cost`，不得绕过 `ProviderApplicationService -> ProviderAdapter -> OpenClawClient` 分层。
+- `AggregateOverviewResponse.stats.total_tokens` 应返回当前聚合窗口内的 token 总量；`token_groups[]` 返回按实例分组的时间序列样本。
+- token 曲线样本最小字段保持 `label/input_tokens/output_tokens/total_tokens`，前端按实例名分组绘图。
+- 当某实例 `usage.cost` 不可用或返回异常时，聚合层允许对该实例返回空 token 样本；若全部实例均不可用，前端改用本地任务节点时间序列作为兜底显示。
+
+## 7. 任务卡片扩展契约
 
 卡片字段采用可扩展结构：
 
@@ -120,7 +131,7 @@
   - 交接文件资源仅认可 Agent 显式上报的 `artifact`（回调字段），不从普通消息文本做路径提取；
   - 后端提供任务范围内受限文件访问接口，禁止越权读取非任务关联路径。
 
-### 6.1 v0.7 任务 API 最小契约
+### 7.1 v0.7 任务 API 最小契约
 
 - `GET /api/v1/boards/{board_id}/tasks`：返回当前登录用户在指定看板可见任务列表，作为看板主数据源。
 - `GET /sse/boards/{board_id}/tasks`：看板任务 SSE 实时事件通道（按当前登录用户隔离），推送 `snapshot_ready/tasks_changed/error` 事件；看板页与流程编辑页统一使用该通道同步任务与节点状态。
@@ -146,6 +157,7 @@
 - `GET /instances/{instance_id}/agent-docs/preview`：转调 OpenClaw `agents.files.get`，返回指定 Agent 文档预览内容。
 - `GET /instances/{instance_id}/agent-docs/download`：下载指定 Agent 文档内容。
 - `GET /aggregate/topology`：实例列表详情态用于构建关系树（实例节点、Agent 节点、Session 节点），前端按选中实例筛选并渲染。
+- `GET /aggregate/overview`：摘要页与看板页的聚合入口，返回实例诊断、事件流、总 token 与按实例分组的 token 曲线样本。
 - `POST /instances/pair-code/validate`、`POST /instances/pair-code`：配对码校验与配对创建契约，后端负责将配对码解析为 `endpoint/gateway_token` 再复用实例校验与落库流程。
 - `POST /auth/register`：注册请求需包含 `username + email + password`，邮箱全局唯一。
 - `POST /auth/login`：登录请求支持 `identifier(用户名或邮箱) + password`。
@@ -170,7 +182,7 @@
 - 流程运行不再引入 `flow_instance_id` 多实例隔离；依赖判定键回归 `flow_id + flow_node`。
 - v0.7 完成判定主路径采用 `task-run event callback`，`chat.history` 不参与主判定。
 
-## 7. 后端分层冻结
+## 8. 后端分层冻结
 
 唯一调用链：
 
@@ -184,33 +196,33 @@
 - Provider Adapter：OpenClaw RPC 与事件映射。
 - Infra/Persistence：实例配置、会话、审计、重试与超时。
 
-### 7.1 拆解服务配置（claw3）
+### 8.1 拆解服务配置（claw3）
 
 - `FLOW_DECOMPOSITION_OPENCLAW_BASE_URL`：拆解服务网关地址（默认 `ws://175.178.213.10:38789`）。
 - `FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN`：拆解服务 Token（默认 claw3）。
 - `FLOW_DECOMPOSITION_OPENCLAW_ORIGIN`：拆解服务 Origin（默认 `http://127.0.0.1:38789`）。
 - `FLOW_DECOMPOSITION_AGENT_ID`：拆解服务使用的 agent（默认 `main`）。
 
-### 7.2 任务事件回调配置
+### 8.2 任务事件回调配置
 
 - `LINPO_TASK_EVENT_CALLBACK_BASE_URL`：写入任务投放提示词的回调基地址（默认 `http://127.0.0.1:8000`）。
 - 未显式配置 `LINPO_TASK_EVENT_CALLBACK_BASE_URL` 时，后端会优先根据实例 endpoint 推导公网回调地址（host 不变，端口默认 `8000`），并附带 `127.0.0.1` 本地地址作为候选兜底。
 - `LINPO_TASK_EVENT_CALLBACK_PORT`：未显式配置回调基地址时，推导公网回调地址使用的端口（默认 `8000`）。
 - `LINPO_TASK_RUN_STALE_SECONDS`：`running` 无 heartbeat 的超时阈值（默认 `900` 秒，最小 `60` 秒）。
 
-### 7.3 Agent 自助挂载回执配置
+### 8.3 Agent 自助挂载回执配置
 
 - `LINPO_PAIRING_RECEIPT_TTL_SECONDS`：挂载/卸载回执有效期（默认 `1800` 秒）。
 - 回执 token 必须一次性消费，确认成功后立即失效。
 - 回执确认必须要求登录态；登录用户邮箱与回执目标邮箱不一致时必须拒绝确认。
 
-## 8. Tauri 构建约束
+## 9. Tauri 构建约束
 
 - 前端打包产物可被 Tauri WebView 加载。
 - 桌面端运行时沿用同一套 API 基地址注入机制。
 - 新增 Tauri 配置时不破坏现有 Web 构建脚本。
 
-## 9. 迁移纪律
+## 10. 迁移纪律
 
 - 多页 IA 相关入口在 v0.7 迁移后不再作为主路径维护。
 - 旧页面能力如需保留，仅作为过渡代码，不作为产品契约。

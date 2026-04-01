@@ -30,6 +30,7 @@ export function Layout(): JSX.Element {
   const isMobile = useIsMobile(960);
   const location = useLocation();
   const isFlowRoute = location.pathname.startsWith('/flow');
+  const isSummaryRoute = location.pathname.startsWith('/summary');
   const isKanbanRoute = location.pathname.startsWith('/kanban');
   const isInstanceFilesRoute = location.pathname.startsWith('/instance-files');
   const mainRef = useRef<HTMLElement | null>(null);
@@ -79,6 +80,14 @@ export function Layout(): JSX.Element {
           </Link>
 
           <nav style={toolbarNavStyle} aria-label="主导航">
+            <NavLink
+              to="/summary"
+              className="linpo-nav-link"
+              style={({ isActive }) => getNavTextLinkStyle(isActive || isSummaryRoute)}
+            >
+              摘要
+            </NavLink>
+            <span aria-hidden="true" style={toolbarNavDividerStyle} data-testid="toolbar-nav-divider" />
             <NavLink to="/kanban" className="linpo-nav-link" style={({ isActive }) => getNavTextLinkStyle(isActive)}>
               看板
             </NavLink>
@@ -104,7 +113,7 @@ export function Layout(): JSX.Element {
 
       <main
         ref={mainRef}
-        style={getMainStyle(isFlowRoute || isKanbanRoute || isInstanceFilesRoute)}
+        style={getMainStyle(isSummaryRoute || isFlowRoute || isKanbanRoute || isInstanceFilesRoute)}
         data-testid="layout-main-shell"
       >
         <Outlet />

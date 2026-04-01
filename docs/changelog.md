@@ -2,6 +2,10 @@
 
 ## 2026-04-01
 
+- PRD/Architecture 新增 `摘要` 主导航页：主工作区升级为 `摘要/看板/流程列表/流程编辑/文件`，摘要页承接审批中心。
+- PRD/Architecture 调整审批边界：v0.7 从“仅看板承载审批”升级为“摘要页审批卡片 + 看板就地操作”双入口，共享同一 `blocked_by_approval` 状态机。
+- PRD/Architecture 新增摘要统计口径：顶部曲线优先展示 OpenClaw token 消耗，若不可用则降级为任务节点数量时间序列。
+- OpenClaw API Catalog 更新：`usage.cost` 从“未接入”调整为“已接入（Adapter）”，用于 `GET /aggregate/overview` 的 token 聚合。
 - PRD/Architecture 按当前源码回收漂移口径：主工作区改为 `看板/流程列表/流程编辑/文件`，不再沿用“仅看板单页”表述。
 - PRD/Architecture 修正文案：看板工具栏统计由“需求数量”改为“流程数量”；看板视图口径统一为“状态/Agent/流程”。
 - PRD/Architecture 收敛流程列头动作：按流程分列时列头仅保留 `运行/中断/继续` 主动作，`删除流程` 统一留在流程列表页处理。

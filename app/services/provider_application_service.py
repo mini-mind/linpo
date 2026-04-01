@@ -370,6 +370,28 @@ class ProviderApplicationService:
             )
         return file_payload
 
+    def usage_cost_summary(
+        self,
+        *,
+        data_source: str | None,
+        execution_context: ProviderExecutionContext | None,
+        days: int = 7,
+    ) -> dict[str, Any]:
+        adapter = self._adapter_for_openclaw(
+            data_source=data_source,
+            execution_context=execution_context,
+            unsupported_detail="usage.cost is only available with the OpenClaw data source",
+        )
+        return self._payload_or_raise(
+            adapter.usage_cost(
+                to_domain_request(
+                    request_id=_provider_request_id(),
+                    capability=DomainProviderCapability.AGGREGATE_READ,
+                ),
+                days=max(1, min(90, days)),
+            )
+        )
+
     def _adapter_for_openclaw(
         self,
         *,

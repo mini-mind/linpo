@@ -25,6 +25,10 @@ vi.mock('./CollabPage', () => ({
   default: () => <div>kanban-page</div>,
 }));
 
+vi.mock('./SummaryPage', () => ({
+  SummaryPage: () => <div>summary-page</div>,
+}));
+
 vi.mock('./FlowPage', () => ({
   FlowPage: () => <div>flow-page</div>,
 }));
@@ -93,6 +97,21 @@ describe('app routes', () => {
     });
 
     expect(screen.getByText('kanban-page')).toBeInTheDocument();
+  });
+
+  it('renders /summary as first-class app route', async () => {
+    document.body.innerHTML = '<div id="root"></div>';
+    window.history.pushState({}, '', '/summary');
+
+    await act(async () => {
+      await import('../main');
+    });
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/summary');
+    });
+
+    expect(screen.getByText('summary-page')).toBeInTheDocument();
   });
 
   it('renders /flow as first-class app route', async () => {

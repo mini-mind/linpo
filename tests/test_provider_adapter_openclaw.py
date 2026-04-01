@@ -278,6 +278,55 @@ def test_openclaw_adapter_chat_history_maps_success_payload() -> None:
     }
 
 
+def test_openclaw_adapter_usage_cost_maps_success_payload() -> None:
+    from app.adapters.openclaw_adapter import OpenClawAdapter
+
+    class FakeClient:
+        def usage_cost(self, *, days: int = 7) -> dict[str, Any]:
+            assert days == 7
+            return {
+                "ok": True,
+                "payload": {
+                    "totals": {"totalTokens": 120},
+                    "daily": [
+                        {
+                            "date": "2026-04-01",
+                            "input": 40,
+                            "output": 20,
+                            "totalTokens": 60,
+                        }
+                    ],
+                },
+            }
+
+        def config_key(self) -> tuple[str | None, str | None, str]:
+            return ("ws://example.invalid/ws", "token-alpha", "http://example.invalid")
+
+    adapter = OpenClawAdapter(
+        client=FakeClient(),
+        instance_id="instance-alpha",
+        instance_name="Alpha",
+    )
+
+    result = adapter.usage_cost(
+        _make_request(DomainProviderCapability.AGGREGATE_READ),
+        days=7,
+    )
+
+    assert result.response.error is None
+    assert result.payload == {
+        "totals": {"totalTokens": 120},
+        "daily": [
+            {
+                "date": "2026-04-01",
+                "input": 40,
+                "output": 20,
+                "totalTokens": 60,
+            }
+        ],
+    }
+
+
 def test_openclaw_adapter_agents_files_get_maps_success_payload() -> None:
     from app.adapters.openclaw_adapter import OpenClawAdapter
 

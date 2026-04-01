@@ -264,6 +264,56 @@ def test_get_agent_doc_returns_file_payload() -> None:
     }
 
 
+def test_usage_cost_summary_returns_payload() -> None:
+    from app.services.provider_application_service import ProviderApplicationService, ProviderExecutionContext
+
+    class FakeAdapter:
+        def usage_cost(self, request: Any, *, days: int | None = None) -> ProviderPayloadResult:
+            assert days == 7
+            diagnostic = to_domain_diagnostic(
+                instance_id="instance-alpha",
+                instance_name="Alpha",
+                status="ok",
+                freshness_status="fresh",
+                checked_at=None,
+            )
+            return ProviderPayloadResult(
+                response=to_domain_response(request=request, diagnostics=[diagnostic]),
+                payload={
+                    "totals": {"totalTokens": 42},
+                    "daily": [
+                        {
+                            "date": "2026-04-01",
+                            "input": 20,
+                            "output": 10,
+                            "totalTokens": 30,
+                        }
+                    ],
+                },
+            )
+
+    service = ProviderApplicationService()
+    context = ProviderExecutionContext(adapter=cast(ProviderAdapter, FakeAdapter()), cache_key=("cache",))
+
+    payload = service.usage_cost_summary(
+        data_source="openclaw",
+        execution_context=context,
+        days=7,
+    )
+
+    assert payload == {
+        "totals": {"totalTokens": 42},
+        "daily": [
+            {
+                "date": "2026-04-01",
+                "input": 20,
+                "output": 10,
+                "totalTokens": 30,
+            }
+        ],
+    }
+
+
 def test_patch_session_raises_http_exception_when_adapter_returns_domain_error() -> None:
     from app.services.provider_application_service import ProviderApplicationService, ProviderExecutionContext
 

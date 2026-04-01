@@ -327,6 +327,19 @@ class OpenClawAdapter:
             default_error_message="agents.files.get failed",
         )
 
+    def usage_cost(
+        self,
+        request: DomainProviderRequest,
+        *,
+        days: int | None = None,
+    ) -> ProviderPayloadResult:
+        resolved_days = days if isinstance(days, int) else 7
+        return self._execute_payload_call(
+            request,
+            lambda: self._client.usage_cost(days=resolved_days),
+            default_error_message="usage.cost failed",
+        )
+
     @property
     def _client(self) -> OpenClawClientProtocol:
         if self.client is None:

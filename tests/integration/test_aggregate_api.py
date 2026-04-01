@@ -107,6 +107,7 @@ def _install_aggregate_data_source(
     monkeypatch: pytest.MonkeyPatch,
     *,
     providers_by_token: dict[str, object],
+    usage_cost_by_token: dict[str, dict[str, Any] | Exception] | None = None,
 ) -> None:
     provider_application_service = importlib.import_module(
         "app.services.provider_application_service"
@@ -135,6 +136,28 @@ def _install_aggregate_data_source(
         provider_application_service,
         "get_observer_data_source",
         fake_get_observer_data_source,
+    )
+
+    usage_payloads = usage_cost_by_token or {}
+
+    def fake_usage_cost_summary(self: object, *, execution_context: object | None, **kwargs: object) -> dict[str, Any]:
+        del kwargs
+        assert execution_context is not None
+        base_url, gateway_token, origin = cast(SupportsConfigKey, execution_context.adapter).config_key()
+        assert isinstance(base_url, str)
+        assert isinstance(gateway_token, str)
+        assert isinstance(origin, str)
+        result = usage_payloads.get(gateway_token)
+        if isinstance(result, Exception):
+            raise result
+        if isinstance(result, dict):
+            return result
+        raise HTTPException(status_code=503, detail="usage unavailable")
+
+    monkeypatch.setattr(
+        provider_application_service.ProviderApplicationService,
+        "usage_cost_summary",
+        fake_usage_cost_summary,
     )
 
 
@@ -312,6 +335,42 @@ def test_overview_returns_aggregated_agents_with_request_id_freshness_and_diagno
                 ]
             ),
         },
+        usage_cost_by_token={
+            "token-alpha": {
+                "totals": {"totalTokens": 180},
+                "daily": [
+                    {
+                        "date": "2026-03-31",
+                        "input": 30,
+                        "output": 10,
+                        "totalTokens": 40,
+                    },
+                    {
+                        "date": "2026-04-01",
+                        "input": 100,
+                        "output": 40,
+                        "totalTokens": 140,
+                    },
+                ],
+            },
+            "token-beta": {
+                "totals": {"totalTokens": 60},
+                "daily": [
+                    {
+                        "date": "2026-04-01",
+                        "input": 25,
+                        "output": 15,
+                        "totalTokens": 40,
+                    },
+                    {
+                        "date": "2026-04-02",
+                        "input": 10,
+                        "output": 10,
+                        "totalTokens": 20,
+                    },
+                ],
+            },
+        },
     )
 
     status_code, _, body = request("GET", "/aggregate/overview", headers={"cookie": auth_cookie})
@@ -327,20 +386,46 @@ def test_overview_returns_aggregated_agents_with_request_id_freshness_and_diagno
         "agent_count": 3,
         "active_agent_count": 1,
         "attention_instance_count": 0,
-        "total_tokens": None,
+        "total_tokens": 240,
     }
     assert payload["token_groups"] == [
         {
             "instance_id": alpha["id"],
             "instance_name": "alpha-instance",
-            "total_tokens": None,
-            "samples": [],
+            "total_tokens": 180,
+            "samples": [
+                {
+                    "label": "2026-03-31",
+                    "input_tokens": 30,
+                    "output_tokens": 10,
+                    "total_tokens": 40,
+                },
+                {
+                    "label": "2026-04-01",
+                    "input_tokens": 100,
+                    "output_tokens": 40,
+                    "total_tokens": 140,
+                },
+            ],
         },
         {
             "instance_id": beta["id"],
             "instance_name": "beta-instance",
-            "total_tokens": None,
-            "samples": [],
+            "total_tokens": 60,
+            "samples": [
+                {
+                    "label": "2026-04-01",
+                    "input_tokens": 25,
+                    "output_tokens": 15,
+                    "total_tokens": 40,
+                },
+                {
+                    "label": "2026-04-02",
+                    "input_tokens": 10,
+                    "output_tokens": 10,
+                    "total_tokens": 20,
+                },
+            ],
         },
     ]
     assert payload["global_events"] == [

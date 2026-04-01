@@ -140,3 +140,10 @@ class ProviderAdapter(Protocol):
         agent_id: str,
         name: str,
     ) -> ProviderPayloadResult: ...
+
+    def usage_cost(
+        self,
+        request: DomainProviderRequest,
+        *,
+        days: int | None = None,
+    ) -> ProviderPayloadResult: ...
