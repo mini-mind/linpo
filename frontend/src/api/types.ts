@@ -70,6 +70,23 @@ export interface InstanceFileListResponse {
   existing_count: number;
 }
 
+export interface InstanceAgentDocItem {
+  id: string;
+  agent_id: string;
+  agent_name: string;
+  path: string;
+  name: string;
+  exists: boolean;
+  size_bytes: number | null;
+  updated_at: string;
+}
+
+export interface InstanceAgentDocListResponse {
+  items: InstanceAgentDocItem[];
+  total: number;
+  existing_count: number;
+}
+
 export interface UserMessageLinkItem {
   label?: string | null;
   href: string;

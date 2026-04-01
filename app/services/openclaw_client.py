@@ -615,6 +615,34 @@ class OpenClawClient:
             "params": {"key": key},
         }
 
+    def _build_agents_files_list_request(
+        self,
+        *,
+        agent_id: str,
+    ) -> dict[str, Any]:
+        return {
+            "type": "req",
+            "id": f"agents-files-list-{uuid4().hex[:8]}",
+            "method": "agents.files.list",
+            "params": {"agentId": agent_id},
+        }
+
+    def _build_agents_files_get_request(
+        self,
+        *,
+        agent_id: str,
+        name: str,
+    ) -> dict[str, Any]:
+        return {
+            "type": "req",
+            "id": f"agents-files-get-{uuid4().hex[:8]}",
+            "method": "agents.files.get",
+            "params": {
+                "agentId": agent_id,
+                "name": name,
+            },
+        }
+
     def _send_chat_send(
         self,
         *,
@@ -757,6 +785,35 @@ class OpenClawClient:
 
     def sessions_delete(self, *, key: str) -> dict[str, Any]:
         request = self._build_sessions_delete_request(key=key)
+        return self._run_sync(self._send_control_request(request))
+
+    def agents_files_list(
+        self,
+        *,
+        agent_id: str,
+    ) -> dict[str, Any]:
+        normalized_agent_id = agent_id.strip()
+        if normalized_agent_id == "":
+            raise HTTPException(status_code=400, detail="agent_id is required")
+        request = self._build_agents_files_list_request(agent_id=normalized_agent_id)
+        return self._run_sync(self._send_control_request(request))
+
+    def agents_files_get(
+        self,
+        *,
+        agent_id: str,
+        name: str,
+    ) -> dict[str, Any]:
+        normalized_agent_id = agent_id.strip()
+        normalized_name = name.strip()
+        if normalized_agent_id == "":
+            raise HTTPException(status_code=400, detail="agent_id is required")
+        if normalized_name == "":
+            raise HTTPException(status_code=400, detail="name is required")
+        request = self._build_agents_files_get_request(
+            agent_id=normalized_agent_id,
+            name=normalized_name,
+        )
         return self._run_sync(self._send_control_request(request))
 
     def _build_models_list_request(self) -> dict[str, Any]:

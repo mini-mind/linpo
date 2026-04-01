@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from sqlalchemy.orm import Session
+from typing import cast
 
 from app.api.tasks import (
     _build_task_output_preview,
@@ -23,6 +25,8 @@ from app.api.schemas import (
     AgentPairingRequestResponse,
     AgentUnmountRequestPayload,
     InstanceDeleteResponse,
+    InstanceAgentDocItem,
+    InstanceAgentDocListResponse,
     InstanceFileItem,
     InstanceFileListResponse,
     InstanceItem,
@@ -53,6 +57,10 @@ from app.services.agent_self_pairing_service import (
 )
 from app.services.message_center_service import MessageCenterService, MessageNotFoundError
 from app.services.task_service import TaskService
+from app.services.provider_application_service import (
+    ProviderApplicationService,
+    ProviderExecutionContext,
+)
 from app.services.pairing_receipt_service import (
     PairingReceiptConsumedError,
     PairingReceiptEmailMismatchError,
@@ -82,6 +90,10 @@ def get_message_center_service() -> MessageCenterService:
 
 def get_task_service() -> TaskService:
     return TaskService()
+
+
+def get_provider_application_service(request: Request) -> ProviderApplicationService:
+    return cast(ProviderApplicationService, request.app.state.provider_application_service)
 
 
 def get_current_user(
@@ -156,6 +168,33 @@ def _to_utc_iso(value: object) -> str:
         dt_value = value if getattr(value, "tzinfo", None) is not None else value.replace(tzinfo=UTC)
         return dt_value.astimezone(UTC).isoformat()
     return ""
+
+
+def _to_iso_from_millis(value: object) -> str:
+    if isinstance(value, int):
+        return datetime.fromtimestamp(value / 1000, tz=UTC).isoformat()
+    if isinstance(value, float):
+        return datetime.fromtimestamp(value / 1000, tz=UTC).isoformat()
+    return ""
+
+
+def _build_execution_context_or_404(
+    *,
+    instance_service: InstanceService,
+    provider_application_service: ProviderApplicationService,
+    db_session: Session,
+    current_user: User,
+    instance_id: UUID,
+) -> ProviderExecutionContext:
+    try:
+        instance_context = instance_service.get_openclaw_context(
+            db_session,
+            user_id=current_user.id,
+            instance_id=instance_id,
+        )
+    except InstanceNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found") from exc
+    return provider_application_service.build_execution_context(instance_context)
 
 
 def _task_output_paths_for_instance_files(task: Task) -> list[Path]:
@@ -381,6 +420,131 @@ def download_instance_file(
     if download:
         return FileResponse(output_path, media_type=media_type, filename=output_path.name)
     return FileResponse(output_path, media_type=media_type)
+
+
+@router.get("/{instance_id}/agent-docs", response_model=InstanceAgentDocListResponse)
+def list_instance_agent_docs(
+    instance_id: UUID,
+    q: str | None = Query(default=None),
+    only_existing: bool = Query(default=False, alias="onlyExisting"),
+    current_user: User = Depends(get_current_user),
+    db_session: Session = Depends(get_session),
+    instance_service: InstanceService = Depends(get_instance_service),
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
+) -> InstanceAgentDocListResponse:
+    execution_context = _build_execution_context_or_404(
+        instance_service=instance_service,
+        provider_application_service=provider_application_service,
+        db_session=db_session,
+        current_user=current_user,
+        instance_id=instance_id,
+    )
+    raw_items = provider_application_service.list_agent_docs(
+        data_source="openclaw",
+        execution_context=execution_context,
+    )
+    items = [InstanceAgentDocItem.model_validate(item) for item in raw_items]
+
+    keyword = (q or "").strip().lower()
+    if keyword:
+        items = [
+            item
+            for item in items
+            if keyword in item.agent_id.lower()
+            or keyword in item.agent_name.lower()
+            or keyword in item.name.lower()
+            or keyword in item.path.lower()
+        ]
+    if only_existing:
+        items = [item for item in items if item.exists]
+
+    existing_count = sum(1 for item in items if item.exists)
+    return InstanceAgentDocListResponse(items=items, total=len(items), existing_count=existing_count)
+
+
+@router.get("/{instance_id}/agent-docs/preview", response_model=TaskOutputPreviewResponse)
+def preview_instance_agent_doc(
+    instance_id: UUID,
+    agent_id: str = Query(alias="agentId"),
+    name: str = Query(),
+    current_user: User = Depends(get_current_user),
+    db_session: Session = Depends(get_session),
+    instance_service: InstanceService = Depends(get_instance_service),
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
+) -> TaskOutputPreviewResponse:
+    execution_context = _build_execution_context_or_404(
+        instance_service=instance_service,
+        provider_application_service=provider_application_service,
+        db_session=db_session,
+        current_user=current_user,
+        instance_id=instance_id,
+    )
+    file_payload = provider_application_service.get_agent_doc(
+        data_source="openclaw",
+        execution_context=execution_context,
+        agent_id=agent_id,
+        name=name,
+    )
+    if bool(file_payload.get("missing")):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent doc not found")
+
+    path_value = file_payload.get("path")
+    path_text = path_value.strip() if isinstance(path_value, str) else name.strip()
+    content_value = file_payload.get("content")
+    content = content_value if isinstance(content_value, str) else ""
+    size_value = file_payload.get("size")
+    size_bytes = size_value if isinstance(size_value, int) and size_value >= 0 else len(content.encode("utf-8"))
+    return TaskOutputPreviewResponse(
+        path=path_text,
+        kind="text",
+        mime_type="text/markdown",
+        size_bytes=size_bytes,
+        truncated=False,
+        content=content,
+        download_url=(
+            f"/instances/{instance_id}/agent-docs/download"
+            f"?agentId={quote(agent_id.strip(), safe='')}&name={quote(name.strip(), safe='')}&download=true"
+        ),
+    )
+
+
+@router.get("/{instance_id}/agent-docs/download")
+def download_instance_agent_doc(
+    instance_id: UUID,
+    agent_id: str = Query(alias="agentId"),
+    name: str = Query(),
+    download: bool = Query(default=True),
+    current_user: User = Depends(get_current_user),
+    db_session: Session = Depends(get_session),
+    instance_service: InstanceService = Depends(get_instance_service),
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
+) -> Response:
+    execution_context = _build_execution_context_or_404(
+        instance_service=instance_service,
+        provider_application_service=provider_application_service,
+        db_session=db_session,
+        current_user=current_user,
+        instance_id=instance_id,
+    )
+    file_payload = provider_application_service.get_agent_doc(
+        data_source="openclaw",
+        execution_context=execution_context,
+        agent_id=agent_id,
+        name=name,
+    )
+    if bool(file_payload.get("missing")):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent doc not found")
+
+    content_value = file_payload.get("content")
+    content = content_value if isinstance(content_value, str) else ""
+    headers: dict[str, str] = {}
+    if download:
+        headers["Content-Disposition"] = f'attachment; filename="{name.strip()}"'
+    return Response(
+        content=content.encode("utf-8"),
+        media_type="text/markdown; charset=utf-8",
+        headers=headers,
+    )
 
 
 @router.post(

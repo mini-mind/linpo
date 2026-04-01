@@ -110,3 +110,33 @@ class ProviderAdapter(Protocol):
         session_key: str,
         limit: int,
     ) -> ProviderPayloadResult: ...
+
+    def agent_files_list(
+        self,
+        request: DomainProviderRequest,
+        *,
+        agent_id: str,
+    ) -> ProviderPayloadResult: ...
+
+    def agent_files_get(
+        self,
+        request: DomainProviderRequest,
+        *,
+        agent_id: str,
+        name: str,
+    ) -> ProviderPayloadResult: ...
+
+    def agents_files_list(
+        self,
+        request: DomainProviderRequest,
+        *,
+        agent_id: str,
+    ) -> ProviderPayloadResult: ...
+
+    def agents_files_get(
+        self,
+        request: DomainProviderRequest,
+        *,
+        agent_id: str,
+        name: str,
+    ) -> ProviderPayloadResult: ...

@@ -222,6 +222,23 @@ class InstanceFileListResponse(BaseModel):
     existing_count: int
 
 
+class InstanceAgentDocItem(BaseModel):
+    id: str
+    agent_id: str
+    agent_name: str
+    path: str
+    name: str
+    exists: bool
+    size_bytes: int | None = None
+    updated_at: str
+
+
+class InstanceAgentDocListResponse(BaseModel):
+    items: list[InstanceAgentDocItem]
+    total: int
+    existing_count: int
+
+
 class AgentMountRequestPayload(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 

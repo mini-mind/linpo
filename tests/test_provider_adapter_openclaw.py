@@ -278,6 +278,49 @@ def test_openclaw_adapter_chat_history_maps_success_payload() -> None:
     }
 
 
+def test_openclaw_adapter_agents_files_get_maps_success_payload() -> None:
+    from app.adapters.openclaw_adapter import OpenClawAdapter
+
+    class FakeClient:
+        def agents_files_get(self, *, agent_id: str, name: str) -> dict[str, Any]:
+            assert agent_id == "planner"
+            assert name == "SOUL.md"
+            return {
+                "ok": True,
+                "payload": {
+                    "file": {
+                        "name": "SOUL.md",
+                        "path": "agent://planner/SOUL.md",
+                        "content": "# Soul",
+                    }
+                },
+            }
+
+        def config_key(self) -> tuple[str | None, str | None, str]:
+            return ("ws://example.invalid/ws", "token-alpha", "http://example.invalid")
+
+    adapter = OpenClawAdapter(
+        client=FakeClient(),
+        instance_id="instance-alpha",
+        instance_name="Alpha",
+    )
+
+    result = adapter.agents_files_get(
+        _make_request(DomainProviderCapability.SESSION_READ),
+        agent_id="planner",
+        name="SOUL.md",
+    )
+
+    assert result.response.error is None
+    assert result.payload == {
+        "file": {
+            "name": "SOUL.md",
+            "path": "agent://planner/SOUL.md",
+            "content": "# Soul",
+        }
+    }
+
+
 @pytest.mark.parametrize(
     ("method_name", "default_error_message"),
     [

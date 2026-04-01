@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -12,6 +13,8 @@ from app.domain.provider_contract import DomainProviderCapability
 from app.domain.provider_contract_mapping import to_domain_request
 from app.services.instance_service import InstanceOpenClawContext
 from app.services.observer_data import ObserverDataSource, get_observer_data_source
+
+
 @dataclass(frozen=True)
 class ProviderExecutionContext:
     adapter: ProviderAdapter
@@ -265,6 +268,108 @@ class ProviderApplicationService:
         )
         return self._payload_or_raise(result)
 
+    def list_agent_docs(
+        self,
+        *,
+        data_source: str | None,
+        execution_context: ProviderExecutionContext | None,
+    ) -> list[dict[str, Any]]:
+        adapter = self._adapter_for_openclaw(
+            data_source=data_source,
+            execution_context=execution_context,
+            unsupported_detail="agents.files.list is only available with the OpenClaw data source",
+        )
+        snapshot_result = adapter.fetch_snapshot(
+            to_domain_request(
+                request_id=_provider_request_id(),
+                capability=DomainProviderCapability.SESSION_READ,
+            )
+        )
+        snapshot_error = snapshot_result.response.error
+        if snapshot_error is not None:
+            raise HTTPException(status_code=503, detail=snapshot_error.message)
+
+        snapshot = snapshot_result.snapshot
+        if not isinstance(snapshot, dict):
+            raise HTTPException(status_code=503, detail="OpenClaw snapshot missing payload")
+
+        items: list[dict[str, Any]] = []
+        for agent_id, agent_name in self._extract_agent_summaries(snapshot):
+            payload = self._payload_or_raise(
+                adapter.agents_files_list(
+                    to_domain_request(
+                        request_id=_provider_request_id(),
+                        capability=DomainProviderCapability.SESSION_READ,
+                    ),
+                    agent_id=agent_id,
+                )
+            )
+            files = payload.get("files")
+            if not isinstance(files, list):
+                continue
+            for entry in files:
+                if not isinstance(entry, dict):
+                    continue
+                name = entry.get("name")
+                path = entry.get("path")
+                if not isinstance(name, str) or not isinstance(path, str):
+                    continue
+                size_value = entry.get("size")
+                updated_at_value = entry.get("updatedAtMs")
+                items.append(
+                    {
+                        "id": f"{agent_id}:{name}",
+                        "agent_id": agent_id,
+                        "agent_name": agent_name,
+                        "path": path,
+                        "name": name,
+                        "exists": not bool(entry.get("missing")),
+                        "size_bytes": size_value if isinstance(size_value, int) and size_value >= 0 else None,
+                        "updated_at": self._to_iso_from_millis(updated_at_value),
+                    }
+                )
+
+        items.sort(
+            key=lambda item: (
+                str(item.get("updated_at", "")),
+                str(item.get("agent_id", "")),
+                str(item.get("name", "")),
+            ),
+            reverse=True,
+        )
+        return items
+
+    def get_agent_doc(
+        self,
+        *,
+        data_source: str | None,
+        execution_context: ProviderExecutionContext | None,
+        agent_id: str,
+        name: str,
+    ) -> dict[str, Any]:
+        adapter = self._adapter_for_openclaw(
+            data_source=data_source,
+            execution_context=execution_context,
+            unsupported_detail="agents.files.get is only available with the OpenClaw data source",
+        )
+        payload = self._payload_or_raise(
+            adapter.agents_files_get(
+                to_domain_request(
+                    request_id=_provider_request_id(),
+                    capability=DomainProviderCapability.SESSION_READ,
+                ),
+                agent_id=agent_id,
+                name=name,
+            )
+        )
+        file_payload = payload.get("file")
+        if not isinstance(file_payload, dict):
+            raise HTTPException(
+                status_code=503,
+                detail="OpenClaw agents.files.get returned invalid file payload",
+            )
+        return file_payload
+
     def _adapter_for_openclaw(
         self,
         *,
@@ -292,6 +397,38 @@ class ProviderApplicationService:
         if isinstance(value_ok, bool):
             return value_ok
         return True
+
+    def _extract_agent_summaries(self, snapshot: dict[str, Any]) -> list[tuple[str, str]]:
+        health = snapshot.get("health")
+        if not isinstance(health, dict):
+            raise HTTPException(status_code=503, detail="OpenClaw snapshot missing health payload")
+        agents = health.get("agents")
+        if not isinstance(agents, list):
+            raise HTTPException(status_code=503, detail="OpenClaw snapshot missing agents list")
+
+        ordered: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for item in agents:
+            if not isinstance(item, dict):
+                continue
+            agent_id = item.get("agentId")
+            if not isinstance(agent_id, str):
+                continue
+            normalized_id = agent_id.strip()
+            if normalized_id == "" or normalized_id in seen:
+                continue
+            seen.add(normalized_id)
+            display_name = item.get("displayName")
+            normalized_name = display_name.strip() if isinstance(display_name, str) and display_name.strip() else normalized_id
+            ordered.append((normalized_id, normalized_name))
+        return ordered
+
+    def _to_iso_from_millis(self, value: object) -> str:
+        if isinstance(value, int):
+            return datetime.fromtimestamp(value / 1000, tz=UTC).isoformat()
+        if isinstance(value, float):
+            return datetime.fromtimestamp(value / 1000, tz=UTC).isoformat()
+        return ""
 
 
 def _provider_request_id() -> str:

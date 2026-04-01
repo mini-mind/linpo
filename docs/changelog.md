@@ -2,6 +2,8 @@
 
 ## 2026-04-01
 
+- PRD/Architecture 扩展“实例文件页”口径：新增 OpenClaw Agent 白名单文档浏览能力，文件页统一展示“任务产物 + Agent 文档”两类资源。
+- Architecture 补充 Agent 文档转调契约：新增 `GET /instances/{instance_id}/agent-docs`、`/agent-docs/preview`、`/agent-docs/download`，后端转调 OpenClaw `agents.files.list/get`。
 - PRD/Architecture 补充看板列高度口径：未折叠列按内部卡片自然包裹，超出页面高度后仅列内列表滚动，不再把所有列统一拉满高度。
 - PRD/Architecture 补充看板列折叠交互：支持双击列头折叠/展开列，折叠态收敛为半透明窄列并移除列头，仅在顶部展示纵向省略号与渐隐背景。
 - PRD/Architecture 调整导航 IA：`实例文件` 入口从账户下拉迁移到顶部导航，主导航改为 `看板/流程/文件`。

@@ -36,7 +36,8 @@
 - `KanbanShell` 未折叠列采用“内容包裹 + 列体内滚动”布局：轨道顶部对齐，列本身只增长到当前工作区可用高度上限，超出部分由列内卡片列表承担纵向滚动。
 - `Layout`：维护流程导航入口缓存（`linpo.lastFlowEntryPath`），用于“点击导航栏流程时回到上次访问的编辑页”。
 - `Layout`：主导航保留 `看板/流程/文件`；账户相关入口统一走导航栏用户信息下拉菜单，`/pairing` 保留兼容路由但不在主导航暴露。
-- `InstanceFilesPage`：实例文件页（`/instance-files`），按实例聚合任务产出文件，提供搜索、预览、下载与关联任务跳转。
+- `InstanceFilesPage`：实例文件页（`/instance-files`），按实例聚合任务产出文件与 Agent 文档，提供搜索、预览、下载与关联任务跳转。
+- `InstanceFilesPage`：任务产物与 Agent 文档是两条数据链，前者走 Linpo 任务文件作用域校验，后者走 OpenClaw `agents.files.list/get` 白名单文档转调。
 - `MessageCenterModal`：导航栏账户下拉菜单触发的消息中心弹窗，承接“消息列表 + 详情 + 回执确认跳转”。
 - `MessageCenterModal`：通过 portal 挂载到 `document.body`，避免受局部层级与滚动容器影响导致不可见。
 - `AccountMenu`：下拉菜单提供 `账户/消息/实例/退出` 菜单动作；`账户`打开 `UserProfileModal`（左侧 `基本信息/修改密码/会员` 侧边栏 + 右侧展示区）。
@@ -143,6 +144,9 @@
 - `GET /instances/{instance_id}/files`：返回该实例下任务关联的可访问产出文件列表（含存在性与大小信息）。
 - `GET /instances/{instance_id}/files/preview`：按实例+任务上下文预览文件内容（文本/JSON/二进制占位）。
 - `GET /instances/{instance_id}/files/download`：按实例+任务上下文下载文件流。
+- `GET /instances/{instance_id}/agent-docs`：转调 OpenClaw `agents.files.list`，返回该实例下可读 Agent 白名单文档清单。
+- `GET /instances/{instance_id}/agent-docs/preview`：转调 OpenClaw `agents.files.get`，返回指定 Agent 文档预览内容。
+- `GET /instances/{instance_id}/agent-docs/download`：下载指定 Agent 文档内容。
 - `GET /aggregate/topology`：实例列表详情态用于构建关系树（实例节点、Agent 节点、Session 节点），前端按选中实例筛选并渲染。
 - `POST /instances/pair-code/validate`、`POST /instances/pair-code`：配对码校验与配对创建契约，后端负责将配对码解析为 `endpoint/gateway_token` 再复用实例校验与落库流程。
 - `POST /auth/register`：注册请求需包含 `username + email + password`，邮箱全局唯一。
@@ -159,6 +163,7 @@
 - 任务状态机最小集遵循 `queued/running/blocked_by_approval/failed/completed`。
 - `session` 不作为任务主键来源，任务标识由 Linpo 侧生成并持久化。
 - 实例文件接口必须做任务作用域校验：仅允许当前用户、当前实例、当前看板下任务关联路径，不开放任意绝对路径访问。
+- Agent 文档接口必须只暴露 OpenClaw 白名单文件名：`AGENTS.md`、`SOUL.md`、`TOOLS.md`、`IDENTITY.md`、`USER.md`、`HEARTBEAT.md`、`BOOTSTRAP.md`、`MEMORY.md`、`memory.md`；Linpo 不自行接受任意路径输入。
 - `flow.generate` 为流程页面分配专用 session：`planner:claw3`、`manager`、`execution` 前缀，用于流程拆解和任务调度链路。
 - 流程拆解逻辑不在前端执行，统一由后端 `FlowDecompositionService` 通过 `claw3`（OpenClaw 实例）产出结构化节点 JSON。
 - 流程创建入口仍由 `FlowListPage` 新建弹窗承接；`FlowEditorPanel` 底部悬浮对话框用于后续增量改图（同样调用 `flow.generate`）。

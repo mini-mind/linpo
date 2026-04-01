@@ -4,6 +4,7 @@
  */
 
 import type {
+  InstanceAgentDocListResponse,
   InstanceFileListResponse,
   InstanceItem,
   InstancePairCodeRequest,
@@ -128,6 +129,54 @@ export async function previewInstanceFile(
   return fetchApi<TaskOutputPreviewResponse>(
     `/instances/${encodeURIComponent(instanceId)}/files/preview?${params.toString()}`
   );
+}
+
+export async function listInstanceAgentDocs(
+  instanceId: string,
+  options?: {
+    q?: string;
+    onlyExisting?: boolean;
+  }
+): Promise<InstanceAgentDocListResponse> {
+  const params = new URLSearchParams();
+  if (options?.q?.trim()) {
+    params.set('q', options.q.trim());
+  }
+  if (options?.onlyExisting) {
+    params.set('onlyExisting', 'true');
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  return fetchApi<InstanceAgentDocListResponse>(
+    `/instances/${encodeURIComponent(instanceId)}/agent-docs${suffix}`
+  );
+}
+
+export async function previewInstanceAgentDoc(
+  instanceId: string,
+  agentId: string,
+  name: string
+): Promise<TaskOutputPreviewResponse> {
+  const params = new URLSearchParams();
+  params.set('agentId', agentId);
+  params.set('name', name);
+  return fetchApi<TaskOutputPreviewResponse>(
+    `/instances/${encodeURIComponent(instanceId)}/agent-docs/preview?${params.toString()}`
+  );
+}
+
+export function buildInstanceAgentDocDownloadUrl(
+  instanceId: string,
+  agentId: string,
+  name: string,
+  options?: { download?: boolean }
+): string {
+  const params = new URLSearchParams();
+  params.set('agentId', agentId);
+  params.set('name', name);
+  if (options?.download !== false) {
+    params.set('download', 'true');
+  }
+  return `${API_BASE_URL}/instances/${encodeURIComponent(instanceId)}/agent-docs/download?${params.toString()}`;
 }
 
 export function buildInstanceFileDownloadUrl(

@@ -8,13 +8,19 @@ import { InstanceFilesPage } from './InstanceFilesPage';
 const {
   mockListInstances,
   mockListInstanceFiles,
+  mockListInstanceAgentDocs,
   mockPreviewInstanceFile,
+  mockPreviewInstanceAgentDoc,
   mockBuildInstanceFileDownloadUrl,
+  mockBuildInstanceAgentDocDownloadUrl,
 } = vi.hoisted(() => ({
   mockListInstances: vi.fn(),
   mockListInstanceFiles: vi.fn(),
+  mockListInstanceAgentDocs: vi.fn(),
   mockPreviewInstanceFile: vi.fn(),
+  mockPreviewInstanceAgentDoc: vi.fn(),
   mockBuildInstanceFileDownloadUrl: vi.fn(),
+  mockBuildInstanceAgentDocDownloadUrl: vi.fn(),
 }));
 
 vi.mock('../api/instanceClient', async () => {
@@ -23,8 +29,11 @@ vi.mock('../api/instanceClient', async () => {
     ...actual,
     listInstances: mockListInstances,
     listInstanceFiles: mockListInstanceFiles,
+    listInstanceAgentDocs: mockListInstanceAgentDocs,
     previewInstanceFile: mockPreviewInstanceFile,
+    previewInstanceAgentDoc: mockPreviewInstanceAgentDoc,
     buildInstanceFileDownloadUrl: mockBuildInstanceFileDownloadUrl,
+    buildInstanceAgentDocDownloadUrl: mockBuildInstanceAgentDocDownloadUrl,
   };
 });
 
@@ -70,6 +79,11 @@ describe('InstanceFilesPage', () => {
       total: 1,
       existing_count: 1,
     });
+    mockListInstanceAgentDocs.mockResolvedValue({
+      items: [],
+      total: 0,
+      existing_count: 0,
+    });
     mockPreviewInstanceFile.mockResolvedValue({
       path: '/tmp/linpo/demo/out.json',
       kind: 'json',
@@ -80,11 +94,14 @@ describe('InstanceFilesPage', () => {
       download_url: '/instances/inst-1/files/download?taskId=task-1',
     });
     mockBuildInstanceFileDownloadUrl.mockReturnValue('/instances/inst-1/files/download?taskId=task-1');
+    mockBuildInstanceAgentDocDownloadUrl.mockReturnValue(
+      '/instances/inst-1/agent-docs/download?agentId=agent-1&name=SOUL.md'
+    );
   });
 
   it('loads instance files and renders json preview', async () => {
     renderPage();
-    await screen.findByRole('button', { name: '查看文件 out.json' });
+    await screen.findByRole('button', { name: '查看任务文件 out.json' });
 
     await waitFor(() => {
       expect(mockPreviewInstanceFile).toHaveBeenCalledWith(
@@ -95,5 +112,47 @@ describe('InstanceFilesPage', () => {
       );
     });
     expect(screen.getByText(/"result": "ok"/)).toBeInTheDocument();
+  });
+
+  it('loads agent docs and renders markdown preview', async () => {
+    mockListInstanceFiles.mockResolvedValueOnce({
+      items: [],
+      total: 0,
+      existing_count: 0,
+    });
+    mockListInstanceAgentDocs.mockResolvedValueOnce({
+      items: [
+        {
+          id: 'agent-1:SOUL.md',
+          agent_id: 'agent-1',
+          agent_name: 'Claw Planner',
+          path: 'agent://agent-1/SOUL.md',
+          name: 'SOUL.md',
+          exists: true,
+          size_bytes: 36,
+          updated_at: '2026-04-01T00:00:00Z',
+        },
+      ],
+      total: 1,
+      existing_count: 1,
+    });
+    mockPreviewInstanceAgentDoc.mockResolvedValueOnce({
+      path: 'agent://agent-1/SOUL.md',
+      kind: 'text',
+      mime_type: 'text/markdown',
+      size_bytes: 36,
+      truncated: false,
+      content: '# Soul\n\nAgent mission profile.',
+      download_url: '/instances/inst-1/agent-docs/download?agentId=agent-1&name=SOUL.md',
+    });
+
+    renderPage();
+    await screen.findByRole('button', { name: '查看 Agent 文档 SOUL.md' });
+
+    await waitFor(() => {
+      expect(mockPreviewInstanceAgentDoc).toHaveBeenCalledWith('inst-1', 'agent-1', 'SOUL.md');
+    });
+    expect(screen.getByText('Soul')).toBeInTheDocument();
+    expect(screen.getByText('Agent mission profile.')).toBeInTheDocument();
   });
 });

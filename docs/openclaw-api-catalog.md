@@ -25,6 +25,8 @@
 - `chat.send`（并已对外：`POST /chat/agents/{agent_id}/send`）
 - `chat.abort`（并已对外：`POST /chat/agents/{agent_id}/pause`，对外动作名为 pause）
 - `chat.history`（并已对外：`GET /chat/sessions/{key}/history`）
+- `agents.files.list`（并已对外：`GET /instances/{instance_id}/agent-docs`）
+- `agents.files.get`（并已对外：`GET /instances/{instance_id}/agent-docs/preview|download`）
 
 ## 1. Chat 相关
 
@@ -57,8 +59,8 @@
 | `agents.create` | 创建新 agent | ❌ 未接入 | 无对应实现 |
 | `agents.update` | 更新 agent 配置 | ❌ 未接入 | 无对应实现 |
 | `agents.delete` | 删除 agent | ❌ 未接入 | 无对应实现 |
-| `agents.files.list` | 列出 agent 文件 | ❌ 未接入 | 无对应实现 |
-| `agents.files.get` | 获取 agent 文件内容 | ❌ 未接入 | 无对应实现 |
+| `agents.files.list` | 列出 agent 文件 | ✅ 已接入（Adapter+HTTP） | 适配层已封装；HTTP：`GET /instances/{instance_id}/agent-docs` |
+| `agents.files.get` | 获取 agent 文件内容 | ✅ 已接入（Adapter+HTTP） | 适配层已封装；HTTP：`GET /instances/{instance_id}/agent-docs/preview`、`GET /instances/{instance_id}/agent-docs/download` |
 | `agents.files.set` | 设置 agent 文件内容 | ❌ 未接入 | 无对应实现 |
 
 ## 4. Agent 调用

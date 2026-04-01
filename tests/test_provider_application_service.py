@@ -139,6 +139,131 @@ def test_list_models_uses_adapter_and_returns_models_payload() -> None:
     ]
 
 
+def test_list_agent_docs_collects_snapshot_agents_and_file_payloads() -> None:
+    from app.adapters.provider_adapter import ProviderSnapshotResult
+    from app.domain.provider_contract import DomainProviderCapability
+    from app.services.provider_application_service import ProviderApplicationService, ProviderExecutionContext
+
+    class FakeAdapter:
+        def fetch_snapshot(self, request: Any) -> ProviderSnapshotResult:
+            assert request.capability == DomainProviderCapability.SESSION_READ
+            diagnostic = to_domain_diagnostic(
+                instance_id="instance-alpha",
+                instance_name="Alpha",
+                status="ok",
+                freshness_status="fresh",
+                checked_at=None,
+            )
+            return ProviderSnapshotResult(
+                response=to_domain_response(request=request, diagnostics=[diagnostic]),
+                snapshot={
+                    "health": {
+                        "agents": [
+                            {"agentId": "planner", "displayName": "Planner"},
+                            {"agentId": "executor"},
+                        ]
+                    }
+                },
+            )
+
+        def agents_files_list(self, request: Any, *, agent_id: str) -> ProviderPayloadResult:
+            assert request.capability == DomainProviderCapability.SESSION_READ
+            diagnostic = to_domain_diagnostic(
+                instance_id="instance-alpha",
+                instance_name="Alpha",
+                status="ok",
+                freshness_status="fresh",
+                checked_at=None,
+            )
+            file_name = "SOUL.md" if agent_id == "planner" else "MEMORY.md"
+            return ProviderPayloadResult(
+                response=to_domain_response(request=request, diagnostics=[diagnostic]),
+                payload={
+                    "files": [
+                        {
+                            "name": file_name,
+                            "path": f"agent://{agent_id}/{file_name}",
+                            "size": 24,
+                            "updatedAtMs": 1_775_000_000_000,
+                            "missing": False,
+                        }
+                    ]
+                },
+            )
+
+    service = ProviderApplicationService()
+    context = ProviderExecutionContext(adapter=cast(ProviderAdapter, FakeAdapter()), cache_key=("cache",))
+
+    items = service.list_agent_docs(data_source="openclaw", execution_context=context)
+
+    assert items == [
+        {
+            "id": "planner:SOUL.md",
+            "agent_id": "planner",
+            "agent_name": "Planner",
+            "path": "agent://planner/SOUL.md",
+            "name": "SOUL.md",
+            "exists": True,
+            "size_bytes": 24,
+            "updated_at": "2026-03-31T23:33:20+00:00",
+        },
+        {
+            "id": "executor:MEMORY.md",
+            "agent_id": "executor",
+            "agent_name": "executor",
+            "path": "agent://executor/MEMORY.md",
+            "name": "MEMORY.md",
+            "exists": True,
+            "size_bytes": 24,
+            "updated_at": "2026-03-31T23:33:20+00:00",
+        },
+    ]
+
+
+def test_get_agent_doc_returns_file_payload() -> None:
+    from app.services.provider_application_service import ProviderApplicationService, ProviderExecutionContext
+
+    class FakeAdapter:
+        def agents_files_get(self, request: Any, *, agent_id: str, name: str) -> ProviderPayloadResult:
+            assert agent_id == "planner"
+            assert name == "SOUL.md"
+            diagnostic = to_domain_diagnostic(
+                instance_id="instance-alpha",
+                instance_name="Alpha",
+                status="ok",
+                freshness_status="fresh",
+                checked_at=None,
+            )
+            return ProviderPayloadResult(
+                response=to_domain_response(request=request, diagnostics=[diagnostic]),
+                payload={
+                    "file": {
+                        "name": "SOUL.md",
+                        "path": "agent://planner/SOUL.md",
+                        "content": "# Soul",
+                        "missing": False,
+                    }
+                },
+            )
+
+    service = ProviderApplicationService()
+    context = ProviderExecutionContext(adapter=cast(ProviderAdapter, FakeAdapter()), cache_key=("cache",))
+
+    payload = service.get_agent_doc(
+        data_source="openclaw",
+        execution_context=context,
+        agent_id="planner",
+        name="SOUL.md",
+    )
+
+    assert payload == {
+        "name": "SOUL.md",
+        "path": "agent://planner/SOUL.md",
+        "content": "# Soul",
+        "missing": False,
+    }
+
+
 def test_patch_session_raises_http_exception_when_adapter_returns_domain_error() -> None:
     from app.services.provider_application_service import ProviderApplicationService, ProviderExecutionContext
 

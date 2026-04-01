@@ -103,6 +103,19 @@ class OpenClawClientProtocol(Protocol):
         limit: int,
     ) -> dict[str, Any]: ...
 
+    def agents_files_list(
+        self,
+        *,
+        agent_id: str,
+    ) -> dict[str, Any]: ...
+
+    def agents_files_get(
+        self,
+        *,
+        agent_id: str,
+        name: str,
+    ) -> dict[str, Any]: ...
+
 
 @dataclass(frozen=True)
 class OpenClawAdapter:
@@ -284,6 +297,34 @@ class OpenClawAdapter:
                 limit=limit,
             ),
             default_error_message="chat.history failed",
+        )
+
+    def agents_files_list(
+        self,
+        request: DomainProviderRequest,
+        *,
+        agent_id: str,
+    ) -> ProviderPayloadResult:
+        return self._execute_payload_call(
+            request,
+            lambda: self._client.agents_files_list(agent_id=agent_id),
+            default_error_message="agents.files.list failed",
+        )
+
+    def agents_files_get(
+        self,
+        request: DomainProviderRequest,
+        *,
+        agent_id: str,
+        name: str,
+    ) -> ProviderPayloadResult:
+        return self._execute_payload_call(
+            request,
+            lambda: self._client.agents_files_get(
+                agent_id=agent_id,
+                name=name,
+            ),
+            default_error_message="agents.files.get failed",
         )
 
     @property

@@ -2,12 +2,16 @@ import type React from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  buildInstanceAgentDocDownloadUrl,
   buildInstanceFileDownloadUrl,
+  listInstanceAgentDocs,
   listInstanceFiles,
   listInstances,
+  previewInstanceAgentDoc,
   previewInstanceFile,
 } from '../api/instanceClient';
 import type {
+  InstanceAgentDocItem,
   InstanceFileItem,
   InstanceItem,
   TaskOutputPreviewResponse,
@@ -18,6 +22,9 @@ import { useToast } from '../hooks/useToast';
 import { MarkdownMessage } from './MarkdownMessage';
 
 const DEFAULT_BOARD_ID = 'default';
+type SelectedResource =
+  | { kind: 'task'; id: string }
+  | { kind: 'agent-doc'; id: string };
 
 export function InstanceFilesPage(): JSX.Element {
   const isMobile = useIsMobile(960);
@@ -26,12 +33,13 @@ export function InstanceFilesPage(): JSX.Element {
   const [currentInstanceId, setCurrentInstanceId] = useCurrentInstanceId();
   const [instances, setInstances] = useState<InstanceItem[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string>('');
-  const [items, setItems] = useState<InstanceFileItem[]>([]);
+  const [taskItems, setTaskItems] = useState<InstanceFileItem[]>([]);
+  const [agentDocs, setAgentDocs] = useState<InstanceAgentDocItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [keyword, setKeyword] = useState('');
   const [onlyExisting, setOnlyExisting] = useState(false);
-  const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
+  const [selectedResource, setSelectedResource] = useState<SelectedResource | null>(null);
   const [preview, setPreview] = useState<TaskOutputPreviewResponse | null>(null);
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -40,9 +48,19 @@ export function InstanceFilesPage(): JSX.Element {
     () => instances.find((item) => item.id === selectedInstanceId) ?? null,
     [instances, selectedInstanceId]
   );
-  const selectedFile = useMemo(
-    () => items.find((item) => item.id === selectedFileId) ?? items[0] ?? null,
-    [items, selectedFileId]
+  const selectedTaskFile = useMemo(
+    () =>
+      selectedResource?.kind === 'task'
+        ? taskItems.find((item) => item.id === selectedResource.id) ?? null
+        : null,
+    [selectedResource, taskItems]
+  );
+  const selectedAgentDoc = useMemo(
+    () =>
+      selectedResource?.kind === 'agent-doc'
+        ? agentDocs.find((item) => item.id === selectedResource.id) ?? null
+        : null,
+    [agentDocs, selectedResource]
   );
 
   const loadInstancesData = useCallback(async () => {
@@ -69,19 +87,27 @@ export function InstanceFilesPage(): JSX.Element {
   const loadFiles = useCallback(async () => {
     const instanceId = selectedInstanceId.trim();
     if (!instanceId) {
-      setItems([]);
+      setTaskItems([]);
+      setAgentDocs([]);
       setLoadError(null);
       return;
     }
     setIsLoading(true);
     setLoadError(null);
     try {
-      const response = await listInstanceFiles(instanceId, {
-        boardId: DEFAULT_BOARD_ID,
-        q: keyword,
-        onlyExisting,
-      });
-      setItems(response.items);
+      const [fileResponse, docResponse] = await Promise.all([
+        listInstanceFiles(instanceId, {
+          boardId: DEFAULT_BOARD_ID,
+          q: keyword,
+          onlyExisting,
+        }),
+        listInstanceAgentDocs(instanceId, {
+          q: keyword,
+          onlyExisting,
+        }),
+      ]);
+      setTaskItems(fileResponse.items);
+      setAgentDocs(docResponse.items);
     } catch (error) {
       const message = error instanceof Error ? error.message : '读取实例文件失败';
       setLoadError(message);
@@ -114,19 +140,31 @@ export function InstanceFilesPage(): JSX.Element {
   }, [loadFiles, selectedInstanceId]);
 
   useEffect(() => {
-    if (items.length === 0) {
-      setSelectedFileId(null);
+    const taskStillExists =
+      selectedResource?.kind === 'task'
+        ? taskItems.some((item) => item.id === selectedResource.id)
+        : false;
+    const docStillExists =
+      selectedResource?.kind === 'agent-doc'
+        ? agentDocs.some((item) => item.id === selectedResource.id)
+        : false;
+    if (taskStillExists || docStillExists) {
       return;
     }
-    if (selectedFileId && items.some((item) => item.id === selectedFileId)) {
+    if (taskItems.length > 0) {
+      setSelectedResource({ kind: 'task', id: taskItems[0].id });
       return;
     }
-    setSelectedFileId(items[0].id);
-  }, [items, selectedFileId]);
+    if (agentDocs.length > 0) {
+      setSelectedResource({ kind: 'agent-doc', id: agentDocs[0].id });
+      return;
+    }
+    setSelectedResource(null);
+  }, [agentDocs, selectedResource, taskItems]);
 
   useEffect(() => {
     const instanceId = selectedInstanceId.trim();
-    if (!instanceId || !selectedFile) {
+    if (!instanceId || !selectedResource) {
       setPreview(null);
       setPreviewError(null);
       setIsPreviewLoading(false);
@@ -135,7 +173,20 @@ export function InstanceFilesPage(): JSX.Element {
     let cancelled = false;
     setIsPreviewLoading(true);
     setPreviewError(null);
-    void previewInstanceFile(instanceId, selectedFile.task_id, selectedFile.path, { boardId: DEFAULT_BOARD_ID })
+    const previewPromise =
+      selectedResource.kind === 'task' && selectedTaskFile
+        ? previewInstanceFile(instanceId, selectedTaskFile.task_id, selectedTaskFile.path, {
+            boardId: DEFAULT_BOARD_ID,
+          })
+        : selectedResource.kind === 'agent-doc' && selectedAgentDoc
+          ? previewInstanceAgentDoc(instanceId, selectedAgentDoc.agent_id, selectedAgentDoc.name)
+          : null;
+    if (!previewPromise) {
+      setPreview(null);
+      setIsPreviewLoading(false);
+      return;
+    }
+    void previewPromise
       .then((payload) => {
         if (!cancelled) {
           setPreview(payload);
@@ -157,33 +208,56 @@ export function InstanceFilesPage(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [selectedFile, selectedInstanceId]);
+  }, [selectedAgentDoc, selectedInstanceId, selectedResource, selectedTaskFile]);
 
   const inlineUrl = useMemo(() => {
-    if (!selectedFile || !selectedInstanceId.trim()) {
+    if (!selectedInstanceId.trim()) {
       return '';
     }
-    return buildInstanceFileDownloadUrl(selectedInstanceId, selectedFile.task_id, selectedFile.path, {
-      boardId: DEFAULT_BOARD_ID,
-      download: false,
-    });
-  }, [selectedFile, selectedInstanceId]);
+    if (selectedResource?.kind === 'task' && selectedTaskFile) {
+      return buildInstanceFileDownloadUrl(selectedInstanceId, selectedTaskFile.task_id, selectedTaskFile.path, {
+        boardId: DEFAULT_BOARD_ID,
+        download: false,
+      });
+    }
+    if (selectedResource?.kind === 'agent-doc' && selectedAgentDoc) {
+      return buildInstanceAgentDocDownloadUrl(selectedInstanceId, selectedAgentDoc.agent_id, selectedAgentDoc.name, {
+        download: false,
+      });
+    }
+    return '';
+  }, [selectedAgentDoc, selectedInstanceId, selectedResource, selectedTaskFile]);
+
   const downloadUrl = useMemo(() => {
-    if (!selectedFile || !selectedInstanceId.trim()) {
+    if (!selectedInstanceId.trim()) {
       return '';
     }
-    return buildInstanceFileDownloadUrl(selectedInstanceId, selectedFile.task_id, selectedFile.path, {
-      boardId: DEFAULT_BOARD_ID,
-      download: true,
-    });
-  }, [selectedFile, selectedInstanceId]);
+    if (selectedResource?.kind === 'task' && selectedTaskFile) {
+      return buildInstanceFileDownloadUrl(selectedInstanceId, selectedTaskFile.task_id, selectedTaskFile.path, {
+        boardId: DEFAULT_BOARD_ID,
+        download: true,
+      });
+    }
+    if (selectedResource?.kind === 'agent-doc' && selectedAgentDoc) {
+      return buildInstanceAgentDocDownloadUrl(selectedInstanceId, selectedAgentDoc.agent_id, selectedAgentDoc.name, {
+        download: true,
+      });
+    }
+    return '';
+  }, [selectedAgentDoc, selectedInstanceId, selectedResource, selectedTaskFile]);
+
+  const totalCount = taskItems.length + agentDocs.length;
+  const existingCount =
+    taskItems.filter((item) => item.exists).length + agentDocs.filter((item) => item.exists).length;
 
   return (
     <section style={pageStyle} aria-label="instance-files-page">
       <header style={isMobile ? { ...toolbarStyle, ...toolbarMobileStyle } : toolbarStyle}>
         <div style={isMobile ? { ...toolbarStatsStyle, ...toolbarStatsMobileStyle } : toolbarStatsStyle}>
-          <span style={statTextStyle}>文件数 {items.length}</span>
-          <span style={statTextStyle}>可访问 {items.filter((item) => item.exists).length}</span>
+          <span style={statTextStyle}>总文件数 {totalCount}</span>
+          <span style={statTextStyle}>可访问 {existingCount}</span>
+          <span style={statTextStyle}>任务产物 {taskItems.length}</span>
+          <span style={statTextStyle}>Agent 文档 {agentDocs.length}</span>
         </div>
         <div style={isMobile ? { ...toolbarActionsStyle, ...toolbarActionsMobileStyle } : toolbarActionsStyle}>
           <select
@@ -202,7 +276,7 @@ export function InstanceFilesPage(): JSX.Element {
           <input
             value={keyword}
             onChange={(event) => setKeyword(event.target.value)}
-            placeholder="搜索路径/任务"
+            placeholder="搜索路径/任务/文档"
             style={isMobile ? { ...searchInputStyle, ...searchInputMobileStyle } : searchInputStyle}
             aria-label="搜索实例文件"
           />
@@ -227,78 +301,128 @@ export function InstanceFilesPage(): JSX.Element {
 
       <div style={isMobile ? bodyShellMobileStyle : bodyShellStyle}>
         <div style={getBodyStyle(isMobile)}>
-        <aside style={listPanelStyle}>
-          {selectedInstance ? <p style={panelTitleStyle}>实例：{selectedInstance.name}</p> : null}
-          {loadError ? <p style={errorTextStyle}>{loadError}</p> : null}
-          {!loadError && isLoading ? <p style={hintTextStyle}>加载中...</p> : null}
-          {!loadError && !isLoading && items.length === 0 ? <p style={hintTextStyle}>暂无文件</p> : null}
-          <div style={listWrapStyle}>
-            {items.map((item) => {
-              const active = selectedFile?.id === item.id;
-              return (
-                <button
-                  type="button"
-                  key={item.id}
-                  style={getRowStyle(active)}
-                  onClick={() => setSelectedFileId(item.id)}
-                  aria-label={`查看文件 ${item.name}`}
-                >
-                  <div style={rowHeaderStyle}>
-                    <span style={rowNameStyle}>{item.name}</span>
-                    <span style={item.exists ? existsBadgeStyle : missingBadgeStyle}>{item.exists ? '可访问' : '缺失'}</span>
-                  </div>
-                  <p style={rowPathStyle} title={item.path}>{item.path}</p>
-                  <p style={rowMetaStyle}>任务：{item.task_title} · 状态：{item.task_status}</p>
-                </button>
-              );
-            })}
-          </div>
-        </aside>
+          <aside style={listPanelStyle}>
+            {selectedInstance ? <p style={panelTitleStyle}>实例：{selectedInstance.name}</p> : null}
+            {loadError ? <p style={errorTextStyle}>{loadError}</p> : null}
+            {!loadError && isLoading ? <p style={hintTextStyle}>加载中...</p> : null}
+            {!loadError && !isLoading && totalCount === 0 ? <p style={hintTextStyle}>暂无文件</p> : null}
+            <div style={listWrapStyle}>
+              <div style={groupWrapStyle}>
+                <p style={groupTitleStyle}>任务产物 ({taskItems.length})</p>
+                {taskItems.length === 0 ? (
+                  <p style={emptyGroupStyle}>暂无任务产物</p>
+                ) : (
+                  taskItems.map((item) => {
+                    const active =
+                      selectedResource?.kind === 'task' && selectedResource.id === item.id;
+                    return (
+                      <button
+                        type="button"
+                        key={item.id}
+                        style={getRowStyle(active)}
+                        onClick={() => setSelectedResource({ kind: 'task', id: item.id })}
+                        aria-label={`查看任务文件 ${item.name}`}
+                      >
+                        <div style={rowHeaderStyle}>
+                          <span style={rowNameStyle}>{item.name}</span>
+                          <span style={item.exists ? existsBadgeStyle : missingBadgeStyle}>
+                            {item.exists ? '可访问' : '缺失'}
+                          </span>
+                        </div>
+                        <p style={rowPathStyle} title={item.path}>
+                          {item.path}
+                        </p>
+                        <p style={rowMetaStyle}>任务：{item.task_title} · 状态：{item.task_status}</p>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
 
-        <article style={previewPanelStyle}>
-          {!selectedFile ? (
-            <p style={hintTextStyle}>选择文件后查看预览</p>
-          ) : (
-            <>
-              <div style={previewHeaderStyle}>
-                <h3 style={previewTitleStyle}>{selectedFile.name}</h3>
-                <div style={previewActionRowStyle}>
-                  <a href={downloadUrl} style={actionLinkStyle}>
-                    下载
-                  </a>
-                  <button
-                    type="button"
-                    style={buttonStyle}
-                    onClick={() => navigate('/kanban')}
-                  >
-                    回看板
-                  </button>
+              <div style={groupWrapStyle}>
+                <p style={groupTitleStyle}>Agent 文档 ({agentDocs.length})</p>
+                {agentDocs.length === 0 ? (
+                  <p style={emptyGroupStyle}>暂无 Agent 文档</p>
+                ) : (
+                  agentDocs.map((doc) => {
+                    const active =
+                      selectedResource?.kind === 'agent-doc' && selectedResource.id === doc.id;
+                    return (
+                      <button
+                        type="button"
+                        key={doc.id}
+                        style={getRowStyle(active)}
+                        onClick={() => setSelectedResource({ kind: 'agent-doc', id: doc.id })}
+                        aria-label={`查看 Agent 文档 ${doc.name}`}
+                      >
+                        <div style={rowHeaderStyle}>
+                          <span style={rowNameStyle}>{doc.name}</span>
+                          <span style={doc.exists ? existsBadgeStyle : missingBadgeStyle}>
+                            {doc.exists ? '可访问' : '缺失'}
+                          </span>
+                        </div>
+                        <p style={rowPathStyle} title={doc.path}>
+                          {doc.path}
+                        </p>
+                        <p style={rowMetaStyle}>Agent：{doc.agent_name || doc.agent_id}</p>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </aside>
+
+          <article style={previewPanelStyle}>
+            {!selectedResource || (!selectedTaskFile && !selectedAgentDoc) ? (
+              <p style={hintTextStyle}>选择文件后查看预览</p>
+            ) : (
+              <>
+                <div style={previewHeaderStyle}>
+                  <h3 style={previewTitleStyle}>{selectedTaskFile?.name ?? selectedAgentDoc?.name ?? '-'}</h3>
+                  <div style={previewActionRowStyle}>
+                    <a href={downloadUrl} style={actionLinkStyle}>
+                      下载
+                    </a>
+                    <button type="button" style={buttonStyle} onClick={() => navigate('/kanban')}>
+                      回看板
+                    </button>
+                  </div>
                 </div>
-              </div>
-              <div style={metaGridStyle}>
-                <span style={metaItemStyle}>路径：{selectedFile.path}</span>
-                <span style={metaItemStyle}>大小：{formatSize(selectedFile.size_bytes)}</span>
-                <span style={metaItemStyle}>更新时间：{selectedFile.updated_at || '-'}</span>
-                <span style={metaItemStyle}>任务：{selectedFile.task_title}</span>
-              </div>
-              <div style={previewBodyStyle}>
-                {isPreviewLoading ? <p style={hintTextStyle}>加载预览...</p> : null}
-                {previewError ? <p style={errorTextStyle}>{previewError}</p> : null}
-                {!isPreviewLoading && !previewError && preview ? (
-                  preview.kind === 'json' ? (
-                    <pre style={jsonStyle}>{safePrettyJson(preview.content)}</pre>
-                  ) : preview.kind === 'text' ? (
-                    <MarkdownMessage text={preview.content ?? ''} style={textStyle} />
-                  ) : preview.mime_type.startsWith('image/') ? (
-                    <img src={inlineUrl} alt={selectedFile.name} style={imageStyle} />
-                  ) : (
-                    <p style={hintTextStyle}>该文件为二进制格式，暂不支持内嵌预览，请下载查看。</p>
-                  )
-                ) : null}
-              </div>
-            </>
-          )}
-        </article>
+                <div style={metaGridStyle}>
+                  <span style={metaItemStyle}>路径：{selectedTaskFile?.path ?? selectedAgentDoc?.path ?? '-'}</span>
+                  <span style={metaItemStyle}>
+                    大小：{formatSize(selectedTaskFile?.size_bytes ?? selectedAgentDoc?.size_bytes ?? null)}
+                  </span>
+                  <span style={metaItemStyle}>更新时间：{selectedTaskFile?.updated_at ?? selectedAgentDoc?.updated_at ?? '-'}</span>
+                  {selectedTaskFile ? (
+                    <>
+                      <span style={metaItemStyle}>任务：{selectedTaskFile.task_title}</span>
+                      <span style={metaItemStyle}>状态：{selectedTaskFile.task_status}</span>
+                    </>
+                  ) : null}
+                  {selectedAgentDoc ? (
+                    <span style={metaItemStyle}>Agent：{selectedAgentDoc.agent_name || selectedAgentDoc.agent_id}</span>
+                  ) : null}
+                </div>
+                <div style={previewBodyStyle}>
+                  {isPreviewLoading ? <p style={hintTextStyle}>加载预览...</p> : null}
+                  {previewError ? <p style={errorTextStyle}>{previewError}</p> : null}
+                  {!isPreviewLoading && !previewError && preview ? (
+                    preview.kind === 'json' ? (
+                      <pre style={jsonStyle}>{safePrettyJson(preview.content)}</pre>
+                    ) : preview.kind === 'text' ? (
+                      <MarkdownMessage text={preview.content ?? ''} style={textStyle} />
+                    ) : preview.mime_type.startsWith('image/') ? (
+                      <img src={inlineUrl} alt={selectedTaskFile?.name ?? selectedAgentDoc?.name ?? 'preview'} style={imageStyle} />
+                    ) : (
+                      <p style={hintTextStyle}>该文件为二进制格式，暂不支持内嵌预览，请下载查看。</p>
+                    )
+                  ) : null}
+                </div>
+              </>
+            )}
+          </article>
         </div>
       </div>
     </section>
@@ -487,6 +611,25 @@ const panelTitleStyle: React.CSSProperties = {
   fontSize: '0.8rem',
   fontWeight: 700,
   color: '#0f172a',
+};
+
+const groupWrapStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.38rem',
+};
+
+const groupTitleStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.74rem',
+  fontWeight: 700,
+  color: '#1e293b',
+};
+
+const emptyGroupStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.72rem',
+  color: '#64748b',
 };
 
 const listWrapStyle: React.CSSProperties = {

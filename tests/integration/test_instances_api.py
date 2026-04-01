@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.db import session as db_session
 from app.db.models import Instance, Task, User
 from app.main import app
-from app.services.crypto import decrypt_secret
+from app.services.crypto import decrypt_secret, encrypt_secret
 from app.services.instance_validator import (
     InstanceValidationErrorCode,
     InstanceValidationRequest,
@@ -276,6 +276,209 @@ def test_instance_files_preview_returns_clear_404_when_missing(
     assert preview_status == 404
     preview_payload = cast(dict[str, Any], json.loads(preview_body.decode("utf-8")))
     assert "file may still exist inside the agent instance" in preview_payload["detail"].lower()
+
+
+def test_instance_agent_docs_list_preview_and_download(
+    isolated_database_url: str,
+    auth_cookie: str,
+    db_handle: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    user = db_handle.execute(select(User).where(User.username == "alice")).scalar_one()
+    instance = Instance(
+        user_id=user.id,
+        name="claw1-docs",
+        type="openclaw",
+        endpoint="https://example.com",
+        gateway_token_enc=encrypt_secret("alice-token"),
+        status="ok",
+    )
+    db_handle.add(instance)
+    db_handle.commit()
+    db_handle.refresh(instance)
+
+    def fake_fetch_snapshot(self: object) -> object:
+        del self
+        return type(
+            "Snapshot",
+            (),
+            {
+                "snapshot": {
+                    "health": {
+                        "agents": [
+                            {"agentId": "planner", "displayName": "Claw Planner"},
+                            {"agentId": "executor"},
+                        ]
+                    }
+                }
+            },
+        )()
+
+    def fake_agents_files_list(self: object, *, agent_id: str) -> dict[str, Any]:
+        del self
+        file_name = "SOUL.md" if agent_id == "planner" else "MEMORY.md"
+        return {
+            "ok": True,
+            "payload": {
+                "files": [
+                    {
+                        "name": file_name,
+                        "path": f"agent://{agent_id}/{file_name}",
+                        "size": 32,
+                        "updatedAtMs": 1_775_000_000_000,
+                        "missing": False,
+                    }
+                ]
+            },
+        }
+
+    def fake_agents_files_get(self: object, *, agent_id: str, name: str) -> dict[str, Any]:
+        del self
+        return {
+            "ok": True,
+            "payload": {
+                "file": {
+                    "name": name,
+                    "path": f"agent://{agent_id}/{name}",
+                    "content": f"# {name}\n\nowned by {agent_id}",
+                    "size": 26,
+                    "missing": False,
+                }
+            },
+        }
+
+    monkeypatch.setattr("app.services.openclaw_client.OpenClawClient.fetch_snapshot", fake_fetch_snapshot)
+    monkeypatch.setattr(
+        "app.services.openclaw_client.OpenClawClient.agents_files_list",
+        fake_agents_files_list,
+    )
+    monkeypatch.setattr(
+        "app.services.openclaw_client.OpenClawClient.agents_files_get",
+        fake_agents_files_get,
+    )
+
+    list_status, _, list_body = request(
+        "GET",
+        f"/instances/{instance.id}/agent-docs",
+        headers={"cookie": auth_cookie},
+    )
+    assert list_status == 200
+    list_payload = cast(dict[str, Any], json.loads(list_body.decode("utf-8")))
+    assert list_payload["total"] == 2
+    assert list_payload["existing_count"] == 2
+    assert list_payload["items"][0]["agent_name"] in {"Claw Planner", "executor"}
+    assert {item["name"] for item in list_payload["items"]} == {"SOUL.md", "MEMORY.md"}
+
+    preview_status, _, preview_body = request(
+        "GET",
+        f"/instances/{instance.id}/agent-docs/preview?agentId=planner&name=SOUL.md",
+        headers={"cookie": auth_cookie},
+    )
+    assert preview_status == 200
+    preview_payload = cast(dict[str, Any], json.loads(preview_body.decode("utf-8")))
+    assert preview_payload["path"] == "agent://planner/SOUL.md"
+    assert preview_payload["kind"] == "text"
+    assert preview_payload["mime_type"] == "text/markdown"
+    assert "owned by planner" in preview_payload["content"]
+
+    download_status, download_headers, download_body = request(
+        "GET",
+        f"/instances/{instance.id}/agent-docs/download?agentId=planner&name=SOUL.md&download=true",
+        headers={"cookie": auth_cookie},
+    )
+    assert download_status == 200
+    assert "text/markdown" in download_headers.get("content-type", "")
+    assert b"owned by planner" in download_body
+
+
+def test_instance_agent_docs_preview_returns_404_when_missing(
+    isolated_database_url: str,
+    auth_cookie: str,
+    db_handle: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    user = db_handle.execute(select(User).where(User.username == "alice")).scalar_one()
+    instance = Instance(
+        user_id=user.id,
+        name="claw1-docs-missing",
+        type="openclaw",
+        endpoint="https://example.com",
+        gateway_token_enc=encrypt_secret("alice-token"),
+        status="ok",
+    )
+    db_handle.add(instance)
+    db_handle.commit()
+    db_handle.refresh(instance)
+
+    def fake_agents_files_get(self: object, *, agent_id: str, name: str) -> dict[str, Any]:
+        del self, agent_id, name
+        return {
+            "ok": True,
+            "payload": {
+                "file": {
+                    "name": "SOUL.md",
+                    "path": "agent://planner/SOUL.md",
+                    "content": "",
+                    "missing": True,
+                }
+            },
+        }
+
+    monkeypatch.setattr(
+        "app.services.openclaw_client.OpenClawClient.agents_files_get",
+        fake_agents_files_get,
+    )
+
+    preview_status, _, preview_body = request(
+        "GET",
+        f"/instances/{instance.id}/agent-docs/preview?agentId=planner&name=SOUL.md",
+        headers={"cookie": auth_cookie},
+    )
+    assert preview_status == 404
+    preview_payload = cast(dict[str, Any], json.loads(preview_body.decode("utf-8")))
+    assert preview_payload["detail"] == "Agent doc not found"
+
+
+def test_instance_agent_docs_reject_cross_user_access_before_provider_call(
+    isolated_database_url: str,
+    auth_cookie: str,
+    db_handle: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    other_cookie = _register_and_login("bob")
+    bob = db_handle.execute(select(User).where(User.username == "bob")).scalar_one()
+    instance = Instance(
+        user_id=bob.id,
+        name="bob-claw-docs",
+        type="openclaw",
+        endpoint="https://example.com",
+        gateway_token_enc=encrypt_secret("bob-token"),
+        status="ok",
+    )
+    db_handle.add(instance)
+    db_handle.commit()
+    db_handle.refresh(instance)
+
+    def fail_fetch_snapshot(self: object) -> object:
+        del self
+        raise AssertionError("cross-user access should fail before provider call")
+
+    monkeypatch.setattr(
+        "app.services.openclaw_client.OpenClawClient.fetch_snapshot",
+        fail_fetch_snapshot,
+    )
+
+    list_status, _, list_body = request(
+        "GET",
+        f"/instances/{instance.id}/agent-docs",
+        headers={"cookie": auth_cookie},
+    )
+    assert list_status == 404
+    assert json.loads(list_body.decode("utf-8")) == {"detail": "Instance not found"}
+
 
 def test_validate_instance_returns_auth_failed_for_invalid_token(
     isolated_database_url: str,
