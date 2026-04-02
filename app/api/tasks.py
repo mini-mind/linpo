@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, s
 from fastapi.responses import FileResponse
 from fastapi.responses import Response
 from fastapi.responses import StreamingResponse
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.api.task_output_helpers import (
@@ -91,6 +92,7 @@ _EVENT_KEY_MAX = 80
 _FLOW_PLANNER_AGENT_ID = "claw3"
 _FLOW_PLANNER_SSE_POLL_INTERVAL_SECONDS = 0.6
 _FLOW_PLANNER_SSE_KEEPALIVE_SECONDS = 12.0
+_TASK_TERMINAL_STATUSES: set[TaskStatus] = {"completed", "failed", "blocked_by_approval"}
 
 
 def get_task_service() -> TaskService:
@@ -684,6 +686,19 @@ def _is_runnable_queued_task(task: Task, tasks_by_flow_node: dict[tuple[str, str
     return True
 
 
+def _claim_task_for_dispatch(*, db_session: Session, task_id: UUID) -> bool:
+    claim_result = db_session.execute(
+        update(Task)
+        .where(Task.id == task_id, Task.status == "queued")
+        .values(
+            status="running",
+            updated_at=datetime.now(UTC),
+        )
+    )
+    db_session.commit()
+    return bool(claim_result.rowcount and claim_result.rowcount > 0)
+
+
 def _build_task_dispatch_prompt(
     *,
     board_id: str,
@@ -770,6 +785,12 @@ def _dispatch_next_queued_task(
         return None
 
     extras = dict(candidate.extras if isinstance(candidate.extras, dict) else {})
+
+    if not _claim_task_for_dispatch(db_session=db_session, task_id=candidate.id):
+        return None
+    db_session.refresh(candidate)
+    extras = dict(candidate.extras if isinstance(candidate.extras, dict) else {})
+
     if not isinstance(candidate.agent_id, str) or candidate.agent_id.strip() == "":
         extras["dispatch_status"] = "failed"
         extras["dispatch_error"] = "task agent_id is required"
@@ -822,6 +843,29 @@ def _dispatch_next_queued_task(
     except HTTPException as exc:
         extras["dispatch_status"] = "failed"
         extras["dispatch_error"] = str(exc.detail)
+        extras["finished_at"] = _iso_now()
+        task_service.update_task_status(
+            db_session,
+            task=candidate,
+            status="failed",
+            extras=extras,
+        )
+        return _DispatchResult(task_id=str(candidate.id), run_id=run_id)
+    except Exception as exc:  # pragma: no cover - exercised via integration tests
+        extras["dispatch_status"] = "failed"
+        extras["dispatch_error"] = str(exc) or exc.__class__.__name__
+        extras["finished_at"] = _iso_now()
+        task_service.update_task_status(
+            db_session,
+            task=candidate,
+            status="failed",
+            extras=extras,
+        )
+        return _DispatchResult(task_id=str(candidate.id), run_id=run_id)
+
+    if not isinstance(send_result, dict):
+        extras["dispatch_status"] = "failed"
+        extras["dispatch_error"] = "dispatch response must be an object"
         extras["finished_at"] = _iso_now()
         task_service.update_task_status(
             db_session,
@@ -1183,6 +1227,8 @@ async def flow_planner_sse(
     db_session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
     flow_planner_session_service: FlowPlannerSessionService = Depends(get_flow_planner_session_service),
+    flow_decomposition_service: FlowDecompositionService = Depends(get_flow_decomposition_service),
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
 ) -> Response:
     normalized_board_id = board_id.strip() or "default"
     normalized_session_key = session_key.strip()
@@ -1876,6 +1922,16 @@ def task_run_event_callback(
             dispatched_task_ids=[],
         )
 
+    current_status = _normalize_task_status(task.status)
+    if current_status in _TASK_TERMINAL_STATUSES:
+        return TaskRunEventResponse(
+            accepted=False,
+            task_id=str(task.id),
+            run_id=normalized_run_id,
+            status=current_status,
+            dispatched_task_ids=[],
+        )
+
     event_at = _parse_iso_datetime(payload.occurred_at) or datetime.now(UTC)
     event_at_iso = event_at.isoformat()
     extras["dispatch_last_event"] = payload.event_type
@@ -1891,18 +1947,8 @@ def task_run_event_callback(
         _append_artifact(task, f"artifact: {payload.artifact.strip()}")
 
     dispatched_task_ids: list[str] = []
-    next_status = _normalize_task_status(task.status)
-    terminal_statuses = {"completed", "failed", "blocked_by_approval"}
+    next_status = current_status
     if payload.event_type in {"started", "progress", "heartbeat"}:
-        if next_status in terminal_statuses:
-            task_service.update_task_extras(db_session, task=task, extras=extras)
-            return TaskRunEventResponse(
-                accepted=True,
-                task_id=str(task.id),
-                run_id=normalized_run_id,
-                status=next_status,
-                dispatched_task_ids=[],
-            )
         extras["dispatch_status"] = "running"
         next_status = "running"
     elif payload.event_type == "need_approval":
