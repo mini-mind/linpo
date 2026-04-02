@@ -412,6 +412,27 @@ describe('FlowPage', () => {
     expect(await screen.findByRole('button', { name: '发送' })).toBeInTheDocument();
   });
 
+  it('falls back to an available executor agent when a draft stores a stale agent id', async () => {
+    const flowId = seedDraftFlow('draft-stale-executor', {
+      executor_agent_id: 'agent-missing',
+    });
+    renderFlowPage(`/flow/edit/${flowId}`);
+    await waitForFlowCanvasReady();
+
+    const input = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
+    await userEvent.type(input, '请基于当前需求继续规划');
+    await userEvent.keyboard('{Enter}');
+
+    await waitFor(() => {
+      expect(mockGenerateFlowFromRequirement).toHaveBeenCalledTimes(1);
+    });
+    expect(mockGenerateFlowFromRequirement.mock.calls[0][0]).toMatchObject({
+      executor_agent_id: 'agent-alpha',
+      manager_agent_id: 'agent-alpha',
+      instance_id: 'instance-alpha',
+    });
+  });
+
   it('subscribes planner message stream through sse before planning response resolves', async () => {
     let resolveGenerate: ((value: FlowGenerateResponse) => void) | null = null;
     mockGenerateFlowFromRequirement.mockImplementation(

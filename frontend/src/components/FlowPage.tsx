@@ -701,14 +701,14 @@ export function FlowPage(): JSX.Element {
   }, [clearPlannerStepTimer]);
 
   useEffect(() => {
-    if (selectedExecutorAgentId && uniqueAgents.some((item) => item.agent_id === selectedExecutorAgentId)) {
+    const resolvedExecutorAgentId = resolveExecutorAgentId(selectedExecutorAgentId, uniqueAgents, lanes);
+    if (resolvedExecutorAgentId === selectedExecutorAgentId) {
       return;
     }
-    const fallback = uniqueAgents[0]?.agent_id ?? '';
-    if (fallback) {
-      setSelectedExecutorAgentId((current) => current || fallback);
+    if (resolvedExecutorAgentId) {
+      setSelectedExecutorAgentId(resolvedExecutorAgentId);
     }
-  }, [selectedExecutorAgentId, uniqueAgents]);
+  }, [lanes, selectedExecutorAgentId, uniqueAgents]);
 
   useEffect(() => {
     if (!isMobile) {
@@ -2296,8 +2296,7 @@ export function FlowPage(): JSX.Element {
       return;
     }
 
-    const executorAgentId =
-      selectedExecutorAgentId.trim() || uniqueAgents[0]?.agent_id?.trim() || lanes.find((lane) => lane.agentId)?.agentId || '';
+    const executorAgentId = resolveExecutorAgentId(selectedExecutorAgentId, uniqueAgents, lanes);
     if (!executorAgentId) {
       addToast('请先配置可用 Agent（泳道或默认执行 Agent）', 'warning');
       return;
@@ -2509,8 +2508,7 @@ export function FlowPage(): JSX.Element {
       addToast('当前没有可加入看板的流程节点', 'warning');
       return;
     }
-    const executorAgentId =
-      selectedExecutorAgentId.trim() || uniqueAgents[0]?.agent_id?.trim() || lanes.find((lane) => lane.agentId)?.agentId || '';
+    const executorAgentId = resolveExecutorAgentId(selectedExecutorAgentId, uniqueAgents, lanes);
     if (!executorAgentId) {
       addToast('请先配置可用 Agent（泳道或默认执行 Agent）', 'warning');
       return;
@@ -3737,7 +3735,7 @@ function buildInitialLanesFromAgent(
   agentId: string,
   agents: AggregateOverviewAgentItem[]
 ): FlowLane[] {
-  const normalizedAgentId = agentId.trim() || agents[0]?.agent_id || '';
+  const normalizedAgentId = resolveExecutorAgentId(agentId, agents, []);
   if (!normalizedAgentId) {
     return [
       {
@@ -3812,6 +3810,31 @@ function buildPlannerSessionKey(boardId: string, plannerAgentId: string): string
   const normalizedBoardId = boardId.trim() || 'default';
   const normalizedPlannerAgentId = plannerAgentId.trim() || FIXED_FLOW_PLANNER_AGENT_ID;
   return `linpo:flow:${normalizedBoardId}:planner:${normalizedPlannerAgentId}:${Math.random().toString(16).slice(2, 10)}`;
+}
+
+function resolveExecutorAgentId(
+  selectedAgentId: string,
+  agents: AggregateOverviewAgentItem[],
+  lanes: FlowLane[]
+): string {
+  const normalizedSelectedAgentId = selectedAgentId.trim();
+  if (normalizedSelectedAgentId && agents.some((agent) => agent.agent_id === normalizedSelectedAgentId)) {
+    return normalizedSelectedAgentId;
+  }
+
+  const overviewFallbackAgentId = agents[0]?.agent_id?.trim() ?? '';
+  if (overviewFallbackAgentId) {
+    return overviewFallbackAgentId;
+  }
+
+  for (const lane of lanes) {
+    const laneAgentId = lane.agentId?.trim() ?? '';
+    if (laneAgentId && agents.some((agent) => agent.agent_id === laneAgentId)) {
+      return laneAgentId;
+    }
+  }
+
+  return '';
 }
 
 function areFlowChatMessagesEqual(left: FlowChatMessageItem[], right: FlowChatMessageItem[]): boolean {
@@ -4313,7 +4336,7 @@ function prepareNodesForSubmission(
     const levelOffset = layerOffsetByLevel.get(layer) ?? 0;
     layerOffsetByLevel.set(layer, levelOffset + 1);
     const assignedAgent =
-      laneAgent ||
+      (laneAgent && normalizedAgentPool.includes(laneAgent) ? laneAgent : null) ||
       normalizedAgentPool[(layer + levelOffset) % normalizedAgentPool.length] ||
       normalizedAgentPool[0];
     return {
