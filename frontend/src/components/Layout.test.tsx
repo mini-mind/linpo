@@ -82,6 +82,15 @@ describe('Layout', () => {
     expect(screen.getByTestId('layout-main-shell')).toHaveTextContent('流程编辑内容');
   });
 
+  it('shows route transition hint immediately when clicking top nav', async () => {
+    renderLayout('/kanban');
+
+    await userEvent.click(screen.getByRole('link', { name: '流程' }));
+
+    expect(screen.getByRole('status')).toHaveTextContent('正在进入流程，请稍候...');
+    expect(screen.getByTestId('layout-main-shell')).toHaveTextContent('流程编辑内容');
+  });
+
   it('keeps main nav horizontally scrollable on mobile', () => {
     const originalWidth = window.innerWidth;
     window.innerWidth = 480;

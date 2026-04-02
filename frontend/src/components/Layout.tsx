@@ -35,6 +35,7 @@ export function Layout(): JSX.Element {
   const isInstanceFilesRoute = location.pathname.startsWith('/instance-files');
   const mainRef = useRef<HTMLElement | null>(null);
   const [flowNavTarget, setFlowNavTarget] = useState('/flow/edit/new');
+  const [routeTransitionHint, setRouteTransitionHint] = useState<RouteTransitionHint | null>(null);
 
   useEffect(() => {
     const cached = loadLastFlowEntryPath();
@@ -63,6 +64,36 @@ export function Layout(): JSX.Element {
     mainElement.scrollLeft = 0;
   }, [location.pathname, location.search]);
 
+  useEffect(() => {
+    if (!routeTransitionHint) {
+      return;
+    }
+    const current = `${location.pathname}${location.search}${location.hash}`;
+    if (current === routeTransitionHint.from) {
+      return;
+    }
+    const elapsed = Date.now() - routeTransitionHint.startedAt;
+    const delay = Math.max(0, ROUTE_TRANSITION_HINT_MIN_MS - elapsed);
+    const timer = window.setTimeout(() => {
+      setRouteTransitionHint(null);
+    }, delay);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [location.hash, location.pathname, location.search, routeTransitionHint]);
+
+  const beginRouteTransition = (targetPath: string, label: string) => {
+    const current = `${location.pathname}${location.search}${location.hash}`;
+    if (targetPath === current) {
+      return;
+    }
+    setRouteTransitionHint({
+      label,
+      startedAt: Date.now(),
+      from: current,
+    });
+  };
+
   return (
     <div style={shellStyle}>
       <style>{`${toastAnimationStyle}\n${navLinkHoverStyle}\n${globalFormControlStyle}`}</style>
@@ -84,22 +115,34 @@ export function Layout(): JSX.Element {
             <NavLink
               to="/summary"
               className="linpo-nav-link"
+              onClick={() => beginRouteTransition('/summary', '摘要')}
               style={({ isActive }) => getNavTextLinkStyle(isActive || isSummaryRoute)}
             >
               摘要
             </NavLink>
             <span aria-hidden="true" style={toolbarNavDividerStyle} data-testid="toolbar-nav-divider" />
-            <NavLink to="/kanban" className="linpo-nav-link" style={({ isActive }) => getNavTextLinkStyle(isActive)}>
+            <NavLink
+              to="/kanban"
+              className="linpo-nav-link"
+              onClick={() => beginRouteTransition('/kanban', '看板')}
+              style={({ isActive }) => getNavTextLinkStyle(isActive)}
+            >
               看板
             </NavLink>
             <span aria-hidden="true" style={toolbarNavDividerStyle} data-testid="toolbar-nav-divider" />
-            <NavLink to={flowNavTarget} className="linpo-nav-link" style={() => getNavTextLinkStyle(isFlowRoute)}>
+            <NavLink
+              to={flowNavTarget}
+              className="linpo-nav-link"
+              onClick={() => beginRouteTransition(flowNavTarget, '流程')}
+              style={() => getNavTextLinkStyle(isFlowRoute)}
+            >
               流程
             </NavLink>
             <span aria-hidden="true" style={toolbarNavDividerStyle} data-testid="toolbar-nav-divider" />
             <NavLink
               to="/instance-files"
               className="linpo-nav-link"
+              onClick={() => beginRouteTransition('/instance-files', '文件')}
               style={({ isActive }) => getNavTextLinkStyle(isActive || isInstanceFilesRoute)}
             >
               文件
@@ -118,6 +161,11 @@ export function Layout(): JSX.Element {
         style={getMainStyle(isSummaryRoute || isFlowRoute || isKanbanRoute || isInstanceFilesRoute)}
         data-testid="layout-main-shell"
       >
+        {routeTransitionHint ? (
+          <div style={routeTransitionHintOverlayStyle} role="status" aria-live="polite">
+            正在进入{routeTransitionHint.label}，请稍候...
+          </div>
+        ) : null}
         <Outlet />
       </main>
     </div>
@@ -132,6 +180,14 @@ function RedirectToSummary(): JSX.Element {
 export function RedirectToOverview(): JSX.Element {
   return <RedirectToSummary />;
 }
+
+type RouteTransitionHint = {
+  label: string;
+  startedAt: number;
+  from: string;
+};
+
+const ROUTE_TRANSITION_HINT_MIN_MS = 220;
 
 const FLOW_ENTRY_STORAGE_KEY = 'linpo.lastFlowEntryPath';
 
@@ -174,6 +230,23 @@ const shellStyle: React.CSSProperties = {
     'radial-gradient(1000px 700px at 10% -10%, rgba(16, 185, 129, 0.23), transparent 65%), radial-gradient(900px 700px at 95% 0%, rgba(14, 165, 233, 0.2), transparent 62%), linear-gradient(180deg, #f0f8fa 0%, #eef6f2 52%, #f6f8ef 100%)',
   color: '#10212f',
   fontFamily: '"IBM Plex Sans", "Noto Sans SC", "PingFang SC", sans-serif',
+};
+
+const routeTransitionHintOverlayStyle: React.CSSProperties = {
+  position: 'fixed',
+  top: '72px',
+  right: '1rem',
+  zIndex: 120,
+  padding: '0.38rem 0.62rem',
+  borderRadius: '0.55rem',
+  fontSize: '0.76rem',
+  lineHeight: 1.2,
+  letterSpacing: '0.01em',
+  color: '#0f172a',
+  background: 'rgba(255, 255, 255, 0.9)',
+  border: '1px solid rgba(15, 23, 42, 0.09)',
+  boxShadow: '0 6px 18px rgba(15, 23, 42, 0.12)',
+  pointerEvents: 'none',
 };
 
 function getToolbarStyle(isMobile: boolean): React.CSSProperties {
