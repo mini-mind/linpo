@@ -13,6 +13,7 @@ from app.api.schemas import TaskOutputPreviewResponse
 from app.db.models import Task
 
 _OUTPUT_PREVIEW_MAX_BYTES = 120_000
+_TASK_OUTPUT_SANDBOX_ROOT = Path('/tmp/linpo').resolve(strict=False)
 
 
 def parse_task_dependencies(raw: str | None) -> list[str]:
@@ -57,6 +58,23 @@ def normalize_output_path(raw_path: str) -> Path | None:
         return None
 
 
+def is_task_output_sandbox_path(path: Path) -> bool:
+    try:
+        path.relative_to(_TASK_OUTPUT_SANDBOX_ROOT)
+        return True
+    except ValueError:
+        return False
+
+
+def normalize_task_output_sandbox_path(raw_path: str) -> Path | None:
+    normalized = normalize_output_path(raw_path)
+    if normalized is None:
+        return None
+    if not is_task_output_sandbox_path(normalized):
+        return None
+    return normalized
+
+
 def extract_output_paths_from_artifact(item: str) -> list[str]:
     normalized = item.strip()
     if normalized == '':
@@ -66,10 +84,13 @@ def extract_output_paths_from_artifact(item: str) -> list[str]:
     seen: set[str] = set()
 
     def add_candidate(value: str) -> None:
-        candidate = value.strip()
-        if candidate and candidate not in seen:
-            seen.add(candidate)
-            candidates.append(candidate)
+        candidate = normalize_task_output_sandbox_path(value.strip())
+        if candidate is None:
+            return
+        normalized = str(candidate)
+        if normalized not in seen:
+            seen.add(normalized)
+            candidates.append(normalized)
 
     path_pattern = r"(/[^\s\"'<>]+)"
     lowered = normalized.lower()
@@ -105,7 +126,7 @@ def task_output_allowed_paths(task: Task) -> set[Path]:
 
     allowed: set[Path] = set()
     for candidate in candidates:
-        normalized = normalize_output_path(candidate)
+        normalized = normalize_task_output_sandbox_path(candidate)
         if normalized is not None:
             allowed.add(normalized)
     return allowed
@@ -119,7 +140,7 @@ def task_output_candidate_paths(task: Task, requested_path: str | None) -> list[
     def add_candidate(raw: str | None) -> None:
         if not isinstance(raw, str):
             return
-        normalized = normalize_output_path(raw)
+        normalized = normalize_task_output_sandbox_path(raw)
         if normalized is None or normalized not in allowed or normalized in seen:
             return
         seen.add(normalized)

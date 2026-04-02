@@ -6,7 +6,7 @@ from typing import Any
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.db.models import Task
@@ -133,9 +133,36 @@ class TaskService:
         board_id: str,
         run_id: str,
     ) -> Task | None:
+        normalized_run_id = run_id.strip()
+        if normalized_run_id == "":
+            return None
+
+        extras_board_id = Task.extras["board_id"].as_string()
+        board_match_clause = (
+            or_(extras_board_id.is_(None), extras_board_id == "", extras_board_id == "default")
+            if board_id == "default"
+            else extras_board_id == board_id
+        )
+
+        statement = (
+            select(Task)
+            .where(
+                Task.extras["dispatch_run_id"].as_string() == normalized_run_id,
+                board_match_clause,
+            )
+            .order_by(Task.created_at.desc(), Task.id.desc())
+        )
+        try:
+            db_filtered_task = db_session.execute(statement).scalars().first()
+            if db_filtered_task is not None:
+                return db_filtered_task
+        except Exception:
+            pass
+
+        # 安全回退：数据库 JSON 过滤失败时，回退到 Python 过滤，确保功能可用。
         for task in self.list_tasks_for_board(db_session, board_id=board_id):
             extras = task.extras if isinstance(task.extras, dict) else {}
-            if str(extras.get("dispatch_run_id", "")).strip() == run_id:
+            if str(extras.get("dispatch_run_id", "")).strip() == normalized_run_id:
                 return task
         return None
 

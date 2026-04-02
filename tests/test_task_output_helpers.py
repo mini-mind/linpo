@@ -5,6 +5,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import HTTPException
+import pytest
 
 from app.api.task_output_helpers import (
     build_task_output_preview,
@@ -41,6 +42,12 @@ def make_task(*, output_path: str, artifacts: list[str] | None = None) -> Task:
     )
 
 
+def _sandbox_dir() -> Path:
+    root = Path('/tmp/linpo') / 'test-task-output-helpers' / uuid4().hex
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
 def test_extract_output_paths_from_artifact_supports_prefixed_and_inline_tmp_paths() -> None:
     artifact = 'artifact: /tmp/linpo/flow-a/node-a.json and fallback /tmp/linpo/flow-a/node-b.json'
 
@@ -50,13 +57,23 @@ def test_extract_output_paths_from_artifact_supports_prefixed_and_inline_tmp_pat
     ]
 
 
-def test_resolve_task_output_path_rejects_disallowed_paths(tmp_path: Path) -> None:
-    allowed_path = tmp_path / 'allowed.json'
+def test_extract_output_paths_from_artifact_ignores_non_sandbox_absolute_paths() -> None:
+    artifact = 'artifact: /etc/passwd and inline /tmp/linpo/flow-a/node-a.json and /tmp/linpo/../linpo/flow-a/node-b.json'
+
+    assert extract_output_paths_from_artifact(artifact) == [
+        '/tmp/linpo/flow-a/node-a.json',
+        '/tmp/linpo/flow-a/node-b.json',
+    ]
+
+
+def test_resolve_task_output_path_rejects_disallowed_paths() -> None:
+    sandbox_dir = _sandbox_dir()
+    allowed_path = sandbox_dir / 'allowed.json'
     task = make_task(output_path=str(allowed_path))
 
     assert resolve_task_output_path(task, str(allowed_path)) == allowed_path.resolve()
 
-    forbidden_path = tmp_path / 'forbidden.json'
+    forbidden_path = sandbox_dir / 'forbidden.json'
     try:
         resolve_task_output_path(task, str(forbidden_path))
     except HTTPException as exc:
@@ -65,8 +82,16 @@ def test_resolve_task_output_path_rejects_disallowed_paths(tmp_path: Path) -> No
         raise AssertionError('expected resolve_task_output_path to reject forbidden path')
 
 
-def test_pick_existing_task_output_path_and_preview_round_trip(tmp_path: Path) -> None:
-    output_path = tmp_path / 'result.json'
+def test_resolve_task_output_path_rejects_task_output_outside_sandbox() -> None:
+    task = make_task(output_path='/etc/passwd')
+    with pytest.raises(HTTPException) as exc_info:
+        resolve_task_output_path(task, None)
+    assert exc_info.value.status_code == 403
+
+
+def test_pick_existing_task_output_path_and_preview_round_trip() -> None:
+    sandbox_dir = _sandbox_dir()
+    output_path = sandbox_dir / 'result.json'
     output_path.write_text('{"ok": true}', encoding='utf-8')
     task = make_task(output_path=str(output_path), artifacts=[f'artifact: {output_path}'])
 
