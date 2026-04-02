@@ -19,7 +19,7 @@ export function LoginPage(): JSX.Element {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
-  const from = (location.state as { from?: { pathname?: string } })?.from?.pathname || '/kanban';
+  const from = (location.state as { from?: { pathname?: string } })?.from?.pathname || '/summary';
 
   const handleModeToggle = useCallback(() => {
     setMode((prev) => (prev === 'login' ? 'register' : 'login'));
@@ -83,7 +83,7 @@ export function LoginPage(): JSX.Element {
         <div style={headerStyle}>
           <img src="/assets/brand/linpo-flame-icon.svg" alt="" aria-hidden="true" style={logoStyle} />
           <h1 style={titleStyle}>{title}</h1>
-          <p style={subtitleStyle}>登录后进入看板与流程协作空间</p>
+          <p style={subtitleStyle}>登录后进入摘要与流程协作空间</p>
         </div>
 
         <form onSubmit={handleSubmit} style={formStyle}>

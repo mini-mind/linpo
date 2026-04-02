@@ -13,6 +13,7 @@ const {
   mockGetAggregateOverview,
   mockGenerateFlowFromRequirement,
   mockConfirmFlowToKanban,
+  mockDeleteKanbanRequirementTasks,
   mockListKanbanTasks,
   mockRenameFlowRequirement,
   mockStopFlowRequirement,
@@ -24,6 +25,7 @@ const {
   mockGetAggregateOverview: vi.fn(),
   mockGenerateFlowFromRequirement: vi.fn(),
   mockConfirmFlowToKanban: vi.fn(),
+  mockDeleteKanbanRequirementTasks: vi.fn(),
   mockListKanbanTasks: vi.fn(),
   mockRenameFlowRequirement: vi.fn(),
   mockStopFlowRequirement: vi.fn(),
@@ -40,6 +42,7 @@ vi.mock('../api/client', async () => {
     getAggregateOverview: mockGetAggregateOverview,
     generateFlowFromRequirement: mockGenerateFlowFromRequirement,
     confirmFlowToKanban: mockConfirmFlowToKanban,
+    deleteKanbanRequirementTasks: mockDeleteKanbanRequirementTasks,
     listKanbanTasks: mockListKanbanTasks,
     renameFlowRequirement: mockRenameFlowRequirement,
     stopFlowRequirement: mockStopFlowRequirement,
@@ -104,7 +107,7 @@ function buildConfirmResponse(): FlowConfirmResponse {
   };
 }
 
-function buildGenerateResponse(): FlowGenerateResponse {
+function buildGenerateResponse(overrides: Partial<FlowGenerateResponse> = {}): FlowGenerateResponse {
   return {
     board_id: 'default',
     planner_session_key: 'linpo:flow:default:planner:claw3:test',
@@ -115,6 +118,7 @@ function buildGenerateResponse(): FlowGenerateResponse {
         id: 'node_planned_1',
         title: '规划节点A',
         description: '规划后的详细描述',
+        depends_on: [],
         x: 42,
         y: 36,
         layer: 1,
@@ -126,6 +130,7 @@ function buildGenerateResponse(): FlowGenerateResponse {
     edges: [],
     messages: [],
     created_task_ids: [],
+    ...overrides,
   };
 }
 
@@ -224,6 +229,11 @@ describe('FlowPage', () => {
     mockGetAggregateOverview.mockResolvedValue(buildOverview());
     mockGenerateFlowFromRequirement.mockResolvedValue(buildGenerateResponse());
     mockConfirmFlowToKanban.mockResolvedValue(buildConfirmResponse());
+    mockDeleteKanbanRequirementTasks.mockResolvedValue({
+      deleted: true,
+      deleted_task_ids: ['task-node-1'],
+      requirement_id: 'req-flow-a',
+    });
     mockListKanbanTasks.mockResolvedValue([]);
     mockRenameFlowRequirement.mockResolvedValue({
       requirement_id: 'req-flow-a',
@@ -296,6 +306,7 @@ describe('FlowPage', () => {
     expect(Array.isArray(payload.current_nodes)).toBe(true);
     expect(payload.current_nodes.length).toBe(1);
     expect(payload.current_nodes[0].title).toBe('现有节点');
+    expect(payload.current_nodes[0].depends_on).toEqual([]);
     expect(payload.current_edges).toEqual([]);
     expect(payload.planner_agent_id).toBe('claw3');
 
@@ -371,6 +382,90 @@ describe('FlowPage', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '发送' })).toBeInTheDocument();
     });
+  });
+
+  it('updates flow graph from planner sse patch before http response resolves', async () => {
+    let resolveGenerate: ((value: FlowGenerateResponse) => void) | null = null;
+    mockGenerateFlowFromRequirement.mockImplementation(
+      () =>
+        new Promise<FlowGenerateResponse>((resolve) => {
+          resolveGenerate = resolve;
+        })
+    );
+
+    const flowId = seedDraftFlow('draft-planner-graph-sse');
+    renderFlowPage(`/flow/edit/${flowId}`);
+    await findCanvasActionGroup();
+
+    const input = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
+    await userEvent.type(input, '请规划一个发布流程');
+    await userEvent.keyboard('{Enter}');
+
+    await waitFor(() => {
+      expect(mockCreateFlowPlannerSseClient).toHaveBeenCalledTimes(1);
+    });
+
+    const plannerSseOptions = mockCreateFlowPlannerSseClient.mock.calls[0]?.[0];
+    act(() => {
+      plannerSseOptions.onMessage({
+        type: 'planner_nodes_patched',
+        channel: `session:${plannerSseOptions.sessionKey}:messages`,
+        seq: 1,
+        timestamp: '2026-04-02T00:00:00Z',
+        payload: {
+          session_key: plannerSseOptions.sessionKey,
+          revision: 0,
+          operations: [
+            {
+              type: 'upsert_node',
+              node: {
+                id: 'node_sse_1',
+                title: 'SSE 节点A',
+                description: '先落一个节点',
+                depends_on: [],
+                sensitive: false,
+              },
+            },
+            {
+              type: 'upsert_node',
+              node: {
+                id: 'node_sse_2',
+                title: 'SSE 节点B',
+                description: '依赖第一个节点',
+                depends_on: ['node_sse_1'],
+                sensitive: true,
+              },
+            },
+          ],
+        },
+      });
+    });
+
+    expect(await screen.findByRole('button', { name: '流程节点-SSE 节点A' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '流程节点-SSE 节点B' })).toBeInTheDocument();
+    expect(document.querySelectorAll('[data-flow-edge-path="true"]').length).toBe(1);
+    expect(screen.getByTestId('flow-planning-overlay')).toBeInTheDocument();
+
+    if (!resolveGenerate) {
+      throw new Error('planner mock resolver missing');
+    }
+    const resolveGenerateFn = resolveGenerate as (value: FlowGenerateResponse) => void;
+    resolveGenerateFn(buildGenerateResponse());
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '流程节点-SSE 节点A' })).toBeInTheDocument();
+    });
+    expect(screen.queryByText('流程草图已更新。')).not.toBeInTheDocument();
+  });
+
+  it('creates unnamed draft immediately from empty state without opening create modal', async () => {
+    renderFlowPage('/flow/edit/new');
+    await findCanvasActionGroup();
+
+    await userEvent.click(screen.getByRole('button', { name: '创建流程' }));
+    expect(screen.queryByRole('dialog', { name: '新建流程' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '切换流程-未命名流程' })).toBeInTheDocument();
+    expect(screen.queryByTestId('flow-empty-selection-overlay')).not.toBeInTheDocument();
+    expect(mockGenerateFlowFromRequirement).not.toHaveBeenCalled();
   });
 
   it('supports double-click node to edit node modal', async () => {
@@ -697,7 +792,8 @@ describe('FlowPage', () => {
     const actions = await findCanvasActionGroup();
 
     const overlay = screen.getByTestId('flow-empty-selection-overlay');
-    expect(overlay).toHaveTextContent('先从左侧选择流程，或直接创建新流程');
+    expect(overlay).toHaveTextContent('欢迎来到流程编辑台');
+    expect(overlay).toHaveTextContent('从左侧选择一个流程，或创建新的流程开始规划');
     expect(within(overlay).getByRole('button', { name: '创建流程' })).toBeInTheDocument();
     expect(within(actions).getByRole('button', { name: '创建' })).toBeInTheDocument();
 
@@ -705,7 +801,9 @@ describe('FlowPage', () => {
     expect(screen.queryByRole('dialog', { name: '创建节点' })).not.toBeInTheDocument();
 
     await userEvent.click(within(overlay).getByRole('button', { name: '创建流程' }));
-    expect(await screen.findByRole('dialog', { name: '新建流程' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: '新建流程' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '切换流程-未命名流程' })).toBeInTheDocument();
+    expect(screen.queryByTestId('flow-empty-selection-overlay')).not.toBeInTheDocument();
   });
 
   it('shows runtime action button by flow state and removes instance panel', async () => {
@@ -807,6 +905,47 @@ describe('FlowPage', () => {
 
     await waitFor(() => {
       expect(mockRenameFlowRequirement).toHaveBeenCalledWith('req-flow-a', { name: '新流程名' }, undefined, 'default');
+    });
+  });
+
+  it('deletes backend requirement even when current flow is opened from local draft record', async () => {
+    window.confirm = vi.fn(() => true);
+    mockListKanbanTasks.mockResolvedValue([
+      buildKanbanTask({
+        id: 'task-a-1',
+        status: 'queued',
+        extras: {
+          requirement_id: 'req-flow-a',
+          requirement_title: '流程A',
+          flow_node: 'a_1',
+          dependencies: 'none',
+          sensitive: 'false',
+        },
+      }),
+    ]);
+    upsertFlowDraft({
+      id: 'req-flow-a',
+      name: '流程A 本地草稿',
+      requirement: '',
+      nodes: [],
+      edges: [],
+      lanes: [],
+      node_lane_by_id: {},
+      planner_session_key: null,
+      execution_session_prefix: null,
+      executor_agent_id: null,
+      created_at: '2026-03-29T08:00:00Z',
+      updated_at: '2026-03-29T08:00:00Z',
+    });
+
+    renderFlowPage('/flow/edit/req-flow-a');
+
+    await findCanvasActionGroup();
+    await userEvent.click(screen.getByRole('button', { name: '编辑流程-流程A' }));
+    await userEvent.click(screen.getByRole('button', { name: '删除流程' }));
+
+    await waitFor(() => {
+      expect(mockDeleteKanbanRequirementTasks).toHaveBeenCalledWith('req-flow-a', undefined, 'default');
     });
   });
 

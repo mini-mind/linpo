@@ -448,25 +448,37 @@ def test_flow_generate_creates_canvas_and_tasks(
         gateway_token="token-flow",
     )
 
-    from app.services.flow_decomposition_service import (
-        FlowDecompositionResult,
-        FlowNodeDraft,
-    )
+    from app.services.flow_decomposition_service import FlowDecompositionResult, FlowNodeDraft, FlowPlannerDispatch
 
     monkeypatch.setattr(
-        "app.api.tasks.FlowDecompositionService.decompose",
+        "app.api.tasks.FlowDecompositionService.dispatch_planner",
+        lambda self, **kwargs: FlowPlannerDispatch(
+            planner_agent_id="claw3",
+            planner_session_key="linpo:flow:default:planner:claw3",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.api.tasks.FlowDecompositionService.read_latest_snapshot",
         lambda self, **kwargs: FlowDecompositionResult(
             nodes=[
-                FlowNodeDraft(id="node_1", title="拆解上线计划", depends_on=[], sensitive=False),
+                FlowNodeDraft(
+                    id="node_1",
+                    title="拆解上线计划",
+                    description="先拆解",
+                    depends_on=[],
+                    sensitive=False,
+                ),
                 FlowNodeDraft(
                     id="node_2",
                     title="执行主任务",
+                    description="执行",
                     depends_on=["node_1"],
                     sensitive=False,
                 ),
                 FlowNodeDraft(
                     id="node_3",
                     title="提交审批",
+                    description="审批",
                     depends_on=["node_2"],
                     sensitive=True,
                 ),
@@ -492,6 +504,12 @@ def test_flow_generate_creates_canvas_and_tasks(
     assert payload["planner_session_key"] == "linpo:flow:default:planner:claw3"
     assert isinstance(payload["manager_session_key"], str) and payload["manager_session_key"]
     assert len(payload["nodes"]) >= 3
+    assert payload["nodes"][0]["depends_on"] == []
+    assert payload["nodes"][1]["depends_on"] == ["node_1"]
+    assert payload["edges"] == [
+        {"id": "edge-node_1-node_2", "source": "node_1", "target": "node_2"},
+        {"id": "edge-node_2-node_3", "source": "node_2", "target": "node_3"},
+    ]
     assert payload["created_task_ids"] == []
 
     list_status, _, list_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
@@ -531,6 +549,150 @@ def test_flow_generate_rejects_non_claw3_planner_agent(
     assert payload["detail"] == "planner_agent_id must be claw3"
 
 
+def test_flow_generate_parses_bare_json_text_from_planner(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("flow-generate-bare-json-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-flow-bare-json",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-bare-json",
+    )
+
+    send_calls: list[dict[str, Any]] = []
+
+    monkeypatch.setattr(
+        "app.services.flow_decomposition_service.FlowDecompositionService._build_claw3_execution_context",
+        lambda self: object(),
+    )
+
+    def fake_send_chat_message(self: Any, **kwargs: Any) -> dict[str, Any]:
+        send_calls.append(kwargs)
+        return {
+            "request_id": "req-flow-bare-json",
+            "agent_id": kwargs["agent_id"],
+            "status": "accepted",
+        }
+
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
+        fake_send_chat_message,
+    )
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.chat_history",
+        lambda self, **kwargs: {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "text": '{"nodes":[{"id":"node_1","title":"抓取 Trending","description":"输出 github_trending_today.json","depends_on":[],"sensitive":false},{"id":"node_2","title":"商业画布审批","description":"读取 github_trending_today.json 并输出 business_canvas.md","depends_on":["node_1"],"sensitive":true}]}',
+                }
+            ]
+        },
+    )
+
+    status_code, _, payload = _request_json(
+        "POST",
+        DEFAULT_FLOW_GENERATE_PATH,
+        {
+            "requirement": "今天 github 上 star 飙升的 openclaw 相关项目，并输出商业画布",
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor",
+            "planner_agent_id": "claw3",
+            "manager_agent_id": "agent-manager",
+        },
+        auth_cookie,
+    )
+
+    assert status_code == 200
+    assert len(send_calls) == 1
+    assert send_calls[0]["agent_id"] == "claw3"
+    assert payload["nodes"][0]["id"] == "node_1"
+    assert payload["nodes"][0]["depends_on"] == []
+    assert payload["nodes"][1]["id"] == "node_2"
+    assert payload["nodes"][1]["depends_on"] == ["node_1"]
+    assert payload["nodes"][1]["sensitive"] is True
+    assert payload["edges"] == [{"id": "edge-node_1-node_2", "source": "node_1", "target": "node_2"}]
+
+
+def test_flow_generate_returns_current_snapshot_when_planner_history_not_ready(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("flow-generate-current-snapshot-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-flow-current",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-current",
+    )
+
+    from app.services.flow_decomposition_service import FlowPlannerDispatch
+
+    monkeypatch.setattr(
+        "app.api.tasks.FlowDecompositionService.dispatch_planner",
+        lambda self, **kwargs: FlowPlannerDispatch(
+            planner_agent_id="claw3",
+            planner_session_key="linpo:flow:default:planner:claw3:current",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.api.tasks.FlowDecompositionService.read_latest_snapshot",
+        lambda self, **kwargs: None,
+    )
+
+    status_code, _, payload = _request_json(
+        "POST",
+        DEFAULT_FLOW_GENERATE_PATH,
+        {
+            "requirement": "把验收前置并改并行依赖",
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor",
+            "planner_agent_id": "claw3",
+            "current_nodes": [
+                {
+                    "id": "node_1",
+                    "title": "步骤1",
+                    "description": "保持已有节点",
+                    "depends_on": [],
+                    "x": 100,
+                    "y": 100,
+                    "layer": 1,
+                    "sensitive": False,
+                    "status": "queued",
+                    "agent_id": "agent-executor",
+                },
+                {
+                    "id": "node_2",
+                    "title": "步骤2",
+                    "description": "依赖步骤1",
+                    "depends_on": ["node_1"],
+                    "x": 380,
+                    "y": 100,
+                    "layer": 2,
+                    "sensitive": True,
+                    "status": "queued",
+                    "agent_id": "agent-executor",
+                },
+            ],
+            "current_edges": [],
+        },
+        auth_cookie,
+    )
+
+    assert status_code == 200
+    assert payload["planner_session_key"] == "linpo:flow:default:planner:claw3:current"
+    assert [node["id"] for node in payload["nodes"]] == ["node_1", "node_2"]
+    assert payload["nodes"][1]["depends_on"] == ["node_1"]
+    assert payload["edges"] == [{"id": "edge-node_1-node_2", "source": "node_1", "target": "node_2"}]
+    assert payload["messages"] == []
+
+
 def test_flow_planner_sse_returns_latest_planner_messages_snapshot(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -556,6 +718,11 @@ def test_flow_planner_sse_returns_latest_planner_messages_snapshot(
                     "content": [{"type": "text", "text": "已生成初版流程节点。"}],
                     "timestamp": 1775000001000,
                 },
+                {
+                    "role": "assistant",
+                    "text": '{"nodes":[{"id":"node_1","title":"规划步骤1","description":"说明","depends_on":[],"sensitive":false},{"id":"node_2","title":"规划步骤2","description":"依赖步骤1","depends_on":["node_1"],"sensitive":true}]}',
+                    "timestamp": 1775000002000,
+                },
             ]
         },
     )
@@ -571,8 +738,13 @@ def test_flow_planner_sse_returns_latest_planner_messages_snapshot(
     text = body.decode("utf-8")
     assert '"type": "snapshot_ready"' in text
     assert '"type": "planner_messages_updated"' in text
+    assert '"type": "planner_nodes_patched"' in text
+    assert '"type": "planner_snapshot_updated"' in text
     assert '"session_key": "linpo:flow:default:planner:claw3:test"' in text
+    assert '"revision": 1' in text
+    assert '"type": "upsert_node"' in text
     assert '已生成初版流程节点。' in text
+    assert '"depends_on": ["node_1"]' in text
 
 
 def test_flow_confirm_enqueues_tasks_then_dispatches_from_queue(
@@ -649,6 +821,82 @@ def test_flow_confirm_enqueues_tasks_then_dispatches_from_queue(
     list_payload = cast(list[dict[str, Any]], json.loads(list_body.decode("utf-8")))
     assert len(list_payload) == 2
     assert any(item["status"] in {"running", "completed", "blocked_by_approval"} for item in list_payload)
+
+
+def test_flow_confirm_uses_node_depends_on_as_dependency_source(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("flow-confirm-depends-on-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-flow-confirm-depends",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-confirm-depends",
+    )
+
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
+        lambda self, **kwargs: {
+            "request_id": f"req-{kwargs['agent_id']}",
+            "agent_id": kwargs["agent_id"],
+            "status": "accepted",
+        },
+    )
+
+    status_code, _, payload = _request_json(
+        "POST",
+        DEFAULT_FLOW_CONFIRM_PATH,
+        {
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor",
+            "manager_agent_id": "agent-manager",
+            "planner_session_key": "linpo:flow:default:planner:claw3:depends",
+            "execution_session_prefix": "linpo:flow:default:exec",
+            "nodes": [
+                {
+                    "id": "node_1",
+                    "title": "步骤1",
+                    "description": "先执行",
+                    "depends_on": [],
+                    "x": 100,
+                    "y": 100,
+                    "layer": 1,
+                    "sensitive": False,
+                    "status": "queued",
+                    "agent_id": "agent-executor",
+                },
+                {
+                    "id": "node_2",
+                    "title": "步骤2审批",
+                    "description": "依赖步骤1",
+                    "depends_on": ["node_1"],
+                    "x": 380,
+                    "y": 100,
+                    "layer": 2,
+                    "sensitive": True,
+                    "status": "queued",
+                    "agent_id": "agent-executor",
+                },
+            ],
+            "edges": [],
+        },
+        auth_cookie,
+    )
+
+    assert status_code == 200
+    assert payload["nodes"][1]["depends_on"] == ["node_1"]
+
+    list_status, _, list_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
+    assert list_status == 200
+    list_payload = cast(list[dict[str, Any]], json.loads(list_body.decode("utf-8")))
+    flow_tasks = [item for item in list_payload if item["extras"].get("planner_session_key") == "linpo:flow:default:planner:claw3:depends"]
+    assert len(flow_tasks) == 2
+    node_2_task = next(item for item in flow_tasks if item["extras"]["flow_node"] == "node_2")
+    assert node_2_task["extras"]["dependencies"] == "node_1"
+    assert node_2_task["extras"]["temp_input_paths"].endswith("/node_1.json")
 
 
 def test_flow_confirm_reuse_requirement_id_replaces_previous_tasks(

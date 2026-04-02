@@ -450,4 +450,232 @@ describe('flow planner sse client', () => {
       })
     );
   });
+
+  it('parses planner node patch updates from sse stream', () => {
+    const fakeSource = new FakeEventSource();
+    const onMessage = vi.fn();
+    const client = createFlowPlannerSseClient({
+      baseUrl: 'http://linpo.test:8000',
+      boardId: 'default',
+      sessionKey: 'linpo:flow:default:planner:claw3:test',
+      onMessage,
+      createEventSource: () => fakeSource,
+    });
+
+    client.connect();
+    fakeSource.emitMessage(
+      JSON.stringify({
+        type: 'planner_nodes_patched',
+        channel: 'session:linpo:flow:default:planner:claw3:test:messages',
+        seq: 4,
+        timestamp: '2026-04-02T00:00:00Z',
+        payload: {
+          session_key: 'linpo:flow:default:planner:claw3:test',
+          revision: 2,
+          operations: [
+            {
+              type: 'upsert_node',
+              node: {
+                id: 'node_1',
+                title: '节点A',
+                description: '说明',
+                depends_on: [],
+                sensitive: false,
+              },
+            },
+          ],
+        },
+      })
+    );
+
+    expect(onMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'planner_nodes_patched',
+        payload: {
+          session_key: 'linpo:flow:default:planner:claw3:test',
+          revision: 2,
+          operations: [
+            {
+              type: 'upsert_node',
+              node: {
+                id: 'node_1',
+                title: '节点A',
+                description: '说明',
+                depends_on: [],
+                sensitive: false,
+              },
+            },
+          ],
+        },
+      })
+    );
+  });
+
+  it('parses planner snapshot updates from sse stream', () => {
+    const fakeSource = new FakeEventSource();
+    const onMessage = vi.fn();
+    const client = createFlowPlannerSseClient({
+      baseUrl: 'http://linpo.test:8000',
+      boardId: 'default',
+      sessionKey: 'linpo:flow:default:planner:claw3:test',
+      onMessage,
+      createEventSource: () => fakeSource,
+    });
+
+    client.connect();
+    fakeSource.emitMessage(
+      JSON.stringify({
+        type: 'planner_snapshot_updated',
+        channel: 'session:linpo:flow:default:planner:claw3:test:messages',
+        seq: 5,
+        timestamp: '2026-04-02T00:00:00Z',
+        payload: {
+          session_key: 'linpo:flow:default:planner:claw3:test',
+          revision: 3,
+          nodes: [
+            {
+              id: 'node_1',
+              title: '节点A',
+              description: '说明',
+              depends_on: [],
+              sensitive: false,
+            },
+          ],
+        },
+      })
+    );
+
+    expect(onMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'planner_snapshot_updated',
+        payload: {
+          session_key: 'linpo:flow:default:planner:claw3:test',
+          revision: 3,
+          nodes: [
+            {
+              id: 'node_1',
+              title: '节点A',
+              description: '说明',
+              depends_on: [],
+              sensitive: false,
+            },
+          ],
+        },
+      })
+    );
+  });
+
+  it('parses planner node patch updates from sse stream', () => {
+    const fakeSource = new FakeEventSource();
+    const onMessage = vi.fn();
+    const client = createFlowPlannerSseClient({
+      baseUrl: 'http://linpo.test:8000',
+      boardId: 'default',
+      sessionKey: 'linpo:flow:default:planner:claw3:test',
+      onMessage,
+      createEventSource: () => fakeSource,
+    });
+
+    client.connect();
+    fakeSource.emitMessage(
+      JSON.stringify({
+        type: 'planner_nodes_patched',
+        channel: 'session:linpo:flow:default:planner:claw3:test:messages',
+        seq: 4,
+        timestamp: '2026-04-02T00:00:00Z',
+        payload: {
+          session_key: 'linpo:flow:default:planner:claw3:test',
+          revision: 2,
+          operations: [
+            {
+              type: 'upsert_node',
+              node: {
+                id: 'node_1',
+                title: '节点A',
+                description: '增量更新',
+                depends_on: [],
+                sensitive: false,
+              },
+            },
+          ],
+        },
+      })
+    );
+
+    expect(onMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'planner_nodes_patched',
+        payload: {
+          session_key: 'linpo:flow:default:planner:claw3:test',
+          revision: 2,
+          operations: [
+            {
+              type: 'upsert_node',
+              node: {
+                id: 'node_1',
+                title: '节点A',
+                description: '增量更新',
+                depends_on: [],
+                sensitive: false,
+              },
+            },
+          ],
+        },
+      })
+    );
+  });
+
+  it('parses planner snapshot updates from sse stream', () => {
+    const fakeSource = new FakeEventSource();
+    const onMessage = vi.fn();
+    const client = createFlowPlannerSseClient({
+      baseUrl: 'http://linpo.test:8000',
+      boardId: 'default',
+      sessionKey: 'linpo:flow:default:planner:claw3:test',
+      onMessage,
+      createEventSource: () => fakeSource,
+    });
+
+    client.connect();
+    fakeSource.emitMessage(
+      JSON.stringify({
+        type: 'planner_snapshot_updated',
+        channel: 'session:linpo:flow:default:planner:claw3:test:messages',
+        seq: 5,
+        timestamp: '2026-04-02T00:00:00Z',
+        payload: {
+          session_key: 'linpo:flow:default:planner:claw3:test',
+          revision: 3,
+          nodes: [
+            {
+              id: 'node_1',
+              title: '节点A',
+              description: '完整快照',
+              depends_on: [],
+              sensitive: false,
+            },
+          ],
+        },
+      })
+    );
+
+    expect(onMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'planner_snapshot_updated',
+        payload: {
+          session_key: 'linpo:flow:default:planner:claw3:test',
+          revision: 3,
+          nodes: [
+            {
+              id: 'node_1',
+              title: '节点A',
+              description: '完整快照',
+              depends_on: [],
+              sensitive: false,
+            },
+          ],
+        },
+      })
+    );
+  });
 });

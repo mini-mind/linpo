@@ -1,5 +1,14 @@
 # Linpo 文档变更记录
 
+## 2026-04-02
+
+- PRD 调整默认入口：网站根路径 `/` 改为“已登录进摘要、未登录进 landing”，登录后的默认回跳页同步从看板切换为摘要。
+- PRD 调整看板状态视图：最左侧新增 `待确认` 动作列，原工具栏中的“创建任务”迁入该列头，快捷建流入口从看板弹窗移除。
+- PRD 调整流程页新建交互：侧栏“新建”改为直接创建 `未命名流程` 草稿并进入编辑，不再先弹窗收集流程名/需求。
+- PRD/Architecture 将流程规划协议从“planner 最终返回整图 JSON”升级为“基于 `depends_on` 的节点级实时增删改流”，明确边仅为派生视图，不再作为独立权威写入对象。
+- PRD/Architecture 细化流程页实时可见性：`flow.generate` 只负责启动 planner 会话并返回 session/snapshot，流程图修改本身通过 planner SSE 连续推送，用户无需等待最终 commit 才能看到改图进度。
+- PRD/Architecture 冻结流程规划 SSE 的最小图补丁事件：`planner_nodes_patched`（`upsert_node/delete_node`）与 `planner_snapshot_updated`（重连/纠偏快照）。
+
 ## 2026-04-01
 
 - PRD/Architecture 细化流程规划消息流契约：前端在发送 `flow.generate` 前确定 `planner_session_key`，并通过 `/api/v1/boards/{board_id}/tasks/flow/planner-sse` 订阅 `planner_messages_updated` SSE 增量。

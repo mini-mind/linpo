@@ -25,7 +25,7 @@ function renderLoginPageWithMemoryRouter(initialEntry = '/login') {
           <LocationDisplay />
           <Routes>
             <Route path="/login" element={<LoginPage />} />
-            <Route path="/kanban" element={<div>kanban-page</div>} />
+            <Route path="/summary" element={<div>summary-page</div>} />
           </Routes>
         </AuthProvider>
       </ToastProvider>
@@ -57,7 +57,7 @@ describe('LoginPage auth flow', () => {
     expect(await screen.findByText('登录到灵盘')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('用户名或邮箱')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('密码')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '登录' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '登录' })).toBeInTheDocument();
   });
 
   it('toggles to register form when clicking register link', async () => {
@@ -85,7 +85,7 @@ describe('LoginPage auth flow', () => {
     expect(await screen.findByText('登录到灵盘')).toBeInTheDocument();
   });
 
-  it('calls login API and redirects to /kanban on valid credentials', async () => {
+  it('calls login API and redirects to /summary on valid credentials', async () => {
     window.localStorage.setItem('linpo.currentInstanceId', 'stale-instance');
     mockFetch
       .mockResolvedValueOnce({
@@ -125,11 +125,11 @@ describe('LoginPage auth flow', () => {
     expect(window.localStorage.getItem('linpo.currentInstanceId')).toBeNull();
 
     await waitFor(() => {
-      expect(screen.getByTestId('location-display')).toHaveTextContent('/kanban');
+      expect(screen.getByTestId('location-display')).toHaveTextContent('/summary');
     });
   });
 
-  it('calls register API and redirects to /kanban on valid input', async () => {
+  it('calls register API and redirects to /summary on valid input', async () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: false,
@@ -171,7 +171,7 @@ describe('LoginPage auth flow', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId('location-display')).toHaveTextContent('/kanban');
+      expect(screen.getByTestId('location-display')).toHaveTextContent('/summary');
     });
   });
 
@@ -314,7 +314,7 @@ describe('Route guarding', () => {
     expect(await screen.findByText('欢迎, alice')).toBeInTheDocument();
   });
 
-  it('redirects authenticated users from /login to /kanban by default', async () => {
+  it('redirects authenticated users from /login to /summary by default', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
       status: 200,
@@ -331,7 +331,7 @@ describe('Route guarding', () => {
                 <Route element={<PublicRoute />}>
                   <Route path="/login" element={<LoginPage />} />
                 </Route>
-                <Route path="/kanban" element={<div>看板页内容</div>} />
+                <Route path="/summary" element={<div>摘要页内容</div>} />
               </Routes>
             </MemoryRouter>
           </AuthProvider>
@@ -341,7 +341,41 @@ describe('Route guarding', () => {
 
     render(<App />);
 
-    expect(await screen.findByText('看板页内容')).toBeInTheDocument();
-    expect(screen.getByTestId('location-display')).toHaveTextContent('/kanban');
+    expect(await screen.findByText('摘要页内容')).toBeInTheDocument();
+    expect(screen.getByTestId('location-display')).toHaveTextContent('/summary');
+  });
+
+  it('redirects unauthenticated root access to /landing', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: async () => ({ detail: 'Unauthorized' }),
+    });
+
+    function LandingPage() {
+      return <div>landing-page</div>;
+    }
+
+    function App() {
+      return (
+        <ToastProvider>
+          <AuthProvider>
+            <BrowserRouter>
+              <Routes>
+                <Route path="/landing" element={<LandingPage />} />
+                <Route element={<ProtectedRoute />}>
+                  <Route path="/" element={<div>root-protected</div>} />
+                </Route>
+              </Routes>
+            </BrowserRouter>
+          </AuthProvider>
+        </ToastProvider>
+      );
+    }
+
+    window.history.pushState({}, '', '/');
+    render(<App />);
+
+    expect(await screen.findByText('landing-page')).toBeInTheDocument();
   });
 });

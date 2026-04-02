@@ -1,6 +1,8 @@
 import { resolveCurrentInstanceId } from '../hooks/useCurrentInstance';
 import {
   type FlowChatMessageItem,
+  type FlowPlannerNodeDraft,
+  type FlowPlannerNodeOperation,
   type KanbanTaskItem,
   type RealtimeObserverChannel,
   type ObserverRealtimeMessage,
@@ -102,6 +104,18 @@ export interface FlowPlannerErrorPayload {
   detail: string;
 }
 
+export interface FlowPlannerNodesPatchedPayload {
+  session_key: string;
+  revision: number;
+  operations: FlowPlannerNodeOperation[];
+}
+
+export interface FlowPlannerSnapshotUpdatedPayload {
+  session_key: string;
+  revision: number;
+  nodes: FlowPlannerNodeDraft[];
+}
+
 export type FlowPlannerRealtimeMessage =
   | {
       type: 'snapshot_ready';
@@ -116,6 +130,20 @@ export type FlowPlannerRealtimeMessage =
       seq: number;
       timestamp: string;
       payload: FlowPlannerMessagesUpdatedPayload;
+    }
+  | {
+      type: 'planner_nodes_patched';
+      channel: `session:${string}:messages`;
+      seq: number;
+      timestamp: string;
+      payload: FlowPlannerNodesPatchedPayload;
+    }
+  | {
+      type: 'planner_snapshot_updated';
+      channel: `session:${string}:messages`;
+      seq: number;
+      timestamp: string;
+      payload: FlowPlannerSnapshotUpdatedPayload;
     }
   | {
       type: 'error';
@@ -433,6 +461,33 @@ function isFlowChatMessageItem(value: unknown): value is FlowChatMessageItem {
   );
 }
 
+function isFlowPlannerNodeDraft(value: unknown): value is FlowPlannerNodeDraft {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    typeof value.id === 'string' &&
+    typeof value.title === 'string' &&
+    (value.description === undefined || value.description === null || typeof value.description === 'string') &&
+    Array.isArray(value.depends_on) &&
+    value.depends_on.every((item) => typeof item === 'string') &&
+    typeof value.sensitive === 'boolean'
+  );
+}
+
+function isFlowPlannerNodeOperation(value: unknown): value is FlowPlannerNodeOperation {
+  if (!isRecord(value) || typeof value.type !== 'string') {
+    return false;
+  }
+  if (value.type === 'upsert_node') {
+    return isFlowPlannerNodeDraft(value.node);
+  }
+  if (value.type === 'delete_node') {
+    return typeof value.node_id === 'string' && value.node_id.trim() !== '';
+  }
+  return false;
+}
+
 function isSessionMessagesChannel(value: unknown): value is `session:${string}:messages` {
   return typeof value === 'string' && value.startsWith('session:') && value.endsWith(':messages');
 }
@@ -482,6 +537,54 @@ function parseFlowPlannerRealtimeMessage(raw: string): FlowPlannerRealtimeMessag
       payload: {
         session_key: payload.session_key,
         messages: payload.messages,
+      },
+    };
+  }
+
+  if (type === 'planner_nodes_patched') {
+    if (
+      typeof payload.session_key !== 'string' ||
+      typeof payload.revision !== 'number' ||
+      !Number.isInteger(payload.revision) ||
+      payload.revision < 0 ||
+      !Array.isArray(payload.operations) ||
+      !payload.operations.every((item) => isFlowPlannerNodeOperation(item))
+    ) {
+      throw new Error('Invalid flow planner realtime message');
+    }
+    return {
+      type,
+      channel,
+      seq,
+      timestamp,
+      payload: {
+        session_key: payload.session_key,
+        revision: payload.revision,
+        operations: payload.operations,
+      },
+    };
+  }
+
+  if (type === 'planner_snapshot_updated') {
+    if (
+      typeof payload.session_key !== 'string' ||
+      typeof payload.revision !== 'number' ||
+      !Number.isInteger(payload.revision) ||
+      payload.revision < 0 ||
+      !Array.isArray(payload.nodes) ||
+      !payload.nodes.every((item) => isFlowPlannerNodeDraft(item))
+    ) {
+      throw new Error('Invalid flow planner realtime message');
+    }
+    return {
+      type,
+      channel,
+      seq,
+      timestamp,
+      payload: {
+        session_key: payload.session_key,
+        revision: payload.revision,
+        nodes: payload.nodes,
       },
     };
   }

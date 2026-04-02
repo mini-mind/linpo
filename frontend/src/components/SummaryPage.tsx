@@ -452,7 +452,7 @@ export function SummaryPage(): JSX.Element {
 
   if (isLoading) {
     return (
-      <section style={getWorkspacePageStyle()}>
+      <section style={getWorkspacePageStyle({ extra: summaryPageStyle })} data-testid="summary-page">
         <div style={getWorkspaceBodyShellStyle({ isMobile, extra: isMobile ? bodyShellMobileStyle : bodyShellStyle })}>
           <div style={getWorkspaceBodyInnerStyle({ isMobile, maxWidthPx: WORKSPACE_CONTENT_MAX_WIDTH_PX, extra: getBodyStyle(isMobile) })} data-testid="summary-content-frame">
             <div style={getContentStyle(isMobile)}>
@@ -471,7 +471,7 @@ export function SummaryPage(): JSX.Element {
   if (overviewError && !overview) {
     const envelope = overviewError instanceof ApiError ? overviewError.envelope : null;
     return (
-      <section style={getWorkspacePageStyle()}>
+      <section style={getWorkspacePageStyle({ extra: summaryPageStyle })} data-testid="summary-page">
         <div style={getWorkspaceBodyShellStyle({ isMobile, extra: isMobile ? bodyShellMobileStyle : bodyShellStyle })}>
           <div style={getWorkspaceBodyInnerStyle({ isMobile, maxWidthPx: WORKSPACE_CONTENT_MAX_WIDTH_PX, extra: getBodyStyle(isMobile) })} data-testid="summary-content-frame">
             <div style={getContentStyle(isMobile)}>
@@ -491,7 +491,7 @@ export function SummaryPage(): JSX.Element {
   }
 
   return (
-    <section style={getWorkspacePageStyle()}>
+    <section style={getWorkspacePageStyle({ extra: summaryPageStyle })} data-testid="summary-page">
       <div style={getWorkspaceBodyShellStyle({ isMobile, extra: isMobile ? bodyShellMobileStyle : bodyShellStyle })}>
         <div style={getWorkspaceBodyInnerStyle({ isMobile, maxWidthPx: WORKSPACE_CONTENT_MAX_WIDTH_PX, extra: getBodyStyle(isMobile) })} data-testid="summary-content-frame">
           <div style={getContentStyle(isMobile)}>
@@ -1080,9 +1080,19 @@ function getVisibleMetricLabels(labels: string[], isMobile: boolean): string[] {
   return next.length > 0 ? next : labels;
 }
 
-const bodyShellStyle: React.CSSProperties = {};
+const summaryPageStyle: React.CSSProperties = {
+  minHeight: '100%',
+  height: 'auto',
+  overflow: 'visible',
+};
 
-const bodyShellMobileStyle: React.CSSProperties = {};
+const bodyShellStyle: React.CSSProperties = {
+  flex: '0 0 auto',
+};
+
+const bodyShellMobileStyle: React.CSSProperties = {
+  flex: '0 0 auto',
+};
 
 function getContentStyle(isMobile: boolean): React.CSSProperties {
   return {
@@ -1101,8 +1111,8 @@ function getBodyStyle(isMobile: boolean): React.CSSProperties {
     minHeight: 0,
     display: 'flex',
     flexDirection: 'column',
-    flex: 1,
-    overflow: 'hidden',
+    flex: '0 0 auto',
+    overflow: 'visible',
   };
 }
 

@@ -364,6 +364,7 @@ export interface FlowCanvasNode {
   id: string;
   title: string;
   description?: string | null;
+  depends_on: string[];
   x: number;
   y: number;
   layer: number;
@@ -371,6 +372,24 @@ export interface FlowCanvasNode {
   status: TaskStatus;
   agent_id: string | null;
 }
+
+export interface FlowPlannerNodeDraft {
+  id: string;
+  title: string;
+  description?: string | null;
+  depends_on: string[];
+  sensitive: boolean;
+}
+
+export type FlowPlannerNodeOperation =
+  | {
+      type: 'upsert_node';
+      node: FlowPlannerNodeDraft;
+    }
+  | {
+      type: 'delete_node';
+      node_id: string;
+    };
 
 export interface FlowCanvasEdge {
   id: string;

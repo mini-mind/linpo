@@ -5,11 +5,12 @@ import os
 import re
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from fastapi import HTTPException
 
+from app.adapters.provider_adapter import ProviderAdapter
 from app.adapters.openclaw_adapter import OpenClawAdapter
 from app.services.openclaw_client import OpenClawClient
 from app.services.provider_application_service import (
@@ -24,8 +25,8 @@ _DEFAULT_DECOMPOSITION_GATEWAY_TOKEN = "OuWJnOh9wo_8wLkIQv262NPc0tgnjo1G4yCMh9v-
 _DEFAULT_DECOMPOSITION_AGENT_ID = "claw3"
 _DEFAULT_HISTORY_LIMIT = 60
 _DEFAULT_MAX_NODES = 12
-_DEFAULT_POLL_TIMES = 40
 _DEFAULT_POLL_INTERVAL_SECONDS = 0.6
+_DEFAULT_POLL_TIMEOUT_SECONDS = 60.0
 _DEFAULT_JSON_REPAIR_ATTEMPTS = 2
 
 
@@ -41,6 +42,12 @@ class FlowNodeDraft:
 @dataclass(frozen=True)
 class FlowDecompositionResult:
     nodes: list[FlowNodeDraft]
+    planner_session_key: str
+
+
+@dataclass(frozen=True)
+class FlowPlannerDispatch:
+    planner_agent_id: str
     planner_session_key: str
 
 
@@ -67,26 +74,61 @@ class FlowDecompositionService:
         if normalized_requirement == "":
             raise HTTPException(status_code=400, detail="requirement is required")
 
-        normalized_planner_agent_id = self._resolve_planner_agent_id(planner_agent_id)
-        context = self._build_claw3_execution_context()
-        normalized_planner_session_key = (
-            planner_session_key.strip()
-            if isinstance(planner_session_key, str) and planner_session_key.strip()
-            else f"linpo:flow:{board_id}:planner:claw3:{uuid4().hex[:8]}"
-        )
         normalized_nodes = current_nodes or []
-        normalized_edges = current_edges or []
+        dispatch = self.dispatch_planner(
+            requirement=normalized_requirement,
+            board_id=board_id,
+            planner_agent_id=planner_agent_id,
+            planner_session_key=planner_session_key,
+            flow_name=flow_name,
+            current_nodes=normalized_nodes,
+            current_edges=current_edges or [],
+        )
+        assistant_message = self._wait_for_assistant_json(
+            context=self._build_claw3_execution_context(),
+            session_key=dispatch.planner_session_key,
+            planner_agent_id=dispatch.planner_agent_id,
+        )
+        nodes = self._parse_nodes_from_message(assistant_message, current_nodes=normalized_nodes)
+        return FlowDecompositionResult(
+            nodes=nodes,
+            planner_session_key=dispatch.planner_session_key,
+        )
+
+    def build_realtime_execution_context(self) -> ProviderExecutionContext:
+        return self._build_claw3_execution_context()
+
+    def dispatch_planner(
+        self,
+        *,
+        requirement: str,
+        board_id: str,
+        planner_agent_id: str | None = None,
+        planner_session_key: str | None = None,
+        flow_name: str | None = None,
+        current_nodes: list[dict[str, Any]] | None = None,
+        current_edges: list[dict[str, Any]] | None = None,
+    ) -> FlowPlannerDispatch:
+        normalized_requirement = requirement.strip()
+        if normalized_requirement == "":
+            raise HTTPException(status_code=400, detail="requirement is required")
+
+        normalized_planner_agent_id = self._resolve_planner_agent_id(planner_agent_id)
+        normalized_planner_session_key = self._normalize_planner_session_key(
+            board_id=board_id,
+            planner_session_key=planner_session_key,
+        )
         prompt = self._build_decomposition_prompt(
             normalized_requirement,
             flow_name=flow_name,
-            current_nodes=normalized_nodes,
-            current_edges=normalized_edges,
+            current_nodes=current_nodes or [],
+            current_edges=current_edges or [],
         )
 
         try:
             self._provider_application_service.send_chat_message(
                 data_source="openclaw",
-                execution_context=context,
+                execution_context=self._build_claw3_execution_context(),
                 agent_id=normalized_planner_agent_id,
                 message=prompt,
                 session_key=normalized_planner_session_key,
@@ -96,19 +138,64 @@ class FlowDecompositionService:
         except Exception as exc:
             raise HTTPException(status_code=503, detail=f"Flow decomposition dispatch failed: {exc}") from exc
 
-        assistant_message = self._wait_for_assistant_json(
-            context=context,
-            session_key=normalized_planner_session_key,
+        return FlowPlannerDispatch(
             planner_agent_id=normalized_planner_agent_id,
-        )
-        nodes = self._parse_nodes_from_message(assistant_message, current_nodes=normalized_nodes)
-        return FlowDecompositionResult(
-            nodes=nodes,
             planner_session_key=normalized_planner_session_key,
         )
 
-    def build_realtime_execution_context(self) -> ProviderExecutionContext:
-        return self._build_claw3_execution_context()
+    def read_latest_snapshot(
+        self,
+        *,
+        planner_session_key: str,
+        current_nodes: list[dict[str, Any]] | None = None,
+        limit: int = _DEFAULT_HISTORY_LIMIT,
+    ) -> FlowDecompositionResult | None:
+        context = self._build_claw3_execution_context()
+        try:
+            history_payload = self._provider_application_service.chat_history(
+                data_source="openclaw",
+                execution_context=context,
+                session_key=planner_session_key,
+                limit=limit,
+            )
+        except HTTPException as exc:
+            if self._is_retryable_history_error(exc):
+                return None
+            raise
+        return self.snapshot_from_history_messages(
+            messages_raw=history_payload.get("messages", []),
+            planner_session_key=planner_session_key,
+            current_nodes=current_nodes,
+        )
+
+    def snapshot_from_history_messages(
+        self,
+        *,
+        messages_raw: object,
+        planner_session_key: str,
+        current_nodes: list[dict[str, Any]] | None = None,
+    ) -> FlowDecompositionResult | None:
+        if not isinstance(messages_raw, list):
+            return None
+
+        for item in reversed(messages_raw):
+            if not isinstance(item, dict):
+                continue
+            role = item.get("role")
+            if not isinstance(role, str) or role != "assistant":
+                continue
+            text = self._extract_history_item_text(item).strip()
+            if text == "" or not self._extract_json_candidates(text):
+                continue
+            try:
+                nodes = self._parse_nodes_from_message(text, current_nodes=current_nodes)
+            except HTTPException:
+                continue
+            return FlowDecompositionResult(
+                nodes=nodes,
+                planner_session_key=planner_session_key,
+            )
+        return None
 
     def _build_claw3_execution_context(self) -> ProviderExecutionContext:
         base_url = self._decomposition_base_url()
@@ -131,7 +218,7 @@ class FlowDecompositionService:
             instance_name="claw3",
         )
         return ProviderExecutionContext(
-            adapter=adapter,
+            adapter=cast(ProviderAdapter, adapter),
             cache_key=("flow-decomposer-claw3", base_url, origin, self._decomposition_agent_id()),
         )
 
@@ -144,7 +231,8 @@ class FlowDecompositionService:
     ) -> str:
         repaired_signatures: set[str] = set()
         repair_attempts = 0
-        for _ in range(_DEFAULT_POLL_TIMES):
+        deadline = time.monotonic() + max(_DEFAULT_POLL_TIMEOUT_SECONDS, 0.0)
+        while True:
             try:
                 payload = self._provider_application_service.chat_history(
                     data_source="openclaw",
@@ -185,11 +273,25 @@ class FlowDecompositionService:
                         repaired_signatures.add(signature)
                         repair_attempts += 1
                         break
+            if time.monotonic() >= deadline:
+                break
             time.sleep(_DEFAULT_POLL_INTERVAL_SECONDS)
 
         raise HTTPException(
             status_code=503,
             detail="Flow decomposition failed: claw3 did not return structured JSON",
+        )
+
+    def _normalize_planner_session_key(
+        self,
+        *,
+        board_id: str,
+        planner_session_key: str | None,
+    ) -> str:
+        return (
+            planner_session_key.strip()
+            if isinstance(planner_session_key, str) and planner_session_key.strip()
+            else f"linpo:flow:{board_id}:planner:claw3:{uuid4().hex[:8]}"
         )
 
     def _parse_nodes_from_message(
@@ -389,6 +491,7 @@ class FlowDecompositionService:
             "5) 每个节点 description 要写清执行要点；若节点可再拆分，请明确写出“可委派 subagent 并行执行”的建议；"
             "6) 最终至少一个敏感节点 sensitive=true 用于审批；"
             "7) 每个节点 description 需包含文件交接要求：明确输入/输出文件语义，并提醒执行阶段“若运行环境无法直接访问默认路径，可先在可访问工作目录处理中间文件，但 completed 前必须回写到指定输出路径；否则应 failed 并说明原因”。"
+            "8) 不要等待全量思考完再一次性输出；一旦形成当前可用草图，就立即输出完整最新 nodes JSON。若后续需要修订，可继续输出更新后的完整最新 nodes JSON。"
         )
         if not current_nodes and not current_edges:
             return f"{base_prompt}用户需求：{requirement}"

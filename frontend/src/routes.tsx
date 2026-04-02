@@ -14,6 +14,9 @@ export function ProtectedRoute(): JSX.Element {
   }
 
   if (!user) {
+    if (location.pathname === '/') {
+      return <Navigate to="/landing" replace />;
+    }
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
@@ -33,7 +36,7 @@ export function PublicRoute(): JSX.Element {
   }
 
   if (user) {
-    const from = (location.state as { from?: { pathname?: string } })?.from?.pathname || '/kanban';
+    const from = (location.state as { from?: { pathname?: string } })?.from?.pathname || '/summary';
     return <Navigate to={from} replace />;
   }
 

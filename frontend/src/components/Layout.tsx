@@ -124,13 +124,13 @@ export function Layout(): JSX.Element {
   );
 }
 
-function RedirectToKanban(): JSX.Element {
-  return <Navigate to="/kanban" replace />;
+function RedirectToSummary(): JSX.Element {
+  return <Navigate to="/summary" replace />;
 }
 
 // Kept for backward compatibility in existing test imports.
 export function RedirectToOverview(): JSX.Element {
-  return <RedirectToKanban />;
+  return <RedirectToSummary />;
 }
 
 const FLOW_ENTRY_STORAGE_KEY = 'linpo.lastFlowEntryPath';

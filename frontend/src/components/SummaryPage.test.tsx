@@ -303,7 +303,9 @@ describe('SummaryPage', () => {
   it('keeps summary content within constrained desktop frame width', async () => {
     renderPage();
 
+    const page = await screen.findByTestId('summary-page');
     const contentFrame = await screen.findByTestId('summary-content-frame');
+    expect(page).toHaveStyle({ minHeight: '100%', height: 'auto', overflow: 'visible' });
     expect(contentFrame).toHaveStyle({ maxWidth: '1520px' });
   });
 });

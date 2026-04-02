@@ -197,7 +197,7 @@ describe('CollabPage', () => {
     }));
   });
 
-  it('renders flat toolbar with + action and keeps view mode select', async () => {
+  it('renders flat toolbar with pending-confirmation column action and keeps view mode select', async () => {
     mockGetAggregateOverview.mockResolvedValue(buildOverview({ agents: [buildAgent()] }));
 
     renderPage();
@@ -210,7 +210,9 @@ describe('CollabPage', () => {
     expect(screen.getByLabelText('看板统计')).toBeInTheDocument();
     expect(screen.getByText('流程数量 0')).toBeInTheDocument();
     expect(screen.queryByText('分列方式')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '➕任务' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '➕任务' })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '待确认', level: 3 })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: '创建任务' })[0]).toBeInTheDocument();
     expect(screen.getByTestId('kanban-frame')).toHaveStyle({ width: '100%' });
     expect(screen.getByTestId('kanban-board')).toHaveStyle({ overflowX: 'auto' });
   });
@@ -227,7 +229,8 @@ describe('CollabPage', () => {
 
     renderPage();
 
-    await screen.findByRole('heading', { name: '进行中', level: 3 });
+    await screen.findByRole('heading', { name: '待确认', level: 3 });
+    expect(screen.getByRole('heading', { name: '进行中', level: 3 })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '失败', level: 3 })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '阻塞', level: 3 })).toBeInTheDocument();
 
@@ -370,11 +373,12 @@ describe('CollabPage', () => {
     renderPage();
 
     await screen.findByTestId('kanban-board');
-    await userEvent.click(screen.getByRole('button', { name: '➕任务' }));
-    expect(screen.getByRole('dialog', { name: '创建任务入口' })).toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole('button', { name: '创建任务' })[0]);
+    const dialog = screen.getByRole('dialog', { name: '创建任务入口' });
+    expect(dialog).toBeInTheDocument();
 
     await userEvent.type(screen.getByLabelText('需求'), '新增排队任务');
-    await userEvent.click(screen.getByRole('button', { name: '创建任务' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: '创建任务' }));
 
     await waitFor(() => {
       expect(mockCreateKanbanTask).toHaveBeenCalledWith(
@@ -391,17 +395,15 @@ describe('CollabPage', () => {
     expect(await screen.findByText('新增排队任务')).toBeInTheDocument();
   });
 
-  it('navigates to flow page from quick-create modal create-flow action', async () => {
+  it('removes create-flow action from quick-create modal', async () => {
     mockGetAggregateOverview.mockResolvedValue(buildOverview({ agents: [buildAgent()] }));
 
     renderPage();
 
     await screen.findByTestId('kanban-board');
-    await userEvent.click(screen.getByRole('button', { name: '➕任务' }));
-    await userEvent.type(screen.getByLabelText('需求'), '生成审批流程');
-    await userEvent.click(screen.getByRole('button', { name: '创建流程' }));
-
-    expect(await screen.findByText('flow-page')).toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole('button', { name: '创建任务' })[0]);
+    const dialog = screen.getByRole('dialog', { name: '创建任务入口' });
+    expect(within(dialog).queryByRole('button', { name: '创建流程' })).not.toBeInTheDocument();
   });
 
   it('opens task detail dialog when clicking a task card', async () => {

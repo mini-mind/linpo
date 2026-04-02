@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom';
 import { act, cleanup, screen, waitFor } from '@testing-library/react';
-import { Outlet } from 'react-router-dom';
+import { Navigate, Outlet } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../hooks/useAuth', () => ({
@@ -18,7 +18,7 @@ vi.mock('../routes', () => ({
 
 vi.mock('./Layout', () => ({
   Layout: () => <Outlet />,
-  RedirectToOverview: () => <div>redirect-kanban</div>,
+  RedirectToOverview: () => <Navigate to="/summary" replace />,
 }));
 
 vi.mock('./CollabPage', () => ({
@@ -98,6 +98,21 @@ describe('app routes', () => {
   it('renders /summary as first-class app route', async () => {
     document.body.innerHTML = '<div id="root"></div>';
     window.history.pushState({}, '', '/summary');
+
+    await act(async () => {
+      await import('../main');
+    });
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/summary');
+    });
+
+    expect(screen.getByText('summary-page')).toBeInTheDocument();
+  });
+
+  it('redirects root path to /summary in authenticated app shell', async () => {
+    document.body.innerHTML = '<div id="root"></div>';
+    window.history.pushState({}, '', '/');
 
     await act(async () => {
       await import('../main');

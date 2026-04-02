@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import asyncio
@@ -245,8 +246,138 @@ def _normalize_flow_chat_messages(messages_raw: object) -> list[FlowChatMessageI
     return items
 
 
+def _normalize_depends_on_values(
+    raw_values: object,
+    *,
+    node_id: str,
+    known_node_ids: set[str],
+) -> list[str]:
+    if not isinstance(raw_values, list):
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in raw_values:
+        if not isinstance(item, str):
+            continue
+        dependency = item.strip()
+        if dependency == "" or dependency == node_id or dependency not in known_node_ids or dependency in seen:
+            continue
+        seen.add(dependency)
+        normalized.append(dependency)
+    return normalized
+
+
+def _node_declares_depends_on(node: FlowCanvasNode) -> bool:
+    return "depends_on" in node.model_fields_set
+
+
+def _resolve_canvas_depends_on(
+    *,
+    nodes: list[FlowCanvasNode],
+    edges: list[FlowCanvasEdge],
+) -> dict[str, list[str]]:
+    node_ids = {node.id for node in nodes}
+    edge_deps_by_target: dict[str, list[str]] = {node.id: [] for node in nodes}
+
+    for edge in edges:
+        if edge.source not in node_ids or edge.target not in node_ids:
+            continue
+        if edge.source == edge.target:
+            continue
+        deps = edge_deps_by_target.setdefault(edge.target, [])
+        if edge.source not in deps:
+            deps.append(edge.source)
+
+    depends_on_by_target: dict[str, list[str]] = {}
+    for node in nodes:
+        raw_values: object
+        if _node_declares_depends_on(node):
+            raw_values = node.depends_on
+        else:
+            raw_values = edge_deps_by_target.get(node.id, [])
+        depends_on_by_target[node.id] = _normalize_depends_on_values(
+            raw_values,
+            node_id=node.id,
+            known_node_ids=node_ids,
+        )
+    return depends_on_by_target
+
+
+def _normalize_canvas_nodes(
+    *,
+    nodes: list[FlowCanvasNode],
+    edges: list[FlowCanvasEdge],
+) -> list[FlowCanvasNode]:
+    depends_on_by_target = _resolve_canvas_depends_on(nodes=nodes, edges=edges)
+    return [
+        node.model_copy(update={"depends_on": depends_on_by_target.get(node.id, [])})
+        for node in nodes
+    ]
+
+
 def _flow_chat_messages_signature(messages: list[FlowChatMessageItem]) -> str:
     return json.dumps([item.model_dump(mode="json") for item in messages], ensure_ascii=False, separators=(",", ":"))
+
+
+def _flow_canvas_nodes_signature(nodes: list[FlowCanvasNode]) -> str:
+    return json.dumps(
+        [item.model_dump(mode="json") for item in nodes],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def _diff_flow_canvas_nodes(
+    previous: list[FlowCanvasNode],
+    current: list[FlowCanvasNode],
+) -> tuple[list[FlowCanvasNode], list[str]]:
+    previous_by_id = {node.id: node for node in previous}
+    current_by_id = {node.id: node for node in current}
+    patched: list[FlowCanvasNode] = []
+
+    for node in current:
+        previous_node = previous_by_id.get(node.id)
+        if previous_node is None:
+            patched.append(node)
+            continue
+        if previous_node.model_dump(mode="json") != node.model_dump(mode="json"):
+            patched.append(node)
+
+    removed_node_ids = [node_id for node_id in previous_by_id if node_id not in current_by_id]
+    return patched, removed_node_ids
+
+
+def _to_planner_node_draft_payload(node: FlowCanvasNode) -> dict[str, Any]:
+    return {
+        "id": node.id,
+        "title": node.title,
+        "description": node.description,
+        "depends_on": node.depends_on,
+        "sensitive": node.sensitive,
+    }
+
+
+def _build_planner_node_operations(
+    previous: list[FlowCanvasNode],
+    current: list[FlowCanvasNode],
+) -> list[dict[str, Any]]:
+    patched_nodes, removed_node_ids = _diff_flow_canvas_nodes(previous, current)
+    operations: list[dict[str, Any]] = []
+    for node_id in removed_node_ids:
+        operations.append(
+            {
+                "type": "delete_node",
+                "node_id": node_id,
+            }
+        )
+    for node in patched_nodes:
+        operations.append(
+            {
+                "type": "upsert_node",
+                "node": _to_planner_node_draft_payload(node),
+            }
+        )
+    return operations
 
 
 def _is_retryable_flow_history_error(exc: HTTPException) -> bool:
@@ -676,17 +807,7 @@ def _to_flow_drafts_from_canvas(
     nodes: list[FlowCanvasNode],
     edges: list[FlowCanvasEdge],
 ) -> list[_FlowNodeDraft]:
-    node_ids = {node.id for node in nodes}
-    deps_by_target: dict[str, list[str]] = {node.id: [] for node in nodes}
-
-    for edge in edges:
-        if edge.source not in node_ids or edge.target not in node_ids:
-            continue
-        if edge.source == edge.target:
-            continue
-        deps = deps_by_target.setdefault(edge.target, [])
-        if edge.source not in deps:
-            deps.append(edge.source)
+    deps_by_target = _resolve_canvas_depends_on(nodes=nodes, edges=edges)
 
     drafts: list[_FlowNodeDraft] = []
     for node in nodes:
@@ -744,6 +865,7 @@ def _build_canvas_nodes(
                     id=node.id,
                     title=node.title,
                     description=node.description,
+                    depends_on=node.depends_on,
                     x=160 + layer_index * 280,
                     y=120 + row_index * 148,
                     layer=layer_index + 1,
@@ -1137,47 +1259,64 @@ def generate_flow(
     if not requirement:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="requirement is required")
     planner_agent_id = _resolve_flow_planner_agent_id(payload.planner_agent_id)
-
-    decomposition = flow_decomposition_service.decompose(
+    normalized_current_nodes = _normalize_canvas_nodes(
+        nodes=payload.current_nodes,
+        edges=payload.current_edges,
+    )
+    dispatch = flow_decomposition_service.dispatch_planner(
         requirement=requirement,
         board_id=normalized_board_id,
         planner_agent_id=planner_agent_id,
         planner_session_key=payload.planner_session_key,
         flow_name=payload.flow_name,
-        current_nodes=[node.model_dump(mode="json") for node in payload.current_nodes],
+        current_nodes=[node.model_dump(mode="json") for node in normalized_current_nodes],
         current_edges=[edge.model_dump(mode="json") for edge in payload.current_edges],
     )
-    planner_session_key = decomposition.planner_session_key
+    planner_session_key = dispatch.planner_session_key
     manager_session_key = f"linpo:flow:{normalized_board_id}:manager"
     execution_session_prefix = f"linpo:flow:{normalized_board_id}:exec"
-
-    nodes = [
-        _FlowNodeDraft(
-            id=node.id,
-            title=node.title,
-            description=node.description,
-            depends_on=node.depends_on,
-            sensitive=node.sensitive,
+    try:
+        latest_snapshot = flow_decomposition_service.read_latest_snapshot(
+            planner_session_key=planner_session_key,
+            current_nodes=[node.model_dump(mode="json") for node in normalized_current_nodes],
+            limit=200,
         )
-        for node in decomposition.nodes
-    ]
-    layers = _resolve_layers(nodes)
-    canvas_nodes = _build_canvas_nodes(
-        nodes=nodes,
-        layers=layers,
-        agent_id=payload.executor_agent_id.strip() or None,
-        status_by_node_id={},
-    )
-    canvas_edges = _build_canvas_edges(nodes)
+    except HTTPException:
+        latest_snapshot = None
 
-    messages: list[FlowChatMessageItem] = [
-        FlowChatMessageItem(role="user", content=requirement, created_at=datetime.now(UTC).isoformat()),
-        FlowChatMessageItem(
-            role="assistant",
-            content="流程草图已生成，确认后才会写入看板队列。",
-            created_at=datetime.now(UTC).isoformat(),
-        ),
-    ]
+    if latest_snapshot is None:
+        canvas_nodes = normalized_current_nodes
+        canvas_edges = _build_canvas_edges(
+            [
+                _FlowNodeDraft(
+                    id=node.id,
+                    title=node.title,
+                    description=(node.description or "").strip(),
+                    depends_on=node.depends_on,
+                    sensitive=node.sensitive,
+                )
+                for node in normalized_current_nodes
+            ]
+        )
+    else:
+        snapshot_nodes = [
+            _FlowNodeDraft(
+                id=node.id,
+                title=node.title,
+                description=node.description,
+                depends_on=node.depends_on,
+                sensitive=node.sensitive,
+            )
+            for node in latest_snapshot.nodes
+        ]
+        layers = _resolve_layers(snapshot_nodes)
+        canvas_nodes = _build_canvas_nodes(
+            nodes=snapshot_nodes,
+            layers=layers,
+            agent_id=payload.executor_agent_id.strip() or None,
+            status_by_node_id={},
+        )
+        canvas_edges = _build_canvas_edges(snapshot_nodes)
 
     return FlowGenerateResponse(
         board_id=normalized_board_id,
@@ -1186,12 +1325,12 @@ def generate_flow(
         execution_session_prefix=execution_session_prefix,
         nodes=canvas_nodes,
         edges=canvas_edges,
-        messages=messages,
+        messages=[],
         created_task_ids=[],
     )
 
 
-@router.get("/flow/planner-sse")
+@router.get("/flow/planner-sse", response_model=None)
 async def flow_planner_sse(
     board_id: str,
     request: Request,
@@ -1199,7 +1338,7 @@ async def flow_planner_sse(
     snapshot_only: bool = Query(default=False, alias="snapshotOnly"),
     flow_decomposition_service: FlowDecompositionService = Depends(get_flow_decomposition_service),
     provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
-) -> StreamingResponse:
+) -> Response:
     del board_id
     normalized_session_key = session_key.strip()
     if normalized_session_key == "":
@@ -1225,12 +1364,17 @@ async def flow_planner_sse(
                 }
             )
         ]
+        revision = 0
         try:
             history_payload = provider_application_service.chat_history(
                 data_source="openclaw",
                 execution_context=context,
                 session_key=normalized_session_key,
                 limit=200,
+            )
+            snapshot = flow_decomposition_service.snapshot_from_history_messages(
+                messages_raw=history_payload.get("messages", []),
+                planner_session_key=normalized_session_key,
             )
             snapshot_messages = _normalize_flow_chat_messages(history_payload.get("messages", []))
             if snapshot_messages:
@@ -1244,6 +1388,64 @@ async def flow_planner_sse(
                             "payload": {
                                 "session_key": normalized_session_key,
                                 "messages": [item.model_dump(mode="json") for item in snapshot_messages],
+                            },
+                        }
+                    )
+                )
+            if snapshot is not None:
+                revision += 1
+                snapshot_nodes = _build_canvas_nodes(
+                    nodes=[
+                        _FlowNodeDraft(
+                            id=node.id,
+                            title=node.title,
+                            description=node.description,
+                            depends_on=node.depends_on,
+                            sensitive=node.sensitive,
+                        )
+                        for node in snapshot.nodes
+                    ],
+                    layers=_resolve_layers(
+                        [
+                            _FlowNodeDraft(
+                                id=node.id,
+                                title=node.title,
+                                description=node.description,
+                                depends_on=node.depends_on,
+                                sensitive=node.sensitive,
+                            )
+                            for node in snapshot.nodes
+                        ]
+                    ),
+                    agent_id=None,
+                    status_by_node_id={},
+                )
+                snapshot_parts.append(
+                    _to_sse_data(
+                        {
+                            "type": "planner_nodes_patched",
+                            "channel": channel,
+                            "seq": len(snapshot_parts),
+                            "timestamp": datetime.now(tz=UTC).isoformat(),
+                            "payload": {
+                                "session_key": normalized_session_key,
+                                "revision": revision,
+                                "operations": _build_planner_node_operations([], snapshot_nodes),
+                            },
+                        }
+                    )
+                )
+                snapshot_parts.append(
+                    _to_sse_data(
+                        {
+                            "type": "planner_snapshot_updated",
+                            "channel": channel,
+                            "seq": len(snapshot_parts),
+                            "timestamp": datetime.now(tz=UTC).isoformat(),
+                            "payload": {
+                                "session_key": normalized_session_key,
+                                "revision": revision,
+                                "nodes": [_to_planner_node_draft_payload(item) for item in snapshot_nodes],
                             },
                         }
                     )
@@ -1267,10 +1469,13 @@ async def flow_planner_sse(
             headers=headers,
         )
 
-    async def event_stream() -> object:
+    async def event_stream() -> AsyncIterator[str]:
         seq = 0
+        revision = 0
         keepalive_elapsed = 0.0
         last_signature = ""
+        last_snapshot_nodes: list[FlowCanvasNode] = []
+        last_snapshot_signature = ""
         try:
             yield _to_sse_data(
                 {
@@ -1314,6 +1519,31 @@ async def flow_planner_sse(
 
                 next_messages = _normalize_flow_chat_messages(history_payload.get("messages", []))
                 next_signature = _flow_chat_messages_signature(next_messages)
+                snapshot = flow_decomposition_service.snapshot_from_history_messages(
+                    messages_raw=history_payload.get("messages", []),
+                    planner_session_key=normalized_session_key,
+                    current_nodes=[node.model_dump(mode="json") for node in last_snapshot_nodes],
+                )
+                next_snapshot_nodes: list[FlowCanvasNode] = []
+                next_snapshot_signature = ""
+                if snapshot is not None:
+                    snapshot_drafts = [
+                        _FlowNodeDraft(
+                            id=node.id,
+                            title=node.title,
+                            description=node.description,
+                            depends_on=node.depends_on,
+                            sensitive=node.sensitive,
+                        )
+                        for node in snapshot.nodes
+                    ]
+                    next_snapshot_nodes = _build_canvas_nodes(
+                        nodes=snapshot_drafts,
+                        layers=_resolve_layers(snapshot_drafts),
+                        agent_id=None,
+                        status_by_node_id={},
+                    )
+                    next_snapshot_signature = _flow_canvas_nodes_signature(next_snapshot_nodes)
                 if next_signature != last_signature:
                     seq += 1
                     last_signature = next_signature
@@ -1330,6 +1560,44 @@ async def flow_planner_sse(
                             },
                         }
                     )
+                if next_snapshot_signature != "" and next_snapshot_signature != last_snapshot_signature:
+                    operations = _build_planner_node_operations(last_snapshot_nodes, next_snapshot_nodes)
+                    if operations:
+                        revision += 1
+                        seq += 1
+                        keepalive_elapsed = 0.0
+                        yield _to_sse_data(
+                            {
+                                "type": "planner_nodes_patched",
+                                "channel": channel,
+                                "seq": seq,
+                                "timestamp": datetime.now(tz=UTC).isoformat(),
+                                "payload": {
+                                    "session_key": normalized_session_key,
+                                    "revision": revision,
+                                    "operations": operations,
+                                },
+                            }
+                        )
+                    else:
+                        revision += 1
+                    seq += 1
+                    keepalive_elapsed = 0.0
+                    yield _to_sse_data(
+                        {
+                            "type": "planner_snapshot_updated",
+                            "channel": channel,
+                            "seq": seq,
+                            "timestamp": datetime.now(tz=UTC).isoformat(),
+                            "payload": {
+                                "session_key": normalized_session_key,
+                                "revision": revision,
+                                "nodes": [_to_planner_node_draft_payload(item) for item in next_snapshot_nodes],
+                            },
+                        }
+                    )
+                    last_snapshot_nodes = next_snapshot_nodes
+                    last_snapshot_signature = next_snapshot_signature
                 elif snapshot_only:
                     return
                 else:
@@ -2117,18 +2385,8 @@ def sync_requirement(
             continue
         node_ids.add(node_id)
         normalized_nodes.append(node)
-
-    deps_by_target: dict[str, list[str]] = {node.id: [] for node in normalized_nodes}
-    for edge in payload.edges:
-        source = edge.source.strip()
-        target = edge.target.strip()
-        if source == "" or target == "" or source == target:
-            continue
-        if source not in node_ids or target not in node_ids:
-            continue
-        deps = deps_by_target.setdefault(target, [])
-        if source not in deps:
-            deps.append(source)
+    normalized_nodes = _normalize_canvas_nodes(nodes=normalized_nodes, edges=payload.edges)
+    deps_by_target = _resolve_canvas_depends_on(nodes=normalized_nodes, edges=payload.edges)
 
     updated_task_ids: list[str] = []
     created_task_ids: list[str] = []

@@ -39,9 +39,10 @@ import {
   WORKSPACE_NARROW_MOBILE_BREAKPOINT_PX,
 } from './workspaceLayout';
 
-type StatusColumnKey = TaskStatus | 'blocked';
+type StatusColumnKey = 'pending_confirmation' | TaskStatus | 'blocked';
 
 const STATUS_COLUMNS: Array<{ key: StatusColumnKey; title: string }> = [
+  { key: 'pending_confirmation', title: '待确认' },
   { key: 'queued', title: '待调度' },
   { key: 'running', title: '进行中' },
   { key: 'blocked', title: '阻塞' },
@@ -491,22 +492,6 @@ export default function CollabPage(): JSX.Element {
     }
   }, [addToast, loadOverview, requirementInput, selectedAgent]);
 
-  const handleCreateFlow = useCallback(() => {
-    const requirement = requirementInput.trim();
-    const draftExecutorAgentId = selectedAgent?.agentId ?? '';
-    const draftFlowName = requirement ? (requirement.length <= 8 ? requirement : `${requirement.slice(0, 8)}...`) : '';
-    setIsCreateModalOpen(false);
-    setRequirementInput('');
-    navigate('/flow/edit/new', {
-      state: {
-        open_create_modal: true,
-        draft_requirement: requirement || undefined,
-        draft_flow_name: draftFlowName || undefined,
-        draft_executor_agent_id: draftExecutorAgentId || undefined,
-      },
-    });
-  }, [navigate, requirementInput, selectedAgent?.agentId]);
-
   const handleDeleteTaskNode = useCallback(async (task: BoardTask) => {
     const confirmed = window.confirm(`确认删除节点「${task.title}」吗？`);
     if (!confirmed) {
@@ -884,14 +869,6 @@ export default function CollabPage(): JSX.Element {
             ) : null}
           </div>
           <div style={isMobile ? { ...toolbarGroupStyle, ...toolbarGroupMobileStyle } : toolbarGroupStyle}>
-            <button
-              type="button"
-              style={isMobile ? { ...flatActionButtonStyle, ...flatActionButtonMobileStyle } : flatActionButtonStyle}
-              onClick={() => setIsCreateModalOpen(true)}
-              aria-label="➕任务"
-            >
-              ➕任务
-            </button>
             <select
               id="view-mode"
               aria-label="分列方式"
@@ -944,9 +921,6 @@ export default function CollabPage(): JSX.Element {
             <div style={modalActionStyle}>
               <button type="button" style={flatActionButtonStyle} onClick={() => void handleCreateTask()} disabled={!canCreateTask}>
                 创建任务
-              </button>
-              <button type="button" style={flatActionButtonStyle} onClick={handleCreateFlow}>
-                创建流程
               </button>
               <button
                 type="button"
@@ -1294,13 +1268,37 @@ export default function CollabPage(): JSX.Element {
                 ) : (
                   <>
                     <header
-                      style={columnHeaderStyle}
+                      style={
+                        viewMode === 'status' && column.id === 'status:pending_confirmation'
+                          ? { ...columnHeaderStyle, ...pendingConfirmationColumnHeaderStyle }
+                          : columnHeaderStyle
+                      }
                       onDoubleClick={!isNarrowMobileBoard ? () => toggleColumnCollapsed(column.id) : undefined}
                       title={!isNarrowMobileBoard ? `折叠列 ${column.title}` : undefined}
                     >
-                      <h3 style={columnTitleStyle}>{column.title}</h3>
+                      <div style={columnTitleRowStyle}>
+                        <h3 style={columnTitleStyle}>{column.title}</h3>
+                        <span style={columnCountStyle}>{column.tasks.length}</span>
+                      </div>
                       <div style={columnHeaderActionStyle}>
-                      <span style={columnCountStyle}>{column.tasks.length}</span>
+                      {viewMode === 'status' && column.id === 'status:pending_confirmation' ? (
+                        <button
+                          type="button"
+                          style={pendingConfirmationCreateButtonStyle}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setIsCreateModalOpen(true);
+                          }}
+                          onDoubleClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                          }}
+                          aria-label="创建任务"
+                        >
+                          +
+                        </button>
+                      ) : null}
                       {viewMode === 'flow' && column.flowId ? (
                       <>
                         <span style={flowColumnStatePillStyle}>
@@ -1368,7 +1366,11 @@ export default function CollabPage(): JSX.Element {
                   {loading ? (
                     <p style={emptyTextStyle}>同步中...</p>
                   ) : column.tasks.length === 0 ? (
-                    <p style={emptyTextStyle}>暂无任务</p>
+                    <p style={emptyTextStyle}>
+                      {viewMode === 'status' && column.id === 'status:pending_confirmation'
+                        ? '从这里创建新的待执行任务。'
+                        : '暂无任务'}
+                    </p>
                   ) : (
                     column.tasks.map((task) => (
                       <article key={task.id} style={taskCardStyle}>
@@ -2959,18 +2961,38 @@ const mobileAddAgentColumnStyle: React.CSSProperties = {
 };
 
 const columnHeaderStyle: React.CSSProperties = {
-  padding: '0.58rem 0.65rem',
-  borderBottom: '1px solid rgba(148, 163, 184, 0.26)',
+  minHeight: '3.25rem',
+  padding: '0.72rem 0.75rem',
+  border: '1px solid rgba(148, 163, 184, 0.24)',
+  borderBottomColor: 'rgba(148, 163, 184, 0.3)',
+  borderRadius: '0.8rem 0.8rem 0 0',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
   cursor: 'pointer',
+  background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(248, 250, 252, 0.9) 100%)',
+  boxShadow: '0 10px 24px -22px rgba(15, 23, 42, 0.5), inset 0 -1px 0 rgba(255, 255, 255, 0.64)',
+};
+
+const pendingConfirmationColumnHeaderStyle: React.CSSProperties = {
+  border: '1px solid rgba(14, 116, 144, 0.2)',
+  borderBottomColor: 'rgba(14, 116, 144, 0.24)',
+  borderRadius: '0.8rem 0.8rem 0 0',
+  background: 'linear-gradient(180deg, rgba(240, 249, 255, 0.98) 0%, rgba(236, 253, 245, 0.88) 100%)',
+  boxShadow: '0 10px 28px -22px rgba(14, 116, 144, 0.7), inset 0 -1px 0 rgba(255, 255, 255, 0.72)',
 };
 
 const columnTitleStyle: React.CSSProperties = {
   margin: 0,
   fontSize: '0.84rem',
   fontWeight: 700,
+};
+
+const columnTitleRowStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '0.38rem',
+  minWidth: 0,
 };
 
 const columnCountStyle: React.CSSProperties = {
@@ -2990,6 +3012,26 @@ const columnHeaderActionStyle: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   gap: '0.42rem',
+};
+
+const pendingConfirmationCreateButtonStyle: React.CSSProperties = {
+  width: '1.6rem',
+  minWidth: '1.6rem',
+  height: '1.6rem',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  border: '1px solid rgba(14, 116, 144, 0.28)',
+  borderRadius: '999px',
+  background: 'linear-gradient(180deg, rgba(14, 165, 233, 0.14) 0%, rgba(16, 185, 129, 0.12) 100%)',
+  boxShadow: '0 8px 18px -14px rgba(14, 116, 144, 0.8)',
+  color: '#0f766e',
+  fontSize: '0.95rem',
+  fontWeight: 700,
+  lineHeight: 1,
+  cursor: 'pointer',
+  padding: 0,
+  flexShrink: 0,
 };
 
 const interruptFlowButtonStyle: React.CSSProperties = {

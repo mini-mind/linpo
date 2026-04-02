@@ -496,12 +496,32 @@ class FlowCanvasNode(BaseModel):
     id: str
     title: str
     description: str | None = Field(default=None, max_length=16000)
+    depends_on: list[str] = Field(default_factory=list)
     x: float
     y: float
     layer: int
     sensitive: bool
     status: TaskStatus
     agent_id: str | None
+
+    @field_validator("depends_on", mode="before")
+    @classmethod
+    def _normalize_depends_on(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            return []
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            dependency = item.strip()
+            if dependency == "" or dependency in seen:
+                continue
+            seen.add(dependency)
+            normalized.append(dependency)
+        return normalized
 
 
 class FlowCanvasEdge(BaseModel):
