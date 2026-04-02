@@ -202,7 +202,7 @@ export function FlowPage(): JSX.Element {
 
   const [isSubmittingFlow, setIsSubmittingFlow] = useState(false);
   const [isFlowActioning, setIsFlowActioning] = useState(false);
-  const [isSyncingBlockedFlow, setIsSyncingBlockedFlow] = useState(false);
+  const [, setIsSyncingBlockedFlow] = useState(false);
 
   const [flowNodes, setFlowNodes] = useState<FlowCanvasNode[]>([]);
   const flowEdges = useMemo(() => deriveEdgesFromNodes(flowNodes), [flowNodes]);
@@ -1012,6 +1012,14 @@ export function FlowPage(): JSX.Element {
                 <div style={flowSidebarSectionListStyle}>
                   {section.items.map((item) => {
                     const isActive = item.id === currentFlowId.trim();
+                    const isActiveFlowRunnable =
+                      isActive
+                      && flowNodes.length > 0
+                      && !isSubmittingFlow
+                      && !isPlanning
+                      && !isFlowActioning
+                      && item.statusLabel !== '运行中'
+                      && item.statusLabel !== '阻塞';
                     return (
                       <article
                         key={item.id}
@@ -1050,6 +1058,17 @@ export function FlowPage(): JSX.Element {
                         >
                           编辑
                         </button>
+                        {isActive ? (
+                          <button
+                            type="button"
+                            style={isDrawerMode ? { ...flowSidebarItemRunButtonStyle, ...flowSidebarItemRunButtonDrawerStyle } : flowSidebarItemRunButtonStyle}
+                            onClick={() => setIsSubmitConfirmOpen(true)}
+                            disabled={!isActiveFlowRunnable}
+                            aria-label={`运行流程-${item.name}`}
+                          >
+                            {isSubmittingFlow ? '运行中...' : '运行'}
+                          </button>
+                        ) : null}
                       </article>
                     );
                   })}
@@ -1061,7 +1080,17 @@ export function FlowPage(): JSX.Element {
       </>
     );
     },
-    [currentFlowId, flowSidebarSections, handleCreateBlankFlow, navigateToFlowEditor, openFlowDetailFromSidebar]
+    [
+      currentFlowId,
+      flowNodes.length,
+      flowSidebarSections,
+      handleCreateBlankFlow,
+      isFlowActioning,
+      isPlanning,
+      isSubmittingFlow,
+      navigateToFlowEditor,
+      openFlowDetailFromSidebar,
+    ]
   );
 
   const applyDraftRecord = useCallback((draft: FlowDraftRecord) => {
@@ -2555,28 +2584,16 @@ export function FlowPage(): JSX.Element {
     setIsSubmitConfirmOpen(true);
   }, [flowRuntimeState, handleContinueFlow, handleStopFlow]);
 
-  const displayFlowName = hasSelectedFlow ? (flowDisplayName.trim() || '未命名流程') : '创建';
-  const flowStateLabel = isBlankFlowSelection
-    ? '未选择流程'
-    : flowRuntimeState === 'running'
-      ? '运行中'
-      : flowRuntimeState === 'blocked'
-        ? '阻塞中'
-        : '可运行';
-  const flowActionButtonLabel = isBlankFlowSelection ? '创建' : (isSubmittingFlow ? '运行中...' : '运行');
-  const flowActionDisabled = isBlankFlowSelection
-    ? false
-    : (!canConfirm || isSubmittingFlow || isPlanning || isFlowActioning);
   const showMobileDeleteAction = isMobile && canEdit && selectedNodeIds.length > 0;
   const showMobileNodeActions = isMobile && hasSelectedFlow;
-  const floatingCanvasActionsNode = (
+  const floatingCanvasActionsNode = isMobile && hasSelectedFlow ? (
     <div
       style={isMobile ? { ...canvasFloatingActionsStyle, ...canvasFloatingActionsMobileStyle } : canvasFloatingActionsStyle}
       role="group"
       aria-label="流程画布操作"
       data-testid="flow-canvas-floating-actions"
     >
-      <div style={isMobile ? { ...canvasFloatingMetaRowStyle, ...canvasFloatingMetaRowMobileStyle } : canvasFloatingMetaRowStyle}>
+      <div style={isMobile ? { ...canvasFloatingActionRowStyle, ...canvasFloatingActionRowMobileStyle } : canvasFloatingActionRowStyle}>
         {isMobile ? (
           <button
             type="button"
@@ -2588,11 +2605,6 @@ export function FlowPage(): JSX.Element {
             流程列表
           </button>
         ) : null}
-        {hasSelectedFlow ? <span style={canvasFloatingFlowNameStyle}>{displayFlowName}</span> : null}
-        <span style={isMobile ? { ...flowStateBadgeStyle, ...flowStateBadgeMobileStyle } : flowStateBadgeStyle}>{flowStateLabel}</span>
-        {isSyncingBlockedFlow ? <span style={flowSyncBadgeStyle}>同步中...</span> : null}
-      </div>
-      <div style={isMobile ? { ...canvasFloatingActionRowStyle, ...canvasFloatingActionRowMobileStyle } : canvasFloatingActionRowStyle}>
         {showMobileNodeActions ? (
           <button
             type="button"
@@ -2627,23 +2639,9 @@ export function FlowPage(): JSX.Element {
             删除节点
           </button>
         ) : null}
-        <button
-          type="button"
-          style={isMobile ? { ...primaryButtonStyle, ...canvasFloatingPrimaryActionMobileStyle } : { ...primaryButtonStyle, ...canvasFloatingPrimaryActionStyle }}
-          onClick={() => {
-            if (isBlankFlowSelection) {
-              handleCreateBlankFlow();
-              return;
-            }
-            setIsSubmitConfirmOpen(true);
-          }}
-          disabled={flowActionDisabled}
-        >
-          {flowActionButtonLabel}
-        </button>
       </div>
     </div>
-  );
+  ) : null;
   const canvasPaneNode = (
     <div style={canvasPaneStyle}>
       {floatingCanvasActionsNode}
@@ -4265,22 +4263,6 @@ const breadcrumbCurrentButtonMobileStyle: React.CSSProperties = {
   maxWidth: '58vw',
 };
 
-const flowStateBadgeStyle: React.CSSProperties = {
-  border: '1px solid rgba(148, 163, 184, 0.35)',
-  borderRadius: '999px',
-  padding: '0.1rem 0.5rem',
-  fontSize: '0.72rem',
-  fontWeight: 700,
-  color: '#334155',
-  background: 'rgba(255, 255, 255, 0.74)',
-  whiteSpace: 'nowrap',
-};
-
-const flowStateBadgeMobileStyle: React.CSSProperties = {
-  fontSize: '0.68rem',
-  padding: '0.08rem 0.45rem',
-};
-
 const primaryButtonStyle: React.CSSProperties = {
   border: '1px solid rgba(14, 116, 144, 0.52)',
   background: 'linear-gradient(120deg, #0f766e 0%, #0284c7 100%)',
@@ -4306,17 +4288,6 @@ const flowContinueButtonStyle: React.CSSProperties = {
   ...primaryButtonStyle,
   border: '1px solid rgba(180, 83, 9, 0.46)',
   background: 'linear-gradient(120deg, #b45309 0%, #d97706 100%)',
-};
-
-const flowSyncBadgeStyle: React.CSSProperties = {
-  border: '1px solid rgba(14, 116, 144, 0.34)',
-  borderRadius: '999px',
-  padding: '0.1rem 0.5rem',
-  fontSize: '0.7rem',
-  fontWeight: 700,
-  color: '#075985',
-  background: 'rgba(224, 242, 254, 0.85)',
-  whiteSpace: 'nowrap',
 };
 
 const flowWorkspaceStyle: React.CSSProperties = {
@@ -4580,11 +4551,11 @@ const flowSidebarItemActiveStyle: React.CSSProperties = {
 };
 
 const flowSidebarItemBodyButtonStyle: React.CSSProperties = {
-  paddingBottom: '2.15rem',
+  paddingRight: '4.3rem',
 };
 
 const flowSidebarItemBodyButtonDrawerStyle: React.CSSProperties = {
-  paddingBottom: '1.9rem',
+  paddingRight: '4.05rem',
 };
 
 const flowSidebarItemTitleStyle: React.CSSProperties = {
@@ -4613,22 +4584,46 @@ const flowSidebarItemMetaDrawerStyle: React.CSSProperties = {
 const flowSidebarItemEditButtonStyle: React.CSSProperties = {
   position: 'absolute',
   right: '0.58rem',
-  bottom: '0.55rem',
-  minWidth: '3.2rem',
+  top: '0.55rem',
+  minWidth: '3rem',
   border: '1px solid rgba(148, 163, 184, 0.34)',
   borderRadius: '0.5rem',
   background: 'rgba(255, 255, 255, 0.88)',
   color: '#334155',
-  fontSize: '0.74rem',
+  fontSize: '0.72rem',
   fontWeight: 700,
   cursor: 'pointer',
-  padding: '0.3rem 0.46rem',
+  padding: '0.26rem 0.44rem',
 };
 
 const flowSidebarItemEditButtonDrawerStyle: React.CSSProperties = {
   right: '0.46rem',
-  bottom: '0.42rem',
+  top: '0.42rem',
+  minWidth: '2.84rem',
+  fontSize: '0.68rem',
+  borderRadius: '0.42rem',
+};
+
+const flowSidebarItemRunButtonStyle: React.CSSProperties = {
+  position: 'absolute',
+  right: '0.58rem',
+  top: '2.4rem',
   minWidth: '3rem',
+  border: '1px solid rgba(14, 116, 144, 0.42)',
+  borderRadius: '0.5rem',
+  background: 'linear-gradient(120deg, #0f766e 0%, #0284c7 100%)',
+  color: '#f8fafc',
+  fontSize: '0.72rem',
+  fontWeight: 700,
+  cursor: 'pointer',
+  padding: '0.26rem 0.44rem',
+  boxShadow: '0 12px 24px -24px rgba(15, 23, 42, 0.9)',
+};
+
+const flowSidebarItemRunButtonDrawerStyle: React.CSSProperties = {
+  right: '0.46rem',
+  top: '2.08rem',
+  minWidth: '2.84rem',
   fontSize: '0.68rem',
   borderRadius: '0.42rem',
 };
@@ -4759,35 +4754,6 @@ const canvasFloatingActionsMobileStyle: React.CSSProperties = {
   gap: '0.42rem',
 };
 
-const canvasFloatingMetaRowStyle: React.CSSProperties = {
-  width: '100%',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'flex-end',
-  gap: '0.42rem',
-  flexWrap: 'wrap',
-  pointerEvents: 'auto',
-};
-
-const canvasFloatingMetaRowMobileStyle: React.CSSProperties = {
-  justifyContent: 'stretch',
-};
-
-const canvasFloatingFlowNameStyle: React.CSSProperties = {
-  maxWidth: '60%',
-  fontSize: '0.72rem',
-  fontWeight: 700,
-  color: '#0f172a',
-  background: 'rgba(255, 255, 255, 0.9)',
-  border: '1px solid rgba(148, 163, 184, 0.3)',
-  borderRadius: '999px',
-  padding: '0.24rem 0.58rem',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-  boxShadow: '0 10px 24px -20px rgba(15, 23, 42, 0.9)',
-};
-
 const canvasFloatingActionRowStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
@@ -4821,15 +4787,6 @@ const canvasFloatingDetailLabelStyle: React.CSSProperties = {
   whiteSpace: 'nowrap',
   fontSize: '0.78rem',
   fontWeight: 700,
-};
-
-const canvasFloatingPrimaryActionStyle: React.CSSProperties = {
-  boxShadow: '0 18px 34px -26px rgba(15, 23, 42, 0.95)',
-};
-
-const canvasFloatingPrimaryActionMobileStyle: React.CSSProperties = {
-  ...canvasFloatingPrimaryActionStyle,
-  minWidth: '5rem',
 };
 
 const emptySelectionOverlayStyle: React.CSSProperties = {

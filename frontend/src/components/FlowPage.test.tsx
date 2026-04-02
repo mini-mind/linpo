@@ -221,6 +221,30 @@ async function findCanvasActionGroup(): Promise<HTMLElement> {
   return actions;
 }
 
+async function waitForFlowCanvasReady(): Promise<HTMLElement> {
+  const viewport = await screen.findByTestId('flow-canvas-viewport');
+  expect(screen.queryByRole('toolbar', { name: '流程编辑工具栏' })).not.toBeInTheDocument();
+  return viewport;
+}
+
+function findFlowSidebarCard(flowName: string): HTMLElement {
+  const switchButton = screen.getByRole('button', { name: `切换流程-${flowName}` });
+  const card = switchButton.closest('article');
+  if (!(card instanceof HTMLElement)) {
+    throw new Error(`sidebar card missing for flow ${flowName}`);
+  }
+  return card;
+}
+
+function findCurrentFlowSidebarCard(): HTMLElement {
+  const switchButton = screen.getByRole('button', { current: 'page' });
+  const card = switchButton.closest('article');
+  if (!(card instanceof HTMLElement)) {
+    throw new Error('current sidebar card missing');
+  }
+  return card;
+}
+
 describe('FlowPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -269,7 +293,7 @@ describe('FlowPage', () => {
   it('supports canvas double-click create node with modal', async () => {
     const flowId = seedDraftFlow('draft-double-click');
     renderFlowPage(`/flow/edit/${flowId}`);
-    await findCanvasActionGroup();
+    await waitForFlowCanvasReady();
 
     await createNodeByCanvasDoubleClick('拆解需求');
 
@@ -290,7 +314,7 @@ describe('FlowPage', () => {
 
     const flowId = seedDraftFlow('draft-planner');
     renderFlowPage(`/flow/edit/${flowId}`);
-    await findCanvasActionGroup();
+    await waitForFlowCanvasReady();
     await createNodeByCanvasDoubleClick('现有节点', '已有上下文');
 
     const input = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
@@ -338,7 +362,7 @@ describe('FlowPage', () => {
 
     const flowId = seedDraftFlow('draft-planner-sse');
     renderFlowPage(`/flow/edit/${flowId}`);
-    await findCanvasActionGroup();
+    await waitForFlowCanvasReady();
 
     const input = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
     await userEvent.type(input, '请规划一个发布流程');
@@ -395,7 +419,7 @@ describe('FlowPage', () => {
 
     const flowId = seedDraftFlow('draft-planner-graph-sse');
     renderFlowPage(`/flow/edit/${flowId}`);
-    await findCanvasActionGroup();
+    await waitForFlowCanvasReady();
 
     const input = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
     await userEvent.type(input, '请规划一个发布流程');
@@ -459,7 +483,7 @@ describe('FlowPage', () => {
 
   it('creates unnamed draft immediately from empty state without opening create modal', async () => {
     renderFlowPage('/flow/edit/new');
-    await findCanvasActionGroup();
+    expect(screen.queryByTestId('flow-canvas-floating-actions')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: '创建流程' }));
     expect(screen.queryByRole('dialog', { name: '新建流程' })).not.toBeInTheDocument();
@@ -471,7 +495,7 @@ describe('FlowPage', () => {
   it('supports double-click node to edit node modal', async () => {
     const flowId = seedDraftFlow('draft-edit-node');
     renderFlowPage(`/flow/edit/${flowId}`);
-    await findCanvasActionGroup();
+    await waitForFlowCanvasReady();
     await createNodeByCanvasDoubleClick('初始节点');
 
     const nodeButton = await screen.findByRole('button', { name: '流程节点-初始节点' });
@@ -503,7 +527,7 @@ describe('FlowPage', () => {
 
     const flowId = seedDraftFlow('draft-submit-flow');
     renderFlowPage(`/flow/edit/${flowId}`);
-    const actions = await findCanvasActionGroup();
+    await waitForFlowCanvasReady();
 
     await createNodeByCanvasDoubleClick('节点A', '详细描述A');
     await createNodeByCanvasDoubleClick('节点B');
@@ -514,7 +538,7 @@ describe('FlowPage', () => {
     const targetConnector = screen.getByRole('button', { name: '节点 节点B 左侧连接点' });
     fireEvent.pointerUp(targetConnector, { pointerId: 1, pointerType: 'mouse', button: 0, isPrimary: true, clientX: 470, clientY: 430 });
 
-    await userEvent.click(within(actions).getByRole('button', { name: '运行' }));
+    await userEvent.click(within(findCurrentFlowSidebarCard()).getByRole('button', { name: /运行流程-/ }));
     expect(screen.getByRole('dialog', { name: '确认运行流程' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '确认运行' }));
 
@@ -549,10 +573,10 @@ describe('FlowPage', () => {
     ]);
 
     renderFlowPage('/flow/edit/req-flow-a');
-    const actions = await findCanvasActionGroup();
+    await waitForFlowCanvasReady();
     await createNodeByCanvasDoubleClick('节点A');
 
-    await userEvent.click(within(actions).getByRole('button', { name: '运行' }));
+    await userEvent.click(within(findCurrentFlowSidebarCard()).getByRole('button', { name: /运行流程-/ }));
     expect(screen.getByRole('dialog', { name: '确认运行流程' })).toBeInTheDocument();
     expect(screen.getByText('检测到该流程已有产出文件，再次运行可能覆盖历史产物。')).toBeInTheDocument();
   });
@@ -560,7 +584,7 @@ describe('FlowPage', () => {
   it('removes selected edge by Delete key without edge delete button', async () => {
     const flowId = seedDraftFlow('draft-remove-edge');
     renderFlowPage(`/flow/edit/${flowId}`);
-    await findCanvasActionGroup();
+    await waitForFlowCanvasReady();
 
     await createNodeByCanvasDoubleClick('节点A');
     await createNodeByCanvasDoubleClick('节点B');
@@ -653,9 +677,9 @@ describe('FlowPage', () => {
     });
 
     renderFlowPage('/flow/edit/new');
-    await findCanvasActionGroup();
+    const sidebar = await screen.findByTestId('flow-sidebar');
+    expect(screen.queryByTestId('flow-canvas-floating-actions')).not.toBeInTheDocument();
 
-    const sidebar = screen.getByTestId('flow-sidebar');
     expect(within(sidebar).getByRole('heading', { name: '流程列表' })).toBeInTheDocument();
     expect(within(sidebar).getByRole('button', { name: '新建' })).toBeInTheDocument();
     expect(within(sidebar).queryByLabelText('流程筛选')).not.toBeInTheDocument();
@@ -702,16 +726,17 @@ describe('FlowPage', () => {
     });
 
     renderFlowPage('/flow/edit/req-flow-a');
-    await findCanvasActionGroup();
+    await waitForFlowCanvasReady();
 
     expect(screen.getByLabelText('流程分组-当前')).toHaveTextContent('流程A');
     expect(screen.getByLabelText('流程分组-草稿')).toHaveTextContent('草稿流程C');
     expect(screen.getByLabelText('流程分组-已提交')).toHaveTextContent('流程B');
     expect(screen.getAllByRole('button', { name: '切换流程-流程A' })).toHaveLength(1);
-    const editFlowAButton = screen.getByRole('button', { name: '编辑流程-流程A' });
-    expect(editFlowAButton).toHaveStyle({ position: 'absolute' });
+    const currentCard = findFlowSidebarCard('流程A');
+    const editFlowAButton = within(currentCard).getByRole('button', { name: '编辑流程-流程A' });
+    expect((editFlowAButton as HTMLButtonElement).style.top).toBe('0.55rem');
     expect((editFlowAButton as HTMLButtonElement).style.right).toBe('0.58rem');
-    expect((editFlowAButton as HTMLButtonElement).style.bottom).toBe('0.55rem');
+    expect(within(currentCard).getByRole('button', { name: '运行流程-流程A' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '编辑流程-草稿流程C' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '编辑流程-流程B' })).toBeInTheDocument();
   });
@@ -778,7 +803,7 @@ describe('FlowPage', () => {
   it('hides unconnected handles on unselected nodes', async () => {
     const flowId = seedDraftFlow('draft-hidden-handles');
     renderFlowPage(`/flow/edit/${flowId}`);
-    await findCanvasActionGroup();
+    await waitForFlowCanvasReady();
 
     await createNodeByCanvasDoubleClick('节点A');
     await createNodeByCanvasDoubleClick('节点B');
@@ -789,13 +814,12 @@ describe('FlowPage', () => {
 
   it('locks editor with create overlay when no flow is selected', async () => {
     renderFlowPage('/flow/edit/new');
-    const actions = await findCanvasActionGroup();
+    expect(screen.queryByTestId('flow-canvas-floating-actions')).not.toBeInTheDocument();
 
     const overlay = screen.getByTestId('flow-empty-selection-overlay');
     expect(overlay).toHaveTextContent('欢迎来到流程编辑台');
     expect(overlay).toHaveTextContent('从左侧选择一个流程，或创建新的流程开始规划');
     expect(within(overlay).getByRole('button', { name: '创建流程' })).toBeInTheDocument();
-    expect(within(actions).getByRole('button', { name: '创建' })).toBeInTheDocument();
 
     fireEvent.doubleClick(screen.getByTestId('flow-canvas-viewport'), { clientX: 540, clientY: 260 });
     expect(screen.queryByRole('dialog', { name: '创建节点' })).not.toBeInTheDocument();
@@ -834,12 +858,13 @@ describe('FlowPage', () => {
 
     renderFlowPage('/flow/edit/req-flow-a');
 
-    const actions = await findCanvasActionGroup();
-    expect(within(actions).getByRole('button', { name: '运行' })).toBeDisabled();
-    expect(within(actions).queryByRole('button', { name: '中断' })).not.toBeInTheDocument();
+    await waitForFlowCanvasReady();
+    expect(screen.queryByTestId('flow-canvas-floating-actions')).not.toBeInTheDocument();
+    const currentCard = findFlowSidebarCard('流程A');
+    expect(within(currentCard).getByRole('button', { name: '运行流程-流程A' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: '停止流程' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('流程实例面板')).not.toBeInTheDocument();
-    expect(screen.getByText('运行中')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '切换流程-流程A' })).toHaveTextContent('运行中');
     expect(screen.getByTestId('flow-planner-input')).toBeDisabled();
 
     await userEvent.click(screen.getByRole('button', { name: '编辑流程-流程A' }));
@@ -865,10 +890,11 @@ describe('FlowPage', () => {
 
     renderFlowPage('/flow/edit/req-flow-b');
 
-    const actions = await findCanvasActionGroup();
-    expect(within(actions).getByRole('button', { name: '运行' })).toBeDisabled();
-    expect(within(actions).queryByRole('button', { name: '继续' })).not.toBeInTheDocument();
-    expect(screen.getByText('阻塞中')).toBeInTheDocument();
+    await waitForFlowCanvasReady();
+    expect(screen.queryByTestId('flow-canvas-floating-actions')).not.toBeInTheDocument();
+    const currentCard = findFlowSidebarCard('流程B');
+    expect(within(currentCard).getByRole('button', { name: '运行流程-流程B' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '切换流程-流程B' })).toHaveTextContent('阻塞');
     expect(screen.getByTestId('flow-planner-input')).not.toBeDisabled();
 
     await userEvent.click(screen.getByRole('button', { name: '编辑流程-流程B' }));
@@ -896,7 +922,7 @@ describe('FlowPage', () => {
 
     renderFlowPage('/flow/edit/req-flow-a');
 
-    await findCanvasActionGroup();
+    await waitForFlowCanvasReady();
     await userEvent.click(screen.getByRole('button', { name: '编辑流程-流程A' }));
     const nameInput = screen.getByPlaceholderText('输入流程名称');
     await userEvent.clear(nameInput);
@@ -940,7 +966,7 @@ describe('FlowPage', () => {
 
     renderFlowPage('/flow/edit/req-flow-a');
 
-    await findCanvasActionGroup();
+    await waitForFlowCanvasReady();
     await userEvent.click(screen.getByRole('button', { name: '编辑流程-流程A' }));
     await userEvent.click(screen.getByRole('button', { name: '删除流程' }));
 
