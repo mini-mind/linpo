@@ -202,6 +202,42 @@ describe('SummaryPage', () => {
     expect(channels).toContain('agent:agent-alpha:detail');
   });
 
+  it('uses current instance token samples for summary trend', async () => {
+    mockGetAggregateOverview.mockResolvedValue(
+      buildOverview({
+        token_groups: [
+          {
+            instance_id: 'instance-alpha',
+            instance_name: 'alpha-instance',
+            total_tokens: 180,
+            samples: [
+              { label: '2026-03-31', input_tokens: 30, output_tokens: 10, total_tokens: 40 },
+              { label: '2026-04-01', input_tokens: 100, output_tokens: 40, total_tokens: 140 },
+            ],
+          },
+          {
+            instance_id: 'instance-beta',
+            instance_name: 'beta-instance',
+            total_tokens: 60,
+            samples: [
+              { label: '2026-03-31', input_tokens: 25, output_tokens: 15, total_tokens: 40 },
+              { label: '2026-04-01', input_tokens: 10, output_tokens: 10, total_tokens: 20 },
+            ],
+          },
+        ],
+      })
+    );
+    window.localStorage.setItem('linpo.currentInstanceId', 'instance-alpha');
+
+    renderPage();
+
+    await screen.findByTestId('summary-chart');
+
+    expect(screen.getByText('180 tokens')).toBeInTheDocument();
+    expect(screen.getByText('alpha-instance')).toBeInTheDocument();
+    expect(screen.queryByText('beta-instance')).not.toBeInTheDocument();
+  });
+
   it('continues blocked task from summary page', async () => {
     renderPage();
 

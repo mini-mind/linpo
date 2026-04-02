@@ -417,7 +417,10 @@ export function SummaryPage(): JSX.Element {
     [tasks]
   );
 
-  const metric = useMemo(() => buildSummaryMetric(overview?.token_groups ?? [], tasks), [overview?.token_groups, tasks]);
+  const metric = useMemo(
+    () => buildSummaryMetric(overview?.token_groups ?? [], tasks, currentInstanceId),
+    [currentInstanceId, overview?.token_groups, tasks]
+  );
 
   const filteredEvents = useMemo(() => events.filter((item) => matchesEventQuery(item, eventQuery)), [eventQuery, events]);
   const totalEventPages = Math.max(1, Math.ceil(filteredEvents.length / EVENTS_PAGE_SIZE));
@@ -1002,12 +1005,25 @@ function EnvelopeErrorSummary({ envelope }: { envelope: ErrorEnvelope }): JSX.El
   );
 }
 
-function buildSummaryMetric(tokenGroups: AggregateOverviewTokenGroup[], tasks: KanbanTaskItem[]): SummaryMetric {
-  const tokenMetric = buildTokenMetric(tokenGroups);
+function buildSummaryMetric(
+  tokenGroups: AggregateOverviewTokenGroup[],
+  tasks: KanbanTaskItem[],
+  currentInstanceId: string | null
+): SummaryMetric {
+  const scopedTokenGroups =
+    currentInstanceId === null
+      ? tokenGroups
+      : tokenGroups.filter((group) => group.instance_id === currentInstanceId);
+  const scopedTasks =
+    currentInstanceId === null
+      ? tasks
+      : tasks.filter((task) => task.instance_id === currentInstanceId);
+
+  const tokenMetric = buildTokenMetric(scopedTokenGroups);
   if (tokenMetric) {
     return tokenMetric;
   }
-  return buildTaskFallbackMetric(tasks);
+  return buildTaskFallbackMetric(scopedTasks);
 }
 
 function buildTokenMetric(tokenGroups: AggregateOverviewTokenGroup[]): SummaryMetric | null {
