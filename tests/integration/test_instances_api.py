@@ -282,6 +282,62 @@ def test_instance_files_preview_returns_clear_404_when_missing(
     assert "file may still exist inside the agent instance" in preview_payload["detail"].lower()
 
 
+def test_instance_files_list_normalizes_dirty_task_fields(
+    isolated_database_url: str,
+    auth_cookie: str,
+    db_handle: Session,
+) -> None:
+    del isolated_database_url
+    user = db_handle.execute(select(User).where(User.username == "alice")).scalar_one()
+    instance = Instance(
+        user_id=user.id,
+        name="claw1-files-dirty",
+        type="openclaw",
+        endpoint="http://127.0.0.1:28789",
+        gateway_token_enc="enc",
+        status="ok",
+    )
+    db_handle.add(instance)
+    db_handle.commit()
+    db_handle.refresh(instance)
+
+    output_path = Path("/tmp/linpo/test-instance-files/dirty_status.txt")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("dirty regression fixture", encoding="utf-8")
+    task = Task(
+        user_id=user.id,
+        instance_id=instance.id,
+        title="脏数据归一化回归",
+        summary="unknown status + empty agent id",
+        status="upstream_unknown_status",
+        source="flow",
+        agent_id=None,
+        agent_name="",
+        artifacts=[f"artifact: {output_path}"],
+        extras={
+            "board_id": "default",
+            "requirement_id": "req-dirty-status",
+            "temp_output_path": str(output_path),
+        },
+    )
+    db_handle.add(task)
+    db_handle.commit()
+    db_handle.refresh(task)
+
+    list_status, _, list_body = request(
+        "GET",
+        f"/instances/{instance.id}/files?boardId=default",
+        headers={"cookie": auth_cookie},
+    )
+    assert list_status == 200
+    list_payload = cast(dict[str, Any], json.loads(list_body.decode("utf-8")))
+    items = cast(list[dict[str, Any]], list_payload["items"])
+    matched = next((item for item in items if item["task_id"] == str(task.id)), None)
+    assert matched is not None
+    assert matched["task_status"] == "queued"
+    assert matched["agent_id"] == ""
+
+
 def test_instance_agent_docs_list_preview_and_download(
     isolated_database_url: str,
     auth_cookie: str,
