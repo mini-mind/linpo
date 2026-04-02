@@ -5,6 +5,7 @@ import {
   applyPlannerNodeOperations,
   deriveEdgesFromNodes,
   prepareNodesForSubmission,
+  resolveExecutorAgentId,
 } from './flowPageUtils';
 
 function makeNode(overrides: Partial<FlowCanvasNode> & { id: string; title: string }): FlowCanvasNode {
@@ -132,5 +133,25 @@ describe('flowPageUtils', () => {
         'agent-1'
       )
     ).toThrow('流程存在环路');
+  });
+
+  it('does not silently fallback to another agent when selected executor is missing', () => {
+    const resolved = resolveExecutorAgentId(
+      'agent-gone',
+      [
+        {
+          instance_id: 'instance-alpha',
+          instance_name: 'alpha',
+          agent_id: 'agent-alpha',
+          agent_name: 'Alpha',
+          status: 'running',
+          is_active: true,
+          last_active_at: null,
+          drilldown_path: '/session/agent-alpha',
+        },
+      ],
+      [{ id: 'lane_agent_alpha', name: 'Alpha', agentId: 'agent-alpha', createdAt: '2026-04-02T00:00:00Z' }]
+    );
+    expect(resolved).toBe('');
   });
 });

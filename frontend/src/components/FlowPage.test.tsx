@@ -8,6 +8,7 @@ import type { AggregateOverviewResponse, FlowConfirmResponse, FlowGenerateRespon
 import { ToastProvider } from '../hooks/useToast';
 import { FlowPage } from './FlowPage';
 import { upsertFlowDraft } from './flowDraftStore';
+import { PLANNER_SETTLE_TIMEOUT_MS } from './flowPageUtils';
 
 const {
   mockGetAggregateOverview,
@@ -230,6 +231,14 @@ async function waitForFlowCanvasReady(): Promise<HTMLElement> {
   return viewport;
 }
 
+async function waitForPlannerFeedbackSettled(): Promise<void> {
+  await act(async () => {
+    await new Promise<void>((resolve) => {
+      window.setTimeout(resolve, PLANNER_SETTLE_TIMEOUT_MS + 30);
+    });
+  });
+}
+
 function findFlowSidebarCard(flowName: string): HTMLElement {
   const switchButton = screen.getByRole('button', { name: `切换流程-${flowName}` });
   const card = switchButton.closest('article');
@@ -403,6 +412,7 @@ describe('FlowPage', () => {
     expect(screen.getByTestId('flow-planning-overlay')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '停止' })).not.toBeInTheDocument();
 
+    await waitForPlannerFeedbackSettled();
     await userEvent.click(screen.getByTestId('flow-planning-overlay'));
     await waitFor(() => {
       expect(screen.queryByTestId('flow-planning-overlay')).not.toBeInTheDocument();
@@ -522,6 +532,13 @@ describe('FlowPage', () => {
         'default'
       );
     });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '发送' })).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByTestId('flow-planning-overlay'));
+    await waitFor(() => {
+      expect(screen.queryByTestId('flow-planning-overlay')).not.toBeInTheDocument();
+    });
   });
 
   it('keeps automatic mode open while waiting and blocks canvas edits until overlay is dismissed after settling', async () => {
@@ -586,9 +603,122 @@ describe('FlowPage', () => {
     });
     expect(screen.getByTestId('flow-planning-overlay')).toBeInTheDocument();
 
+    await waitForPlannerFeedbackSettled();
     await userEvent.click(screen.getByTestId('flow-planning-overlay'));
     await waitFor(() => {
       expect(screen.queryByTestId('flow-planning-overlay')).not.toBeInTheDocument();
+    });
+  });
+
+  it('blocks overlay dismissal until planner feedback settles after completion', async () => {
+    let resolveGenerate: ((value: FlowGenerateResponse) => void) | null = null;
+    mockGenerateFlowFromRequirement.mockImplementation(
+      () =>
+        new Promise<FlowGenerateResponse>((resolve) => {
+          resolveGenerate = resolve;
+        })
+    );
+
+    const flowId = seedDraftFlow('draft-planner-close-lock');
+    renderFlowPage(`/flow/edit/${flowId}`);
+    await waitForFlowCanvasReady();
+
+    const input = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
+    await userEvent.type(input, '请完成流程拆解');
+    await userEvent.keyboard('{Enter}');
+
+    await waitFor(() => {
+      expect(mockCreateFlowPlannerSseClient).toHaveBeenCalledTimes(1);
+    });
+    const plannerSseOptions = mockCreateFlowPlannerSseClient.mock.calls[0]?.[0];
+
+    if (!resolveGenerate) {
+      throw new Error('planner mock resolver missing');
+    }
+    const resolveGenerateFn = resolveGenerate as (value: FlowGenerateResponse) => void;
+    resolveGenerateFn(
+      buildGenerateResponse({
+        planner_session_key: plannerSseOptions.sessionKey,
+      })
+    );
+
+    act(() => {
+      plannerSseOptions.onMessage({
+        type: 'planner_session_updated',
+        channel: `session:${plannerSseOptions.sessionKey}:messages`,
+        seq: 2,
+        timestamp: '2026-04-02T00:00:01Z',
+        payload: {
+          session_key: plannerSseOptions.sessionKey,
+          status: 'completed',
+          revision: 1,
+          updated_at: '2026-04-02T00:00:01Z',
+        },
+      });
+    });
+
+    await userEvent.click(screen.getByTestId('flow-planning-overlay'));
+    expect(screen.getByTestId('flow-planning-overlay')).toBeInTheDocument();
+
+    await waitForPlannerFeedbackSettled();
+    await userEvent.click(screen.getByTestId('flow-planning-overlay'));
+    await waitFor(() => {
+      expect(screen.queryByTestId('flow-planning-overlay')).not.toBeInTheDocument();
+    });
+  });
+
+  it('uses loading placeholder message while planning instead of synthetic system text', async () => {
+    let resolveGenerate: ((value: FlowGenerateResponse) => void) | null = null;
+    mockGenerateFlowFromRequirement.mockImplementation(
+      () =>
+        new Promise<FlowGenerateResponse>((resolve) => {
+          resolveGenerate = resolve;
+        })
+    );
+
+    const flowId = seedDraftFlow('draft-planning-placeholder');
+    renderFlowPage(`/flow/edit/${flowId}`);
+    await waitForFlowCanvasReady();
+
+    const input = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
+    await userEvent.type(input, '请给出一个拆解计划');
+    await userEvent.keyboard('{Enter}');
+
+    expect(await screen.findByText('规划中')).toBeInTheDocument();
+    expect(screen.queryByText('已发送规划请求，等待 claw3 逐节点编辑工作流。')).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(mockCreateFlowPlannerSseClient).toHaveBeenCalledTimes(1);
+    });
+    const plannerSseOptions = mockCreateFlowPlannerSseClient.mock.calls[0]?.[0];
+
+    if (!resolveGenerate) {
+      throw new Error('planner mock resolver missing');
+    }
+    const resolveGenerateFn = resolveGenerate as (value: FlowGenerateResponse) => void;
+    resolveGenerateFn(
+      buildGenerateResponse({
+        planner_session_key: plannerSseOptions.sessionKey,
+      })
+    );
+
+    act(() => {
+      plannerSseOptions.onMessage({
+        type: 'planner_session_updated',
+        channel: `session:${plannerSseOptions.sessionKey}:messages`,
+        seq: 2,
+        timestamp: '2026-04-02T00:00:01Z',
+        payload: {
+          session_key: plannerSseOptions.sessionKey,
+          status: 'completed',
+          revision: 1,
+          updated_at: '2026-04-02T00:00:01Z',
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('规划中')).not.toBeInTheDocument();
     });
   });
 
@@ -683,6 +813,261 @@ describe('FlowPage', () => {
     const secondPayload = mockGenerateFlowFromRequirement.mock.calls[1][0];
     expect(secondPayload.planner_session_key).not.toBe('linpo:flow:default:planner:claw3:stale-flow-a');
     expect(secondPayload.requirement).toBe('流程B的规划需求');
+  });
+
+  it('recomputes planning overlay after switching away and back while waiting for reply', async () => {
+    let resolveFirstGenerate: ((value: FlowGenerateResponse) => void) | null = null;
+    mockGenerateFlowFromRequirement.mockImplementationOnce(
+      () =>
+        new Promise<FlowGenerateResponse>((resolve) => {
+          resolveFirstGenerate = resolve;
+        })
+    );
+
+    upsertFlowDraft({
+      id: 'draft-overlay-a',
+      name: '遮罩流程A',
+      requirement: '',
+      nodes: [],
+      edges: [],
+      lanes: [],
+      node_lane_by_id: {},
+      planner_session_key: 'linpo:flow:default:planner:claw3:overlay-a',
+      execution_session_prefix: null,
+      executor_agent_id: null,
+      created_at: '2026-03-29T08:00:00Z',
+      updated_at: '2026-03-29T08:00:00Z',
+    });
+    upsertFlowDraft({
+      id: 'draft-overlay-b',
+      name: '遮罩流程B',
+      requirement: '',
+      nodes: [],
+      edges: [],
+      lanes: [],
+      node_lane_by_id: {},
+      planner_session_key: 'linpo:flow:default:planner:claw3:overlay-b',
+      execution_session_prefix: null,
+      executor_agent_id: null,
+      created_at: '2026-03-29T08:01:00Z',
+      updated_at: '2026-03-29T08:01:00Z',
+    });
+
+    renderFlowPage('/flow/edit/draft-overlay-a');
+    await waitForFlowCanvasReady();
+
+    const plannerInput = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
+    await userEvent.click(plannerInput);
+    await userEvent.type(plannerInput, '流程A等待回复中');
+    await userEvent.keyboard('{Enter}');
+
+    await waitFor(() => {
+      expect(mockGenerateFlowFromRequirement).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.getByTestId('flow-planning-overlay')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '切换流程-遮罩流程B' }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '切换流程-遮罩流程B', current: 'page' })).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('flow-planning-overlay')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '切换流程-遮罩流程A' }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '切换流程-遮罩流程A', current: 'page' })).toBeInTheDocument();
+    });
+    expect(await screen.findByTestId('flow-planning-overlay')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByTestId('flow-planning-overlay'));
+    expect(screen.getByTestId('flow-planning-overlay')).toBeInTheDocument();
+
+    if (!resolveFirstGenerate) {
+      throw new Error('first planner resolver missing');
+    }
+    const resolveFirstGenerateFn = resolveFirstGenerate as (value: FlowGenerateResponse) => void;
+    resolveFirstGenerateFn(
+      buildGenerateResponse({
+        planner_session_key: 'linpo:flow:default:planner:claw3:overlay-a',
+      })
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+  });
+
+  it('updates canvas nodes when switching flow cards', async () => {
+    seedDraftFlow('draft-flow-a-canvas', {
+      name: '流程A画布',
+      nodes: [
+        {
+          id: 'node_a_1',
+          title: 'A节点',
+          description: 'A flow node',
+          depends_on: [],
+          x: 60,
+          y: 40,
+          layer: 1,
+          sensitive: false,
+          status: 'queued',
+          agent_id: 'agent-alpha',
+        },
+      ],
+      edges: [],
+    });
+    seedDraftFlow('draft-flow-b-canvas', {
+      name: '流程B画布',
+      nodes: [
+        {
+          id: 'node_b_1',
+          title: 'B节点',
+          description: 'B flow node',
+          depends_on: [],
+          x: 120,
+          y: 80,
+          layer: 1,
+          sensitive: false,
+          status: 'queued',
+          agent_id: 'agent-alpha',
+        },
+      ],
+      edges: [],
+    });
+
+    renderFlowPage('/flow/edit/draft-flow-a-canvas');
+    await waitForFlowCanvasReady();
+
+    expect(await screen.findByRole('button', { name: '流程节点-A节点' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '流程节点-B节点' })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '切换流程-流程B画布' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '切换流程-流程B画布', current: 'page' })).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '流程节点-B节点' })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: '流程节点-A节点' })).not.toBeInTheDocument();
+  });
+
+  it('updates canvas snapshot when switching submitted flow cards', async () => {
+    mockListKanbanTasks.mockResolvedValue([
+      buildKanbanTask({
+        id: 'task-a-1',
+        title: 'A提交节点',
+        extras: {
+          requirement_id: 'req-flow-a',
+          requirement_title: '提交流程A',
+          flow_node: 'node_a_1',
+          dependencies: 'none',
+          sensitive: 'false',
+          flow_layer: '1',
+          flow_x: '80',
+          flow_y: '60',
+        },
+      }),
+      buildKanbanTask({
+        id: 'task-b-1',
+        title: 'B提交节点',
+        extras: {
+          requirement_id: 'req-flow-b',
+          requirement_title: '提交流程B',
+          flow_node: 'node_b_1',
+          dependencies: 'none',
+          sensitive: 'false',
+          flow_layer: '1',
+          flow_x: '120',
+          flow_y: '90',
+        },
+      }),
+    ]);
+
+    renderFlowPage('/flow/edit/req-flow-a');
+    await waitForFlowCanvasReady();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '流程节点-A提交节点' })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: '流程节点-B提交节点' })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '切换流程-提交流程B' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '切换流程-提交流程B', current: 'page' })).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '流程节点-B提交节点' })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: '流程节点-A提交节点' })).not.toBeInTheDocument();
+  });
+
+  it('prefers submitted snapshot when switching to a card that has both submitted data and stale draft', async () => {
+    mockListKanbanTasks.mockResolvedValue([
+      buildKanbanTask({
+        id: 'task-a-1',
+        title: 'A提交节点',
+        extras: {
+          requirement_id: 'req-flow-a',
+          requirement_title: '提交流程A',
+          flow_node: 'node_a_1',
+          dependencies: 'none',
+          sensitive: 'false',
+          flow_layer: '1',
+          flow_x: '80',
+          flow_y: '60',
+        },
+      }),
+      buildKanbanTask({
+        id: 'task-b-1',
+        title: 'B提交节点-最新',
+        extras: {
+          requirement_id: 'req-flow-b',
+          requirement_title: '提交流程B',
+          flow_node: 'node_b_1',
+          dependencies: 'none',
+          sensitive: 'false',
+          flow_layer: '1',
+          flow_x: '120',
+          flow_y: '90',
+        },
+      }),
+    ]);
+    seedDraftFlow('req-flow-b', {
+      name: '提交流程B-旧草稿',
+      nodes: [
+        {
+          id: 'node_b_stale',
+          title: 'B旧草稿节点',
+          description: 'stale draft',
+          depends_on: [],
+          x: 42,
+          y: 36,
+          layer: 1,
+          sensitive: false,
+          status: 'queued',
+          agent_id: 'agent-alpha',
+        },
+      ],
+      edges: [],
+    });
+
+    renderFlowPage('/flow/edit/req-flow-a');
+    await waitForFlowCanvasReady();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '流程节点-A提交节点' })).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: '切换流程-提交流程B' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '切换流程-提交流程B', current: 'page' })).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '流程节点-B提交节点-最新' })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: '流程节点-B旧草稿节点' })).not.toBeInTheDocument();
   });
 
   it('updates flow graph from planner sse patch before http response resolves', async () => {
@@ -876,6 +1261,51 @@ describe('FlowPage', () => {
     expect(payload.nodes.some((node: { description?: string | null }) => (node.description ?? '').includes('详细描述A'))).toBe(true);
     const layers = payload.nodes.map((node: { layer: number }) => node.layer);
     expect(layers.every((layer: number) => layer >= 1)).toBe(true);
+  });
+
+  it('shows unavailable agent error on run when flow references removed agent', async () => {
+    seedDraftFlow('draft-missing-agent', {
+      name: '失效Agent流程',
+      nodes: [
+        {
+          id: 'node_a_1',
+          title: '节点A',
+          description: '',
+          depends_on: [],
+          x: 60,
+          y: 40,
+          layer: 1,
+          sensitive: false,
+          status: 'queued',
+          agent_id: 'agent-gone',
+        },
+      ],
+      edges: [],
+      lanes: [
+        {
+          id: 'lane_agent_gone',
+          name: '失效Agent泳道',
+          agent_id: 'agent-gone',
+          created_at: '2026-03-29T08:00:00Z',
+        },
+      ],
+      node_lane_by_id: {
+        node_a_1: 'lane_agent_gone',
+      },
+      executor_agent_id: 'agent-gone',
+    });
+
+    renderFlowPage('/flow/edit/draft-missing-agent');
+    await waitForFlowCanvasReady();
+
+    await userEvent.click(within(findCurrentFlowSidebarCard()).getByRole('button', { name: /运行流程-/ }));
+    expect(screen.getByRole('dialog', { name: '确认运行流程' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '确认运行' }));
+
+    await waitFor(() => {
+      expect(mockConfirmFlowToKanban).not.toHaveBeenCalled();
+    });
+    expect(screen.getByRole('dialog', { name: '确认运行流程' })).toBeInTheDocument();
   });
 
   it('shows overwrite warning before running when flow already has output artifacts', async () => {
@@ -1374,6 +1804,59 @@ describe('FlowPage', () => {
     expect(screen.queryByRole('dialog', { name: '新建流程' })).not.toBeInTheDocument();
     expect(await screen.findByRole('button', { name: '切换流程-未命名流程' })).toBeInTheDocument();
     expect(screen.queryByTestId('flow-empty-selection-overlay')).not.toBeInTheDocument();
+  });
+
+  it('creates default lanes for all existing agents and puts main first', async () => {
+    mockGetAggregateOverview.mockResolvedValueOnce({
+      ...buildOverview(),
+      agents: [
+        {
+          instance_id: 'instance-alpha',
+          instance_name: 'alpha-instance',
+          agent_id: 'agent-alpha',
+          agent_name: 'Alpha Agent',
+          status: 'running',
+          is_active: true,
+          last_active_at: '2026-03-29T08:00:00Z',
+          drilldown_path: '/session/agent-alpha/__none__/__new__?instanceId=instance-alpha',
+        },
+        {
+          instance_id: 'instance-main',
+          instance_name: 'main-instance',
+          agent_id: 'main',
+          agent_name: 'Main',
+          status: 'running',
+          is_active: true,
+          last_active_at: '2026-03-29T08:01:00Z',
+          drilldown_path: '/session/main/__none__/__new__?instanceId=instance-main',
+        },
+        {
+          instance_id: 'instance-beta',
+          instance_name: 'beta-instance',
+          agent_id: 'agent-beta',
+          agent_name: 'Beta Agent',
+          status: 'running',
+          is_active: true,
+          last_active_at: '2026-03-29T08:02:00Z',
+          drilldown_path: '/session/agent-beta/__none__/__new__?instanceId=instance-beta',
+        },
+      ],
+    });
+
+    renderFlowPage('/flow/edit/new');
+    const overlay = await screen.findByTestId('flow-empty-selection-overlay');
+    await userEvent.click(within(overlay).getByRole('button', { name: '创建流程' }));
+    await screen.findByRole('button', { name: '切换流程-未命名流程' });
+
+    await waitFor(() => {
+      const laneHeaders = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-flow-lane-title="true"]')
+      );
+      expect(laneHeaders).toHaveLength(3);
+      expect(laneHeaders[0]).toHaveTextContent('Main');
+      expect(laneHeaders[1]).toHaveTextContent('Alpha Agent');
+      expect(laneHeaders[2]).toHaveTextContent('Beta Agent');
+    });
   });
 
   it('shows runtime action button by flow state and removes instance panel', async () => {

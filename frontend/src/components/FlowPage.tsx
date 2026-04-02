@@ -238,6 +238,38 @@ type FlowRouteState = {
   draft_flow_name?: string;
   draft_requirement?: string;
   draft_executor_agent_id?: string;
+  prefer_submitted_snapshot?: boolean;
+};
+
+const FLOW_PLANNING_PLACEHOLDER_CREATED_AT = "__flow_planning_placeholder__";
+const FLOW_PLANNING_PLACEHOLDER_MESSAGE: FlowChatMessageItem = {
+  role: "assistant",
+  content: "规划中",
+  created_at: FLOW_PLANNING_PLACEHOLDER_CREATED_AT,
+};
+
+function isFlowPlanningPlaceholderMessage(message: FlowChatMessageItem): boolean {
+  return message.created_at === FLOW_PLANNING_PLACEHOLDER_CREATED_AT;
+}
+
+function hasPendingPlannerReply(messages: FlowChatMessageItem[]): boolean {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (isFlowPlanningPlaceholderMessage(message)) {
+      continue;
+    }
+    return message.role === 'user';
+  }
+  return false;
+}
+
+const flowPlanningPlaceholderTextStyle: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "0.4rem",
+  fontSize: "0.84rem",
+  color: "#2563eb",
+  fontWeight: 600,
 };
 
 type NodeModalState = {
@@ -354,6 +386,7 @@ export function FlowPage(): JSX.Element {
   const [plannerSessionStatus, setPlannerSessionStatus] = useState<FlowPlannerSessionStatus | 'idle'>('idle');
   const [isPlanning, setIsPlanning] = useState(false);
   const [isPlannerStopping, setIsPlannerStopping] = useState(false);
+  const [isPlannerOverlayCloseBlocked, setIsPlannerOverlayCloseBlocked] = useState(false);
   const [isMobileFlowSidebarOpen, setIsMobileFlowSidebarOpen] = useState(false);
   const [isPlannerExpanded, setIsPlannerExpanded] = useState(false);
   const [pendingDetailFlowId, setPendingDetailFlowId] = useState('');
@@ -402,6 +435,7 @@ export function FlowPage(): JSX.Element {
   const activeFlowScopeRef = useRef('');
   const plannerSessionStatusRef = useRef<FlowPlannerSessionStatus | 'idle'>('idle');
   const isPlannerStoppingRef = useRef(false);
+  const isPlannerOverlayCloseBlockedRef = useRef(false);
   const mobileFlowSidebarTriggerRef = useRef<HTMLButtonElement | null>(null);
   const activeDrawerFlowButtonRef = useRef<HTMLButtonElement | null>(null);
   const mobileDrawerCloseButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -551,19 +585,41 @@ export function FlowPage(): JSX.Element {
     }
   }, []);
 
+  const clearPlannerFinishTimer = useCallback(() => {
+    if (plannerFinishTimerRef.current !== null) {
+      window.clearTimeout(plannerFinishTimerRef.current);
+      plannerFinishTimerRef.current = null;
+    }
+  }, []);
+
+  const setPlannerOverlayCloseBlockedWithRef = useCallback((next: boolean) => {
+    isPlannerOverlayCloseBlockedRef.current = next;
+    setIsPlannerOverlayCloseBlocked(next);
+  }, []);
+
+  const schedulePlannerOverlayCloseUnlock = useCallback(() => {
+    clearPlannerFinishTimer();
+    plannerFinishTimerRef.current = window.setTimeout(() => {
+      plannerFinishTimerRef.current = null;
+      setPlannerOverlayCloseBlockedWithRef(false);
+    }, PLANNER_SETTLE_TIMEOUT_MS);
+  }, [clearPlannerFinishTimer, setPlannerOverlayCloseBlockedWithRef]);
+
   const resetPlannerRuntimeState = useCallback(() => {
     pendingPlannerRequestRef.current = null;
     pendingPlannerSnapshotRef.current = null;
     plannerOperationQueueRef.current = [];
     clearPlannerStepTimer();
+    clearPlannerFinishTimer();
     setPlannerInput('');
     setIsPlannerExpanded(false);
     plannerSessionStatusRef.current = 'idle';
     isPlannerStoppingRef.current = false;
+    setPlannerOverlayCloseBlockedWithRef(false);
     setPlannerSessionStatus('idle');
     setIsPlanning(false);
     setIsPlannerStopping(false);
-  }, [clearPlannerStepTimer]);
+  }, [clearPlannerFinishTimer, clearPlannerStepTimer, setPlannerOverlayCloseBlockedWithRef]);
 
   const cachePlannerMessages = useCallback((sessionKey: string | null | undefined, messages: FlowChatMessageItem[]) => {
     const normalizedSessionKey = sessionKey?.trim() ?? '';
@@ -682,6 +738,8 @@ export function FlowPage(): JSX.Element {
         setPlannerSessionStatus(message.payload.status);
         setIsPlannerExpanded(true);
         if (message.payload.status === 'planning') {
+          clearPlannerFinishTimer();
+          setPlannerOverlayCloseBlockedWithRef(true);
           setIsPlanning(true);
           setIsPlannerStopping(false);
           return;
@@ -696,6 +754,13 @@ export function FlowPage(): JSX.Element {
         pendingPlannerRequestRef.current = null;
         setIsPlanning(false);
         setIsPlannerStopping(false);
+        if (message.payload.status === 'stopped') {
+          clearPlannerFinishTimer();
+          setPlannerOverlayCloseBlockedWithRef(false);
+          return;
+        }
+        setPlannerOverlayCloseBlockedWithRef(true);
+        schedulePlannerOverlayCloseUnlock();
         return;
       }
       if (message.type === 'planner_messages_updated') {
@@ -706,6 +771,14 @@ export function FlowPage(): JSX.Element {
         setPlannerMessages((current) =>
           areFlowChatMessagesEqual(current, message.payload.messages) ? current : message.payload.messages
         );
+        const currentPlannerStatus = plannerSessionStatusRef.current;
+        if (isTerminalPlannerSessionStatus(currentPlannerStatus)) {
+          setPlannerOverlayCloseBlockedWithRef(true);
+          schedulePlannerOverlayCloseUnlock();
+        } else {
+          clearPlannerFinishTimer();
+          setPlannerOverlayCloseBlockedWithRef(true);
+        }
         return;
       }
 
@@ -731,9 +804,14 @@ export function FlowPage(): JSX.Element {
       }
       const currentPlannerStatus = plannerSessionStatusRef.current;
       if (!isTerminalPlannerSessionStatus(currentPlannerStatus)) {
+        clearPlannerFinishTimer();
+        setPlannerOverlayCloseBlockedWithRef(true);
         setIsPlanning(true);
         plannerSessionStatusRef.current = 'planning';
         setPlannerSessionStatus('planning');
+      } else {
+        setPlannerOverlayCloseBlockedWithRef(true);
+        schedulePlannerOverlayCloseUnlock();
       }
       setIsPlannerExpanded(true);
 
@@ -754,7 +832,15 @@ export function FlowPage(): JSX.Element {
 
       applyPlannerDraftNodes(message.payload.nodes, sessionKey);
     },
-    [applyPlannerDraftNodes, cachePlannerMessages, clearPlannerStepTimer, flushPlannerOperationQueue]
+    [
+      applyPlannerDraftNodes,
+      cachePlannerMessages,
+      clearPlannerFinishTimer,
+      clearPlannerStepTimer,
+      flushPlannerOperationQueue,
+      schedulePlannerOverlayCloseUnlock,
+      setPlannerOverlayCloseBlockedWithRef,
+    ]
   );
 
   useEffect(() => {
@@ -832,6 +918,30 @@ export function FlowPage(): JSX.Element {
       setSelectedExecutorAgentId(resolvedExecutorAgentId);
     }
   }, [lanes, selectedExecutorAgentId, uniqueAgents]);
+
+  useEffect(() => {
+    if (uniqueAgents.length === 0) {
+      return;
+    }
+    const normalizedFlowId = currentFlowId.trim();
+    const isNewlyCreatedBlankDraft =
+      normalizedFlowId.startsWith('draft_') &&
+      flowDisplayName.trim() === '未命名流程' &&
+      flowRequirement.trim() === '';
+    if (!isNewlyCreatedBlankDraft) {
+      return;
+    }
+    const hasOnlyUnassignedLane = lanes.length === 1 && (lanes[0]?.agentId?.trim() ?? '') === '';
+    const shouldHydrateDefaultAgentLanes = lanes.length === 0 || (hasOnlyUnassignedLane && flowNodes.length === 0);
+    if (!shouldHydrateDefaultAgentLanes) {
+      return;
+    }
+    const nextLanes = buildInitialLanesFromAgent(selectedExecutorAgentId, uniqueAgents);
+    if (nextLanes.length === 0) {
+      return;
+    }
+    setLanes(nextLanes);
+  }, [currentFlowId, flowDisplayName, flowNodes.length, flowRequirement, lanes, selectedExecutorAgentId, uniqueAgents]);
 
   useEffect(() => {
     if (!isMobile) {
@@ -963,6 +1073,9 @@ export function FlowPage(): JSX.Element {
       if (isPlannerAwaitingSession(plannerSessionStatusRef.current, isPlannerStoppingRef.current)) {
         return;
       }
+      if (isPlannerOverlayCloseBlockedRef.current) {
+        return;
+      }
       const target = event.target as Node | null;
       if (!target) {
         return;
@@ -1002,6 +1115,9 @@ export function FlowPage(): JSX.Element {
       if (isPlannerAwaitingSession(plannerSessionStatusRef.current, isPlannerStoppingRef.current)) {
         return;
       }
+      if (isPlannerOverlayCloseBlockedRef.current) {
+        return;
+      }
       setIsPlannerExpanded(false);
     };
     document.addEventListener('focusin', handleFocusIn);
@@ -1027,9 +1143,11 @@ export function FlowPage(): JSX.Element {
   }, [isPlannerExpanded, plannerMessages, isPlanning]);
 
   const navigateToFlowEditor = useCallback(
-    (flowId: string) => {
+    (flowId: string, routeStatePatch?: Partial<FlowRouteState>) => {
       setIsMobileFlowSidebarOpen(false);
-      navigate(`/flow/edit/${encodeURIComponent(flowId)}`);
+      navigate(`/flow/edit/${encodeURIComponent(flowId)}`, {
+        state: routeStatePatch ? { ...routeStatePatch } : undefined,
+      });
     },
     [navigate]
   );
@@ -1129,6 +1247,8 @@ export function FlowPage(): JSX.Element {
       setPlannerSessionStatus('idle');
       setIsPlanning(false);
       setIsPlannerStopping(false);
+      clearPlannerFinishTimer();
+      setPlannerOverlayCloseBlockedWithRef(false);
       setIsDraftCanvas(true);
       setIsSubmittedFlow(false);
       setSelectedNodeIds([]);
@@ -1141,7 +1261,18 @@ export function FlowPage(): JSX.Element {
       const message = error instanceof Error ? error.message : '流程删除失败';
       addToast(message, 'error');
     }
-  }, [addToast, currentFlowId, flowCatalog, flowDisplayName, isNewFlowRoute, navigate, refreshFlowTasks, resolvedFlowId]);
+  }, [
+    addToast,
+    clearPlannerFinishTimer,
+    currentFlowId,
+    flowCatalog,
+    flowDisplayName,
+    isNewFlowRoute,
+    navigate,
+    refreshFlowTasks,
+    resolvedFlowId,
+    setPlannerOverlayCloseBlockedWithRef,
+  ]);
 
   const renderFlowSidebarContent = useCallback(
     (mode: 'desktop' | 'drawer') => {
@@ -1220,7 +1351,12 @@ export function FlowPage(): JSX.Element {
                                 ? { ...flowSidebarItemStyle, ...flowSidebarItemDrawerStyle, ...flowSidebarItemBodyButtonDrawerStyle }
                                 : { ...flowSidebarItemStyle, ...flowSidebarItemBodyButtonStyle }
                           }
-                          onClick={() => navigateToFlowEditor(item.id)}
+                          onClick={() =>
+                            navigateToFlowEditor(
+                              item.id,
+                              item.hasSubmitted ? { prefer_submitted_snapshot: true } : undefined
+                            )
+                          }
                           aria-label={`切换流程-${item.name}`}
                           aria-current={isActive ? 'page' : undefined}
                           ref={mode === 'drawer' && isActive ? activeDrawerFlowButtonRef : undefined}
@@ -1410,6 +1546,34 @@ export function FlowPage(): JSX.Element {
           setConnectionDrag(null);
         }
       } else {
+        const preferSubmittedSnapshot = Boolean(routeState?.prefer_submitted_snapshot);
+        if (preferSubmittedSnapshot) {
+          const snapshot = flowCatalog.get(resolvedFlowId);
+          if (snapshot) {
+            applySnapshot(snapshot);
+          } else {
+            const fallbackLanes = buildInitialLanesFromAgent('', uniqueAgents);
+            resetPlannerRuntimeState();
+            setCurrentFlowId(resolvedFlowId);
+            setFlowDisplayName('未命名流程');
+            setFlowNameInput('未命名流程');
+            setFlowRequirement('');
+            setFlowNodes([]);
+            setLanes(fallbackLanes);
+            setNodeLaneById({});
+            setLastResponse(null);
+            setPlannerSessionKey(null);
+            setPlannerMessages([]);
+            setSelectedExecutorAgentId('');
+            setIsDraftCanvas(true);
+            setIsSubmittedFlow(false);
+            setSelectedNodeIds([]);
+            setSelectedEdgeId(null);
+            setConnectionDrag(null);
+          }
+          setLoadedRouteKey(routeKey);
+          return;
+        }
         const existingDraft = getFlowDraftById(resolvedFlowId);
         if (existingDraft) {
           applyDraftRecord(existingDraft);
@@ -1604,7 +1768,29 @@ export function FlowPage(): JSX.Element {
   const hasSelectedFlow = !isNewFlowRoute || currentFlowId.trim() !== '';
   const isBlankFlowSelection = isNewFlowRoute && !hasSelectedFlow;
   const isPlannerAutoMode = hasSelectedFlow && isPlannerExpanded;
-  const isPlannerAwaiting = isPlanning || isPlannerAwaitingSession(plannerSessionStatus, isPlannerStopping);
+  const isPlannerAwaitingByPendingMessage = useMemo(() => {
+    if (isPlanning || isPlannerAwaitingSession(plannerSessionStatus, isPlannerStopping)) {
+      return false;
+    }
+    if (plannerSessionStatus !== 'idle') {
+      return false;
+    }
+    return hasPendingPlannerReply(plannerMessages);
+  }, [isPlanning, isPlannerStopping, plannerMessages, plannerSessionStatus]);
+  const isPlannerAwaiting = isPlanning
+    || isPlannerAwaitingSession(plannerSessionStatus, isPlannerStopping)
+    || isPlannerAwaitingByPendingMessage;
+  const isPlannerOverlayDismissible = !isPlannerOverlayCloseBlocked;
+  const plannerMessagesForDisplay = useMemo(() => {
+    if (!isPlannerAwaiting) {
+      return plannerMessages;
+    }
+    const lastMessage = plannerMessages[plannerMessages.length - 1];
+    if (lastMessage && isFlowPlanningPlaceholderMessage(lastMessage)) {
+      return plannerMessages;
+    }
+    return [...plannerMessages, FLOW_PLANNING_PLACEHOLDER_MESSAGE];
+  }, [isPlannerAwaiting, plannerMessages]);
   const canEdit = hasSelectedFlow && !isPlannerAutoMode && !isPlanning && !isFlowActioning && flowRuntimeState !== 'running';
   const canPromptPlanner = hasSelectedFlow && !isFlowActioning && flowRuntimeState !== 'running';
   const canConfirm =
@@ -1644,6 +1830,25 @@ export function FlowPage(): JSX.Element {
   useEffect(() => {
     isPlannerStoppingRef.current = isPlannerStopping;
   }, [isPlannerStopping]);
+
+  useEffect(() => {
+    if (!isPlannerAwaitingByPendingMessage) {
+      return;
+    }
+    clearPlannerFinishTimer();
+    setPlannerOverlayCloseBlockedWithRef(true);
+    setIsPlannerExpanded(true);
+  }, [
+    clearPlannerFinishTimer,
+    isPlannerAwaitingByPendingMessage,
+    setPlannerOverlayCloseBlockedWithRef,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      clearPlannerFinishTimer();
+    };
+  }, [clearPlannerFinishTimer]);
 
   const laneById = useMemo(() => new Map(normalizedLanes.map((lane) => [lane.id, lane])), [normalizedLanes]);
   const nodeById = useMemo(() => new Map(flowNodes.map((node) => [node.id, node])), [flowNodes]);
@@ -2430,7 +2635,13 @@ export function FlowPage(): JSX.Element {
       return;
     }
 
-    const executorAgentId = resolveExecutorAgentId(selectedExecutorAgentId, uniqueAgents, lanes);
+    const strictExecutorAgentId = resolveExecutorAgentId(selectedExecutorAgentId, uniqueAgents, lanes);
+    const laneFallbackExecutorAgentId = lanes
+      .map((lane) => lane.agentId?.trim() ?? '')
+      .find((agentId) => agentId !== '' && uniqueAgents.some((agent) => agent.agent_id === agentId))
+      ?? '';
+    const overviewFallbackExecutorAgentId = uniqueAgents[0]?.agent_id?.trim() ?? '';
+    const executorAgentId = strictExecutorAgentId || laneFallbackExecutorAgentId || overviewFallbackExecutorAgentId;
     if (!executorAgentId) {
       addToast('请先配置可用 Agent（泳道或默认执行 Agent）', 'warning');
       return;
@@ -2469,6 +2680,8 @@ export function FlowPage(): JSX.Element {
     };
     setIsPlanning(true);
     setIsPlannerStopping(false);
+    clearPlannerFinishTimer();
+    setPlannerOverlayCloseBlockedWithRef(true);
     setPlannerSessionStatus('planning');
     try {
       const response = await generateFlowFromRequirement(
@@ -2551,6 +2764,8 @@ export function FlowPage(): JSX.Element {
       setIsPlanning(false);
       setPlannerSessionStatus('failed');
       setIsPlannerStopping(false);
+      setPlannerOverlayCloseBlockedWithRef(true);
+      schedulePlannerOverlayCloseUnlock();
       addToast(message, 'error');
     } finally {
       const latestPending = pendingPlannerRequestRef.current;
@@ -2562,6 +2777,7 @@ export function FlowPage(): JSX.Element {
     addToast,
     canPromptPlanner,
     cachePlannerMessages,
+    clearPlannerFinishTimer,
     flowDisplayName,
     flowEdges,
     flowNodes,
@@ -2571,7 +2787,9 @@ export function FlowPage(): JSX.Element {
     lanes,
     plannerSessionKey,
     plannerInput,
+    schedulePlannerOverlayCloseUnlock,
     selectedExecutorAgentId,
+    setPlannerOverlayCloseBlockedWithRef,
     uniqueAgents,
   ]);
 
@@ -2599,9 +2817,13 @@ export function FlowPage(): JSX.Element {
       plannerSessionStatusRef.current = 'stopped';
       setIsPlanning(false);
       setPlannerSessionStatus('stopped');
+      clearPlannerFinishTimer();
+      setPlannerOverlayCloseBlockedWithRef(false);
       return;
     }
     setIsPlannerStopping(true);
+    clearPlannerFinishTimer();
+    setPlannerOverlayCloseBlockedWithRef(true);
     try {
       const response = await stopFlowPlannerSession(
         {
@@ -2616,13 +2838,27 @@ export function FlowPage(): JSX.Element {
       pendingPlannerRequestRef.current = null;
       plannerOperationQueueRef.current = [];
       clearPlannerStepTimer();
+      if (response.status === 'stopped') {
+        clearPlannerFinishTimer();
+        setPlannerOverlayCloseBlockedWithRef(false);
+      } else if (isTerminalPlannerSessionStatus(response.status)) {
+        setPlannerOverlayCloseBlockedWithRef(true);
+        schedulePlannerOverlayCloseUnlock();
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : '停止规划失败';
       addToast(message, 'error');
     } finally {
       setIsPlannerStopping(false);
     }
-  }, [addToast, clearPlannerStepTimer, plannerSessionKey]);
+  }, [
+    addToast,
+    clearPlannerFinishTimer,
+    clearPlannerStepTimer,
+    plannerSessionKey,
+    schedulePlannerOverlayCloseUnlock,
+    setPlannerOverlayCloseBlockedWithRef,
+  ]);
 
   const handleStopFlow = useCallback(async () => {
     const requirementId = activeSubmittedRequirementId.trim();
@@ -2673,6 +2909,32 @@ export function FlowPage(): JSX.Element {
     }
     if (flowNodes.length === 0) {
       addToast('当前没有可加入看板的流程节点', 'warning');
+      return;
+    }
+    const availableAgentIdSet = new Set(
+      uniqueAgents
+        .map((agent) => agent.agent_id.trim())
+        .filter((id) => id !== '')
+    );
+    const missingAgentIds = new Set<string>();
+    const configuredExecutorAgentId = selectedExecutorAgentId.trim();
+    if (configuredExecutorAgentId && !availableAgentIdSet.has(configuredExecutorAgentId)) {
+      missingAgentIds.add(configuredExecutorAgentId);
+    }
+    for (const lane of normalizedLanes) {
+      const laneAgentId = lane.agentId?.trim() ?? '';
+      if (laneAgentId && !availableAgentIdSet.has(laneAgentId)) {
+        missingAgentIds.add(laneAgentId);
+      }
+    }
+    for (const node of flowNodes) {
+      const nodeAgentId = node.agent_id?.trim() ?? '';
+      if (nodeAgentId && !availableAgentIdSet.has(nodeAgentId)) {
+        missingAgentIds.add(nodeAgentId);
+      }
+    }
+    if (missingAgentIds.size > 0) {
+      addToast(`流程存在不可用 Agent：${Array.from(missingAgentIds).join('、')}，请先重新分配后再运行`, 'error');
       return;
     }
     const executorAgentId = resolveExecutorAgentId(selectedExecutorAgentId, uniqueAgents, lanes);
@@ -2957,12 +3219,12 @@ export function FlowPage(): JSX.Element {
         <div
           style={{
             ...planningCanvasOverlayStyle,
-            cursor: isPlannerAwaiting ? 'progress' : 'pointer',
+            cursor: isPlannerAwaiting || !isPlannerOverlayDismissible ? 'progress' : 'pointer',
           }}
           data-testid="flow-planning-overlay"
           aria-hidden="true"
           onPointerDown={(event) => {
-            if (isPlannerAwaiting) {
+            if (isPlannerAwaiting || !isPlannerOverlayDismissible) {
               return;
             }
             event.preventDefault();
@@ -3261,17 +3523,30 @@ export function FlowPage(): JSX.Element {
               data-testid="flow-planner-messages"
               tabIndex={0}
             >
-              {plannerMessages.length > 0
+              {plannerMessagesForDisplay.length > 0
                 ? (
-                plannerMessages.map((message, index) => (
+                plannerMessagesForDisplay.map((message, index) => (
                   <article
                     key={`${message.created_at}-${message.role}-${index}`}
                     style={message.role === 'user' ? plannerMessageUserCardStyle : plannerMessageAssistantCardStyle}
                   >
                     <span style={plannerMessageRoleStyle}>
-                      {message.role === 'user' ? '用户' : message.role === 'system' ? '系统' : '规划 Agent'}
+                      {isFlowPlanningPlaceholderMessage(message)
+                        ? '状态'
+                        : message.role === 'user'
+                          ? '用户'
+                          : message.role === 'system'
+                            ? '系统'
+                            : '规划 Agent'}
                     </span>
-                    <MarkdownMessage text={message.content} style={plannerMessageTextStyle} />
+                    {isFlowPlanningPlaceholderMessage(message) ? (
+                      <span style={flowPlanningPlaceholderTextStyle}>
+                        <span aria-hidden="true">⏳</span>
+                        规划中
+                      </span>
+                    ) : (
+                      <MarkdownMessage text={message.content} style={plannerMessageTextStyle} />
+                    )}
                   </article>
                 ))
                 )

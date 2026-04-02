@@ -589,9 +589,8 @@ def test_flow_generate_starts_persistent_planner_session(
     assert payload["nodes"] == []
     assert payload["edges"] == []
     assert payload["created_task_ids"] == []
-    assert [item["role"] for item in payload["messages"]] == ["user", "system"]
+    assert [item["role"] for item in payload["messages"]] == ["user"]
     assert payload["messages"][0]["content"] == "拆分上线计划，执行主任务，最后审批"
-    assert payload["messages"][1]["content"] == "已发送规划请求，等待 claw3 逐节点编辑工作流。"
 
     planner_token = _planner_token_for_session(isolated_database_url, "linpo:flow:default:planner:claw3")
     assert isinstance(planner_token, str) and planner_token != ""
@@ -761,7 +760,7 @@ def test_flow_generate_returns_current_snapshot_from_persisted_planner_session(
     assert [node["id"] for node in payload["nodes"]] == ["node_1", "node_2"]
     assert payload["nodes"][1]["depends_on"] == ["node_1"]
     assert payload["edges"] == [{"id": "edge-node_1-node_2", "source": "node_1", "target": "node_2"}]
-    assert [item["role"] for item in payload["messages"]] == ["user", "system"]
+    assert [item["role"] for item in payload["messages"]] == ["user"]
 
 
 def test_flow_planner_sse_returns_latest_planner_messages_snapshot(

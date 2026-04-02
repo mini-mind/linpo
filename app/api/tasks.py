@@ -1110,17 +1110,6 @@ def generate_flow(
             "current_node_count": len(normalized_current_nodes),
         },
     )
-    flow_planner_session_service.append_message(
-        db_session=db_session,
-        session_key=session_record.session_key,
-        role="system",
-        kind="status",
-        content="已发送规划请求，等待 claw3 逐节点编辑工作流。",
-        payload={
-            "origin": "flow_generate",
-            "status": "planning",
-        },
-    )
     db_session.commit()
 
     try:
@@ -1169,17 +1158,6 @@ def generate_flow(
             payload={
                 "flow_name": (payload.flow_name or "").strip() or "未命名流程",
                 "current_node_count": len(normalized_current_nodes),
-            },
-        )
-        flow_planner_session_service.append_message(
-            db_session=db_session,
-            session_key=session_record.session_key,
-            role="system",
-            kind="status",
-            content="已发送规划请求，等待 claw3 逐节点编辑工作流。",
-            payload={
-                "origin": "flow_generate",
-                "status": "planning",
             },
         )
         db_session.commit()

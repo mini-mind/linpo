@@ -327,8 +327,31 @@ export function buildInitialLanesFromAgent(
   agentId: string,
   agents: AggregateOverviewAgentItem[]
 ): FlowLane[] {
-  const normalizedAgentId = resolveExecutorAgentId(agentId, agents, []);
-  if (!normalizedAgentId) {
+  const normalizedAgents = agents
+    .map((agent) => {
+      const normalizedId = agent.agent_id.trim();
+      if (!normalizedId) {
+        return null;
+      }
+      return {
+        ...agent,
+        agent_id: normalizedId,
+      };
+    })
+    .filter((agent): agent is AggregateOverviewAgentItem => agent !== null);
+
+  if (normalizedAgents.length === 0) {
+    const normalizedAgentId = agentId.trim();
+    if (normalizedAgentId) {
+      return [
+        {
+          id: `lane_${normalizedAgentId}`,
+          name: normalizedAgentId,
+          agentId: normalizedAgentId,
+          createdAt: new Date().toISOString(),
+        },
+      ];
+    }
     return [
       {
         id: 'lane_unassigned',
@@ -338,15 +361,47 @@ export function buildInitialLanesFromAgent(
       },
     ];
   }
-  const matched = agents.find((item) => item.agent_id === normalizedAgentId);
-  return [
-    {
-      id: `lane_${normalizedAgentId}`,
-      name: matched?.agent_name?.trim() || normalizedAgentId,
-      agentId: normalizedAgentId,
-      createdAt: new Date().toISOString(),
-    },
-  ];
+
+  const seenAgentIds = new Set<string>();
+  const laneAgents: AggregateOverviewAgentItem[] = [];
+
+  const pushAgentById = (targetId: string) => {
+    const normalizedTargetId = targetId.trim();
+    if (!normalizedTargetId || seenAgentIds.has(normalizedTargetId)) {
+      return;
+    }
+    const matched = normalizedAgents.find((agent) => agent.agent_id === normalizedTargetId);
+    if (!matched) {
+      return;
+    }
+    seenAgentIds.add(normalizedTargetId);
+    laneAgents.push(matched);
+  };
+
+  const mainAgent = normalizedAgents.find((agent) => {
+    const normalizedAgentId = agent.agent_id.trim().toLowerCase();
+    const normalizedAgentName = agent.agent_name.trim().toLowerCase();
+    return normalizedAgentId === 'main' || normalizedAgentName === 'main';
+  });
+  if (mainAgent) {
+    pushAgentById(mainAgent.agent_id);
+  }
+
+  const normalizedPreferredAgentId = resolveExecutorAgentId(agentId, normalizedAgents, []);
+  if (normalizedPreferredAgentId) {
+    pushAgentById(normalizedPreferredAgentId);
+  }
+
+  for (const agent of normalizedAgents) {
+    pushAgentById(agent.agent_id);
+  }
+
+  return laneAgents.map((agent) => ({
+    id: `lane_${agent.agent_id}`,
+    name: agent.agent_name.trim() || agent.agent_id,
+    agentId: agent.agent_id,
+    createdAt: new Date().toISOString(),
+  }));
 }
 
 export function buildLanesAndNodeLaneMapFromNodes(
@@ -410,13 +465,11 @@ export function resolveExecutorAgentId(
   lanes: FlowLane[]
 ): string {
   const normalizedSelectedAgentId = selectedAgentId.trim();
-  if (normalizedSelectedAgentId && agents.some((agent) => agent.agent_id === normalizedSelectedAgentId)) {
-    return normalizedSelectedAgentId;
-  }
-
-  const overviewFallbackAgentId = agents[0]?.agent_id?.trim() ?? '';
-  if (overviewFallbackAgentId) {
-    return overviewFallbackAgentId;
+  if (normalizedSelectedAgentId) {
+    if (agents.some((agent) => agent.agent_id === normalizedSelectedAgentId)) {
+      return normalizedSelectedAgentId;
+    }
+    return '';
   }
 
   for (const lane of lanes) {
@@ -424,6 +477,11 @@ export function resolveExecutorAgentId(
     if (laneAgentId && agents.some((agent) => agent.agent_id === laneAgentId)) {
       return laneAgentId;
     }
+  }
+
+  const overviewFallbackAgentId = agents[0]?.agent_id?.trim() ?? '';
+  if (overviewFallbackAgentId) {
+    return overviewFallbackAgentId;
   }
 
   return '';
