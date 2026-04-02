@@ -758,6 +758,51 @@ describe('FlowPage', () => {
     expect(screen.queryByText('流程草图已更新。')).not.toBeInTheDocument();
   });
 
+  it('hydrates graph from http response when planner node sse updates are absent', async () => {
+    mockGenerateFlowFromRequirement.mockResolvedValue(
+      buildGenerateResponse({
+        nodes: [
+          {
+            id: 'node_http_1',
+            title: 'HTTP 节点A',
+            description: '回包兜底节点',
+            depends_on: [],
+            x: 24,
+            y: 36,
+            layer: 1,
+            sensitive: false,
+            status: 'queued',
+            agent_id: 'agent-alpha',
+          },
+          {
+            id: 'node_http_2',
+            title: 'HTTP 节点B',
+            description: '依赖 A',
+            depends_on: ['node_http_1'],
+            x: 24,
+            y: 196,
+            layer: 2,
+            sensitive: false,
+            status: 'queued',
+            agent_id: 'agent-alpha',
+          },
+        ],
+      })
+    );
+
+    const flowId = seedDraftFlow('draft-planner-http-fallback');
+    renderFlowPage(`/flow/edit/${flowId}`);
+    await waitForFlowCanvasReady();
+
+    const input = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
+    await userEvent.type(input, '请规划一个发布流程');
+    await userEvent.keyboard('{Enter}');
+
+    expect(await screen.findByRole('button', { name: '流程节点-HTTP 节点A' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '流程节点-HTTP 节点B' })).toBeInTheDocument();
+    expect(document.querySelectorAll('[data-flow-edge-path="true"]').length).toBe(1);
+  });
+
   it('creates unnamed draft immediately from empty state without opening create modal', async () => {
     renderFlowPage('/flow/edit/new');
     expect(screen.queryByTestId('flow-canvas-floating-actions')).not.toBeInTheDocument();
@@ -885,7 +930,7 @@ describe('FlowPage', () => {
     });
   });
 
-  it('removes selected edge by Delete key on mobile without dedicated edge delete button', async () => {
+  it('shows mobile touch entry to remove selected edge', async () => {
     setViewportWidth(390);
     const flowId = seedDraftFlow('draft-remove-edge-mobile');
     renderFlowPage(`/flow/edit/${flowId}`);
@@ -903,8 +948,9 @@ describe('FlowPage', () => {
     const edgePath = document.querySelector('[data-flow-edge-path="true"]');
     expect(edgePath).not.toBeNull();
     fireEvent.click(edgePath as Element);
-    expect(screen.queryByRole('button', { name: '删除所选连线' })).not.toBeInTheDocument();
-    await userEvent.keyboard('{Delete}');
+    const removeEdgeButton = screen.getByRole('button', { name: '删除所选连线' });
+    expect(removeEdgeButton).toBeInTheDocument();
+    await userEvent.click(removeEdgeButton);
 
     await waitFor(() => {
       expect(document.querySelector('[data-flow-edge-path="true"]')).toBeNull();
@@ -1256,6 +1302,50 @@ describe('FlowPage', () => {
     expect(await screen.findByRole('button', { name: '流程节点-移动端修订节点' })).toBeInTheDocument();
   });
 
+  it('does not switch submitted canvas into draft mode on touch tap without real drag distance', async () => {
+    mockListKanbanTasks.mockResolvedValue([
+      buildKanbanTask({
+        id: 'task-touch-threshold',
+        title: '轻触节点',
+        status: 'queued',
+        extras: {
+          requirement_id: 'req-flow-touch-threshold',
+          requirement_title: '轻触流程',
+          flow_node: 'touch_1',
+          dependencies: 'none',
+          sensitive: 'false',
+        },
+      }),
+    ]);
+
+    renderFlowPage('/flow/edit/req-flow-touch-threshold');
+    await waitForFlowCanvasReady();
+
+    const nodeButton = await screen.findByRole('button', { name: '流程节点-轻触节点' });
+    expect(screen.getByText('queued')).toBeInTheDocument();
+
+    fireEvent.pointerDown(nodeButton, {
+      pointerId: 17,
+      pointerType: 'touch',
+      button: 0,
+      isPrimary: true,
+      clientX: 540,
+      clientY: 260,
+    });
+    fireEvent.pointerUp(window, {
+      pointerId: 17,
+      pointerType: 'touch',
+      button: 0,
+      isPrimary: true,
+      clientX: 541,
+      clientY: 261,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('queued')).toBeInTheDocument();
+    });
+  });
+
   it('hides unconnected handles on unselected nodes', async () => {
     const flowId = seedDraftFlow('draft-hidden-handles');
     renderFlowPage(`/flow/edit/${flowId}`);
@@ -1326,6 +1416,32 @@ describe('FlowPage', () => {
     await userEvent.click(screen.getByRole('button', { name: '编辑流程-流程A' }));
     const detailDialog = await screen.findByRole('dialog', { name: '流程编辑窗口' });
     expect(within(detailDialog).getByRole('button', { name: '中断' })).toBeInTheDocument();
+  });
+
+  it('guards Enter key node editing when canEdit is false', async () => {
+    mockListKanbanTasks.mockResolvedValue([
+      buildKanbanTask({
+        id: 'task-running-enter-guard',
+        title: '运行节点',
+        status: 'running',
+        extras: {
+          requirement_id: 'req-flow-enter-guard',
+          requirement_title: '运行流程',
+          flow_node: 'running_1',
+          dependencies: 'none',
+          sensitive: 'false',
+        },
+      }),
+    ]);
+
+    renderFlowPage('/flow/edit/req-flow-enter-guard');
+    await waitForFlowCanvasReady();
+
+    const nodeButton = await screen.findByRole('button', { name: '流程节点-运行节点' });
+    await userEvent.click(nodeButton);
+    await userEvent.keyboard('{Enter}');
+
+    expect(screen.queryByRole('dialog', { name: '编辑节点' })).not.toBeInTheDocument();
   });
 
   it('moves continue action into flow edit dialog when blocked and keeps planner editable', async () => {

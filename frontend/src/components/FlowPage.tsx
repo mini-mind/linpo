@@ -101,28 +101,13 @@ import type {
 } from './flowPageUtils';
 import {
   pageStyle,
-  topToolbarStyle,
-  topToolbarMobileStyle,
-  toolbarInnerStyle,
-  toolbarInnerMobileStyle,
-  toolbarLeftStyle,
-  toolbarLeftMobileStyle,
-  toolbarRightStyle,
-  toolbarRightMobileStyle,
-  breadcrumbRootButtonStyle,
-  breadcrumbSeparatorStyle,
-  breadcrumbCurrentButtonStyle,
-  breadcrumbCurrentButtonMobileStyle,
   primaryButtonStyle,
   primaryButtonMobileStyle,
   flowStopButtonStyle,
   flowContinueButtonStyle,
-  flowWorkspaceStyle,
   flowWorkspaceMobileStyle,
   flowDesktopShellStyle,
   flowDesktopCanvasWrapStyle,
-  flowSidebarStyle,
-  flowSidebarMobileStyle,
   flowSidebarDesktopStyle,
   flowSidebarDrawerOverlayStyle,
   flowSidebarDrawerStyle,
@@ -163,12 +148,7 @@ import {
   flowSidebarItemEditButtonDrawerStyle,
   flowSidebarItemRunButtonStyle,
   flowSidebarItemRunButtonDrawerStyle,
-  plannerRailTitleWrapStyle,
-  plannerRailTitleStyle,
-  plannerRailHintTextStyle,
-  plannerRailMetaStyle,
   floatingPlannerMessagesStyle,
-  plannerMessageBaseCardStyle,
   plannerMessageUserCardStyle,
   plannerMessageAssistantCardStyle,
   plannerMessageRoleStyle,
@@ -179,8 +159,6 @@ import {
   canvasFloatingActionsMobileStyle,
   canvasFloatingActionRowStyle,
   canvasFloatingActionRowMobileStyle,
-  canvasFloatingDetailButtonStyle,
-  canvasFloatingDetailLabelStyle,
   emptySelectionOverlayStyle,
   emptySelectionOverlayMobileStyle,
   emptySelectionCardStyle,
@@ -193,13 +171,6 @@ import {
   floatingPlannerCardMobileStyle,
   floatingPlannerCardCollapsedStyle,
   floatingPlannerCardCollapsedMobileStyle,
-  floatingPlannerHeaderStyle,
-  floatingPlannerHeaderMobileStyle,
-  plannerHeaderActionsStyle,
-  plannerToggleButtonStyle,
-  plannerCollapsedSummaryButtonStyle,
-  plannerCollapsedSummaryLabelStyle,
-  plannerCollapsedSummaryTextStyle,
   secondaryButtonStyle,
   secondaryButtonMobileStyle,
   dangerButtonStyle,
@@ -222,10 +193,6 @@ import {
   confirmTitleStyle,
   confirmTextStyle,
   confirmWarningTextStyle,
-  plannerComposerCardStyle,
-  plannerComposerCardMobileStyle,
-  plannerComposerTextareaStyle,
-  plannerComposerTextareaMobileStyle,
   plannerComposerInlineStyle,
   plannerComposerTextareaInlineStyle,
   plannerComposerTextareaCollapsedStyle,
@@ -342,6 +309,9 @@ type PendingPlannerSnapshot = {
   revision: number;
   nodes: FlowPlannerNodeDraft[];
 };
+
+const NODE_DRAG_MOVE_THRESHOLD_PX = 6;
+const NODE_DRAG_MOVE_THRESHOLD_SQUARED = NODE_DRAG_MOVE_THRESHOLD_PX * NODE_DRAG_MOVE_THRESHOLD_PX;
 
 export function FlowPage(): JSX.Element {
   const navigate = useNavigate();
@@ -709,13 +679,6 @@ export function FlowPage(): JSX.Element {
       if (message.type === 'planner_messages_updated') {
         if (message.payload.session_key !== sessionKey) {
           return;
-        }
-        const pending = pendingPlannerRequestRef.current;
-        if (pending && pending.sessionKey === sessionKey) {
-          pendingPlannerRequestRef.current = {
-            ...pending,
-            allowHttpGraphHydrate: false,
-          };
         }
         cachePlannerMessages(sessionKey, message.payload.messages);
         setPlannerMessages((current) =>
@@ -2206,12 +2169,21 @@ export function FlowPage(): JSX.Element {
     if (!dragState) {
       return;
     }
+    let hasExceededMoveThreshold = false;
+
     const handlePointerMove = (event: PointerEvent) => {
       if (event.pointerId !== dragState.pointerId) {
         return;
       }
       const deltaX = event.clientX - dragState.startX;
       const deltaY = event.clientY - dragState.startY;
+      if (!hasExceededMoveThreshold) {
+        const distanceSquared = deltaX ** 2 + deltaY ** 2;
+        if (distanceSquared < NODE_DRAG_MOVE_THRESHOLD_SQUARED) {
+          return;
+        }
+        hasExceededMoveThreshold = true;
+      }
       const laneUpdates: Record<string, string> = {};
       setFlowNodes((current) =>
         current.map((node) => {
@@ -2246,8 +2218,10 @@ export function FlowPage(): JSX.Element {
         return;
       }
       setDragState(null);
-      setIsDraftCanvas(true);
-      setIsSubmittedFlow(false);
+      if (hasExceededMoveThreshold) {
+        setIsDraftCanvas(true);
+        setIsSubmittedFlow(false);
+      }
     };
 
     window.addEventListener('pointermove', handlePointerMove);
@@ -2494,7 +2468,40 @@ export function FlowPage(): JSX.Element {
       if (flowScopeAtRequest !== activeFlowScopeRef.current) {
         return;
       }
-      const nextNodes = flowNodesRef.current;
+      const pendingRequest = pendingPlannerRequestRef.current;
+      const canHydrateFromHttp =
+        pendingRequest?.requestId === requestId &&
+        pendingRequest.sessionKey === resolvedPlannerSessionKey &&
+        pendingRequest.allowHttpGraphHydrate;
+      let nextNodes = flowNodesRef.current;
+      if (canHydrateFromHttp && pendingRequest) {
+        const normalizedHttpNodes = normalizeFlowNodes(response.nodes, response.edges);
+        const httpDraftNodes: FlowPlannerNodeDraft[] = normalizedHttpNodes.map((node) => ({
+          id: node.id,
+          title: node.title,
+          description: node.description ?? '',
+          depends_on: [...node.depends_on],
+          sensitive: node.sensitive,
+        }));
+        const reconciled = reconcilePlannerCanvasState(
+          httpDraftNodes,
+          flowNodesRef.current,
+          nodeLaneByIdRef.current,
+          lanesRef.current,
+          uniqueAgents,
+          selectedExecutorAgentIdRef.current.trim() || null
+        );
+        nextNodes = reconciled.nodes;
+        setFlowNodes(reconciled.nodes);
+        setLanes(reconciled.lanes);
+        setNodeLaneById(reconciled.nodeLaneById);
+        setIsDraftCanvas(true);
+        setIsSubmittedFlow(false);
+        pendingPlannerRequestRef.current = {
+          ...pendingRequest,
+          allowHttpGraphHydrate: false,
+        };
+      }
       setLastResponse({
         ...response,
         nodes: nextNodes,
@@ -2847,7 +2854,8 @@ export function FlowPage(): JSX.Element {
     setIsSubmitConfirmOpen(true);
   }, [flowRuntimeState, handleContinueFlow, handleStopFlow]);
 
-  const showMobileDeleteAction = isMobile && canEdit && selectedNodeIds.length > 0;
+  const showMobileDeleteNodeAction = isMobile && canEdit && selectedNodeIds.length > 0;
+  const showMobileDeleteEdgeAction = isMobile && canEdit && selectedEdgeId !== null;
   const showMobileNodeActions = isMobile && hasSelectedFlow;
   const floatingCanvasActionsNode = isMobile && hasSelectedFlow ? (
     <div
@@ -2890,7 +2898,7 @@ export function FlowPage(): JSX.Element {
             编辑节点
           </button>
         ) : null}
-        {showMobileDeleteAction ? (
+        {showMobileDeleteNodeAction ? (
           <button
             type="button"
             style={dangerButtonStyle}
@@ -2900,6 +2908,21 @@ export function FlowPage(): JSX.Element {
             aria-label="删除所选节点"
           >
             删除节点
+          </button>
+        ) : null}
+        {showMobileDeleteEdgeAction ? (
+          <button
+            type="button"
+            style={dangerButtonStyle}
+            onClick={() => {
+              if (!selectedEdgeId) {
+                return;
+              }
+              handleRemoveEdge(selectedEdgeId);
+            }}
+            aria-label="删除所选连线"
+          >
+            删除连线
           </button>
         ) : null}
       </div>
@@ -3109,6 +3132,9 @@ export function FlowPage(): JSX.Element {
               onPointerDown={(event) => handleNodePointerDown(event, node.id)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {
+                  if (!canEdit) {
+                    return;
+                  }
                   event.preventDefault();
                   openNodeEditModal(node.id);
                 }
