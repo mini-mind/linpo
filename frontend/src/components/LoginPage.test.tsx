@@ -33,6 +33,24 @@ function renderLoginPageWithMemoryRouter(initialEntry = '/login') {
   );
 }
 
+function renderLoginPageWithRouteState(fromPathname: string) {
+  return render(
+    <MemoryRouter initialEntries={[{ pathname: '/login', state: { from: { pathname: fromPathname } } }]}>
+      <ToastProvider>
+        <AuthProvider>
+          <LocationDisplay />
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/summary" element={<div>summary-page</div>} />
+            <Route path="/flow/edit/new" element={<div>flow-page</div>} />
+            <Route path="/kanban" element={<div>kanban-page</div>} />
+          </Routes>
+        </AuthProvider>
+      </ToastProvider>
+    </MemoryRouter>
+  );
+}
+
 describe('LoginPage auth flow', () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -123,6 +141,32 @@ describe('LoginPage auth flow', () => {
     });
 
     expect(window.localStorage.getItem('linpo.currentInstanceId')).toBeNull();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location-display')).toHaveTextContent('/summary');
+    });
+  });
+
+  it('forces summary landing after login when previous path is flow route', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ detail: 'Unauthorized' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 'user-1', username: 'alice' }),
+      });
+
+    renderLoginPageWithRouteState('/flow/edit/new');
+
+    await screen.findByRole('button', { name: '登录' });
+
+    await userEvent.type(screen.getByPlaceholderText('用户名或邮箱'), 'alice');
+    await userEvent.type(screen.getByPlaceholderText('密码'), 'secret123');
+    await userEvent.click(screen.getByRole('button', { name: '登录' }));
 
     await waitFor(() => {
       expect(screen.getByTestId('location-display')).toHaveTextContent('/summary');

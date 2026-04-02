@@ -1,6 +1,23 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
 
+const DEFAULT_POST_LOGIN_PATH = '/summary';
+
+function shouldForceSummary(pathname: string): boolean {
+  return pathname.startsWith('/flow') || pathname.startsWith('/kanban');
+}
+
+export function resolvePostLoginPath(pathname: string | null | undefined): string {
+  const trimmed = (pathname ?? '').trim();
+  if (trimmed === '' || trimmed === '/login' || trimmed === '/landing') {
+    return DEFAULT_POST_LOGIN_PATH;
+  }
+  if (shouldForceSummary(trimmed)) {
+    return DEFAULT_POST_LOGIN_PATH;
+  }
+  return trimmed;
+}
+
 export function ProtectedRoute(): JSX.Element {
   const { user, loading } = useAuth();
   const location = useLocation();
@@ -36,7 +53,7 @@ export function PublicRoute(): JSX.Element {
   }
 
   if (user) {
-    const from = (location.state as { from?: { pathname?: string } })?.from?.pathname || '/summary';
+    const from = resolvePostLoginPath((location.state as { from?: { pathname?: string } })?.from?.pathname);
     return <Navigate to={from} replace />;
   }
 

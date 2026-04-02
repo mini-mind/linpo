@@ -3,6 +3,7 @@ import { useCallback, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
+import { resolvePostLoginPath } from '../routes';
 
 type AuthMode = 'login' | 'register';
 
@@ -19,7 +20,7 @@ export function LoginPage(): JSX.Element {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
-  const from = (location.state as { from?: { pathname?: string } })?.from?.pathname || '/summary';
+  const from = resolvePostLoginPath((location.state as { from?: { pathname?: string } })?.from?.pathname);
 
   const handleModeToggle = useCallback(() => {
     setMode((prev) => (prev === 'login' ? 'register' : 'login'));
