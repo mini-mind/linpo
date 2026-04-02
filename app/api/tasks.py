@@ -5,12 +5,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import asyncio
 import json
-import mimetypes
 import os
-from pathlib import Path
 import re
 from typing import Any, cast
-from urllib.parse import quote, urlparse
+from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
@@ -19,6 +17,26 @@ from fastapi.responses import Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
+from app.api.task_output_helpers import (
+    build_task_output_preview as build_task_output_preview_helper,
+    guess_output_mime_type as guess_output_mime_type_helper,
+    parse_task_dependencies as parse_task_dependencies_helper,
+    pick_existing_task_output_path as pick_existing_task_output_path_helper,
+    resolve_task_output_path as resolve_task_output_path_helper,
+    task_temp_input_paths as task_temp_input_paths_helper,
+    task_temp_output_path as task_temp_output_path_helper,
+)
+from app.api.flow_planner_helpers import (
+    _build_planner_node_operations,
+    _flow_canvas_nodes_signature,
+    _flow_chat_messages_signature,
+    _normalize_canvas_nodes,
+    _normalize_flow_chat_messages,
+    _normalize_flow_chat_role,
+    _resolve_canvas_depends_on,
+    _serialize_iso_datetime,
+    _to_planner_node_draft_payload,
+)
 from app.api.schemas import (
     FlowCanvasEdge,
     FlowCanvasNode,
@@ -70,7 +88,6 @@ router = APIRouter(prefix="/api/v1/boards/{board_id}/tasks", tags=["tasks"])
 
 _DEFAULT_STALE_RUNNING_SECONDS = 900
 _EVENT_KEY_MAX = 80
-_OUTPUT_PREVIEW_MAX_BYTES = 120_000
 _FLOW_PLANNER_AGENT_ID = "claw3"
 _FLOW_PLANNER_SSE_POLL_INTERVAL_SECONDS = 0.6
 _FLOW_PLANNER_SSE_KEEPALIVE_SECONDS = 12.0
@@ -202,203 +219,6 @@ def _resolve_flow_planner_agent_id(raw: str | None) -> str:
     return _FLOW_PLANNER_AGENT_ID
 
 
-def _normalize_flow_chat_role(raw: object) -> str:
-    if raw in {"user", "assistant", "system"}:
-        return str(raw)
-    return "assistant"
-
-
-def _extract_history_item_text(item: dict[str, object]) -> str:
-    text = item.get("text")
-    if isinstance(text, str):
-        return text
-
-    content = item.get("content")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        text_parts: list[str] = []
-        for block in content:
-            if not isinstance(block, dict):
-                continue
-            block_text = block.get("text")
-            if isinstance(block_text, str):
-                text_parts.append(block_text)
-        return "\n".join(text_parts)
-
-    return ""
-
-
-def _history_item_created_at(item: dict[str, object]) -> str:
-    timestamp = item.get("timestamp")
-    if isinstance(timestamp, (int, float)):
-        return datetime.fromtimestamp(float(timestamp) / 1000.0, tz=UTC).isoformat()
-    return datetime.now(tz=UTC).isoformat()
-
-
-def _normalize_flow_chat_messages(messages_raw: object) -> list[FlowChatMessageItem]:
-    if not isinstance(messages_raw, list):
-        return []
-
-    items: list[FlowChatMessageItem] = []
-    for item in messages_raw:
-        if not isinstance(item, dict):
-            continue
-        content = _extract_history_item_text(cast(dict[str, object], item)).strip()
-        if content == "":
-            continue
-        items.append(
-            FlowChatMessageItem(
-                role=cast(Any, _normalize_flow_chat_role(item.get("role"))),
-                content=content,
-                created_at=_history_item_created_at(cast(dict[str, object], item)),
-            )
-        )
-    return items
-
-
-def _serialize_iso_datetime(value: object) -> str:
-    if isinstance(value, datetime):
-        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
-    if isinstance(value, str):
-        return value
-    return str(value)
-
-
-def _normalize_depends_on_values(
-    raw_values: object,
-    *,
-    node_id: str,
-    known_node_ids: set[str],
-) -> list[str]:
-    if not isinstance(raw_values, list):
-        return []
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for item in raw_values:
-        if not isinstance(item, str):
-            continue
-        dependency = item.strip()
-        if dependency == "" or dependency == node_id or dependency not in known_node_ids or dependency in seen:
-            continue
-        seen.add(dependency)
-        normalized.append(dependency)
-    return normalized
-
-
-def _node_declares_depends_on(node: FlowCanvasNode) -> bool:
-    return "depends_on" in node.model_fields_set
-
-
-def _resolve_canvas_depends_on(
-    *,
-    nodes: list[FlowCanvasNode],
-    edges: list[FlowCanvasEdge],
-) -> dict[str, list[str]]:
-    node_ids = {node.id for node in nodes}
-    edge_deps_by_target: dict[str, list[str]] = {node.id: [] for node in nodes}
-
-    for edge in edges:
-        if edge.source not in node_ids or edge.target not in node_ids:
-            continue
-        if edge.source == edge.target:
-            continue
-        deps = edge_deps_by_target.setdefault(edge.target, [])
-        if edge.source not in deps:
-            deps.append(edge.source)
-
-    depends_on_by_target: dict[str, list[str]] = {}
-    for node in nodes:
-        raw_values: object
-        if _node_declares_depends_on(node):
-            raw_values = node.depends_on
-        else:
-            raw_values = edge_deps_by_target.get(node.id, [])
-        depends_on_by_target[node.id] = _normalize_depends_on_values(
-            raw_values,
-            node_id=node.id,
-            known_node_ids=node_ids,
-        )
-    return depends_on_by_target
-
-
-def _normalize_canvas_nodes(
-    *,
-    nodes: list[FlowCanvasNode],
-    edges: list[FlowCanvasEdge],
-) -> list[FlowCanvasNode]:
-    depends_on_by_target = _resolve_canvas_depends_on(nodes=nodes, edges=edges)
-    return [
-        node.model_copy(update={"depends_on": depends_on_by_target.get(node.id, [])})
-        for node in nodes
-    ]
-
-
-def _flow_chat_messages_signature(messages: list[FlowChatMessageItem]) -> str:
-    return json.dumps([item.model_dump(mode="json") for item in messages], ensure_ascii=False, separators=(",", ":"))
-
-
-def _flow_canvas_nodes_signature(nodes: list[FlowCanvasNode]) -> str:
-    return json.dumps(
-        [item.model_dump(mode="json") for item in nodes],
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-
-
-def _diff_flow_canvas_nodes(
-    previous: list[FlowCanvasNode],
-    current: list[FlowCanvasNode],
-) -> tuple[list[FlowCanvasNode], list[str]]:
-    previous_by_id = {node.id: node for node in previous}
-    current_by_id = {node.id: node for node in current}
-    patched: list[FlowCanvasNode] = []
-
-    for node in current:
-        previous_node = previous_by_id.get(node.id)
-        if previous_node is None:
-            patched.append(node)
-            continue
-        if previous_node.model_dump(mode="json") != node.model_dump(mode="json"):
-            patched.append(node)
-
-    removed_node_ids = [node_id for node_id in previous_by_id if node_id not in current_by_id]
-    return patched, removed_node_ids
-
-
-def _to_planner_node_draft_payload(node: FlowCanvasNode) -> dict[str, Any]:
-    return {
-        "id": node.id,
-        "title": node.title,
-        "description": node.description,
-        "depends_on": node.depends_on,
-        "sensitive": node.sensitive,
-    }
-
-
-def _build_planner_node_operations(
-    previous: list[FlowCanvasNode],
-    current: list[FlowCanvasNode],
-) -> list[dict[str, Any]]:
-    patched_nodes, removed_node_ids = _diff_flow_canvas_nodes(previous, current)
-    operations: list[dict[str, Any]] = []
-    for node_id in removed_node_ids:
-        operations.append(
-            {
-                "type": "delete_node",
-                "node_id": node_id,
-            }
-        )
-    for node in patched_nodes:
-        operations.append(
-            {
-                "type": "upsert_node",
-                "node": _to_planner_node_draft_payload(node),
-            }
-        )
-    return operations
-
-
 def _planner_snapshot_nodes_to_canvas_nodes(
     nodes: list[dict[str, Any]],
     *,
@@ -526,32 +346,15 @@ def _to_sse_data(payload: dict[str, object]) -> str:
 
 
 def _parse_dependencies(raw: str | None) -> list[str]:
-    value = (raw or "").strip()
-    if value == "" or value == "none":
-        return []
-    return [item.strip() for item in value.split(",") if item.strip()]
+    return parse_task_dependencies_helper(raw)
 
 
 def _task_temp_output_path(task: Task) -> str:
-    extras = task.extras if isinstance(task.extras, dict) else {}
-    raw = str(extras.get("temp_output_path", "")).strip()
-    if raw:
-        return raw
-    flow_id = str(extras.get("flow_id", "")).strip() or "adhoc"
-    node_id = str(extras.get("flow_node", "")).strip() or str(task.id)
-    return f"/tmp/linpo/{flow_id}/{node_id}.json"
+    return task_temp_output_path_helper(task)
 
 
 def _task_temp_input_paths(task: Task) -> list[str]:
-    extras = task.extras if isinstance(task.extras, dict) else {}
-    raw = str(extras.get("temp_input_paths", "")).strip()
-    if raw and raw != "none":
-        return [item.strip() for item in raw.split(",") if item.strip()]
-    flow_id = str(extras.get("flow_id", "")).strip()
-    if flow_id == "":
-        return []
-    dependencies = _parse_dependencies(cast(str | None, extras.get("dependencies")))
-    return [f"/tmp/linpo/{flow_id}/{dep}.json" for dep in dependencies]
+    return task_temp_input_paths_helper(task)
 
 
 def _is_sensitive_task(task: Task) -> bool:
@@ -606,190 +409,6 @@ def _is_flow_editable_task(task: Task) -> bool:
     if status == "queued":
         return True
     return _is_flow_interrupted_blocked_task(task)
-
-
-def _normalize_output_path(raw_path: str) -> Path | None:
-    normalized = raw_path.strip()
-    if normalized == "" or "\x00" in normalized:
-        return None
-    candidate = Path(normalized).expanduser()
-    if not candidate.is_absolute():
-        return None
-    try:
-        return candidate.resolve(strict=False)
-    except OSError:
-        return None
-
-
-def _extract_output_paths_from_artifact(item: str) -> list[str]:
-    normalized = item.strip()
-    if normalized == "":
-        return []
-
-    candidates: list[str] = []
-    lowered = normalized.lower()
-    if lowered.startswith("artifact:"):
-        value = normalized.split(":", 1)[1].strip()
-        if value:
-            candidates.append(value)
-
-    if normalized.startswith("/"):
-        candidates.append(normalized)
-
-    for match in re.findall(r"(/tmp/[^\s\"'<>]+)", normalized):
-        candidates.append(match)
-
-    return candidates
-
-
-def _task_output_allowed_paths(task: Task) -> set[Path]:
-    extras = task.extras if isinstance(task.extras, dict) else {}
-    candidates: list[str] = [_task_temp_output_path(task)]
-    output_path = str(extras.get("temp_output_path", "")).strip()
-    if output_path:
-        candidates.append(output_path)
-    input_paths = _task_temp_input_paths(task)
-    candidates.extend(input_paths)
-    for item in task.artifacts:
-        if not isinstance(item, str):
-            continue
-        candidates.extend(_extract_output_paths_from_artifact(item))
-
-    allowed: set[Path] = set()
-    for candidate in candidates:
-        normalized = _normalize_output_path(candidate)
-        if normalized is None:
-            continue
-        allowed.add(normalized)
-    return allowed
-
-
-def _task_output_candidate_paths(task: Task, requested_path: str | None) -> list[Path]:
-    allowed = _task_output_allowed_paths(task)
-    ordered: list[Path] = []
-    seen: set[Path] = set()
-
-    def add_candidate(raw: str | None) -> None:
-        if not isinstance(raw, str):
-            return
-        normalized = _normalize_output_path(raw)
-        if normalized is None:
-            return
-        if normalized not in allowed or normalized in seen:
-            return
-        seen.add(normalized)
-        ordered.append(normalized)
-
-    add_candidate(requested_path)
-    extras = task.extras if isinstance(task.extras, dict) else {}
-    add_candidate(str(extras.get("temp_output_path", "")).strip())
-    add_candidate(_task_temp_output_path(task))
-    for item in task.artifacts:
-        if not isinstance(item, str):
-            continue
-        for candidate in _extract_output_paths_from_artifact(item):
-            add_candidate(candidate)
-    for input_path in _task_temp_input_paths(task):
-        add_candidate(input_path)
-    return ordered
-
-
-def _pick_existing_task_output_path(task: Task, requested_path: str | None) -> Path | None:
-    for candidate in _task_output_candidate_paths(task, requested_path):
-        if candidate.exists() and candidate.is_file():
-            return candidate
-    return None
-
-
-def _resolve_task_output_path(task: Task, requested_path: str | None) -> Path:
-    fallback = _task_temp_output_path(task)
-    raw_candidate = requested_path if isinstance(requested_path, str) else ""
-    candidate = raw_candidate.strip() or fallback
-    normalized = _normalize_output_path(candidate)
-    if normalized is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid output path")
-
-    allowed = _task_output_allowed_paths(task)
-    if normalized not in allowed:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Output path is not allowed for this task")
-    return normalized
-
-
-def _guess_output_mime_type(path: Path) -> str:
-    guessed, _ = mimetypes.guess_type(path.name)
-    if guessed:
-        return guessed
-    return "application/octet-stream"
-
-
-def _is_binary_content(payload: bytes) -> bool:
-    if payload == b"":
-        return False
-    if b"\x00" in payload:
-        return True
-    control_count = 0
-    for value in payload:
-        if value in (9, 10, 13):
-            continue
-        if value < 32:
-            control_count += 1
-    return control_count / max(1, len(payload)) > 0.08
-
-
-def _build_output_download_url(*, board_id: str, task_id: UUID, path: Path) -> str:
-    encoded_board_id = quote(board_id, safe="")
-    encoded_task_id = quote(str(task_id), safe="")
-    encoded_path = quote(str(path), safe="")
-    return (
-        f"/api/v1/boards/{encoded_board_id}/tasks/{encoded_task_id}/output-file"
-        f"?path={encoded_path}&download=true"
-    )
-
-
-def _build_task_output_preview(
-    *,
-    board_id: str,
-    task: Task,
-    output_path: Path,
-) -> TaskOutputPreviewResponse:
-    if not output_path.exists() or not output_path.is_file():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Output file not found")
-
-    mime_type = _guess_output_mime_type(output_path)
-    size_bytes = output_path.stat().st_size
-    with output_path.open("rb") as handle:
-        raw = handle.read(_OUTPUT_PREVIEW_MAX_BYTES + 1)
-    truncated = len(raw) > _OUTPUT_PREVIEW_MAX_BYTES
-    preview_bytes = raw[:_OUTPUT_PREVIEW_MAX_BYTES]
-
-    kind: str = "binary"
-    content: str | None = None
-    if not _is_binary_content(preview_bytes):
-        decoded = preview_bytes.decode("utf-8", errors="replace")
-        if output_path.suffix.lower() == ".json" or mime_type == "application/json":
-            try:
-                parsed_json = json.loads(decoded)
-                decoded = json.dumps(parsed_json, ensure_ascii=False, indent=2)
-                kind = "json"
-            except json.JSONDecodeError:
-                kind = "text"
-        else:
-            kind = "text"
-        content = decoded
-
-    return TaskOutputPreviewResponse(
-        path=str(output_path),
-        kind=kind,
-        mime_type=mime_type,
-        size_bytes=size_bytes,
-        truncated=truncated,
-        content=content,
-        download_url=_build_output_download_url(
-            board_id=board_id,
-            task_id=task.id,
-            path=output_path,
-        ),
-    )
 
 
 def _get_board_task_for_user(
@@ -2390,9 +2009,9 @@ def preview_task_output(
         db_session=db_session,
         task_service=task_service,
     )
-    output_path = _resolve_task_output_path(task, path)
+    output_path = resolve_task_output_path_helper(task, path)
     if not output_path.exists() or not output_path.is_file():
-        fallback = _pick_existing_task_output_path(task, path)
+        fallback = pick_existing_task_output_path_helper(task, path)
         if fallback is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -2400,7 +2019,7 @@ def preview_task_output(
             )
         output_path = fallback
     normalized_board_id = board_id.strip() or "default"
-    return _build_task_output_preview(
+    return build_task_output_preview_helper(
         board_id=normalized_board_id,
         task=task,
         output_path=output_path,
@@ -2424,9 +2043,9 @@ def download_task_output_file(
         db_session=db_session,
         task_service=task_service,
     )
-    output_path = _resolve_task_output_path(task, path)
+    output_path = resolve_task_output_path_helper(task, path)
     if not output_path.exists() or not output_path.is_file():
-        fallback = _pick_existing_task_output_path(task, path)
+        fallback = pick_existing_task_output_path_helper(task, path)
         if fallback is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -2434,7 +2053,7 @@ def download_task_output_file(
             )
         output_path = fallback
 
-    media_type = _guess_output_mime_type(output_path)
+    media_type = guess_output_mime_type_helper(output_path)
     if download:
         return FileResponse(output_path, media_type=media_type, filename=output_path.name)
     return FileResponse(output_path, media_type=media_type)

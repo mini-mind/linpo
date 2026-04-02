@@ -10,14 +10,14 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from sqlalchemy.orm import Session
 from typing import cast
 
-from app.api.tasks import (
-    _build_task_output_preview,
-    _extract_output_paths_from_artifact,
-    _guess_output_mime_type,
-    _normalize_output_path,
-    _pick_existing_task_output_path,
-    _resolve_task_output_path,
-    _task_temp_output_path,
+from app.api.task_output_helpers import (
+    build_task_output_preview,
+    extract_output_paths_from_artifact,
+    guess_output_mime_type,
+    normalize_output_path,
+    pick_existing_task_output_path,
+    resolve_task_output_path,
+    task_temp_output_path,
 )
 from app.api.schemas import (
     AgentMountRequestPayload,
@@ -36,6 +36,7 @@ from app.api.schemas import (
     InstanceValidationResponse,
     InstanceWriteRequest,
     TaskOutputPreviewResponse,
+    TaskStatus,
     UserMessageItem,
     UserMessageReadResponse,
 )
@@ -164,8 +165,8 @@ def _pair_code_to_create_input(payload: InstancePairCodeRequest) -> InstanceCrea
 def _to_utc_iso(value: object) -> str:
     if isinstance(value, str):
         return value
-    if hasattr(value, "astimezone"):
-        dt_value = value if getattr(value, "tzinfo", None) is not None else value.replace(tzinfo=UTC)
+    if isinstance(value, datetime):
+        dt_value = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
         return dt_value.astimezone(UTC).isoformat()
     return ""
 
@@ -176,6 +177,12 @@ def _to_iso_from_millis(value: object) -> str:
     if isinstance(value, float):
         return datetime.fromtimestamp(value / 1000, tz=UTC).isoformat()
     return ""
+
+
+def _normalize_task_status(value: str) -> TaskStatus:
+    if value in {"queued", "running", "blocked_by_approval", "failed", "completed"}:
+        return cast(TaskStatus, value)
+    return "queued"
 
 
 def _build_execution_context_or_404(
@@ -204,16 +211,16 @@ def _task_output_paths_for_instance_files(task: Task) -> list[Path]:
     if output_path:
         candidates.append(output_path)
     else:
-        candidates.append(_task_temp_output_path(task))
+        candidates.append(task_temp_output_path(task))
     for item in task.artifacts:
         if not isinstance(item, str):
             continue
-        candidates.extend(_extract_output_paths_from_artifact(item))
+        candidates.extend(extract_output_paths_from_artifact(item))
 
     ordered: list[Path] = []
     seen: set[Path] = set()
     for candidate in candidates:
-        normalized = _normalize_output_path(candidate)
+        normalized = normalize_output_path(candidate)
         if normalized is None:
             continue
         if normalized in seen:
@@ -243,10 +250,10 @@ def _to_instance_file_items(tasks: list[Task]) -> list[InstanceFileItem]:
                 InstanceFileItem(
                     id=f"{task.id}:{path}",
                     task_id=str(task.id),
-                    agent_id=task.agent_id,
+                    agent_id=task.agent_id or "",
                     agent_name=task.agent_name,
                     task_title=task.title,
-                    task_status=task.status,
+                    task_status=_normalize_task_status(task.status),
                     requirement_id=requirement_id,
                     requirement_title=requirement_title,
                     path=str(path),
@@ -370,9 +377,9 @@ def preview_instance_file(
         db_session=db_session,
         task_service=task_service,
     )
-    output_path = _resolve_task_output_path(task, path)
+    output_path = resolve_task_output_path(task, path)
     if not output_path.exists() or not output_path.is_file():
-        fallback = _pick_existing_task_output_path(task, path)
+        fallback = pick_existing_task_output_path(task, path)
         if fallback is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -380,7 +387,7 @@ def preview_instance_file(
             )
         output_path = fallback
     normalized_board_id = board_id.strip() or "default"
-    return _build_task_output_preview(
+    return build_task_output_preview(
         board_id=normalized_board_id,
         task=task,
         output_path=output_path,
@@ -415,9 +422,9 @@ def download_instance_file(
         db_session=db_session,
         task_service=task_service,
     )
-    output_path = _resolve_task_output_path(task, path)
+    output_path = resolve_task_output_path(task, path)
     if not output_path.exists() or not output_path.is_file():
-        fallback = _pick_existing_task_output_path(task, path)
+        fallback = pick_existing_task_output_path(task, path)
         if fallback is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -425,7 +432,7 @@ def download_instance_file(
             )
         output_path = fallback
 
-    media_type = _guess_output_mime_type(output_path)
+    media_type = guess_output_mime_type(output_path)
     if download:
         return FileResponse(output_path, media_type=media_type, filename=output_path.name)
     return FileResponse(output_path, media_type=media_type)
