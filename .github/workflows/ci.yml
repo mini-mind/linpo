@@ -1,0 +1,105 @@
+name: CI Gate
+
+on:
+  pull_request:
+  push:
+    branches: ["main", "master"]
+
+jobs:
+  backend-gate:
+    name: Backend Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[dev]"
+
+      - name: Backend syntax gate
+        run: |
+          python -m py_compile \
+            app/api/tasks.py \
+            app/api/instances.py \
+            app/api/task_output_helpers.py \
+            app/api/flow_planner_helpers.py \
+            app/services/task_service.py \
+            app/services/flow_decomposition_service.py
+
+      - name: Backend risk suites
+        run: |
+          pytest tests/test_task_output_helpers.py tests/integration/test_tasks_api.py tests/integration/test_instances_api.py -q
+
+  frontend-gate:
+    name: Frontend Gate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Frontend unit gate
+        run: |
+          npm test -- --run src/components/FlowPage.test.tsx src/components/flowPageUtils.test.ts src/components/flowCanvasGeometryUtils.test.ts
+
+      - name: Frontend build gate
+        run: npm run build
+
+  playwright-smoke-local:
+    name: Playwright Smoke (Local)
+    runs-on: ubuntu-latest
+    needs: [frontend-gate]
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run smoke spec against local dev server
+        run: |
+          set -euo pipefail
+          npm run dev -- --host 127.0.0.1 --port 4173 > /tmp/linpo-vite.log 2>&1 &
+          VITE_PID=$!
+          trap 'kill ${VITE_PID} >/dev/null 2>&1 || true' EXIT
+
+          for i in {1..60}; do
+            if curl -sf http://127.0.0.1:4173 >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+          PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173 npx playwright test e2e/flow-page.smoke.spec.ts --project=chromium

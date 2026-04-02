@@ -9,6 +9,12 @@ Linpo v0.7 主工作区收敛为 `摘要 + 看板 + 流程 + 文件`：
 
 ravin 测试服务域名：`linpo.duckdns.org`
 
+## 开发环境基线
+
+- Node.js：`20.19.0`（见 `.nvmrc` / `frontend/.nvmrc`）
+- npm：`>=10`
+- Python：`3.12+`
+
 ## 文档目录
 
 - 治理规则：`AGENTS.md`（项目治理与协作规则唯一真源）

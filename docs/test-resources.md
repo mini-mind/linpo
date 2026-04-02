@@ -27,11 +27,23 @@
 
 ## 标准命令
 
+- `nvm use`：切换到仓库约定 Node 版本（`20.19.0`）。
 - `/data/projects/linpo/.venv/bin/pytest`：后端核心逻辑测试。
 - `npm --prefix frontend run test`：前端单元/集成测试。
 - `npm --prefix frontend run build`：前端构建产物。
 - `make quality`：统一质量门（聚合后端测试、类型检查与前端构建）。
 - `curl -i http://175.178.213.10:8000/health`：后端健康检查。
+
+## CI/CD 门禁（GitHub Actions）
+
+- `CI Gate`：`.github/workflows/ci.yml`
+  - Backend：`py_compile + pytest(关键风险套件)`
+  - Frontend：`vitest(FlowPage/flowPageUtils/geometry) + build`
+  - Playwright：本地 dev server 下执行 `e2e/flow-page.smoke.spec.ts`
+- `CD Delivery Gate`：`.github/workflows/cd-delivery-gate.yml`
+  - 在部署环境运行 `flow-page.smoke.spec.ts`
+  - `push main/master` 触发时读取仓库密钥 `PLAYWRIGHT_BASE_URL`
+  - 手动触发 `workflow_dispatch` 时使用输入参数 `base_url`
 
 ## 验收流程
 
