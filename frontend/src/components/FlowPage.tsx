@@ -310,6 +310,9 @@ type PendingPlannerSnapshot = {
   nodes: FlowPlannerNodeDraft[];
 };
 
+const PLANNER_MESSAGE_CACHE_MAX_SESSIONS = 24;
+const PLANNER_MESSAGE_CACHE_MAX_MESSAGES = 200;
+
 const NODE_DRAG_MOVE_THRESHOLD_PX = 6;
 const NODE_DRAG_MOVE_THRESHOLD_SQUARED = NODE_DRAG_MOVE_THRESHOLD_PX * NODE_DRAG_MOVE_THRESHOLD_PX;
 
@@ -387,6 +390,7 @@ export function FlowPage(): JSX.Element {
   const plannerRequestSeqRef = useRef(0);
   const plannerRevisionBySessionRef = useRef<Record<string, number>>({});
   const plannerMessagesBySessionRef = useRef<Record<string, FlowChatMessageItem[]>>({});
+  const plannerMessageSeenAtRef = useRef<Record<string, number>>({});
   const plannerOperationQueueRef = useRef<FlowPlannerNodeOperation[]>([]);
   const plannerStepTimerRef = useRef<number | null>(null);
   const plannerFinishTimerRef = useRef<number | null>(null);
@@ -566,7 +570,25 @@ export function FlowPage(): JSX.Element {
     if (!normalizedSessionKey) {
       return;
     }
-    plannerMessagesBySessionRef.current[normalizedSessionKey] = messages;
+    plannerMessagesBySessionRef.current[normalizedSessionKey] = messages.slice(-PLANNER_MESSAGE_CACHE_MAX_MESSAGES);
+    plannerMessageSeenAtRef.current[normalizedSessionKey] = Date.now();
+
+    const cachedSessionKeys = Object.keys(plannerMessagesBySessionRef.current);
+    if (cachedSessionKeys.length <= PLANNER_MESSAGE_CACHE_MAX_SESSIONS) {
+      return;
+    }
+
+    const keysByOldest = [...cachedSessionKeys].sort((left, right) => {
+      const leftSeenAt = plannerMessageSeenAtRef.current[left] ?? 0;
+      const rightSeenAt = plannerMessageSeenAtRef.current[right] ?? 0;
+      return leftSeenAt - rightSeenAt;
+    });
+    const staleCount = cachedSessionKeys.length - PLANNER_MESSAGE_CACHE_MAX_SESSIONS;
+    for (let index = 0; index < staleCount; index += 1) {
+      const staleKey = keysByOldest[index];
+      delete plannerMessagesBySessionRef.current[staleKey];
+      delete plannerMessageSeenAtRef.current[staleKey];
+    }
   }, []);
 
   const getCachedPlannerMessages = useCallback((sessionKey: string | null | undefined): FlowChatMessageItem[] => {

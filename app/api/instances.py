@@ -76,6 +76,10 @@ from app.services.instance_pairing_code import (
 
 router = APIRouter(prefix="/instances", tags=["instances"])
 
+_AGENT_DOC_PREVIEW_MAX_BYTES = 120_000
+_AGENT_DOC_DOWNLOAD_MAX_BYTES = 2_000_000
+_PAIRING_REQUEST_NOOP_EXPIRES_SECONDS = 600
+
 
 def get_instance_service() -> InstanceService:
     return InstanceService()
@@ -116,6 +120,15 @@ def _instance_to_item(instance: Instance) -> InstanceItem:
         status=instance.status,
         last_check_at=None if instance.last_check_at is None else instance.last_check_at.isoformat(),
         created_at=instance.created_at.isoformat(),
+    )
+
+
+def _build_noop_pairing_response() -> AgentPairingRequestResponse:
+    now = datetime.now(UTC)
+    return AgentPairingRequestResponse(
+        confirmation_url="/pairing/receipt/pending/confirm",
+        expires_at=now.isoformat(),
+        expires_in_seconds=_PAIRING_REQUEST_NOOP_EXPIRES_SECONDS,
     )
 
 
@@ -508,15 +521,18 @@ def preview_instance_agent_doc(
     path_text = path_value.strip() if isinstance(path_value, str) else name.strip()
     content_value = file_payload.get("content")
     content = content_value if isinstance(content_value, str) else ""
+    raw_bytes = content.encode("utf-8")
     size_value = file_payload.get("size")
-    size_bytes = size_value if isinstance(size_value, int) and size_value >= 0 else len(content.encode("utf-8"))
+    size_bytes = size_value if isinstance(size_value, int) and size_value >= 0 else len(raw_bytes)
+    truncated = len(raw_bytes) > _AGENT_DOC_PREVIEW_MAX_BYTES
+    preview_bytes = raw_bytes[:_AGENT_DOC_PREVIEW_MAX_BYTES]
     return TaskOutputPreviewResponse(
         path=path_text,
         kind="text",
         mime_type="text/markdown",
         size_bytes=size_bytes,
-        truncated=False,
-        content=content,
+        truncated=truncated,
+        content=preview_bytes.decode("utf-8", errors="replace"),
         download_url=(
             f"/instances/{instance_id}/agent-docs/download"
             f"?agentId={quote(agent_id.strip(), safe='')}&name={quote(name.strip(), safe='')}&download=true"
@@ -553,11 +569,17 @@ def download_instance_agent_doc(
 
     content_value = file_payload.get("content")
     content = content_value if isinstance(content_value, str) else ""
+    content_bytes = content.encode("utf-8")
+    if len(content_bytes) > _AGENT_DOC_DOWNLOAD_MAX_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="Agent doc is too large to download",
+        )
     headers: dict[str, str] = {}
     if download:
         headers["Content-Disposition"] = f'attachment; filename="{name.strip()}"'
     return Response(
-        content=content.encode("utf-8"),
+        content=content_bytes,
         media_type="text/markdown; charset=utf-8",
         headers=headers,
     )
@@ -619,10 +641,7 @@ def request_agent_mount(
             ),
         )
     except AgentSelfPairingUserNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="user not found",
-        )
+        return _build_noop_pairing_response()
     except InstanceValidationFailedError as exc:
         return _validation_error_response(
             ok=exc.result.ok,
@@ -658,10 +677,7 @@ def request_agent_unmount(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid instance id") from exc
     except AgentSelfPairingUserNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="user not found",
-        )
+        return _build_noop_pairing_response()
     except InstanceNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found") from exc
 

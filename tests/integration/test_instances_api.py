@@ -501,6 +501,78 @@ def test_instance_agent_docs_preview_returns_404_when_missing(
     assert preview_payload["detail"] == "Agent doc not found"
 
 
+def test_instance_agent_docs_preview_truncates_and_download_rejects_oversized_content(
+    isolated_database_url: str,
+    auth_cookie: str,
+    db_handle: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    user = db_handle.execute(select(User).where(User.username == "alice")).scalar_one()
+    instance = Instance(
+        user_id=user.id,
+        name="claw1-docs-large",
+        type="openclaw",
+        endpoint="https://example.com",
+        gateway_token_enc=encrypt_secret("alice-token"),
+        status="ok",
+    )
+    db_handle.add(instance)
+    db_handle.commit()
+    db_handle.refresh(instance)
+
+    def fake_fetch_snapshot(self: object) -> object:
+        del self
+        return type(
+            "Snapshot",
+            (),
+            {"snapshot": {"health": {"agents": [{"agentId": "planner", "displayName": "Claw Planner"}]}}},
+        )()
+
+    oversized_content = "A" * (2_000_000 + 128)
+
+    def fake_agents_files_get(self: object, *, agent_id: str, name: str) -> dict[str, Any]:
+        del self
+        return {
+            "ok": True,
+            "payload": {
+                "file": {
+                    "name": name,
+                    "path": f"agent://{agent_id}/{name}",
+                    "content": oversized_content,
+                    "size": len(oversized_content.encode("utf-8")),
+                    "missing": False,
+                }
+            },
+        }
+
+    monkeypatch.setattr("app.services.openclaw_client.OpenClawClient.fetch_snapshot", fake_fetch_snapshot)
+    monkeypatch.setattr(
+        "app.services.openclaw_client.OpenClawClient.agents_files_get",
+        fake_agents_files_get,
+    )
+
+    preview_status, _, preview_body = request(
+        "GET",
+        f"/instances/{instance.id}/agent-docs/preview?agentId=planner&name=SOUL.md",
+        headers={"cookie": auth_cookie},
+    )
+    assert preview_status == 200
+    preview_payload = cast(dict[str, Any], json.loads(preview_body.decode("utf-8")))
+    assert preview_payload["truncated"] is True
+    assert isinstance(preview_payload["content"], str)
+    assert len(cast(str, preview_payload["content"]).encode("utf-8")) <= 120_000
+
+    download_status, _, download_body = request(
+        "GET",
+        f"/instances/{instance.id}/agent-docs/download?agentId=planner&name=SOUL.md&download=true",
+        headers={"cookie": auth_cookie},
+    )
+    assert download_status == 413
+    payload = cast(dict[str, Any], json.loads(download_body.decode("utf-8")))
+    assert payload["detail"] == "Agent doc is too large to download"
+
+
 def test_instance_agent_docs_reject_cross_user_access_before_provider_call(
     isolated_database_url: str,
     auth_cookie: str,
@@ -762,6 +834,37 @@ def test_agent_mount_request_returns_confirmation_url_and_writes_message(
     assert target["action"] == "mount"
 
 
+def test_agent_mount_request_hides_user_not_found(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _register_and_login("alice")
+
+    monkeypatch.setattr(
+        "app.services.instance_validator.InstanceValidatorService.validate",
+        lambda self, validation_request: InstanceValidationResult(
+            ok=True,
+            status="active",
+            message=f"validated:{validation_request.endpoint}",
+        ),
+    )
+
+    request_status, _, request_payload = _request_json(
+        "POST",
+        "/instances/agent-mount/request",
+        {
+            "email": "missing-user@example.com",
+            "name": "ghost-mount",
+            "type": "openclaw",
+            "endpoint": "http://127.0.0.1:28789",
+            "gatewayToken": "ghost-token",
+        },
+    )
+    confirmation_url = _require_confirmation_url(request_status, request_payload)
+    assert confirmation_url == "/pairing/receipt/pending/confirm"
+
+
 def test_message_read_endpoint_marks_message_as_read(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -885,6 +988,47 @@ def test_agent_unmount_request_returns_confirmation_url(
     confirmation_url = _require_confirmation_url(request_status, request_payload)
     token = _extract_receipt_token(confirmation_url)
     assert token != ""
+
+
+def test_agent_unmount_request_hides_user_not_found(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    auth_cookie = _register_and_login("alice")
+
+    monkeypatch.setattr(
+        "app.services.instance_validator.InstanceValidatorService.validate",
+        lambda self, validation_request: InstanceValidationResult(
+            ok=True,
+            status="active",
+            message=f"validated:{validation_request.endpoint}",
+        ),
+    )
+
+    create_status, _, create_payload = _request_json(
+        "POST",
+        "/instances",
+        {
+            "name": "alice-to-unmount-noop",
+            "type": "openclaw",
+            "endpoint": "http://127.0.0.1:28789",
+            "gatewayToken": "token-to-unmount-noop",
+        },
+        auth_cookie,
+    )
+    assert create_status == 201
+
+    request_status, _, request_payload = _request_json(
+        "POST",
+        "/instances/agent-unmount/request",
+        {
+            "email": "missing-user@example.com",
+            "instanceId": create_payload["id"],
+        },
+    )
+    confirmation_url = _require_confirmation_url(request_status, request_payload)
+    assert confirmation_url == "/pairing/receipt/pending/confirm"
 
 
 def test_agent_receipt_confirm_requires_login(
