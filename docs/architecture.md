@@ -34,20 +34,21 @@
 - `SummaryPage`：移动端采用单列堆叠布局，审批列表与事件流保留各自的内部滚动区域；事件流筛选与分页控件允许在小屏下自然换行或堆叠。
 - `SummaryPage`：事件卡片默认展开，展示实例、Agent、类型与完整描述；不再提供分类按钮组或“全部展开”动作。
 - `SummaryPage`：整体页面壳与 `InstanceFilesPage` 主内容区对齐；普通桌面维持稳定留白，超宽屏时整体居中并限制最大内容宽度，避免统计图与左右分栏过度拉伸。
-- `FlowEditorPanel`：编辑流程页，不再提供顶部独立工具栏；画布右上角仅保留“运行”悬浮主按钮，流程级 `重命名/删除/运行/中断/继续` 收敛到左侧流程列表项的编辑弹窗。
+- `FlowEditorPanel`：编辑流程页，不再提供顶部独立工具栏；当前打开流程的侧栏卡片承担主`运行`入口，流程级 `重命名/删除/运行/中断/继续` 收敛到左侧流程列表项的编辑弹窗。
 - `FlowEditorPanel`：编辑流程页需订阅 board tasks SSE 任务事件并增量更新 `flowTasks`，由任务快照反向投影节点状态到画布；左侧流程侧栏复用 Flow 与草稿索引数据源，并承接流程切换与新建流程能力。
-- `FlowEditorPanel`：流程列表渲染采用分组视图：`当前 / 草稿 / 已提交`；同一流程只允许落在一个分组中，当前流程优先级最高。
+- `FlowEditorPanel`：流程列表渲染采用 `草稿 / 已提交` 两组视图；当前打开流程保留在所属分组内，仅通过激活态高亮，不再单独抽成“当前”分组。
+- `FlowEditorPanel`：各分组内的流程项按最后编辑时间倒序排列；当前打开流程不能因为路由激活而改写排序。
 - `FlowEditorPanel`：左侧流程侧栏头部仅保留标题与同行右侧“新建”按钮，不再保留筛选器、排序器或补充说明文案。
 - `FlowEditorPanel`：移动端不依赖双击手势承载核心编辑能力；画布内需暴露显式节点动作入口，至少覆盖 `新建节点/编辑已选节点/打开流程列表`。
 - `FlowEditorPanel`：流程新建弹窗固定使用 `claw3` 作为拆解 Agent（后续可通过配置切换，不在 UI 暴露选择器）。
 - `FlowEditorPanel`：移动端将左侧流程列表改为抽屉式侧栏，默认收起；画布内显式入口负责打开/关闭抽屉，抽屉内部继续复用桌面端的流程切换与新建动作。
 - `FlowEditorPanel`：移动端流程抽屉需处理焦点迁移：打开时聚焦当前流程项（若不存在则聚焦抽屉内首个可操作按钮），关闭时将焦点还给画布内的流程列表触发按钮。
 - `FlowEditorPanel`：底部悬浮规划窗口改为“紧凑对话框 + 按需展开消息流”模式；不再展示 title/描述文案，焦点进入浮窗或消息流时自动展开，焦点回到画布等区域时自动收起。
-- `FlowEditorPanel`：流程规划消息流不再依赖 `flow.generate` 响应里的静态 `messages` 字段，改为在发送前确定 `planner_session_key`，随后通过 SSE 订阅该 planner session 的增量消息。
+- `FlowEditorPanel`：流程规划消息流不再依赖 `flow.generate` 响应里的静态 `messages` 字段，改为在发送前确定 `planner_session_key`，随后通过 SSE 订阅该 planner session 的增量消息；消息需由 Linpo 后端持久化保存，以支持刷新恢复。
 - `FlowEditorPanel`：流程图更新同样走 planner SSE，而不是等待 `flow.generate` 一次性返回整图；前端按收到的节点级补丁实时改写本地草稿，再由 `depends_on` 即时派生边。
 - `FlowEditorPanel`：折叠态仅保留半透明单输入框，placeholder 固定为 `输入您的需求，自动规划流程`，且不再渲染额外外层边框；展开态中消息流位于输入框上方，若无历史消息则保持空白，发送按钮位于输入框下一行最右侧，左侧展示 `Enter 发送 / Shift+Enter 换行` 灰色说明。
 - `FlowEditorPanel`：规划浮窗在展开或收到新消息时需自动滚动到底部；页面布局不得因浮窗常驻而制造额外底部留白，画布可视区需尽量填满剩余空间。
-- `FlowEditorPanel`：发送规划请求期间，发送按钮需禁用并显示“思考中...”，同时画布显示半透明遮罩，明确当前处于规划中。
+- `FlowEditorPanel`：发送规划请求期间，浮窗主按钮由`发送`切换为`停止`；在 planner session 进入终态前，画布持续显示半透明遮罩并冻结人工编辑，不能因首个 HTTP 响应或临时 SSE 静默而提前解除。
 - `KanbanShell` 在“按流程分列”模式下，列头需展示流程状态并提供主动作（`中断流程/继续流程/运行流程`）；删除流程统一留在 `FlowEditorPanel` 当前流程详情中处理。
 - `KanbanShell` 支持按列维度维护折叠状态；双击列头可在“完整列 / 折叠列”间切换，折叠态收敛为半透明窄列并移除列头，仅在顶部保留纵向省略号与渐隐背景，不卸载整页横向滚动容器。
 - `KanbanShell` 未折叠列采用“内容包裹 + 列体内滚动”布局：轨道顶部对齐，列本身只增长到当前工作区可用高度上限，超出部分由列内卡片列表承担纵向滚动。
@@ -101,8 +102,12 @@
 - 连线交互采用连接点拖拽，边渲染按节点相对位置动态选择最短接入点组合。
 - 流程编辑页左侧改为流程列表侧栏；发送规划指令时需携带当前 `nodes/edges` 作为上下文，并在请求期间冻结画布编辑。
 - 流程图 canonical 结构是 `nodes[].depends_on`；`edges` 属于前端/后端根据节点快照计算出的派生表示，仅用于画布渲染和兼容已有提交接口。
-- 流程规划改为“节点级 patch 流”而非“整图 JSON commit”：`FlowDecompositionService` 维护 planner session 对应的 draft revision，并在每次识别到有效增量后产出最新节点快照。
+- 流程规划改为“节点级 patch 流”而非“整图 JSON commit”：Linpo 维护独立的持久化 `planner session`，记录 `messages/current_nodes/revision/status`，并在每次有效增量后产出最新节点快照。
 - 节点级 patch 最小集合冻结为：`upsert_node`（创建/更新节点，包含完整 `id/title/description/depends_on/sensitive`）与 `delete_node`（按 `id` 删除节点）。节点依赖变更必须通过 `upsert_node.depends_on` 表达，不再定义独立 edge patch。
+- `FlowDecompositionService` 负责向 `claw3` 发起规划会话，但不再依赖 claw3 最终回整图 JSON 作为主链；主链改为 claw3 在会话中调用 Linpo planner HTTP 接口进行 `upsert_node/delete_node/complete/fail`。
+- Planner HTTP 接口必须携带一次性 `planner_token`；Linpo 在收到每次节点编辑请求后，先落持久化消息，再更新 draft snapshot/revision，并通过 SSE 推送 `planner_messages_updated/planner_nodes_patched/planner_snapshot_updated/planner_status_updated`。
+- `complete` 接口负责对最终节点集执行完整校验：节点数、唯一 id、`depends_on` 引用合法、至少一个 `sensitive=true`。校验通过才将 planner session 置为 `completed`；否则写入失败消息并保持会话 `failed`。
+- `stop` 接口由前端触发，Linpo 需同时落会话状态、写入消息流，并通过 Provider `chat.pause` 中断 claw3 对应 session。
 - `FlowEditorPanel` 应用 patch 后立即重算派生边；若 SSE 重连、丢序或解析失败，则请求当前 draft snapshot 并整体替换本地 nodes，再继续接收后续 patch。
 - 流程规划消息流与输入框回到画布底部悬浮窗口：同一浮层内承载消息流与输入框，不再占据左侧主列，也不再展示额外标题或说明文本。
 - 浮层与画布的空间分配遵循“最小常驻占位”原则：收起态仅保留紧凑输入区，展开态按内容浮起显示，不为页面制造固定大块底部留白。
@@ -171,11 +176,17 @@
 - `GET /sse/boards/{board_id}/tasks`：看板任务 SSE 实时事件通道（按当前登录用户隔离），推送 `snapshot_ready/tasks_changed/error` 事件；看板页与流程编辑页统一使用该通道同步任务与节点状态。
 - `POST /api/v1/boards/{board_id}/tasks`：创建任务并记录指派信息，创建成功后由应用层触发 OpenClaw `chat.send`。
 - `POST /api/v1/boards/{board_id}/tasks/flow/generate`：根据需求生成流程图节点/边草稿，不落看板任务；支持可选 `current_nodes/current_edges/planner_session_key` 以在已有流程上增量改图，后端固定以 `claw3` 作为 planner 目标。
-- `POST /api/v1/boards/{board_id}/tasks/flow/generate`：改为“启动一次 planner 增量编辑会话”；响应至少返回 `planner_session_key` 与当前 draft snapshot，不再要求等待完整整图生成结束。
+- `POST /api/v1/boards/{board_id}/tasks/flow/generate`：改为“启动或续接一次 planner 增量编辑会话”；后端先持久化用户消息、当前工作流快照与 planner session 状态，再把“历史消息 + 当前快照 + 本次需求 + planner HTTP 接口信息”发送给 `claw3`。响应至少返回 `planner_session_key` 与当前 draft snapshot，不再要求等待完整整图生成结束。
 - `GET /api/v1/boards/{board_id}/tasks/flow/planner-sse?sessionKey=...`：流程规划 SSE 通道；固定连接 `FlowDecompositionService` 的 `claw3` planner session，除 `snapshot_ready/planner_messages_updated/error` 外，还需推送图补丁事件与快照事件，供流程页在消息流外同步实时改图。
 - 图补丁事件最小集合冻结为 `planner_nodes_patched` 与 `planner_snapshot_updated`：
   - `planner_nodes_patched`：负载包含 `session_key/revision/operations[]`，其中操作仅允许 `upsert_node/delete_node`。
   - `planner_snapshot_updated`：负载包含 `session_key/revision/nodes[]`，前端用于重连首屏或重同步纠偏。
+- `GET /api/v1/boards/{board_id}/tasks/flow/planner-sse` 还需推送 `planner_status_updated`，至少包含 `session_key/status/revision/updated_at`，用于前端维持“遮罩/停止按钮/恢复编辑”状态。
+- `POST /api/v1/boards/{board_id}/tasks/flow/planner-stop`：前端停止当前 planner 会话；后端需落持久化状态并尝试暂停 `claw3`。
+- `POST /api/v1/boards/{board_id}/tasks/flow/planner-sessions/{session_key}/nodes/upsert`：planner 内部接口，基于 token 单节点创建或更新。
+- `POST /api/v1/boards/{board_id}/tasks/flow/planner-sessions/{session_key}/nodes/delete`：planner 内部接口，基于 token 删除单节点。
+- `POST /api/v1/boards/{board_id}/tasks/flow/planner-sessions/{session_key}/complete`：planner 内部接口，提交最终节点集并触发完整校验。
+- `POST /api/v1/boards/{board_id}/tasks/flow/planner-sessions/{session_key}/fail`：planner 内部接口，写入失败原因并结束会话。
 - `POST /api/v1/boards/{board_id}/tasks/flow/confirm`：确认草稿后创建 `queued` 任务并触发队列调度。
 - `POST /api/v1/boards/{board_id}/tasks/{task_id}/interrupt`：中断指定任务；若任务处于运行态，后端请求 OpenClaw `chat.pause` 并将任务落为终态，再触发队列推进。
 - `POST /api/v1/boards/{board_id}/tasks/{task_id}/continue`：继续阻塞任务；中断型阻塞恢复为 `queued` 并重新调度，审批型阻塞标记为 `completed` 并推进后续节点。
@@ -214,8 +225,8 @@
 - 实例文件接口必须做任务作用域校验：仅允许当前用户、当前实例、当前看板下任务关联路径，不开放任意绝对路径访问。
 - Agent 文档接口必须只暴露 OpenClaw 白名单文件名：`AGENTS.md`、`SOUL.md`、`TOOLS.md`、`IDENTITY.md`、`USER.md`、`HEARTBEAT.md`、`BOOTSTRAP.md`、`MEMORY.md`、`memory.md`；Linpo 不自行接受任意路径输入。
 - `flow.generate` 为流程页面分配专用 session：`planner:claw3`、`manager`、`execution` 前缀，用于流程拆解和任务调度链路。
-- 流程拆解逻辑不在前端执行，统一由后端 `FlowDecompositionService` 通过 `claw3`（OpenClaw 实例）产出结构化节点增量；若前端传入 planner agent，后端仅接受 `claw3` 并按该目标发起请求，不得静默回退到其他 agent。
-- 流程规划消息流与图补丁共用独立 SSE 通道：前端在发送 `flow.generate` 前确定 `planner_session_key`，随后订阅 `/api/v1/boards/{board_id}/tasks/flow/planner-sse`；后端通过 `ProviderApplicationService.chat_history` 轮询 planner session 历史消息，并向前端推送 `planner_messages_updated`、`planner_nodes_patched` 与 `planner_snapshot_updated`。
+- 流程拆解逻辑不在前端执行，统一由后端 `FlowDecompositionService` 通过 `claw3`（OpenClaw 实例）发起规划会话；若前端传入 planner agent，后端仅接受 `claw3` 并按该目标发起请求，不得静默回退到其他 agent。
+- 流程规划消息流与图补丁共用独立 SSE 通道：前端在发送 `flow.generate` 前确定 `planner_session_key`，随后订阅 `/api/v1/boards/{board_id}/tasks/flow/planner-sse`；后端不再把 OpenClaw `chat.history` 作为唯一真源，而是以 Linpo 持久化 planner session 为真源，对外推送 `planner_messages_updated`、`planner_nodes_patched`、`planner_snapshot_updated` 与 `planner_status_updated`。
 - 流程创建入口由 `FlowEditorPanel` 左侧流程侧栏中的新建弹窗承接；`FlowEditorPanel` 底部悬浮对话框用于后续增量改图（同样调用 `flow.generate`）。
 - 配对入口支持用户自有 OpenClaw（如 `claw2`）；Linpo 不要求用户先配置多页面，只需完成一次实例配对即可进入看板与流程主链。
 - 调度策略：每次入队后立即从 `queued` 取一个“依赖满足”的任务投放执行；任务完成后再推进下一项。未完成任务保持 `running`，敏感终态进入 `blocked_by_approval`。

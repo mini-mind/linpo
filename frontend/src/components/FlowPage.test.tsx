@@ -13,6 +13,7 @@ const {
   mockGetAggregateOverview,
   mockGenerateFlowFromRequirement,
   mockConfirmFlowToKanban,
+  mockStopFlowPlannerSession,
   mockDeleteKanbanRequirementTasks,
   mockListKanbanTasks,
   mockRenameFlowRequirement,
@@ -25,6 +26,7 @@ const {
   mockGetAggregateOverview: vi.fn(),
   mockGenerateFlowFromRequirement: vi.fn(),
   mockConfirmFlowToKanban: vi.fn(),
+  mockStopFlowPlannerSession: vi.fn(),
   mockDeleteKanbanRequirementTasks: vi.fn(),
   mockListKanbanTasks: vi.fn(),
   mockRenameFlowRequirement: vi.fn(),
@@ -42,6 +44,7 @@ vi.mock('../api/client', async () => {
     getAggregateOverview: mockGetAggregateOverview,
     generateFlowFromRequirement: mockGenerateFlowFromRequirement,
     confirmFlowToKanban: mockConfirmFlowToKanban,
+    stopFlowPlannerSession: mockStopFlowPlannerSession,
     deleteKanbanRequirementTasks: mockDeleteKanbanRequirementTasks,
     listKanbanTasks: mockListKanbanTasks,
     renameFlowRequirement: mockRenameFlowRequirement,
@@ -253,6 +256,12 @@ describe('FlowPage', () => {
     mockGetAggregateOverview.mockResolvedValue(buildOverview());
     mockGenerateFlowFromRequirement.mockResolvedValue(buildGenerateResponse());
     mockConfirmFlowToKanban.mockResolvedValue(buildConfirmResponse());
+    mockStopFlowPlannerSession.mockResolvedValue({
+      session_key: 'linpo:flow:default:planner:claw3:test',
+      status: 'stopped',
+      revision: 1,
+      updated_at: '2026-04-02T00:00:00Z',
+    });
     mockDeleteKanbanRequirementTasks.mockResolvedValue({
       deleted: true,
       deleted_task_ids: ['task-node-1'],
@@ -334,21 +343,73 @@ describe('FlowPage', () => {
     expect(payload.current_edges).toEqual([]);
     expect(payload.planner_agent_id).toBe('claw3');
 
-    expect(screen.getByRole('button', { name: '思考中...' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '停止' })).toBeInTheDocument();
     expect(screen.getByTestId('flow-planning-overlay')).toBeInTheDocument();
     expect(input.value).toBe('');
+
+    await waitFor(() => {
+      expect(mockCreateFlowPlannerSseClient).toHaveBeenCalledTimes(1);
+    });
+    const plannerSseOptions = mockCreateFlowPlannerSseClient.mock.calls[0]?.[0];
 
     expect(resolveGenerate).not.toBeNull();
     if (!resolveGenerate) {
       throw new Error('planner mock resolver missing');
     }
     const resolveGenerateFn = resolveGenerate as unknown as (value: FlowGenerateResponse) => void;
-    resolveGenerateFn(buildGenerateResponse());
+    resolveGenerateFn(
+      buildGenerateResponse({
+        planner_session_key: plannerSseOptions.sessionKey,
+      })
+    );
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: '发送' })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: '流程节点-规划节点A' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '停止' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: '流程节点-规划节点A' })).not.toBeInTheDocument();
     });
-    expect(screen.queryByTestId('flow-planning-overlay')).not.toBeInTheDocument();
+
+    act(() => {
+      plannerSseOptions.onMessage({
+        type: 'planner_session_updated',
+        channel: `session:${plannerSseOptions.sessionKey}:messages`,
+        seq: 2,
+        timestamp: '2026-04-02T00:00:01Z',
+        payload: {
+          session_key: plannerSseOptions.sessionKey,
+          status: 'completed',
+          revision: 1,
+          updated_at: '2026-04-02T00:00:01Z',
+        },
+      });
+      plannerSseOptions.onMessage({
+        type: 'planner_snapshot_updated',
+        channel: `session:${plannerSseOptions.sessionKey}:messages`,
+        seq: 3,
+        timestamp: '2026-04-02T00:00:02Z',
+        payload: {
+          session_key: plannerSseOptions.sessionKey,
+          revision: 1,
+          nodes: [
+            {
+              id: 'node_planned_1',
+              title: '规划节点A',
+              description: '规划后的详细描述',
+              depends_on: [],
+              sensitive: false,
+            },
+          ],
+        },
+      });
+    });
+    expect(screen.getByTestId('flow-planning-overlay')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '停止' })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByTestId('flow-planning-overlay'));
+    await waitFor(() => {
+      expect(screen.queryByTestId('flow-planning-overlay')).not.toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('flow-planner-messages')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByTestId('flow-planner-input'));
+    expect(await screen.findByRole('button', { name: '发送' })).toBeInTheDocument();
   });
 
   it('subscribes planner message stream through sse before planning response resolves', async () => {
@@ -404,8 +465,203 @@ describe('FlowPage', () => {
     const resolveGenerateFn = resolveGenerate as unknown as (value: FlowGenerateResponse) => void;
     resolveGenerateFn(buildGenerateResponse());
     await waitFor(() => {
+      expect(screen.getByRole('button', { name: '停止' })).toBeInTheDocument();
+    });
+  });
+
+  it('switches send button to stop and calls planner stop api while planning', async () => {
+    mockGenerateFlowFromRequirement.mockImplementation(
+      () =>
+        new Promise<FlowGenerateResponse>((resolve) => {
+          window.setTimeout(() => resolve(buildGenerateResponse()), 0);
+        })
+    );
+
+    const flowId = seedDraftFlow('draft-planner-stop');
+    renderFlowPage(`/flow/edit/${flowId}`);
+    await waitForFlowCanvasReady();
+
+    const input = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
+    await userEvent.type(input, '请先规划一个流程');
+    await userEvent.keyboard('{Enter}');
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '停止' })).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByTestId('flow-planning-overlay'));
+    expect(screen.getByTestId('flow-planner-messages')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '停止' })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '停止' }));
+
+    await waitFor(() => {
+      expect(mockStopFlowPlannerSession).toHaveBeenCalledWith(
+        { planner_session_key: expect.stringContaining('linpo:flow:default:planner:claw3:') },
+        undefined,
+        'default'
+      );
+    });
+  });
+
+  it('keeps automatic mode open while waiting and blocks canvas edits until overlay is dismissed after settling', async () => {
+    let resolveGenerate: ((value: FlowGenerateResponse) => void) | null = null;
+    mockGenerateFlowFromRequirement.mockImplementation(
+      () =>
+        new Promise<FlowGenerateResponse>((resolve) => {
+          resolveGenerate = resolve;
+        })
+    );
+
+    const flowId = seedDraftFlow('draft-planner-auto-mode');
+    renderFlowPage(`/flow/edit/${flowId}`);
+    await waitForFlowCanvasReady();
+
+    const input = screen.getByTestId('flow-planner-input');
+    await userEvent.click(input);
+    expect(await screen.findByTestId('flow-planning-overlay')).toBeInTheDocument();
+
+    fireEvent.doubleClick(screen.getByTestId('flow-canvas-viewport'), { clientX: 540, clientY: 260 });
+    expect(screen.queryByRole('dialog', { name: '创建节点' })).not.toBeInTheDocument();
+
+    await userEvent.type(input, '请拆成一个两步流程');
+    await userEvent.keyboard('{Enter}');
+
+    await waitFor(() => {
+      expect(mockCreateFlowPlannerSseClient).toHaveBeenCalledTimes(1);
+    });
+    const plannerSseOptions = mockCreateFlowPlannerSseClient.mock.calls[0]?.[0];
+
+    expect(screen.getByRole('button', { name: '停止' })).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId('flow-planning-overlay'));
+    expect(screen.getByRole('button', { name: '停止' })).toBeInTheDocument();
+    expect(screen.getByTestId('flow-planner-messages')).toBeInTheDocument();
+
+    if (!resolveGenerate) {
+      throw new Error('planner mock resolver missing');
+    }
+    const resolveGenerateFn = resolveGenerate as (value: FlowGenerateResponse) => void;
+    resolveGenerateFn(
+      buildGenerateResponse({
+        planner_session_key: plannerSseOptions.sessionKey,
+      })
+    );
+    act(() => {
+      plannerSseOptions.onMessage({
+        type: 'planner_session_updated',
+        channel: `session:${plannerSseOptions.sessionKey}:messages`,
+        seq: 2,
+        timestamp: '2026-04-02T00:00:01Z',
+        payload: {
+          session_key: plannerSseOptions.sessionKey,
+          status: 'completed',
+          revision: 1,
+          updated_at: '2026-04-02T00:00:01Z',
+        },
+      });
+    });
+
+    await waitFor(() => {
       expect(screen.getByRole('button', { name: '发送' })).toBeInTheDocument();
     });
+    expect(screen.getByTestId('flow-planning-overlay')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByTestId('flow-planning-overlay'));
+    await waitFor(() => {
+      expect(screen.queryByTestId('flow-planning-overlay')).not.toBeInTheDocument();
+    });
+  });
+
+  it('does not leak a stale planner session into another flow after switching', async () => {
+    let resolveFirstGenerate: ((value: FlowGenerateResponse) => void) | null = null;
+    mockGenerateFlowFromRequirement
+      .mockImplementationOnce(
+        () =>
+          new Promise<FlowGenerateResponse>((resolve) => {
+            resolveFirstGenerate = resolve;
+          })
+      )
+      .mockResolvedValueOnce(
+        buildGenerateResponse({
+          planner_session_key: 'linpo:flow:default:planner:claw3:flow-b',
+        })
+      );
+
+    upsertFlowDraft({
+      id: 'draft-flow-a',
+      name: '流程A草稿',
+      requirement: '',
+      nodes: [],
+      edges: [],
+      lanes: [],
+      node_lane_by_id: {},
+      planner_session_key: null,
+      execution_session_prefix: null,
+      executor_agent_id: null,
+      created_at: '2026-03-29T08:00:00Z',
+      updated_at: '2026-03-29T08:00:00Z',
+    });
+    upsertFlowDraft({
+      id: 'draft-flow-b',
+      name: '流程B草稿',
+      requirement: '',
+      nodes: [],
+      edges: [],
+      lanes: [],
+      node_lane_by_id: {},
+      planner_session_key: null,
+      execution_session_prefix: null,
+      executor_agent_id: null,
+      created_at: '2026-03-29T08:01:00Z',
+      updated_at: '2026-03-29T08:01:00Z',
+    });
+
+    renderFlowPage('/flow/edit/draft-flow-a');
+    await waitForFlowCanvasReady();
+
+    const plannerInput = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
+    await userEvent.click(plannerInput);
+    await userEvent.type(plannerInput, '流程A的规划需求');
+    await userEvent.keyboard('{Enter}');
+
+    await waitFor(() => {
+      expect(mockGenerateFlowFromRequirement).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.getByText('流程A的规划需求')).toBeInTheDocument();
+    expect(screen.getByTestId('flow-planning-overlay')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '切换流程-流程B草稿' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '切换流程-流程B草稿', current: 'page' })).toBeInTheDocument();
+    });
+    expect(screen.queryByText('流程A的规划需求')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('flow-planning-overlay')).not.toBeInTheDocument();
+
+    if (!resolveFirstGenerate) {
+      throw new Error('first planner resolver missing');
+    }
+    const resolveFirstGenerateFn = resolveFirstGenerate as (value: FlowGenerateResponse) => void;
+    resolveFirstGenerateFn(
+      buildGenerateResponse({
+        planner_session_key: 'linpo:flow:default:planner:claw3:stale-flow-a',
+      })
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const flowBInput = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
+    await userEvent.click(flowBInput);
+    await userEvent.type(flowBInput, '流程B的规划需求');
+    await userEvent.keyboard('{Enter}');
+
+    await waitFor(() => {
+      expect(mockGenerateFlowFromRequirement).toHaveBeenCalledTimes(2);
+    });
+    const secondPayload = mockGenerateFlowFromRequirement.mock.calls[1][0];
+    expect(secondPayload.planner_session_key).not.toBe('linpo:flow:default:planner:claw3:stale-flow-a');
+    expect(secondPayload.requirement).toBe('流程B的规划需求');
   });
 
   it('updates flow graph from planner sse patch before http response resolves', async () => {
@@ -687,7 +943,7 @@ describe('FlowPage', () => {
     expect(within(sidebar).queryByLabelText('流程排序')).not.toBeInTheDocument();
   });
 
-  it('groups sidebar flows into 当前 草稿 已提交 sections', async () => {
+  it('groups sidebar flows into 草稿 and 已提交 sections while keeping current flow highlighted', async () => {
     mockListKanbanTasks.mockResolvedValue([
       buildKanbanTask({
         id: 'task-current',
@@ -728,17 +984,194 @@ describe('FlowPage', () => {
     renderFlowPage('/flow/edit/req-flow-a');
     await waitForFlowCanvasReady();
 
-    expect(screen.getByLabelText('流程分组-当前')).toHaveTextContent('流程A');
     expect(screen.getByLabelText('流程分组-草稿')).toHaveTextContent('草稿流程C');
+    expect(screen.getByLabelText('流程分组-已提交')).toHaveTextContent('流程A');
     expect(screen.getByLabelText('流程分组-已提交')).toHaveTextContent('流程B');
+    expect(screen.queryByLabelText('流程分组-当前')).not.toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: '切换流程-流程A' })).toHaveLength(1);
     const currentCard = findFlowSidebarCard('流程A');
+    expect(within(currentCard).getByRole('button', { name: '切换流程-流程A', current: 'page' })).toBeInTheDocument();
     const editFlowAButton = within(currentCard).getByRole('button', { name: '编辑流程-流程A' });
     expect((editFlowAButton as HTMLButtonElement).style.top).toBe('0.55rem');
     expect((editFlowAButton as HTMLButtonElement).style.right).toBe('0.58rem');
     expect(within(currentCard).getByRole('button', { name: '运行流程-流程A' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '编辑流程-草稿流程C' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '编辑流程-流程B' })).toBeInTheDocument();
+  });
+
+  it('sorts sidebar flows by last edited time instead of current open time', async () => {
+    mockListKanbanTasks.mockResolvedValue([
+      buildKanbanTask({
+        id: 'task-submitted-recent',
+        updated_at: '2026-03-29T09:00:00Z',
+        extras: {
+          requirement_id: 'req-flow-recent',
+          requirement_title: '最近提交流程',
+          flow_node: 'recent_1',
+          dependencies: 'none',
+          sensitive: 'false',
+        },
+      }),
+      buildKanbanTask({
+        id: 'task-submitted-older',
+        updated_at: '2026-03-29T07:00:00Z',
+        extras: {
+          requirement_id: 'req-flow-a',
+          requirement_title: '流程A',
+          flow_node: 'a_1',
+          dependencies: 'none',
+          sensitive: 'false',
+        },
+      }),
+    ]);
+    upsertFlowDraft({
+      id: 'draft-recent',
+      name: '最近草稿',
+      requirement: '',
+      nodes: [],
+      edges: [],
+      lanes: [],
+      node_lane_by_id: {},
+      planner_session_key: null,
+      execution_session_prefix: null,
+      executor_agent_id: null,
+      created_at: '2026-03-29T08:00:00Z',
+      updated_at: '2026-03-29T08:30:00Z',
+    });
+    upsertFlowDraft({
+      id: 'draft-older',
+      name: '较早草稿',
+      requirement: '',
+      nodes: [],
+      edges: [],
+      lanes: [],
+      node_lane_by_id: {},
+      planner_session_key: null,
+      execution_session_prefix: null,
+      executor_agent_id: null,
+      created_at: '2026-03-29T06:00:00Z',
+      updated_at: '2026-03-29T06:30:00Z',
+    });
+
+    renderFlowPage('/flow/edit/req-flow-a');
+    await waitForFlowCanvasReady();
+
+    const draftCards = within(screen.getByLabelText('流程分组-草稿')).getAllByRole('article');
+    expect(within(draftCards[0]).getByRole('button', { name: '切换流程-最近草稿' })).toBeInTheDocument();
+    expect(within(draftCards[1]).getByRole('button', { name: '切换流程-较早草稿' })).toBeInTheDocument();
+
+    const submittedCards = within(screen.getByLabelText('流程分组-已提交')).getAllByRole('article');
+    expect(within(submittedCards[0]).getByRole('button', { name: '切换流程-最近提交流程' })).toBeInTheDocument();
+    expect(within(submittedCards[1]).getByRole('button', { name: '切换流程-流程A', current: 'page' })).toBeInTheDocument();
+  });
+
+  it('does not bump a draft to the top merely by opening it', async () => {
+    window.localStorage.setItem(
+      'linpo_flow_drafts_v1',
+      JSON.stringify([
+        {
+          id: 'draft-older-open',
+          name: '较早草稿',
+          requirement: '',
+          nodes: [],
+          edges: [],
+          lanes: [],
+          node_lane_by_id: {},
+          planner_session_key: null,
+          execution_session_prefix: null,
+          executor_agent_id: null,
+          created_at: '2026-03-29T06:00:00Z',
+          updated_at: '2026-03-29T06:30:00Z',
+        },
+        {
+          id: 'draft-recent-open',
+          name: '最近草稿',
+          requirement: '',
+          nodes: [],
+          edges: [],
+          lanes: [],
+          node_lane_by_id: {},
+          planner_session_key: null,
+          execution_session_prefix: null,
+          executor_agent_id: null,
+          created_at: '2026-03-29T08:00:00Z',
+          updated_at: '2026-03-29T08:30:00Z',
+        },
+      ])
+    );
+
+    renderFlowPage('/flow/edit/draft-older-open');
+    await waitForFlowCanvasReady();
+
+    const draftCards = within(screen.getByLabelText('流程分组-草稿')).getAllByRole('article');
+    expect(within(draftCards[0]).getByRole('button', { name: '切换流程-最近草稿' })).toBeInTheDocument();
+    expect(within(draftCards[1]).getByRole('button', { name: '切换流程-较早草稿', current: 'page' })).toBeInTheDocument();
+  });
+
+  it('restores planner messages per flow after switching between drafts', async () => {
+    mockGenerateFlowFromRequirement.mockImplementation(async (payload) =>
+      buildGenerateResponse({
+        planner_session_key: payload.planner_session_key,
+      })
+    );
+
+    upsertFlowDraft({
+      id: 'draft-msg-a',
+      name: '消息流A',
+      requirement: '',
+      nodes: [],
+      edges: [],
+      lanes: [],
+      node_lane_by_id: {},
+      planner_session_key: 'linpo:flow:default:planner:claw3:msg-a',
+      execution_session_prefix: null,
+      executor_agent_id: null,
+      created_at: '2026-03-29T08:00:00Z',
+      updated_at: '2026-03-29T08:00:00Z',
+    });
+    upsertFlowDraft({
+      id: 'draft-msg-b',
+      name: '消息流B',
+      requirement: '',
+      nodes: [],
+      edges: [],
+      lanes: [],
+      node_lane_by_id: {},
+      planner_session_key: 'linpo:flow:default:planner:claw3:msg-b',
+      execution_session_prefix: null,
+      executor_agent_id: null,
+      created_at: '2026-03-29T08:01:00Z',
+      updated_at: '2026-03-29T08:01:00Z',
+    });
+
+    renderFlowPage('/flow/edit/draft-msg-a');
+    await waitForFlowCanvasReady();
+
+    const plannerInput = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
+    await userEvent.click(plannerInput);
+    await userEvent.type(plannerInput, '这是流程A的消息');
+    await userEvent.keyboard('{Enter}');
+    expect(await screen.findByText('这是流程A的消息')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '切换流程-消息流B' }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '切换流程-消息流B', current: 'page' })).toBeInTheDocument();
+    });
+
+    const secondPlannerInput = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
+    await userEvent.click(secondPlannerInput);
+    await userEvent.type(secondPlannerInput, '这是流程B的消息');
+    await userEvent.keyboard('{Enter}');
+    expect(await screen.findByText('这是流程B的消息')).toBeInTheDocument();
+    expect(screen.queryByText('这是流程A的消息')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '切换流程-消息流A' }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '切换流程-消息流A', current: 'page' })).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByTestId('flow-planner-input'));
+    expect(await screen.findByText('这是流程A的消息')).toBeInTheDocument();
+    expect(screen.queryByText('这是流程B的消息')).not.toBeInTheDocument();
   });
 
   it('expands planner message stream on focus and collapses on outside click in mobile', async () => {
@@ -754,6 +1187,7 @@ describe('FlowPage', () => {
     expect(screen.queryByRole('button', { name: '发送' })).not.toBeInTheDocument();
     await userEvent.click(plannerInput);
     expect(await screen.findByTestId('flow-planner-messages')).toBeInTheDocument();
+    expect(screen.getByTestId('flow-planning-overlay')).toBeInTheDocument();
     expect(screen.queryByText('当前还没有规划消息。')).not.toBeInTheDocument();
     expect(screen.getByText('Enter 发送')).toBeInTheDocument();
     expect(screen.getByText('Shift+Enter 换行')).toBeInTheDocument();
@@ -763,10 +1197,11 @@ describe('FlowPage', () => {
       expect(screen.getByTestId('flow-planner-messages')).toBeInTheDocument();
     });
 
-    await userEvent.click(screen.getByTestId('flow-canvas-viewport'));
+    await userEvent.click(screen.getByTestId('flow-planning-overlay'));
     await waitFor(() => {
       expect(screen.queryByTestId('flow-planner-messages')).not.toBeInTheDocument();
     });
+    expect(screen.queryByTestId('flow-planning-overlay')).not.toBeInTheDocument();
     expect(screen.queryByText('Enter 发送')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '发送' })).not.toBeInTheDocument();
   });

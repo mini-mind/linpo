@@ -3,6 +3,7 @@ import {
   type FlowChatMessageItem,
   type FlowPlannerNodeDraft,
   type FlowPlannerNodeOperation,
+  type FlowPlannerSessionStatus,
   type KanbanTaskItem,
   type RealtimeObserverChannel,
   type ObserverRealtimeMessage,
@@ -116,6 +117,14 @@ export interface FlowPlannerSnapshotUpdatedPayload {
   nodes: FlowPlannerNodeDraft[];
 }
 
+export interface FlowPlannerSessionUpdatedPayload {
+  session_key: string;
+  status: FlowPlannerSessionStatus;
+  revision: number;
+  updated_at: string;
+  completed_at?: string | null;
+}
+
 export type FlowPlannerRealtimeMessage =
   | {
       type: 'snapshot_ready';
@@ -144,6 +153,13 @@ export type FlowPlannerRealtimeMessage =
       seq: number;
       timestamp: string;
       payload: FlowPlannerSnapshotUpdatedPayload;
+    }
+  | {
+      type: 'planner_session_updated';
+      channel: `session:${string}:messages`;
+      seq: number;
+      timestamp: string;
+      payload: FlowPlannerSessionUpdatedPayload;
     }
   | {
       type: 'error';
@@ -488,6 +504,10 @@ function isFlowPlannerNodeOperation(value: unknown): value is FlowPlannerNodeOpe
   return false;
 }
 
+function isFlowPlannerSessionStatus(value: unknown): value is FlowPlannerSessionStatus {
+  return value === 'planning' || value === 'completed' || value === 'stopped' || value === 'failed';
+}
+
 function isSessionMessagesChannel(value: unknown): value is `session:${string}:messages` {
   return typeof value === 'string' && value.startsWith('session:') && value.endsWith(':messages');
 }
@@ -585,6 +605,35 @@ function parseFlowPlannerRealtimeMessage(raw: string): FlowPlannerRealtimeMessag
         session_key: payload.session_key,
         revision: payload.revision,
         nodes: payload.nodes,
+      },
+    };
+  }
+
+  if (type === 'planner_session_updated') {
+    if (
+      typeof payload.session_key !== 'string' ||
+      !isFlowPlannerSessionStatus(payload.status) ||
+      typeof payload.revision !== 'number' ||
+      !Number.isInteger(payload.revision) ||
+      payload.revision < 0 ||
+      typeof payload.updated_at !== 'string'
+    ) {
+      throw new Error('Invalid flow planner realtime message');
+    }
+    return {
+      type: 'planner_session_updated',
+      channel,
+      seq,
+      timestamp,
+      payload: {
+        session_key: payload.session_key,
+        status: payload.status,
+        revision: payload.revision,
+        updated_at: payload.updated_at,
+        completed_at:
+          typeof payload.completed_at === 'string' || payload.completed_at === null
+            ? payload.completed_at
+            : undefined,
       },
     };
   }

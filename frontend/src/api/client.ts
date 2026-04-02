@@ -12,6 +12,8 @@ import type {
 	FlowConfirmResponse,
 	FlowGenerateRequest,
 	FlowGenerateResponse,
+	FlowPlannerStopRequest,
+	FlowPlannerStopResponse,
 	FlowRequirementRenameRequest,
 	FlowRequirementRenameResponse,
 	FlowRequirementContinueResponse,
@@ -351,6 +353,40 @@ export async function confirmFlowToKanban(
   const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
   return fetchApi<FlowConfirmResponse>(
     `/api/v1/boards/${encodedBoardId}/tasks/flow/confirm`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+    options
+  );
+}
+
+export async function stopFlowPlannerSession(
+  payload: FlowPlannerStopRequest,
+  options?: ObserverRequestOptions,
+  boardId?: string | null
+): Promise<FlowPlannerStopResponse> {
+  const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
+  return fetchApi<FlowPlannerStopResponse>(
+    `/api/v1/boards/${encodedBoardId}/tasks/flow/planner-stop`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+    options
+  );
+}
+
+export async function stopFlowPlanner(
+  payload: FlowPlannerStopRequest,
+  options?: ObserverRequestOptions,
+  boardId?: string | null
+): Promise<FlowPlannerStopResponse> {
+  const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
+  return fetchApi<FlowPlannerStopResponse>(
+    `/api/v1/boards/${encodedBoardId}/tasks/flow/planner-stop`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

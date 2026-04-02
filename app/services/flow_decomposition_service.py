@@ -69,6 +69,9 @@ class FlowDecompositionService:
         flow_name: str | None = None,
         current_nodes: list[dict[str, Any]] | None = None,
         current_edges: list[dict[str, Any]] | None = None,
+        prompt_history: list[dict[str, str]] | None = None,
+        planner_api_base_url: str | None = None,
+        planner_api_token: str | None = None,
     ) -> FlowDecompositionResult:
         normalized_requirement = requirement.strip()
         if normalized_requirement == "":
@@ -83,6 +86,9 @@ class FlowDecompositionService:
             flow_name=flow_name,
             current_nodes=normalized_nodes,
             current_edges=current_edges or [],
+            prompt_history=prompt_history,
+            planner_api_base_url=planner_api_base_url,
+            planner_api_token=planner_api_token,
         )
         assistant_message = self._wait_for_assistant_json(
             context=self._build_claw3_execution_context(),
@@ -108,6 +114,9 @@ class FlowDecompositionService:
         flow_name: str | None = None,
         current_nodes: list[dict[str, Any]] | None = None,
         current_edges: list[dict[str, Any]] | None = None,
+        prompt_history: list[dict[str, str]] | None = None,
+        planner_api_base_url: str | None = None,
+        planner_api_token: str | None = None,
     ) -> FlowPlannerDispatch:
         normalized_requirement = requirement.strip()
         if normalized_requirement == "":
@@ -123,6 +132,11 @@ class FlowDecompositionService:
             flow_name=flow_name,
             current_nodes=current_nodes or [],
             current_edges=current_edges or [],
+            prompt_history=prompt_history or [],
+            planner_api_base_url=planner_api_base_url,
+            planner_api_token=planner_api_token,
+            planner_session_key=normalized_planner_session_key,
+            board_id=board_id,
         )
 
         try:
@@ -477,12 +491,15 @@ class FlowDecompositionService:
         flow_name: str | None,
         current_nodes: list[dict[str, Any]],
         current_edges: list[dict[str, Any]],
+        prompt_history: list[dict[str, str]],
+        planner_api_base_url: str | None,
+        planner_api_token: str | None,
+        planner_session_key: str,
+        board_id: str,
     ) -> str:
         base_prompt = (
             "你是 Linpo 的流程拆解服务。"
-            "请把用户需求拆解为可执行流程图节点，并仅输出 JSON。"
-            "输出格式必须严格为："
-            '{"nodes":[{"id":"node_1","title":"任务标题","description":"任务详细描述","depends_on":[],"sensitive":false}]}'
+            "请把用户需求拆解为可执行流程图节点。"
             "约束："
             "1) id 全局唯一；"
             "2) depends_on 只能引用已存在节点 id；"
@@ -491,10 +508,29 @@ class FlowDecompositionService:
             "5) 每个节点 description 要写清执行要点；若节点可再拆分，请明确写出“可委派 subagent 并行执行”的建议；"
             "6) 最终至少一个敏感节点 sensitive=true 用于审批；"
             "7) 每个节点 description 需包含文件交接要求：明确输入/输出文件语义，并提醒执行阶段“若运行环境无法直接访问默认路径，可先在可访问工作目录处理中间文件，但 completed 前必须回写到指定输出路径；否则应 failed 并说明原因”。"
-            "8) 不要等待全量思考完再一次性输出；一旦形成当前可用草图，就立即输出完整最新 nodes JSON。若后续需要修订，可继续输出更新后的完整最新 nodes JSON。"
+            "8) 不要等待全量思考完再一次性输出；需要边规划边实时改图。"
         )
+        planner_api_prompt = ""
+        if isinstance(planner_api_base_url, str) and planner_api_base_url.strip() and isinstance(planner_api_token, str) and planner_api_token.strip():
+            session_path = (
+                f"{planner_api_base_url.rstrip('/')}/api/v1/boards/{board_id.strip() or 'default'}/tasks/flow/planner-sessions/{planner_session_key}"
+            )
+            planner_api_prompt = (
+                "不要只在聊天里给出最终结果。"
+                "你必须通过 Linpo planner HTTP 接口逐节点实时编辑工作流，并在每次有效修改后立即调用。"
+                f"请求头固定：X-Linpo-Planner-Token: {planner_api_token.strip()}。"
+                "接口如下："
+                f"1) POST {session_path}/nodes/upsert body={{\"node\":{{\"id\":\"node_1\",\"title\":\"任务标题\",\"description\":\"任务说明\",\"depends_on\":[],\"sensitive\":false}}}}；"
+                f"2) POST {session_path}/nodes/delete body={{\"node_id\":\"node_1\"}}；"
+                f"3) POST {session_path}/complete body={{\"nodes\":[...],\"summary\":\"最终校验通过\"}}；"
+                f"4) POST {session_path}/fail body={{\"reason\":\"失败原因\"}}。"
+                "你可以多次 upsert 同一节点来补充 depends_on 或描述。"
+                "只有在最终节点集校验无误后，才调用 complete 结束会话。"
+                "若环境无法使用这些 HTTP 接口，必须调用 fail 并说明原因。"
+            )
         if not current_nodes and not current_edges:
-            return f"{base_prompt}用户需求：{requirement}"
+            history_prompt = self._render_prompt_history(prompt_history)
+            return f"{base_prompt}{planner_api_prompt}{history_prompt}用户需求：{requirement}"
 
         compact_nodes: list[dict[str, Any]] = []
         for node in current_nodes[:24]:
@@ -527,11 +563,32 @@ class FlowDecompositionService:
         context_json = json.dumps(context_payload, ensure_ascii=False)
         return (
             f"{base_prompt}"
+            f"{planner_api_prompt}"
+            f"{self._render_prompt_history(prompt_history)}"
             "你会收到“当前流程上下文”和“新增指令”，请基于当前流程做增量修改并输出完整最新 nodes。"
             "若指令仅修改局部，未提及的有效节点可保留。"
             f"当前流程上下文：{context_json}"
             f"新增指令：{requirement}"
         )
+
+    def _render_prompt_history(self, prompt_history: list[dict[str, str]]) -> str:
+        if not prompt_history:
+            return ""
+        compact_history: list[dict[str, str]] = []
+        for item in prompt_history[-20:]:
+            role = str(item.get("role", "")).strip() if isinstance(item, dict) else ""
+            content = str(item.get("content", "")).strip() if isinstance(item, dict) else ""
+            if role == "" or content == "":
+                continue
+            compact_history.append(
+                {
+                    "role": role,
+                    "content": content[:1200],
+                }
+            )
+        if not compact_history:
+            return ""
+        return f"历史会话摘要：{json.dumps(compact_history, ensure_ascii=False)}"
 
     def _build_existing_description_map(
         self,

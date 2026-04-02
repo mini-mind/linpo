@@ -484,6 +484,7 @@ class FlowConfirmRequest(BaseModel):
 
 
 FlowChatRole = Literal["user", "assistant", "system"]
+FlowPlannerSessionStatus = Literal["planning", "completed", "stopped", "failed"]
 
 
 class FlowChatMessageItem(BaseModel):
@@ -552,6 +553,67 @@ class FlowConfirmResponse(BaseModel):
     created_task_ids: list[str]
     dispatched_task_ids: list[str]
 
+
+class FlowPlannerSessionItem(BaseModel):
+    session_key: str
+    status: FlowPlannerSessionStatus
+    revision: int
+    updated_at: str
+
+
+class FlowPlannerStopRequest(BaseModel):
+    planner_session_key: str = Field(min_length=1, max_length=256)
+
+
+class FlowPlannerStopResponse(BaseModel):
+    session_key: str
+    status: FlowPlannerSessionStatus
+    revision: int
+    updated_at: str
+
+
+class FlowPlannerNodeDraftItem(BaseModel):
+    id: str
+    title: str
+    description: str | None = Field(default="")
+    depends_on: list[str] = Field(default_factory=list)
+    sensitive: bool = False
+
+    @field_validator("depends_on", mode="before")
+    @classmethod
+    def _normalize_planner_depends_on(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            return []
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            dependency = item.strip()
+            if dependency == "" or dependency in seen:
+                continue
+            seen.add(dependency)
+            normalized.append(dependency)
+        return normalized
+
+
+class FlowPlannerNodeUpsertRequest(BaseModel):
+    node: FlowPlannerNodeDraftItem
+
+
+class FlowPlannerNodeDeleteRequest(BaseModel):
+    node_id: str = Field(min_length=1, max_length=128)
+
+
+class FlowPlannerSessionCompleteRequest(BaseModel):
+    nodes: list[FlowPlannerNodeDraftItem] = Field(default_factory=list)
+    summary: str | None = Field(default=None, max_length=4000)
+
+
+class FlowPlannerSessionFailRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=4000)
 
 class TaskRunEventRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)

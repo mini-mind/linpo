@@ -10,15 +10,23 @@ from urllib.parse import quote
 import pytest
 from cryptography.fernet import Fernet
 from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
+from app.db.models import FlowPlannerSession, User
 from app.db import session as db_session
 from app.main import app
+from app.services.flow_planner_session_service import get_flow_planner_session_service
 from app.services.instance_validator import InstanceValidationResult
 from tests.integration._asgi import request
 
 DEFAULT_TASKS_PATH = "/api/v1/boards/default/tasks"
 DEFAULT_FLOW_GENERATE_PATH = "/api/v1/boards/default/tasks/flow/generate"
 DEFAULT_FLOW_PLANNER_SSE_PATH = "/api/v1/boards/default/tasks/flow/planner-sse"
+DEFAULT_FLOW_PLANNER_NODE_UPSERT_PATH = "/api/v1/boards/default/tasks/flow/planner-sessions/{session_key}/nodes/upsert"
+DEFAULT_FLOW_PLANNER_NODE_DELETE_PATH = "/api/v1/boards/default/tasks/flow/planner-sessions/{session_key}/nodes/delete"
+DEFAULT_FLOW_PLANNER_COMPLETE_PATH = "/api/v1/boards/default/tasks/flow/planner-sessions/{session_key}/complete"
+DEFAULT_FLOW_PLANNER_FAIL_PATH = "/api/v1/boards/default/tasks/flow/planner-sessions/{session_key}/fail"
 DEFAULT_FLOW_CONFIRM_PATH = "/api/v1/boards/default/tasks/flow/confirm"
 DEFAULT_TASK_INTERRUPT_PATH = "/api/v1/boards/default/tasks/{task_id}/interrupt"
 DEFAULT_TASK_CONTINUE_PATH = "/api/v1/boards/default/tasks/{task_id}/continue"
@@ -33,6 +41,13 @@ def _json_headers(cookie_header: str | None = None) -> dict[str, str]:
     return headers
 
 
+def _planner_json_headers(planner_token: str) -> dict[str, str]:
+    return {
+        "content-type": "application/json",
+        "X-Linpo-Planner-Token": planner_token,
+    }
+
+
 def _request_json(
     method: str,
     path: str,
@@ -43,6 +58,25 @@ def _request_json(
         method,
         path,
         headers=_json_headers(cookie_header),
+        body=json.dumps(payload).encode("utf-8"),
+    )
+    return status_code, headers, cast(dict[str, Any], json.loads(body.decode("utf-8")))
+
+
+def _planner_request_json(
+    method: str,
+    path: str,
+    payload: dict[str, object],
+    *,
+    planner_token: str,
+) -> tuple[int, dict[str, str], dict[str, Any]]:
+    status_code, headers, body = request(
+        method,
+        path,
+        headers={
+            "content-type": "application/json",
+            "X-Linpo-Planner-Token": planner_token,
+        },
         body=json.dumps(payload).encode("utf-8"),
     )
     return status_code, headers, cast(dict[str, Any], json.loads(body.decode("utf-8")))
@@ -104,6 +138,42 @@ def _create_instance(
     )
     assert status_code == 201
     return payload
+
+
+def _planner_token_for_session(database_url: str, session_key: str) -> str:
+    with Session(db_session.get_engine(database_url)) as session:
+        planner_session = session.get(FlowPlannerSession, session_key)
+        assert planner_session is not None
+        return planner_session.planner_token
+
+
+def _user_id_for_username(database_url: str, username: str) -> Any:
+    with Session(db_session.get_engine(database_url)) as session:
+        return session.execute(select(User.id).where(User.username == username)).scalar_one()
+
+
+def _seed_planner_session(
+    database_url: str,
+    *,
+    username: str,
+    session_key: str,
+    nodes: list[dict[str, Any]] | None = None,
+    flow_name: str = "测试流程",
+) -> str:
+    planner_service = get_flow_planner_session_service()
+    user_id = _user_id_for_username(database_url, username)
+    with Session(db_session.get_engine(database_url)) as session:
+        planner_service.create_or_restore_session(
+            user_id=user_id,
+            board_id="default",
+            planner_agent_id="claw3",
+            planner_session_key=session_key,
+            flow_name=flow_name,
+            current_nodes=nodes or [],
+            db_session=session,
+            publish_realtime=False,
+        )
+    return _planner_token_for_session(database_url, session_key)
 
 
 @pytest.fixture(autouse=True)
@@ -434,11 +504,10 @@ def test_legacy_kanban_tasks_route_is_removed(isolated_database_url: str) -> Non
     assert status_code == 404
 
 
-def test_flow_generate_creates_canvas_and_tasks(
+def test_flow_generate_starts_persistent_planner_session(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    del isolated_database_url
     _allow_instance_validation(monkeypatch)
     auth_cookie = _register_and_login("flow-generate-user")
     instance = _create_instance(
@@ -448,41 +517,12 @@ def test_flow_generate_creates_canvas_and_tasks(
         gateway_token="token-flow",
     )
 
-    from app.services.flow_decomposition_service import FlowDecompositionResult, FlowNodeDraft, FlowPlannerDispatch
+    from app.services.flow_decomposition_service import FlowPlannerDispatch
 
     monkeypatch.setattr(
         "app.api.tasks.FlowDecompositionService.dispatch_planner",
         lambda self, **kwargs: FlowPlannerDispatch(
             planner_agent_id="claw3",
-            planner_session_key="linpo:flow:default:planner:claw3",
-        ),
-    )
-    monkeypatch.setattr(
-        "app.api.tasks.FlowDecompositionService.read_latest_snapshot",
-        lambda self, **kwargs: FlowDecompositionResult(
-            nodes=[
-                FlowNodeDraft(
-                    id="node_1",
-                    title="拆解上线计划",
-                    description="先拆解",
-                    depends_on=[],
-                    sensitive=False,
-                ),
-                FlowNodeDraft(
-                    id="node_2",
-                    title="执行主任务",
-                    description="执行",
-                    depends_on=["node_1"],
-                    sensitive=False,
-                ),
-                FlowNodeDraft(
-                    id="node_3",
-                    title="提交审批",
-                    description="审批",
-                    depends_on=["node_2"],
-                    sensitive=True,
-                ),
-            ],
             planner_session_key="linpo:flow:default:planner:claw3",
         ),
     )
@@ -503,14 +543,15 @@ def test_flow_generate_creates_canvas_and_tasks(
     assert payload["board_id"] == "default"
     assert payload["planner_session_key"] == "linpo:flow:default:planner:claw3"
     assert isinstance(payload["manager_session_key"], str) and payload["manager_session_key"]
-    assert len(payload["nodes"]) >= 3
-    assert payload["nodes"][0]["depends_on"] == []
-    assert payload["nodes"][1]["depends_on"] == ["node_1"]
-    assert payload["edges"] == [
-        {"id": "edge-node_1-node_2", "source": "node_1", "target": "node_2"},
-        {"id": "edge-node_2-node_3", "source": "node_2", "target": "node_3"},
-    ]
+    assert payload["nodes"] == []
+    assert payload["edges"] == []
     assert payload["created_task_ids"] == []
+    assert [item["role"] for item in payload["messages"]] == ["user", "system"]
+    assert payload["messages"][0]["content"] == "拆分上线计划，执行主任务，最后审批"
+    assert payload["messages"][1]["content"] == "已发送规划请求，等待 claw3 逐节点编辑工作流。"
+
+    planner_token = _planner_token_for_session(isolated_database_url, "linpo:flow:default:planner:claw3")
+    assert isinstance(planner_token, str) and planner_token != ""
 
     list_status, _, list_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
     assert list_status == 200
@@ -549,11 +590,10 @@ def test_flow_generate_rejects_non_claw3_planner_agent(
     assert payload["detail"] == "planner_agent_id must be claw3"
 
 
-def test_flow_generate_parses_bare_json_text_from_planner(
+def test_flow_generate_prompt_includes_history_workflow_json_and_planner_http_interface(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    del isolated_database_url
     _allow_instance_validation(monkeypatch)
     auth_cookie = _register_and_login("flow-generate-bare-json-user")
     instance = _create_instance(
@@ -582,17 +622,6 @@ def test_flow_generate_parses_bare_json_text_from_planner(
         "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
         fake_send_chat_message,
     )
-    monkeypatch.setattr(
-        "app.services.provider_application_service.ProviderApplicationService.chat_history",
-        lambda self, **kwargs: {
-            "messages": [
-                {
-                    "role": "assistant",
-                    "text": '{"nodes":[{"id":"node_1","title":"抓取 Trending","description":"输出 github_trending_today.json","depends_on":[],"sensitive":false},{"id":"node_2","title":"商业画布审批","description":"读取 github_trending_today.json 并输出 business_canvas.md","depends_on":["node_1"],"sensitive":true}]}',
-                }
-            ]
-        },
-    )
 
     status_code, _, payload = _request_json(
         "POST",
@@ -610,19 +639,22 @@ def test_flow_generate_parses_bare_json_text_from_planner(
     assert status_code == 200
     assert len(send_calls) == 1
     assert send_calls[0]["agent_id"] == "claw3"
-    assert payload["nodes"][0]["id"] == "node_1"
-    assert payload["nodes"][0]["depends_on"] == []
-    assert payload["nodes"][1]["id"] == "node_2"
-    assert payload["nodes"][1]["depends_on"] == ["node_1"]
-    assert payload["nodes"][1]["sensitive"] is True
-    assert payload["edges"] == [{"id": "edge-node_1-node_2", "source": "node_1", "target": "node_2"}]
+    prompt = cast(str, send_calls[0]["message"])
+    planner_token = _planner_token_for_session(isolated_database_url, payload["planner_session_key"])
+    assert "/flow/planner-sessions/" in prompt
+    assert "/nodes/upsert" in prompt
+    assert "/complete" in prompt
+    assert "X-Linpo-Planner-Token" in prompt
+    assert planner_token in prompt
+    assert "当前流程上下文" in prompt or "用户需求" in prompt
+    assert "历史会话摘要" in prompt
+    assert "今天 github 上 star 飙升的 openclaw 相关项目，并输出商业画布" in prompt
 
 
-def test_flow_generate_returns_current_snapshot_when_planner_history_not_ready(
+def test_flow_generate_returns_current_snapshot_from_persisted_planner_session(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    del isolated_database_url
     _allow_instance_validation(monkeypatch)
     auth_cookie = _register_and_login("flow-generate-current-snapshot-user")
     instance = _create_instance(
@@ -640,10 +672,6 @@ def test_flow_generate_returns_current_snapshot_when_planner_history_not_ready(
             planner_agent_id="claw3",
             planner_session_key="linpo:flow:default:planner:claw3:current",
         ),
-    )
-    monkeypatch.setattr(
-        "app.api.tasks.FlowDecompositionService.read_latest_snapshot",
-        lambda self, **kwargs: None,
     )
 
     status_code, _, payload = _request_json(
@@ -690,42 +718,69 @@ def test_flow_generate_returns_current_snapshot_when_planner_history_not_ready(
     assert [node["id"] for node in payload["nodes"]] == ["node_1", "node_2"]
     assert payload["nodes"][1]["depends_on"] == ["node_1"]
     assert payload["edges"] == [{"id": "edge-node_1-node_2", "source": "node_1", "target": "node_2"}]
-    assert payload["messages"] == []
+    assert [item["role"] for item in payload["messages"]] == ["user", "system"]
 
 
 def test_flow_planner_sse_returns_latest_planner_messages_snapshot(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    del isolated_database_url
     auth_cookie = _register_and_login("flow-planner-sse-user")
-
-    monkeypatch.setattr(
-        "app.api.tasks.FlowDecompositionService._build_claw3_execution_context",
-        lambda self: object(),
-    )
-    monkeypatch.setattr(
-        "app.services.provider_application_service.ProviderApplicationService.chat_history",
-        lambda self, **kwargs: {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [{"type": "text", "text": "请规划一个发布流程"}],
-                    "timestamp": 1775000000000,
-                },
-                {
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": "已生成初版流程节点。"}],
-                    "timestamp": 1775000001000,
-                },
-                {
-                    "role": "assistant",
-                    "text": '{"nodes":[{"id":"node_1","title":"规划步骤1","description":"说明","depends_on":[],"sensitive":false},{"id":"node_2","title":"规划步骤2","description":"依赖步骤1","depends_on":["node_1"],"sensitive":true}]}',
-                    "timestamp": 1775000002000,
-                },
-            ]
-        },
-    )
+    planner_service = get_flow_planner_session_service()
+    user_id = None
+    with Session(db_session.get_engine(isolated_database_url)) as session:
+      from app.db.models import User
+      user_id = session.execute(select(User.id).where(User.username == "flow-planner-sse-user")).scalar_one()
+      record = planner_service.create_or_restore_session(
+          user_id=user_id,
+          board_id="default",
+          planner_agent_id="claw3",
+          planner_session_key="linpo:flow:default:planner:claw3:test",
+          flow_name="测试流程",
+          current_nodes=[],
+          db_session=session,
+          publish_realtime=False,
+      )
+      planner_service.append_message(
+          session_key=record.session_key,
+          role="user",
+          content="请规划一个发布流程",
+          kind="instruction",
+          db_session=session,
+          publish_realtime=False,
+      )
+      planner_service.append_message(
+          session_key=record.session_key,
+          role="assistant",
+          content="已生成初版流程节点。",
+          kind="status",
+          db_session=session,
+          publish_realtime=False,
+      )
+      planner_service.upsert_node(
+          session_key=record.session_key,
+          node={
+              "id": "node_1",
+              "title": "规划步骤1",
+              "description": "说明",
+              "depends_on": [],
+              "sensitive": False,
+          },
+          db_session=session,
+          publish_realtime=False,
+      )
+      planner_service.upsert_node(
+          session_key=record.session_key,
+          node={
+              "id": "node_2",
+              "title": "规划步骤2",
+              "description": "依赖步骤1",
+              "depends_on": ["node_1"],
+              "sensitive": True,
+          },
+          db_session=session,
+          publish_realtime=False,
+      )
 
     status_code, headers, body = request(
         "GET",
@@ -737,14 +792,120 @@ def test_flow_planner_sse_returns_latest_planner_messages_snapshot(
     assert headers["content-type"].startswith("text/event-stream")
     text = body.decode("utf-8")
     assert '"type": "snapshot_ready"' in text
+    assert '"type": "planner_session_updated"' in text
     assert '"type": "planner_messages_updated"' in text
     assert '"type": "planner_nodes_patched"' in text
     assert '"type": "planner_snapshot_updated"' in text
     assert '"session_key": "linpo:flow:default:planner:claw3:test"' in text
-    assert '"revision": 1' in text
+    assert '"revision": 2' in text
     assert '"type": "upsert_node"' in text
     assert '已生成初版流程节点。' in text
     assert '"depends_on": ["node_1"]' in text
+
+
+def test_flow_planner_http_node_edit_endpoints_return_serialized_updated_at(
+    isolated_database_url: str,
+) -> None:
+    auth_cookie = _register_and_login("flow-planner-http-user")
+    del auth_cookie
+    planner_service = get_flow_planner_session_service()
+    session_key = "linpo:flow:default:planner:claw3:http-edit"
+
+    with Session(db_session.get_engine(isolated_database_url)) as session:
+        user_id = session.execute(select(User.id).where(User.username == "flow-planner-http-user")).scalar_one()
+        record = planner_service.create_or_restore_session(
+            user_id=user_id,
+            board_id="default",
+            planner_agent_id="claw3",
+            planner_session_key=session_key,
+            flow_name="HTTP 编辑测试",
+            current_nodes=[],
+            db_session=session,
+            publish_realtime=False,
+        )
+        planner_token = record.planner_token
+
+    upsert_status, _, upsert_payload = _planner_request_json(
+        "POST",
+        f"{DEFAULT_TASKS_PATH}/flow/planner-sessions/{session_key}/nodes/upsert",
+        {
+            "node": {
+                "id": "node_http_1",
+                "title": "HTTP 节点1",
+                "description": "通过接口新增",
+                "depends_on": [],
+                "sensitive": False,
+            }
+        },
+        planner_token=planner_token,
+    )
+    assert upsert_status == 200
+    assert upsert_payload["session_key"] == session_key
+    assert upsert_payload["status"] == "planning"
+    assert upsert_payload["revision"] == 1
+    assert upsert_payload["updated_at"].endswith("Z")
+
+    delete_status, _, delete_payload = _planner_request_json(
+        "POST",
+        f"{DEFAULT_TASKS_PATH}/flow/planner-sessions/{session_key}/nodes/delete",
+        {
+            "node_id": "node_http_1",
+        },
+        planner_token=planner_token,
+    )
+    assert delete_status == 200
+    assert delete_payload["session_key"] == session_key
+    assert delete_payload["status"] == "planning"
+    assert delete_payload["revision"] == 2
+    assert delete_payload["updated_at"].endswith("Z")
+
+    with Session(db_session.get_engine(isolated_database_url)) as session:
+        planner_session = session.get(FlowPlannerSession, session_key)
+        assert planner_session is not None
+        assert planner_session.current_nodes == []
+
+
+def test_flow_planner_http_fail_endpoint_returns_serialized_updated_at(
+    isolated_database_url: str,
+) -> None:
+    auth_cookie = _register_and_login("flow-planner-http-fail-user")
+    del auth_cookie
+    planner_service = get_flow_planner_session_service()
+    session_key = "linpo:flow:default:planner:claw3:http-fail"
+
+    with Session(db_session.get_engine(isolated_database_url)) as session:
+        user_id = session.execute(select(User.id).where(User.username == "flow-planner-http-fail-user")).scalar_one()
+        record = planner_service.create_or_restore_session(
+            user_id=user_id,
+            board_id="default",
+            planner_agent_id="claw3",
+            planner_session_key=session_key,
+            flow_name="HTTP 失败测试",
+            current_nodes=[],
+            db_session=session,
+            publish_realtime=False,
+        )
+        planner_token = record.planner_token
+
+    fail_status, _, fail_payload = _planner_request_json(
+        "POST",
+        f"{DEFAULT_TASKS_PATH}/flow/planner-sessions/{session_key}/fail",
+        {
+            "reason": "planner 接口测试失败",
+        },
+        planner_token=planner_token,
+    )
+    assert fail_status == 200
+    assert fail_payload["session_key"] == session_key
+    assert fail_payload["status"] == "failed"
+    assert fail_payload["revision"] == 0
+    assert fail_payload["updated_at"].endswith("Z")
+
+    with Session(db_session.get_engine(isolated_database_url)) as session:
+        planner_session = session.get(FlowPlannerSession, session_key)
+        assert planner_session is not None
+        assert planner_session.status == "failed"
+        assert planner_session.last_error == "planner 接口测试失败"
 
 
 def test_flow_confirm_enqueues_tasks_then_dispatches_from_queue(

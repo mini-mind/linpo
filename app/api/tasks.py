@@ -13,19 +13,13 @@ from typing import Any, cast
 from urllib.parse import quote, urlparse
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse
 from fastapi.responses import Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.api.schemas import (
-    FlowRequirementRenameRequest,
-    FlowRequirementRenameResponse,
-    FlowRequirementContinueResponse,
-    FlowRequirementSyncRequest,
-    FlowRequirementSyncResponse,
-    FlowRequirementStopResponse,
     FlowCanvasEdge,
     FlowCanvasNode,
     FlowChatMessageItem,
@@ -33,14 +27,27 @@ from app.api.schemas import (
     FlowConfirmResponse,
     FlowGenerateRequest,
     FlowGenerateResponse,
+    FlowPlannerNodeDeleteRequest,
+    FlowPlannerSessionItem,
+    FlowPlannerNodeUpsertRequest,
+    FlowPlannerSessionCompleteRequest,
+    FlowPlannerSessionFailRequest,
+    FlowPlannerStopRequest,
+    FlowPlannerStopResponse,
+    FlowRequirementContinueResponse,
+    FlowRequirementRenameRequest,
+    FlowRequirementRenameResponse,
+    FlowRequirementStopResponse,
+    FlowRequirementSyncRequest,
+    FlowRequirementSyncResponse,
     TaskContinueResponse,
+    TaskCreateRequest,
     TaskDeleteResponse,
+    TaskInterruptResponse,
+    TaskItem,
     TaskOutputPreviewResponse,
     TaskRunEventRequest,
     TaskRunEventResponse,
-    TaskCreateRequest,
-    TaskInterruptResponse,
-    TaskItem,
     TaskSource,
     TaskStatus,
 )
@@ -48,6 +55,10 @@ from app.db.models import Task, User
 from app.db.session import get_session
 from app.services.auth_service import get_authenticated_user
 from app.services.flow_decomposition_service import FlowDecompositionService
+from app.services.flow_planner_session_service import (
+    FlowPlannerSessionService,
+    get_flow_planner_session_service,
+)
 from app.services.instance_service import InstanceNotFoundError, InstanceService
 from app.services.provider_application_service import (
     ProviderApplicationService,
@@ -246,6 +257,14 @@ def _normalize_flow_chat_messages(messages_raw: object) -> list[FlowChatMessageI
     return items
 
 
+def _serialize_iso_datetime(value: object) -> str:
+    if isinstance(value, datetime):
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
 def _normalize_depends_on_values(
     raw_values: object,
     *,
@@ -380,6 +399,32 @@ def _build_planner_node_operations(
     return operations
 
 
+def _planner_snapshot_nodes_to_canvas_nodes(
+    nodes: list[dict[str, Any]],
+    *,
+    agent_id: str | None,
+) -> list[FlowCanvasNode]:
+    drafts = [
+        _FlowNodeDraft(
+            id=str(node.get("id", "")).strip(),
+            title=str(node.get("title", "")).strip(),
+            description=str(node.get("description", "") or "").strip(),
+            depends_on=[str(item).strip() for item in cast(list[Any], node.get("depends_on", [])) if isinstance(item, str) and str(item).strip()],
+            sensitive=bool(node.get("sensitive", False)),
+        )
+        for node in nodes
+        if isinstance(node, dict) and str(node.get("id", "")).strip() and str(node.get("title", "")).strip()
+    ]
+    if not drafts:
+        return []
+    return _build_canvas_nodes(
+        nodes=drafts,
+        layers=_resolve_layers(drafts),
+        agent_id=agent_id,
+        status_by_node_id={},
+    )
+
+
 def _is_retryable_flow_history_error(exc: HTTPException) -> bool:
     if exc.status_code != status.HTTP_503_SERVICE_UNAVAILABLE:
         return False
@@ -387,6 +432,92 @@ def _is_retryable_flow_history_error(exc: HTTPException) -> bool:
     return (
         "too many non-target control messages" in detail
         or "control response timed out" in detail
+    )
+
+
+def _planner_service_base_url(request: Request) -> str:
+    configured = os.getenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", "").strip()
+    if configured:
+        return configured.rstrip("/")
+    return str(request.base_url).rstrip("/")
+
+
+def _planner_snapshot_to_messages(snapshot: object) -> list[FlowChatMessageItem]:
+    raw_messages = getattr(snapshot, "messages", [])
+    messages: list[FlowChatMessageItem] = []
+    if not isinstance(raw_messages, list):
+        return messages
+    for item in raw_messages:
+        payload = item.to_payload() if hasattr(item, "to_payload") else item
+        if not isinstance(payload, dict):
+            continue
+        role = _normalize_flow_chat_role(payload.get("role"))
+        content = str(payload.get("content", "")).strip()
+        created_at = str(payload.get("created_at", "")).strip() or _iso_now()
+        if content == "":
+            continue
+        messages.append(
+            FlowChatMessageItem(
+                role=cast(Any, role),
+                content=content,
+                created_at=created_at,
+            )
+        )
+    return messages
+
+
+def _planner_snapshot_to_canvas_nodes(snapshot: object) -> list[FlowCanvasNode]:
+    raw_nodes = getattr(snapshot, "current_nodes", getattr(snapshot, "nodes", []))
+    planner_agent_id = None
+    if isinstance(getattr(snapshot, "planner_agent_id", None), str):
+        planner_agent_id = cast(str, getattr(snapshot, "planner_agent_id")).strip() or None
+    canvas_nodes: list[FlowCanvasNode] = []
+    drafts: list[_FlowNodeDraft] = []
+    if isinstance(raw_nodes, list):
+        for item in raw_nodes:
+            if not isinstance(item, dict):
+                continue
+            node_id = str(item.get("id", "")).strip()
+            title = str(item.get("title", "")).strip()
+            if node_id == "" or title == "":
+                continue
+            if all(key in item for key in ("x", "y", "layer", "status")):
+                canvas_nodes.append(
+                    FlowCanvasNode(
+                        id=node_id,
+                        title=title,
+                        description=str(item.get("description", "") or "").strip(),
+                        depends_on=[str(dep).strip() for dep in item.get("depends_on", []) if isinstance(dep, str) and str(dep).strip()],
+                        x=float(item.get("x", 160.0)),
+                        y=float(item.get("y", 120.0)),
+                        layer=int(item.get("layer", 1)),
+                        sensitive=bool(item.get("sensitive", False)),
+                        status=cast(Any, _normalize_task_status(str(item.get("status", "queued")).strip())),
+                        agent_id=str(item.get("agent_id", "")).strip() or planner_agent_id,
+                    )
+                )
+                continue
+            description = str(item.get("description", "") or "").strip()
+            depends_on_raw = item.get("depends_on", [])
+            depends_on = [str(dep).strip() for dep in depends_on_raw if isinstance(dep, str) and str(dep).strip()]
+            drafts.append(
+                _FlowNodeDraft(
+                    id=node_id,
+                    title=title,
+                    description=description,
+                    depends_on=depends_on,
+                    sensitive=bool(item.get("sensitive", False)),
+                )
+            )
+    if canvas_nodes:
+        return canvas_nodes
+    if not drafts:
+        return []
+    return _build_canvas_nodes(
+        nodes=drafts,
+        layers=_resolve_layers(drafts),
+        agent_id=planner_agent_id,
+        status_by_node_id={},
     )
 
 
@@ -738,6 +869,24 @@ def _event_callback_base_url_candidates(
 
     add_candidate(preferred)
     return candidates
+
+
+def _planner_callback_base_url(request: Request) -> str:
+    preferred = os.getenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", "").strip()
+    if preferred:
+        return preferred.rstrip("/")
+    return str(request.base_url).rstrip("/")
+
+
+def _resolve_planner_token(
+    *,
+    header_token: str | None,
+    query_token: str | None,
+) -> str:
+    candidate = (header_token or "").strip() or (query_token or "").strip()
+    if candidate == "":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="planner token is required")
+    return candidate
 
 
 def _stale_running_seconds() -> int:
@@ -1251,8 +1400,12 @@ def _append_artifact(task: Task, item: str) -> None:
 @router.post("/flow/generate", response_model=FlowGenerateResponse)
 def generate_flow(
     board_id: str,
+    request: Request,
     payload: FlowGenerateRequest,
+    db_session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
     flow_decomposition_service: FlowDecompositionService = Depends(get_flow_decomposition_service),
+    flow_planner_session_service: FlowPlannerSessionService = Depends(get_flow_planner_session_service),
 ) -> FlowGenerateResponse:
     normalized_board_id = board_id.strip() or "default"
     requirement = payload.requirement.strip()
@@ -1263,60 +1416,132 @@ def generate_flow(
         nodes=payload.current_nodes,
         edges=payload.current_edges,
     )
-    dispatch = flow_decomposition_service.dispatch_planner(
-        requirement=requirement,
-        board_id=normalized_board_id,
-        planner_agent_id=planner_agent_id,
-        planner_session_key=payload.planner_session_key,
-        flow_name=payload.flow_name,
-        current_nodes=[node.model_dump(mode="json") for node in normalized_current_nodes],
-        current_edges=[edge.model_dump(mode="json") for edge in payload.current_edges],
+    try:
+        instance_uuid = UUID(payload.instance_id)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid instance_id") from exc
+
+    provisional_session_key = (
+        payload.planner_session_key.strip()
+        if isinstance(payload.planner_session_key, str) and payload.planner_session_key.strip()
+        else f"linpo:flow:{normalized_board_id}:planner:{planner_agent_id}:{uuid4().hex[:8]}"
     )
+    session_record = flow_planner_session_service.ensure_session(
+        db_session,
+        user_id=current_user.id,
+        board_id=normalized_board_id,
+        planner_session_key=provisional_session_key,
+        planner_agent_id=planner_agent_id,
+        instance_id=instance_uuid,
+        flow_name=(payload.flow_name or "").strip() or "未命名流程",
+        current_nodes=[node.model_dump(mode="json") for node in normalized_current_nodes],
+    )
+    flow_planner_session_service.append_message(
+        db_session=db_session,
+        session_key=session_record.session_key,
+        role="user",
+        kind="instruction",
+        content=requirement,
+        payload={
+            "flow_name": (payload.flow_name or "").strip() or "未命名流程",
+            "current_node_count": len(normalized_current_nodes),
+        },
+    )
+    flow_planner_session_service.append_message(
+        db_session=db_session,
+        session_key=session_record.session_key,
+        role="system",
+        kind="status",
+        content="已发送规划请求，等待 claw3 逐节点编辑工作流。",
+        payload={
+            "origin": "flow_generate",
+            "status": "planning",
+        },
+    )
+    db_session.commit()
+
+    try:
+        dispatch = flow_decomposition_service.dispatch_planner(
+            requirement=requirement,
+            board_id=normalized_board_id,
+            planner_agent_id=planner_agent_id,
+            planner_session_key=session_record.session_key,
+            flow_name=payload.flow_name,
+            current_nodes=[node.model_dump(mode="json") for node in normalized_current_nodes],
+            current_edges=[edge.model_dump(mode="json") for edge in payload.current_edges],
+            prompt_history=flow_planner_session_service.prompt_history(
+                db_session=db_session,
+                session_key=session_record.session_key,
+            ),
+            planner_api_base_url=_planner_service_base_url(request),
+            planner_api_token=session_record.planner_token,
+        )
+    except HTTPException as exc:
+        flow_planner_session_service.fail_session(
+            session_key=session_record.session_key,
+            reason=str(exc.detail),
+            payload={"origin": "dispatch_error"},
+            db_session=db_session,
+            publish_realtime=True,
+        )
+        raise
     planner_session_key = dispatch.planner_session_key
+    if planner_session_key != session_record.session_key:
+        session_record = flow_planner_session_service.ensure_session(
+            db_session,
+            user_id=current_user.id,
+            board_id=normalized_board_id,
+            planner_session_key=planner_session_key,
+            planner_agent_id=planner_agent_id,
+            instance_id=instance_uuid,
+            flow_name=(payload.flow_name or "").strip() or "未命名流程",
+            current_nodes=[node.model_dump(mode="json") for node in normalized_current_nodes],
+        )
+        flow_planner_session_service.append_message(
+            db_session=db_session,
+            session_key=session_record.session_key,
+            role="user",
+            kind="instruction",
+            content=requirement,
+            payload={
+                "flow_name": (payload.flow_name or "").strip() or "未命名流程",
+                "current_node_count": len(normalized_current_nodes),
+            },
+        )
+        flow_planner_session_service.append_message(
+            db_session=db_session,
+            session_key=session_record.session_key,
+            role="system",
+            kind="status",
+            content="已发送规划请求，等待 claw3 逐节点编辑工作流。",
+            payload={
+                "origin": "flow_generate",
+                "status": "planning",
+            },
+        )
+        db_session.commit()
     manager_session_key = f"linpo:flow:{normalized_board_id}:manager"
     execution_session_prefix = f"linpo:flow:{normalized_board_id}:exec"
-    try:
-        latest_snapshot = flow_decomposition_service.read_latest_snapshot(
-            planner_session_key=planner_session_key,
-            current_nodes=[node.model_dump(mode="json") for node in normalized_current_nodes],
-            limit=200,
-        )
-    except HTTPException:
-        latest_snapshot = None
-
-    if latest_snapshot is None:
+    latest_snapshot = flow_planner_session_service.get_snapshot_for_user(
+        db_session=db_session,
+        user_id=current_user.id,
+        session_key=planner_session_key,
+    )
+    canvas_nodes = _planner_snapshot_to_canvas_nodes(latest_snapshot)
+    if not canvas_nodes:
         canvas_nodes = normalized_current_nodes
-        canvas_edges = _build_canvas_edges(
-            [
-                _FlowNodeDraft(
-                    id=node.id,
-                    title=node.title,
-                    description=(node.description or "").strip(),
-                    depends_on=node.depends_on,
-                    sensitive=node.sensitive,
-                )
-                for node in normalized_current_nodes
-            ]
-        )
-    else:
-        snapshot_nodes = [
+    canvas_edges = _build_canvas_edges(
+        [
             _FlowNodeDraft(
                 id=node.id,
                 title=node.title,
-                description=node.description,
+                description=(node.description or "").strip(),
                 depends_on=node.depends_on,
                 sensitive=node.sensitive,
             )
-            for node in latest_snapshot.nodes
+            for node in canvas_nodes
         ]
-        layers = _resolve_layers(snapshot_nodes)
-        canvas_nodes = _build_canvas_nodes(
-            nodes=snapshot_nodes,
-            layers=layers,
-            agent_id=payload.executor_agent_id.strip() or None,
-            status_by_node_id={},
-        )
-        canvas_edges = _build_canvas_edges(snapshot_nodes)
+    )
 
     return FlowGenerateResponse(
         board_id=normalized_board_id,
@@ -1325,7 +1550,7 @@ def generate_flow(
         execution_session_prefix=execution_session_prefix,
         nodes=canvas_nodes,
         edges=canvas_edges,
-        messages=[],
+        messages=_planner_snapshot_to_messages(latest_snapshot),
         created_task_ids=[],
     )
 
@@ -1336,15 +1561,15 @@ async def flow_planner_sse(
     request: Request,
     session_key: str = Query(alias="sessionKey"),
     snapshot_only: bool = Query(default=False, alias="snapshotOnly"),
-    flow_decomposition_service: FlowDecompositionService = Depends(get_flow_decomposition_service),
-    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
+    db_session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+    flow_planner_session_service: FlowPlannerSessionService = Depends(get_flow_planner_session_service),
 ) -> Response:
-    del board_id
+    normalized_board_id = board_id.strip() or "default"
     normalized_session_key = session_key.strip()
     if normalized_session_key == "":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="sessionKey is required")
 
-    context = flow_decomposition_service._build_claw3_execution_context()
     channel = f"session:{normalized_session_key}:messages"
     headers = {
         "Cache-Control": "no-cache",
@@ -1352,132 +1577,71 @@ async def flow_planner_sse(
         "X-Accel-Buffering": "no",
     }
 
-    if snapshot_only:
-        snapshot_parts = [
-            _to_sse_data(
+    db_session.expire_all()
+    try:
+        snapshot = flow_planner_session_service.get_snapshot_for_user(
+            db_session=db_session,
+            user_id=current_user.id,
+            session_key=normalized_session_key,
+        )
+    except HTTPException as exc:
+        if exc.status_code != status.HTTP_404_NOT_FOUND:
+            raise
+        history_payload = provider_application_service.chat_history(
+            data_source="openclaw",
+            execution_context=flow_decomposition_service.build_realtime_execution_context(),
+            session_key=normalized_session_key,
+            limit=200,
+        )
+        legacy_messages = _normalize_flow_chat_messages(history_payload.get("messages", []))
+        legacy_snapshot = flow_decomposition_service.snapshot_from_history_messages(
+            messages_raw=history_payload.get("messages", []),
+            planner_session_key=normalized_session_key,
+        )
+        seed_nodes = (
+            [
                 {
-                    "type": "snapshot_ready",
-                    "channel": channel,
-                    "seq": 0,
-                    "timestamp": datetime.now(tz=UTC).isoformat(),
-                    "payload": {"status": "ok"},
+                    "id": node.id,
+                    "title": node.title,
+                    "description": node.description,
+                    "depends_on": node.depends_on,
+                    "sensitive": node.sensitive,
                 }
-            )
-        ]
-        revision = 0
-        try:
-            history_payload = provider_application_service.chat_history(
-                data_source="openclaw",
-                execution_context=context,
+                for node in legacy_snapshot.nodes
+            ]
+            if legacy_snapshot is not None
+            else []
+        )
+        snapshot = flow_planner_session_service.ensure_session(
+            db_session,
+            user_id=current_user.id,
+            board_id=normalized_board_id,
+            planner_session_key=normalized_session_key,
+            planner_agent_id=_FLOW_PLANNER_AGENT_ID,
+            instance_id=None,
+            flow_name="未命名流程",
+            current_nodes=seed_nodes,
+        )
+        for message in legacy_messages:
+            flow_planner_session_service.append_message(
+                db_session=db_session,
                 session_key=normalized_session_key,
-                limit=200,
+                role=message.role,
+                kind="legacy_history",
+                content=message.content,
+                payload={},
             )
-            snapshot = flow_decomposition_service.snapshot_from_history_messages(
-                messages_raw=history_payload.get("messages", []),
-                planner_session_key=normalized_session_key,
-            )
-            snapshot_messages = _normalize_flow_chat_messages(history_payload.get("messages", []))
-            if snapshot_messages:
-                snapshot_parts.append(
-                    _to_sse_data(
-                        {
-                            "type": "planner_messages_updated",
-                            "channel": channel,
-                            "seq": 1,
-                            "timestamp": datetime.now(tz=UTC).isoformat(),
-                            "payload": {
-                                "session_key": normalized_session_key,
-                                "messages": [item.model_dump(mode="json") for item in snapshot_messages],
-                            },
-                        }
-                    )
-                )
-            if snapshot is not None:
-                revision += 1
-                snapshot_nodes = _build_canvas_nodes(
-                    nodes=[
-                        _FlowNodeDraft(
-                            id=node.id,
-                            title=node.title,
-                            description=node.description,
-                            depends_on=node.depends_on,
-                            sensitive=node.sensitive,
-                        )
-                        for node in snapshot.nodes
-                    ],
-                    layers=_resolve_layers(
-                        [
-                            _FlowNodeDraft(
-                                id=node.id,
-                                title=node.title,
-                                description=node.description,
-                                depends_on=node.depends_on,
-                                sensitive=node.sensitive,
-                            )
-                            for node in snapshot.nodes
-                        ]
-                    ),
-                    agent_id=None,
-                    status_by_node_id={},
-                )
-                snapshot_parts.append(
-                    _to_sse_data(
-                        {
-                            "type": "planner_nodes_patched",
-                            "channel": channel,
-                            "seq": len(snapshot_parts),
-                            "timestamp": datetime.now(tz=UTC).isoformat(),
-                            "payload": {
-                                "session_key": normalized_session_key,
-                                "revision": revision,
-                                "operations": _build_planner_node_operations([], snapshot_nodes),
-                            },
-                        }
-                    )
-                )
-                snapshot_parts.append(
-                    _to_sse_data(
-                        {
-                            "type": "planner_snapshot_updated",
-                            "channel": channel,
-                            "seq": len(snapshot_parts),
-                            "timestamp": datetime.now(tz=UTC).isoformat(),
-                            "payload": {
-                                "session_key": normalized_session_key,
-                                "revision": revision,
-                                "nodes": [_to_planner_node_draft_payload(item) for item in snapshot_nodes],
-                            },
-                        }
-                    )
-                )
-        except HTTPException as exc:
-            if not _is_retryable_flow_history_error(exc):
-                snapshot_parts.append(
-                    _to_sse_data(
-                        {
-                            "type": "error",
-                            "channel": channel,
-                            "seq": 1,
-                            "timestamp": datetime.now(tz=UTC).isoformat(),
-                            "payload": {"detail": str(exc.detail)},
-                        }
-                    )
-                )
-        return Response(
-            content="".join(snapshot_parts),
-            media_type="text/event-stream",
-            headers=headers,
+        db_session.commit()
+        snapshot = flow_planner_session_service.get_snapshot_for_user(
+            db_session=db_session,
+            user_id=current_user.id,
+            session_key=normalized_session_key,
         )
 
-    async def event_stream() -> AsyncIterator[str]:
-        seq = 0
-        revision = 0
-        keepalive_elapsed = 0.0
-        last_signature = ""
-        last_snapshot_nodes: list[FlowCanvasNode] = []
-        last_snapshot_signature = ""
-        try:
-            yield _to_sse_data(
+    def build_snapshot_events(*, seq_start: int) -> list[str]:
+        seq = seq_start
+        payloads = [
+            _to_sse_data(
                 {
                     "type": "snapshot_ready",
                     "channel": channel,
@@ -1486,68 +1650,153 @@ async def flow_planner_sse(
                     "payload": {"status": "ok"},
                 }
             )
+        ]
+        seq += 1
+        payloads.append(
+            _to_sse_data(
+                {
+                    "type": "planner_session_updated",
+                    "channel": channel,
+                    "seq": seq,
+                    "timestamp": datetime.now(tz=UTC).isoformat(),
+                    "payload": {
+                        "session_key": snapshot.session_key,
+                        "status": snapshot.status,
+                        "revision": snapshot.revision,
+                        "updated_at": snapshot.updated_at,
+                        "last_error": getattr(snapshot, "last_error", None),
+                    },
+                }
+            )
+        )
+        seq += 1
+        payloads.append(
+            _to_sse_data(
+                {
+                    "type": "planner_messages_updated",
+                    "channel": channel,
+                    "seq": seq,
+                    "timestamp": datetime.now(tz=UTC).isoformat(),
+                    "payload": {
+                        "session_key": snapshot.session_key,
+                        "messages": [item.model_dump(mode="json") for item in _planner_snapshot_to_messages(snapshot)],
+                    },
+                }
+            )
+        )
+        seq += 1
+        snapshot_nodes = _planner_snapshot_to_canvas_nodes(snapshot)
+        payloads.append(
+            _to_sse_data(
+                {
+                    "type": "planner_nodes_patched",
+                    "channel": channel,
+                    "seq": seq,
+                    "timestamp": datetime.now(tz=UTC).isoformat(),
+                    "payload": {
+                        "session_key": snapshot.session_key,
+                        "revision": snapshot.revision,
+                        "operations": _build_planner_node_operations([], snapshot_nodes),
+                    },
+                }
+            )
+        )
+        seq += 1
+        payloads.append(
+            _to_sse_data(
+                {
+                    "type": "planner_snapshot_updated",
+                    "channel": channel,
+                    "seq": seq,
+                    "timestamp": datetime.now(tz=UTC).isoformat(),
+                    "payload": {
+                        "session_key": snapshot.session_key,
+                        "revision": snapshot.revision,
+                        "nodes": [_to_planner_node_draft_payload(item) for item in snapshot_nodes],
+                    },
+                }
+            )
+        )
+        return payloads
+
+    if snapshot_only:
+        return Response(
+            content="".join(build_snapshot_events(seq_start=0)),
+            media_type="text/event-stream",
+            headers=headers,
+        )
+
+    async def event_stream() -> AsyncIterator[str]:
+        seq = 0
+        keepalive_elapsed = 0.0
+        last_status_signature = ""
+        last_message_signature = ""
+        last_snapshot_nodes: list[FlowCanvasNode] = []
+        last_snapshot_signature = ""
+        try:
+            for payload in build_snapshot_events(seq_start=seq):
+                yield payload
+                seq += 1
+            last_status_signature = json.dumps(
+                {
+                    "status": snapshot.status,
+                    "revision": snapshot.revision,
+                    "updated_at": snapshot.updated_at,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            initial_messages = _planner_snapshot_to_messages(snapshot)
+            last_message_signature = _flow_chat_messages_signature(initial_messages)
+            last_snapshot_nodes = _planner_snapshot_to_canvas_nodes(snapshot)
+            last_snapshot_signature = _flow_canvas_nodes_signature(last_snapshot_nodes)
 
             while True:
                 if await request.is_disconnected():
                     return
-                try:
-                    history_payload = provider_application_service.chat_history(
-                        data_source="openclaw",
-                        execution_context=context,
-                        session_key=normalized_session_key,
-                        limit=200,
-                    )
-                except HTTPException as exc:
-                    if _is_retryable_flow_history_error(exc):
-                        await asyncio.sleep(_FLOW_PLANNER_SSE_POLL_INTERVAL_SECONDS)
-                        keepalive_elapsed += _FLOW_PLANNER_SSE_POLL_INTERVAL_SECONDS
-                        if keepalive_elapsed >= _FLOW_PLANNER_SSE_KEEPALIVE_SECONDS:
-                            keepalive_elapsed = 0.0
-                            yield ": keep-alive\n\n"
-                        continue
+                await asyncio.sleep(_FLOW_PLANNER_SSE_POLL_INTERVAL_SECONDS)
+                keepalive_elapsed += _FLOW_PLANNER_SSE_POLL_INTERVAL_SECONDS
+                db_session.expire_all()
+                next_snapshot = flow_planner_session_service.get_snapshot_for_user(
+                    db_session=db_session,
+                    user_id=current_user.id,
+                    session_key=normalized_session_key,
+                )
+                next_status_signature = json.dumps(
+                    {
+                        "status": next_snapshot.status,
+                        "revision": next_snapshot.revision,
+                        "updated_at": next_snapshot.updated_at,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                if next_status_signature != last_status_signature:
                     seq += 1
+                    keepalive_elapsed = 0.0
+                    last_status_signature = next_status_signature
                     yield _to_sse_data(
                         {
-                            "type": "error",
+                            "type": "planner_session_updated",
                             "channel": channel,
                             "seq": seq,
                             "timestamp": datetime.now(tz=UTC).isoformat(),
-                            "payload": {"detail": str(exc.detail)},
+                            "payload": {
+                                "session_key": next_snapshot.session_key,
+                                "status": next_snapshot.status,
+                                "revision": next_snapshot.revision,
+                                "updated_at": next_snapshot.updated_at,
+                                "last_error": getattr(next_snapshot, "last_error", None),
+                            },
                         }
                     )
-                    return
 
-                next_messages = _normalize_flow_chat_messages(history_payload.get("messages", []))
-                next_signature = _flow_chat_messages_signature(next_messages)
-                snapshot = flow_decomposition_service.snapshot_from_history_messages(
-                    messages_raw=history_payload.get("messages", []),
-                    planner_session_key=normalized_session_key,
-                    current_nodes=[node.model_dump(mode="json") for node in last_snapshot_nodes],
-                )
-                next_snapshot_nodes: list[FlowCanvasNode] = []
-                next_snapshot_signature = ""
-                if snapshot is not None:
-                    snapshot_drafts = [
-                        _FlowNodeDraft(
-                            id=node.id,
-                            title=node.title,
-                            description=node.description,
-                            depends_on=node.depends_on,
-                            sensitive=node.sensitive,
-                        )
-                        for node in snapshot.nodes
-                    ]
-                    next_snapshot_nodes = _build_canvas_nodes(
-                        nodes=snapshot_drafts,
-                        layers=_resolve_layers(snapshot_drafts),
-                        agent_id=None,
-                        status_by_node_id={},
-                    )
-                    next_snapshot_signature = _flow_canvas_nodes_signature(next_snapshot_nodes)
-                if next_signature != last_signature:
+                next_messages = _planner_snapshot_to_messages(next_snapshot)
+                next_message_signature = _flow_chat_messages_signature(next_messages)
+                if next_message_signature != last_message_signature:
                     seq += 1
-                    last_signature = next_signature
                     keepalive_elapsed = 0.0
+                    last_message_signature = next_message_signature
                     yield _to_sse_data(
                         {
                             "type": "planner_messages_updated",
@@ -1555,15 +1804,17 @@ async def flow_planner_sse(
                             "seq": seq,
                             "timestamp": datetime.now(tz=UTC).isoformat(),
                             "payload": {
-                                "session_key": normalized_session_key,
+                                "session_key": next_snapshot.session_key,
                                 "messages": [item.model_dump(mode="json") for item in next_messages],
                             },
                         }
                     )
-                if next_snapshot_signature != "" and next_snapshot_signature != last_snapshot_signature:
+
+                next_snapshot_nodes = _planner_snapshot_to_canvas_nodes(next_snapshot)
+                next_snapshot_signature = _flow_canvas_nodes_signature(next_snapshot_nodes)
+                if next_snapshot_signature != last_snapshot_signature:
                     operations = _build_planner_node_operations(last_snapshot_nodes, next_snapshot_nodes)
                     if operations:
-                        revision += 1
                         seq += 1
                         keepalive_elapsed = 0.0
                         yield _to_sse_data(
@@ -1573,14 +1824,12 @@ async def flow_planner_sse(
                                 "seq": seq,
                                 "timestamp": datetime.now(tz=UTC).isoformat(),
                                 "payload": {
-                                    "session_key": normalized_session_key,
-                                    "revision": revision,
+                                    "session_key": next_snapshot.session_key,
+                                    "revision": next_snapshot.revision,
                                     "operations": operations,
                                 },
                             }
                         )
-                    else:
-                        revision += 1
                     seq += 1
                     keepalive_elapsed = 0.0
                     yield _to_sse_data(
@@ -1590,32 +1839,174 @@ async def flow_planner_sse(
                             "seq": seq,
                             "timestamp": datetime.now(tz=UTC).isoformat(),
                             "payload": {
-                                "session_key": normalized_session_key,
-                                "revision": revision,
+                                "session_key": next_snapshot.session_key,
+                                "revision": next_snapshot.revision,
                                 "nodes": [_to_planner_node_draft_payload(item) for item in next_snapshot_nodes],
                             },
                         }
                     )
                     last_snapshot_nodes = next_snapshot_nodes
                     last_snapshot_signature = next_snapshot_signature
-                elif snapshot_only:
-                    return
-                else:
-                    await asyncio.sleep(_FLOW_PLANNER_SSE_POLL_INTERVAL_SECONDS)
-                    keepalive_elapsed += _FLOW_PLANNER_SSE_POLL_INTERVAL_SECONDS
-                    if keepalive_elapsed >= _FLOW_PLANNER_SSE_KEEPALIVE_SECONDS:
-                        keepalive_elapsed = 0.0
-                        yield ": keep-alive\n\n"
 
-                if snapshot_only:
+                if keepalive_elapsed >= _FLOW_PLANNER_SSE_KEEPALIVE_SECONDS:
+                    keepalive_elapsed = 0.0
+                    yield ": keep-alive\n\n"
+                if next_snapshot.status in {"completed", "stopped", "failed"}:
                     return
         except asyncio.CancelledError:
+            return
+        except HTTPException as exc:
+            seq += 1
+            yield _to_sse_data(
+                {
+                    "type": "error",
+                    "channel": channel,
+                    "seq": seq,
+                    "timestamp": datetime.now(tz=UTC).isoformat(),
+                    "payload": {"detail": str(exc.detail)},
+                }
+            )
             return
 
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
         headers=headers,
+    )
+
+
+@router.post("/flow/planner-stop", response_model=FlowPlannerStopResponse)
+def stop_flow_planner(
+    board_id: str,
+    payload: FlowPlannerStopRequest,
+    db_session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+    flow_planner_session_service: FlowPlannerSessionService = Depends(get_flow_planner_session_service),
+    flow_decomposition_service: FlowDecompositionService = Depends(get_flow_decomposition_service),
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
+) -> FlowPlannerStopResponse:
+    del board_id
+    snapshot = flow_planner_session_service.stop_for_user(
+        db_session=db_session,
+        user_id=current_user.id,
+        session_key=payload.planner_session_key,
+    )
+    db_session.commit()
+    try:
+        provider_application_service.pause_agent(
+            data_source="openclaw",
+            execution_context=flow_decomposition_service.build_realtime_execution_context(),
+            agent_id=snapshot.planner_agent_id,
+            session_key=snapshot.session_key,
+        )
+    except HTTPException:
+        pass
+    return FlowPlannerStopResponse(
+        session_key=snapshot.session_key,
+        status=cast(Any, snapshot.status),
+        revision=snapshot.revision,
+        updated_at=_serialize_iso_datetime(snapshot.updated_at),
+    )
+
+
+@router.post("/flow/planner-sessions/{session_key}/nodes/upsert", response_model=FlowPlannerSessionItem)
+def planner_upsert_single_node(
+    board_id: str,
+    session_key: str,
+    payload: FlowPlannerNodeUpsertRequest,
+    planner_token: str = Header(alias="X-Linpo-Planner-Token"),
+    db_session: Session = Depends(get_session),
+    flow_planner_session_service: FlowPlannerSessionService = Depends(get_flow_planner_session_service),
+) -> FlowPlannerSessionItem:
+    del board_id
+    snapshot = flow_planner_session_service.upsert_node_by_token(
+        db_session=db_session,
+        session_key=session_key,
+        planner_token=planner_token,
+        node=payload.node.model_dump(mode="json"),
+    )
+    db_session.commit()
+    return FlowPlannerSessionItem(
+        session_key=snapshot.session_key,
+        status=cast(Any, snapshot.status),
+        revision=snapshot.revision,
+        updated_at=_serialize_iso_datetime(snapshot.updated_at),
+    )
+
+
+@router.post("/flow/planner-sessions/{session_key}/nodes/delete", response_model=FlowPlannerSessionItem)
+def planner_delete_single_node(
+    board_id: str,
+    session_key: str,
+    payload: FlowPlannerNodeDeleteRequest,
+    planner_token: str = Header(alias="X-Linpo-Planner-Token"),
+    db_session: Session = Depends(get_session),
+    flow_planner_session_service: FlowPlannerSessionService = Depends(get_flow_planner_session_service),
+) -> FlowPlannerSessionItem:
+    del board_id
+    snapshot = flow_planner_session_service.delete_node_by_token(
+        db_session=db_session,
+        session_key=session_key,
+        planner_token=planner_token,
+        node_id=payload.node_id,
+    )
+    db_session.commit()
+    return FlowPlannerSessionItem(
+        session_key=snapshot.session_key,
+        status=cast(Any, snapshot.status),
+        revision=snapshot.revision,
+        updated_at=_serialize_iso_datetime(snapshot.updated_at),
+    )
+
+
+@router.post("/flow/planner-sessions/{session_key}/complete", response_model=FlowPlannerSessionItem)
+def planner_complete_session(
+    board_id: str,
+    session_key: str,
+    payload: FlowPlannerSessionCompleteRequest,
+    planner_token: str = Header(alias="X-Linpo-Planner-Token"),
+    db_session: Session = Depends(get_session),
+    flow_planner_session_service: FlowPlannerSessionService = Depends(get_flow_planner_session_service),
+) -> FlowPlannerSessionItem:
+    del board_id
+    snapshot = flow_planner_session_service.complete_by_token(
+        db_session=db_session,
+        session_key=session_key,
+        planner_token=planner_token,
+        nodes=[item.model_dump(mode="json") for item in payload.nodes],
+        summary=payload.summary,
+    )
+    db_session.commit()
+    return FlowPlannerSessionItem(
+        session_key=snapshot.session_key,
+        status=cast(Any, snapshot.status),
+        revision=snapshot.revision,
+        updated_at=_serialize_iso_datetime(snapshot.updated_at),
+    )
+
+
+@router.post("/flow/planner-sessions/{session_key}/fail", response_model=FlowPlannerSessionItem)
+def planner_fail_session(
+    board_id: str,
+    session_key: str,
+    payload: FlowPlannerSessionFailRequest,
+    planner_token: str = Header(alias="X-Linpo-Planner-Token"),
+    db_session: Session = Depends(get_session),
+    flow_planner_session_service: FlowPlannerSessionService = Depends(get_flow_planner_session_service),
+) -> FlowPlannerSessionItem:
+    del board_id
+    snapshot = flow_planner_session_service.fail_by_token(
+        db_session=db_session,
+        session_key=session_key,
+        planner_token=planner_token,
+        reason=payload.reason,
+    )
+    db_session.commit()
+    return FlowPlannerSessionItem(
+        session_key=snapshot.session_key,
+        status=cast(Any, snapshot.status),
+        revision=snapshot.revision,
+        updated_at=_serialize_iso_datetime(snapshot.updated_at),
     )
 
 

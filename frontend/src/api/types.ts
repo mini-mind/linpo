@@ -381,6 +381,8 @@ export interface FlowPlannerNodeDraft {
   sensitive: boolean;
 }
 
+export type FlowPlannerSessionStatus = 'planning' | 'completed' | 'stopped' | 'failed';
+
 export type FlowPlannerNodeOperation =
   | {
       type: 'upsert_node';
@@ -442,6 +444,17 @@ export interface FlowConfirmResponse {
   messages: FlowChatMessageItem[];
   created_task_ids: string[];
   dispatched_task_ids: string[];
+}
+
+export interface FlowPlannerStopRequest {
+  planner_session_key: string;
+}
+
+export interface FlowPlannerStopResponse {
+  session_key: string;
+  status: FlowPlannerSessionStatus;
+  revision: number;
+  updated_at: string;
 }
 
 export interface FlowRequirementRenameRequest {

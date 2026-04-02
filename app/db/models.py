@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text, Uuid
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -97,4 +97,44 @@ class UserMessage(Base):
     confirmation_url: Mapped[str] = mapped_column(Text)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, index=True)
+
+
+class FlowPlannerSession(Base):
+    __tablename__ = "flow_planner_sessions"
+
+    session_key: Mapped[str] = mapped_column(String(256), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    board_id: Mapped[str] = mapped_column(String(64), default="default", index=True)
+    instance_id: Mapped[UUID | None] = mapped_column(ForeignKey("instances.id"), index=True, nullable=True)
+    planner_agent_id: Mapped[str] = mapped_column(String(128), default="claw3")
+    planner_token: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    flow_name: Mapped[str] = mapped_column(String(256), default="未命名流程")
+    status: Mapped[str] = mapped_column(String(32), default="planning", index=True)
+    revision: Mapped[int] = mapped_column(default=0)
+    current_nodes: Mapped[list[dict[str, object]]] = mapped_column(JSON, default=list)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=_utc_now,
+        onupdate=_utc_now,
+        index=True,
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class FlowPlannerMessage(Base):
+    __tablename__ = "flow_planner_messages"
+    __table_args__ = (
+        UniqueConstraint("session_key", "seq", name="uq_flow_planner_messages_session_seq"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    session_key: Mapped[str] = mapped_column(ForeignKey("flow_planner_sessions.session_key"), index=True)
+    seq: Mapped[int] = mapped_column(index=True)
+    role: Mapped[str] = mapped_column(String(32), default="assistant")
+    kind: Mapped[str] = mapped_column(String(32), default="message", index=True)
+    content: Mapped[str] = mapped_column(Text, default="")
+    payload: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, index=True)
