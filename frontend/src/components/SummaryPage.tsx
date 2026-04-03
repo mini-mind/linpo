@@ -59,6 +59,12 @@ type SummaryEventItem = {
 };
 
 type SummaryEventFilter = 'all' | 'approval' | 'execution' | 'topology' | 'agent' | 'exception';
+type ApprovalInstanceOption = { id: string; name: string };
+type ApprovalTaskView = {
+  task: KanbanTaskItem;
+  instanceId: string | null;
+  instanceName: string;
+};
 
 const BOARD_REALTIME_ID = 'default';
 const SERIES_COLORS = ['#0f766e', '#0284c7', '#f97316', '#dc2626', '#7c3aed', '#65a30d'];
@@ -74,6 +80,8 @@ export function SummaryPage(): JSX.Element {
   const [overviewError, setOverviewError] = useState<Error | null>(null);
   const [tasksError, setTasksError] = useState<string | null>(null);
   const [continuingTaskId, setContinuingTaskId] = useState<string | null>(null);
+  const [approvalInstanceFilter, setApprovalInstanceFilter] = useState('all');
+  const [selectedTokenSeriesIds, setSelectedTokenSeriesIds] = useState<string[]>([]);
   const [eventQuery, setEventQuery] = useState('');
   const [eventPage, setEventPage] = useState(1);
   const boardRealtimeRef = useRef<ReturnType<typeof createBoardTasksSseClient> | null>(null);
@@ -385,10 +393,87 @@ export function SummaryPage(): JSX.Element {
     [tasks]
   );
 
+  const approvalInstanceOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const item of overview?.diagnostics ?? []) {
+      const instanceId = item.instance_id.trim();
+      if (!instanceId || map.has(instanceId)) {
+        continue;
+      }
+      const instanceName = item.instance_name.trim() || instanceId;
+      map.set(instanceId, instanceName);
+    }
+    for (const item of overview?.agents ?? []) {
+      const instanceId = item.instance_id.trim();
+      if (!instanceId || map.has(instanceId)) {
+        continue;
+      }
+      const instanceName = item.instance_name.trim() || instanceId;
+      map.set(instanceId, instanceName);
+    }
+    return Array.from(map.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'));
+  }, [overview?.agents, overview?.diagnostics]);
+
+  const approvalInstanceNameById = useMemo(
+    () => new Map(approvalInstanceOptions.map((item) => [item.id, item.name])),
+    [approvalInstanceOptions]
+  );
+
+  const approvalTaskViews = useMemo<ApprovalTaskView[]>(
+    () => approvalTasks.map((task) => ({ task, ...resolveApprovalTaskInstance(task, approvalInstanceNameById) })),
+    [approvalInstanceNameById, approvalTasks]
+  );
+
+  const filteredApprovalTaskViews = useMemo(() => {
+    if (approvalInstanceFilter === 'all') {
+      return approvalTaskViews;
+    }
+    return approvalTaskViews.filter((view) => view.instanceId === approvalInstanceFilter);
+  }, [approvalInstanceFilter, approvalTaskViews]);
+
+  useEffect(() => {
+    if (approvalInstanceFilter === 'all') {
+      return;
+    }
+    const hasSelectedInstance = approvalInstanceOptions.some((item) => item.id === approvalInstanceFilter);
+    if (!hasSelectedInstance) {
+      setApprovalInstanceFilter('all');
+    }
+  }, [approvalInstanceFilter, approvalInstanceOptions]);
+
   const metric = useMemo(
     () => buildSummaryMetric(overview?.token_groups ?? [], tasks),
     [overview?.token_groups, tasks]
   );
+
+  useEffect(() => {
+    if (metric.kind !== 'tokens' || metric.series.length === 0) {
+      setSelectedTokenSeriesIds([]);
+      return;
+    }
+    const availableIds = metric.series.map((item) => item.id);
+    setSelectedTokenSeriesIds((current) => {
+      const next = current.filter((id) => availableIds.includes(id));
+      if (next.length > 0) {
+        return next;
+      }
+      return availableIds;
+    });
+  }, [metric]);
+
+  const toggleTokenSeries = useCallback((seriesId: string) => {
+    setSelectedTokenSeriesIds((current) => {
+      if (!current.includes(seriesId)) {
+        return [...current, seriesId];
+      }
+      if (current.length <= 1) {
+        return current;
+      }
+      return current.filter((id) => id !== seriesId);
+    });
+  }, []);
 
   const filteredEvents = useMemo(() => events.filter((item) => matchesEventQuery(item, eventQuery)), [eventQuery, events]);
   const totalEventPages = Math.max(1, Math.ceil(filteredEvents.length / EVENTS_PAGE_SIZE));
@@ -466,13 +551,21 @@ export function SummaryPage(): JSX.Element {
       <div style={getWorkspaceBodyShellStyle({ isMobile, extra: isMobile ? bodyShellMobileStyle : bodyShellStyle })}>
         <div style={getWorkspaceBodyInnerStyle({ isMobile, maxWidthPx: WORKSPACE_CONTENT_MAX_WIDTH_PX, extra: getBodyStyle(isMobile) })} data-testid="summary-content-frame">
           <div style={getContentStyle(isMobile)}>
-            <SummaryChart metric={metric} isMobile={isMobile} />
+            <SummaryChart
+              metric={metric}
+              isMobile={isMobile}
+              selectedSeriesIds={selectedTokenSeriesIds}
+              onToggleSeries={toggleTokenSeries}
+            />
             <div style={getBodyLayoutStyle(isMobile)}>
               <ApprovalPane
-                approvalTasks={approvalTasks}
+                approvalTaskViews={filteredApprovalTaskViews}
+                approvalInstanceFilter={approvalInstanceFilter}
+                approvalInstanceOptions={approvalInstanceOptions}
                 tasksError={tasksError}
                 continuingTaskId={continuingTaskId}
                 onContinueTask={handleContinueTask}
+                onApprovalInstanceFilterChange={setApprovalInstanceFilter}
                 isMobile={isMobile}
               />
               <EventsPane
@@ -495,8 +588,22 @@ export function SummaryPage(): JSX.Element {
   );
 }
 
-function SummaryChart({ metric, isMobile }: { metric: SummaryMetric; isMobile: boolean }): JSX.Element {
-  const maxValue = Math.max(1, ...metric.series.flatMap((item) => item.values));
+function SummaryChart({
+  metric,
+  isMobile,
+  selectedSeriesIds,
+  onToggleSeries,
+}: {
+  metric: SummaryMetric;
+  isMobile: boolean;
+  selectedSeriesIds: string[];
+  onToggleSeries: (seriesId: string) => void;
+}): JSX.Element {
+  const visibleSeries = metric.kind === 'tokens'
+    ? metric.series.filter((item) => selectedSeriesIds.includes(item.id))
+    : metric.series;
+  const chartSeries = visibleSeries.length > 0 ? visibleSeries : metric.series;
+  const maxValue = Math.max(1, ...chartSeries.flatMap((item) => item.values));
   const pointCount = Math.max(1, metric.labels.length - 1);
   const viewBoxWidth = 100;
   const viewBoxHeight = 36;
@@ -507,7 +614,7 @@ function SummaryChart({ metric, isMobile }: { metric: SummaryMetric; isMobile: b
       <div style={getChartHeaderStyle(isMobile)}>
         <div>
           <h2 style={sectionTitleStyle}>{metric.title}</h2>
-          <p style={sectionHintStyle}>{metric.hint}</p>
+          {metric.kind === 'tokens' ? null : <p style={sectionHintStyle}>{metric.hint}</p>}
         </div>
         <div style={chartTotalBadgeStyle}>{metric.totalLabel}</div>
       </div>
@@ -516,14 +623,36 @@ function SummaryChart({ metric, isMobile }: { metric: SummaryMetric; isMobile: b
         <div style={emptyStateStyle}>当前没有可展示的统计样本</div>
       ) : (
         <>
-          <div style={chartLegendStyle}>
-            {metric.series.map((item) => (
-              <span key={item.id} style={legendItemStyle}>
-                <span style={{ ...legendDotStyle, background: item.color }} />
-                {item.name}
-              </span>
-            ))}
-          </div>
+          {metric.kind === 'tokens' ? (
+            <div style={tokenSeriesFilterWrapStyle} role="group" aria-label="Token 曲线实例筛选">
+              {metric.series.map((item) => {
+                const checked = selectedSeriesIds.includes(item.id);
+                return (
+                  <label key={item.id} style={{ ...tokenSeriesFilterItemStyle, color: item.color }}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => onToggleSeries(item.id)}
+                      style={{ ...tokenSeriesFilterCheckboxStyle, accentColor: item.color }}
+                      aria-label={`切换${item.name}曲线`}
+                      data-testid={`summary-series-toggle-${toSeriesTestId(item.id)}`}
+                    />
+                    <span>{item.name}</span>
+                  </label>
+                );
+              })}
+            </div>
+          ) : null}
+          {metric.kind === 'tokens' ? null : (
+            <div style={chartLegendStyle}>
+              {chartSeries.map((item) => (
+                <span key={item.id} style={legendItemStyle}>
+                  <span style={{ ...legendDotStyle, background: item.color }} />
+                  {item.name}
+                </span>
+              ))}
+            </div>
+          )}
           <div style={getChartViewportStyle(isMobile)}>
             <svg viewBox={`0 0 ${viewBoxWidth} ${viewBoxHeight}`} preserveAspectRatio="none" style={chartSvgStyle} aria-label={metric.title}>
               <defs>
@@ -544,7 +673,7 @@ function SummaryChart({ metric, isMobile }: { metric: SummaryMetric; isMobile: b
                   strokeWidth="0.35"
                 />
               ))}
-              {metric.series.map((item) => {
+              {chartSeries.map((item) => {
                 const points = item.values
                   .map((value, index) => {
                     const x = pointCount === 0 ? 0 : (index / pointCount) * viewBoxWidth;
@@ -553,7 +682,7 @@ function SummaryChart({ metric, isMobile }: { metric: SummaryMetric; isMobile: b
                   })
                   .join(' ');
                 return (
-                  <g key={item.id}>
+                  <g key={item.id} data-testid={`summary-series-${toSeriesTestId(item.id)}`}>
                     <polyline
                       fill="none"
                       stroke={item.color}
@@ -586,16 +715,22 @@ function SummaryChart({ metric, isMobile }: { metric: SummaryMetric; isMobile: b
 }
 
 function ApprovalPane({
-  approvalTasks,
+  approvalTaskViews,
+  approvalInstanceFilter,
+  approvalInstanceOptions,
   tasksError,
   continuingTaskId,
   onContinueTask,
+  onApprovalInstanceFilterChange,
   isMobile,
 }: {
-  approvalTasks: KanbanTaskItem[];
+  approvalTaskViews: ApprovalTaskView[];
+  approvalInstanceFilter: string;
+  approvalInstanceOptions: ApprovalInstanceOption[];
   tasksError: string | null;
   continuingTaskId: string | null;
   onContinueTask: (taskId: string, instanceId?: string | null) => void;
+  onApprovalInstanceFilterChange: (value: string) => void;
   isMobile: boolean;
 }): JSX.Element {
   return (
@@ -605,14 +740,31 @@ function ApprovalPane({
           <h2 style={sectionTitleStyle}>审批项</h2>
           <p style={sectionHintStyle}>集中处理被敏感操作阻塞的任务节点。</p>
         </div>
+        <label style={approvalFilterWrapStyle}>
+          <span style={srOnlyStyle}>筛选审批实例</span>
+          <select
+            aria-label="筛选审批实例"
+            value={approvalInstanceFilter}
+            onChange={(event) => onApprovalInstanceFilterChange(event.target.value)}
+            style={approvalFilterSelectStyle}
+          >
+            <option value="all">全部实例</option>
+            {approvalInstanceOptions.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
       {tasksError ? <div style={inlineErrorStyle}>{tasksError}</div> : null}
-      {approvalTasks.length === 0 ? (
+      {approvalTaskViews.length === 0 ? (
         <div style={emptyStateStyle}>当前没有待审批任务</div>
       ) : (
         <div style={getApprovalListStyle(isMobile)}>
-          {approvalTasks.map((task) => {
+          {approvalTaskViews.map((view) => {
+            const task = view.task;
             const requirementTitle = String(task.extras.requirement_title ?? '').trim() || '未命名流程';
             const dependencyLabel = String(task.extras.dependencies ?? task.extras.dependency_titles ?? '').trim();
             return (
@@ -647,7 +799,7 @@ function ApprovalPane({
                   <button
                     type="button"
                     style={primaryButtonStyle}
-                    onClick={() => onContinueTask(task.id, task.instance_id)}
+                    onClick={() => onContinueTask(task.id, view.instanceId ?? task.instance_id)}
                     disabled={continuingTaskId === task.id}
                   >
                     {continuingTaskId === task.id ? '继续中...' : '继续'}
@@ -660,6 +812,34 @@ function ApprovalPane({
       )}
     </section>
   );
+}
+
+function resolveApprovalTaskInstance(
+  task: KanbanTaskItem,
+  approvalInstanceNameById: Map<string, string>
+): { instanceId: string | null; instanceName: string } {
+  const normalizedTaskInstanceId = normalizeOptionalString(task.instance_id);
+  const normalizedExtrasInstanceId = normalizeOptionalString(task.extras.instance_id);
+  const instanceId = normalizedTaskInstanceId ?? normalizedExtrasInstanceId;
+  const backendInstanceName = instanceId ? normalizeOptionalString(approvalInstanceNameById.get(instanceId)) : null;
+  const instanceName =
+    backendInstanceName
+    ?? normalizeOptionalString(task.extras.instance_name)
+    ?? instanceId
+    ?? '未标识实例';
+  return {
+    instanceId: instanceId ?? null,
+    instanceName,
+  };
+}
+
+function normalizeOptionalString(value: unknown): string | null {
+  const normalized = String(value ?? '').trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function toSeriesTestId(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]/g, '-');
 }
 
 function EventsPane({
@@ -981,15 +1161,19 @@ function buildSummaryMetric(
 }
 
 function buildTokenMetric(tokenGroups: AggregateOverviewTokenGroup[]): SummaryMetric | null {
-  const usableGroups = tokenGroups.filter((group) => group.samples.length > 0);
-  if (usableGroups.length === 0) {
+  const mergedGroups = mergeTokenGroups(tokenGroups);
+  const labels = Array.from(
+    new Set(mergedGroups.flatMap((group) => group.samples.map((sample) => sample.label)))
+  ).sort((left, right) => left.localeCompare(right));
+  if (labels.length === 0) {
     return null;
   }
-  const labels = Array.from(
-    new Set(usableGroups.flatMap((group) => group.samples.map((sample) => sample.label)))
-  ).sort((left, right) => left.localeCompare(right));
-  const series = usableGroups.map((group, index) => {
+  const aggregateSampleMap = new Map<string, number>();
+  const instanceSeries = mergedGroups.map((group, index) => {
     const sampleMap = new Map(group.samples.map((sample) => [sample.label, sample.total_tokens]));
+    for (const [label, totalTokens] of sampleMap.entries()) {
+      aggregateSampleMap.set(label, (aggregateSampleMap.get(label) ?? 0) + totalTokens);
+    }
     return {
       id: group.instance_id,
       name: group.instance_name,
@@ -997,15 +1181,76 @@ function buildTokenMetric(tokenGroups: AggregateOverviewTokenGroup[]): SummaryMe
       values: labels.map((label) => sampleMap.get(label) ?? 0),
     };
   });
-  const total = usableGroups.reduce((sum, group) => sum + (group.total_tokens ?? 0), 0);
+  const series = [
+    {
+      id: 'aggregate:all-instances',
+      name: '全部实例',
+      color: '#0f172a',
+      values: labels.map((label) => aggregateSampleMap.get(label) ?? 0),
+    },
+    ...instanceSeries,
+  ];
+  const total = mergedGroups.reduce((sum, group) => sum + (group.total_tokens ?? 0), 0);
   return {
     kind: 'tokens',
     title: 'Token 消耗趋势',
-    hint: '按实例分组展示并支持多实例聚合统计。',
+    hint: '默认展示全部实例聚合曲线，并保留各实例走势对比。',
     labels,
     series,
     totalLabel: total > 0 ? `${total.toLocaleString('en-US')} tokens` : '暂无总量',
   };
+}
+
+function mergeTokenGroups(tokenGroups: AggregateOverviewTokenGroup[]): AggregateOverviewTokenGroup[] {
+  const mergedGroups = new Map<
+    string,
+    {
+      instance_id: string;
+      instance_name: string;
+      total_tokens: number | null;
+      samples: Map<string, { label: string; input_tokens: number; output_tokens: number; total_tokens: number }>;
+    }
+  >();
+
+  tokenGroups.forEach((group, index) => {
+    const normalizedInstanceId = group.instance_id.trim();
+    const normalizedInstanceName = group.instance_name.trim() || normalizedInstanceId || `实例 ${index + 1}`;
+    const key = normalizedInstanceId || normalizedInstanceName;
+    const existing = mergedGroups.get(key) ?? {
+      instance_id: normalizedInstanceId || `instance-${index + 1}`,
+      instance_name: normalizedInstanceName,
+      total_tokens: 0,
+      samples: new Map<string, { label: string; input_tokens: number; output_tokens: number; total_tokens: number }>(),
+    };
+
+    existing.instance_name = existing.instance_name || normalizedInstanceName;
+    existing.total_tokens = (existing.total_tokens ?? 0) + (group.total_tokens ?? 0);
+
+    for (const sample of group.samples) {
+      const current = existing.samples.get(sample.label) ?? {
+        label: sample.label,
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+      };
+      current.input_tokens += sample.input_tokens;
+      current.output_tokens += sample.output_tokens;
+      current.total_tokens += sample.total_tokens;
+      existing.samples.set(sample.label, current);
+    }
+
+    mergedGroups.set(key, existing);
+  });
+
+  return Array.from(mergedGroups.values()).map((group) => ({
+    instance_id: group.instance_id,
+    instance_name: group.instance_name,
+    total_tokens:
+      group.total_tokens !== null
+        ? group.total_tokens
+        : Array.from(group.samples.values()).reduce((sum, sample) => sum + sample.total_tokens, 0),
+    samples: Array.from(group.samples.values()).sort((left, right) => left.label.localeCompare(right.label)),
+  }));
 }
 
 function buildTaskFallbackMetric(tasks: KanbanTaskItem[]): SummaryMetric {
@@ -1149,6 +1394,26 @@ const chartTotalBadgeStyle: React.CSSProperties = {
   color: '#0f766e',
   fontSize: '0.78rem',
   fontWeight: 700,
+};
+
+const tokenSeriesFilterWrapStyle: React.CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '0.45rem 0.7rem',
+  marginBottom: '0.65rem',
+};
+
+const tokenSeriesFilterItemStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '0.35rem',
+  fontSize: '0.74rem',
+  color: '#334155',
+};
+
+const tokenSeriesFilterCheckboxStyle: React.CSSProperties = {
+  width: '0.86rem',
+  height: '0.86rem',
 };
 
 const chartLegendStyle: React.CSSProperties = {
@@ -1329,6 +1594,23 @@ const approvalMetaValueStyle: React.CSSProperties = {
 const approvalActionsStyle: React.CSSProperties = {
   display: 'flex',
   justifyContent: 'flex-end',
+};
+
+const approvalFilterWrapStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'flex-end',
+};
+
+const approvalFilterSelectStyle: React.CSSProperties = {
+  minWidth: '140px',
+  border: '1px solid rgba(148, 163, 184, 0.24)',
+  borderRadius: '0.78rem',
+  background: 'rgba(255, 255, 255, 0.92)',
+  color: '#10212f',
+  fontSize: '0.78rem',
+  padding: '0.5rem 0.72rem',
+  outline: 'none',
 };
 
 const eventsToolbarStyle: React.CSSProperties = {

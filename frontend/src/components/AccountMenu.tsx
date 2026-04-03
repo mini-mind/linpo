@@ -44,6 +44,10 @@ export function AccountMenu({
   }, []);
 
   const handleLogout = useCallback(async () => {
+    const confirmed = window.confirm('确认退出登录吗？');
+    if (!confirmed) {
+      return;
+    }
     try {
       await logout();
       addToast('已退出登录', 'success');

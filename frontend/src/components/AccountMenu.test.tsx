@@ -54,6 +54,7 @@ describe('AccountMenu avatar trigger text', () => {
     mockAvatarUrl = null;
     mockLogout.mockClear();
     mockAddToast.mockClear();
+    vi.restoreAllMocks();
   });
 
   it('uses first Chinese character when username starts with Chinese', () => {
@@ -114,5 +115,37 @@ describe('AccountMenu avatar trigger text', () => {
       fireEvent.click(screen.getByRole('button', { name: '打开账户菜单' }));
     });
     expect(screen.queryByRole('menuitem', { name: '实例文件' })).not.toBeInTheDocument();
+  });
+
+  it('confirms before logout and skips logout when cancelled', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    renderMenu();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '打开账户菜单' }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('menuitem', { name: '退出登录' }));
+    });
+
+    expect(confirmSpy).toHaveBeenCalledWith('确认退出登录吗？');
+    expect(mockLogout).not.toHaveBeenCalled();
+    expect(mockAddToast).not.toHaveBeenCalled();
+  });
+
+  it('logs out after confirmation', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    renderMenu();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '打开账户菜单' }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('menuitem', { name: '退出登录' }));
+    });
+
+    expect(confirmSpy).toHaveBeenCalledWith('确认退出登录吗？');
+    expect(mockLogout).toHaveBeenCalledTimes(1);
+    expect(mockAddToast).toHaveBeenCalledWith('已退出登录', 'success');
   });
 });

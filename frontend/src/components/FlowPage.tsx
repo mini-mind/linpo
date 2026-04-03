@@ -1476,7 +1476,9 @@ export function FlowPage(): JSX.Element {
   }, [getCachedPlannerMessages, resetPlannerRuntimeState]);
 
   useEffect(() => {
-    const routeKey = isNewFlowRoute ? `new:${String(routeState?.draft_flow_id ?? '').trim()}` : resolvedFlowId;
+    const routeKey = isNewFlowRoute
+      ? `new:${String(routeState?.draft_flow_id ?? '').trim()}`
+      : `${resolvedFlowId}:${routeState?.prefer_submitted_snapshot ? 'submitted' : 'default'}`;
 
     if (routeKey !== loadedRouteKey) {
       if (isNewFlowRoute) {
@@ -1593,6 +1595,11 @@ export function FlowPage(): JSX.Element {
     if (!isNewFlowRoute) {
       const snapshot = flowCatalog.get(resolvedFlowId);
       if (!snapshot) {
+        return;
+      }
+      const preferSubmittedSnapshot = Boolean(routeState?.prefer_submitted_snapshot);
+      if (preferSubmittedSnapshot && (isDraftCanvas || currentFlowId.trim() !== resolvedFlowId)) {
+        applySnapshot(snapshot);
         return;
       }
       const isPlaceholderDraft =

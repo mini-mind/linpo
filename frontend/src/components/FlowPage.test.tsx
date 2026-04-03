@@ -1071,6 +1071,58 @@ describe('FlowPage', () => {
     expect(screen.queryByRole('button', { name: '流程节点-B旧草稿节点' })).not.toBeInTheDocument();
   });
 
+  it('switches from a stale draft canvas to the submitted snapshot when clicking the current sidebar card', async () => {
+    mockListKanbanTasks.mockResolvedValue([
+      buildKanbanTask({
+        id: 'task-b-1',
+        title: 'B提交节点-最新',
+        extras: {
+          requirement_id: 'req-flow-b',
+          requirement_title: '提交流程B',
+          flow_node: 'node_b_1',
+          dependencies: 'none',
+          sensitive: 'false',
+          flow_layer: '1',
+          flow_x: '120',
+          flow_y: '90',
+        },
+      }),
+    ]);
+    seedDraftFlow('req-flow-b', {
+      name: '提交流程B-旧草稿',
+      nodes: [
+        {
+          id: 'node_b_stale',
+          title: 'B旧草稿节点',
+          description: 'stale draft',
+          depends_on: [],
+          x: 42,
+          y: 36,
+          layer: 1,
+          sensitive: false,
+          status: 'queued',
+          agent_id: 'agent-alpha',
+        },
+      ],
+      edges: [],
+    });
+
+    renderFlowPage('/flow/edit/req-flow-b');
+    await waitForFlowCanvasReady();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '流程节点-B旧草稿节点' })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: '流程节点-B提交节点-最新' })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '切换流程-提交流程B', current: 'page' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '流程节点-B提交节点-最新' })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: '流程节点-B旧草稿节点' })).not.toBeInTheDocument();
+  });
+
   it('updates flow graph from planner sse patch before http response resolves', async () => {
     let resolveGenerate: ((value: FlowGenerateResponse) => void) | null = null;
     mockGenerateFlowFromRequirement.mockImplementation(
