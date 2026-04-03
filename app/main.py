@@ -1,9 +1,45 @@
 import os
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request, Response
+
+
+def _load_local_env_file() -> None:
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    if not env_path.is_file():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if line == "" or line.startswith("#"):
+            continue
+
+        if line.startswith("export "):
+            line = line[7:].strip()
+
+        if "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        normalized_key = key.strip()
+        if normalized_key == "" or normalized_key in os.environ:
+            continue
+
+        normalized_value = value.strip()
+        if (
+            len(normalized_value) >= 2
+            and normalized_value[0] == normalized_value[-1]
+            and normalized_value[0] in {'"', "'"}
+        ):
+            normalized_value = normalized_value[1:-1]
+
+        os.environ[normalized_key] = normalized_value
+
+
+_load_local_env_file()
 
 from app.adapters.provider_registry import build_default_provider_registry
 from app.api.aggregate import router as aggregate_router
@@ -23,6 +59,7 @@ _DEFAULT_CORS_ORIGINS = [
     "http://127.0.0.1:5173",
 ]
 _ALLOWED_CORS_METHODS = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+_API_V1_PREFIX = "/api/v1"
 
 
 def _get_cors_allow_origins() -> list[str]:
@@ -46,7 +83,50 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Linpo API", lifespan=lifespan)
+_OPENAPI_TAGS = [
+    {
+        "name": "system",
+        "description": "系统级接口与健康检查。",
+    },
+    {
+        "name": "auth",
+        "description": "认证、会话与用户资料接口。",
+    },
+    {
+        "name": "instances",
+        "description": "实例接入、配对、消息与实例文件相关接口。",
+    },
+    {
+        "name": "aggregate",
+        "description": "跨实例聚合视图与拓扑接口。",
+    },
+    {
+        "name": "tasks",
+        "description": "看板任务、任务执行回调与产出接口。",
+    },
+    {
+        "name": "flow",
+        "description": "流程草稿、规划会话与流程级动作接口。",
+    },
+    {
+        "name": "flow-internal",
+        "description": "仅供 planner 会话使用的内部节点编辑与会话提交接口。",
+    },
+    {
+        "name": "observer",
+        "description": "观察者视角下的 agent、node 与事件查询接口。",
+    },
+    {
+        "name": "chat",
+        "description": "面向 agent 的聊天会话、消息发送与会话管理接口。",
+    },
+    {
+        "name": "realtime",
+        "description": "实时订阅相关 HTTP/SSE 接口；WebSocket 通道不出现在 OpenAPI 文档中。",
+    },
+]
+
+app = FastAPI(title="Linpo API", lifespan=lifespan, openapi_tags=_OPENAPI_TAGS)
 _ALLOWED_CORS_ORIGINS = set(_get_cors_allow_origins())
 app.state.bootstrap_database = init_db
 app.state.provider_registry = build_default_provider_registry()
@@ -111,14 +191,19 @@ async def add_http_cors_headers(
     return response
 
 
-app.include_router(aggregate_router)
-app.include_router(agents_router)
-app.include_router(auth_router)
-app.include_router(instances_router)
-app.include_router(realtime_router)
+# Legacy (non-versioned) routes remain available for backward compatibility,
+# but are hidden from OpenAPI to keep `/docs` canonical under `/api/v1/*`.
+for router in (aggregate_router, agents_router, auth_router, instances_router, realtime_router):
+    app.include_router(router, include_in_schema=False)
+    app.include_router(router, prefix=_API_V1_PREFIX)
 app.include_router(tasks_router)
 
 
-@app.get("/health")
+@app.get("/health", tags=["system"], include_in_schema=False)
+def health_legacy() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.get("/api/v1/health", tags=["system"])
 def health() -> dict[str, str]:
     return {"status": "ok"}

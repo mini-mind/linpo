@@ -832,9 +832,13 @@ export function FlowPage(): JSX.Element {
           reconnectAttempts += 1;
           reconnectTimerId = window.setTimeout(() => {
             reconnectTimerId = null;
-            void refreshFlowTasks().finally(() => {
-              connectRealtime();
-            });
+            void refreshFlowTasks()
+              .catch(() => {
+                // Ignore refresh failure during reconnect; the next SSE connect can still recover.
+              })
+              .finally(() => {
+                connectRealtime();
+              });
           }, delay);
         },
       });

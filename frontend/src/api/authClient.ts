@@ -1,11 +1,9 @@
 /**
  * Auth API client for authentication operations
- * Backend API: /auth/* with cookie-based session
+ * Backend API: /api/v1/auth/* with cookie-based session
  */
 
-const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
-const inferredApiBaseUrl = `${window.location.protocol}//${window.location.hostname}:8000`;
-const API_BASE_URL = configuredApiBaseUrl || inferredApiBaseUrl;
+import { API_BASE_URL } from './apiBaseUrl';
 
 export interface User {
   id: string;
@@ -88,7 +86,7 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
  */
 export async function getCurrentUser(): Promise<User | null> {
   try {
-    return await fetchApi<User>('/auth/me');
+    return await fetchApi<User>('/api/v1/auth/me');
   } catch (error) {
     if (error instanceof AuthError && error.code === 'unauthorized') {
       return null;
@@ -102,7 +100,7 @@ export async function getCurrentUser(): Promise<User | null> {
  * Sets session cookie on success
  */
 export async function login(credentials: LoginCredentials): Promise<User> {
-  return fetchApi<User>('/auth/login', {
+  return fetchApi<User>('/api/v1/auth/login', {
     method: 'POST',
     body: JSON.stringify(credentials),
   });
@@ -112,7 +110,7 @@ export async function login(credentials: LoginCredentials): Promise<User> {
  * Register new user
  */
 export async function register(credentials: RegisterCredentials): Promise<User> {
-  return fetchApi<User>('/auth/register', {
+  return fetchApi<User>('/api/v1/auth/register', {
     method: 'POST',
     body: JSON.stringify(credentials),
   });
@@ -123,20 +121,20 @@ export async function register(credentials: RegisterCredentials): Promise<User> 
  * Clears session cookie
  */
 export async function logout(): Promise<void> {
-  await fetchApi<{ ok: boolean }>('/auth/logout', {
+  await fetchApi<{ ok: boolean }>('/api/v1/auth/logout', {
     method: 'POST',
   });
 }
 
 export async function updateProfile(payload: UpdateProfilePayload): Promise<User> {
-  return fetchApi<User>('/auth/profile', {
+  return fetchApi<User>('/api/v1/auth/profile', {
     method: 'PATCH',
     body: JSON.stringify(payload),
   });
 }
 
 export async function updatePassword(payload: UpdatePasswordPayload): Promise<void> {
-  await fetchApi<{ ok: boolean }>('/auth/password', {
+  await fetchApi<{ ok: boolean }>('/api/v1/auth/password', {
     method: 'POST',
     body: JSON.stringify(payload),
   });

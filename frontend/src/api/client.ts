@@ -1,4 +1,5 @@
 import { resolveCurrentInstanceId } from '../hooks/useCurrentInstance';
+import { API_BASE_URL } from './apiBaseUrl';
 import type {
 	AgentDetailResponse,
 	AgentListItem,
@@ -40,10 +41,6 @@ import type {
 	TaskInterruptResponse,
 	TaskOutputPreviewResponse,
 } from './types';
-
-const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
-const inferredApiBaseUrl = `${window.location.protocol}//${window.location.hostname}:8000`;
-const API_BASE_URL = configuredApiBaseUrl || inferredApiBaseUrl;
 const DEFAULT_OBSERVER_DATA_SOURCE = 'openclaw';
 const DEFAULT_BOARD_ID = 'default';
 
@@ -149,19 +146,19 @@ async function fetchApi<T>(
 }
 
 export async function listAgents(options?: ObserverRequestOptions): Promise<AgentListItem[]> {
-  return fetchApi<AgentListItem[]>('/agents', undefined, options);
+  return fetchApi<AgentListItem[]>('/api/v1/agents', undefined, options);
 }
 
 export async function getAggregateOverview(
   options?: ObserverRequestOptions
 ): Promise<AggregateOverviewResponse> {
-  return fetchApi<AggregateOverviewResponse>('/aggregate/overview', undefined, options);
+  return fetchApi<AggregateOverviewResponse>('/api/v1/aggregate/overview', undefined, options);
 }
 
 export async function getAggregateTopology(
   options?: ObserverRequestOptions
 ): Promise<AggregateTopologyResponse> {
-  return fetchApi<AggregateTopologyResponse>('/aggregate/topology', undefined, options);
+  return fetchApi<AggregateTopologyResponse>('/api/v1/aggregate/topology', undefined, options);
 }
 
 export async function listKanbanTasks(
@@ -524,14 +521,14 @@ export async function getAgentDetail(
   agentId: string,
   options?: ObserverRequestOptions
 ): Promise<AgentDetailResponse> {
-  return fetchApi<AgentDetailResponse>(`/agents/${agentId}`, undefined, options);
+  return fetchApi<AgentDetailResponse>(`/api/v1/agents/${agentId}`, undefined, options);
 }
 
 export async function sendChatMessage(
 	request: ChatSendRequest,
 	options?: ObserverRequestOptions
 ): Promise<ChatSendResponse> {
-	const path = `/chat/agents/${encodeURIComponent(request.agentId)}/send`;
+	const path = `/api/v1/chat/agents/${encodeURIComponent(request.agentId)}/send`;
 	const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, options)}`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
@@ -554,7 +551,7 @@ export async function patchSession(
   patch: SessionPatchRequest,
   options?: ObserverRequestOptions
 ): Promise<SessionPatchResponse> {
-  const path = `/chat/sessions/${sessionKey}`;
+  const path = `/api/v1/chat/sessions/${sessionKey}`;
   const body: Record<string, string> = {};
   if (patch.agentId) body.agent_id = patch.agentId;
   if (patch.model) body.model = patch.model;
@@ -578,7 +575,7 @@ export async function resetSession(
   sessionKey: string,
   options?: ObserverRequestOptions
 ): Promise<SessionResetResponse> {
-  const path = `/chat/sessions/${encodeURIComponent(sessionKey)}/reset`;
+  const path = `/api/v1/chat/sessions/${encodeURIComponent(sessionKey)}/reset`;
   const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, options)}`, {
     method: 'POST',
     credentials: 'include',
@@ -595,7 +592,7 @@ export async function deleteSession(
   sessionKey: string,
   options?: ObserverRequestOptions
 ): Promise<SessionDeleteResponse> {
-  const path = `/chat/sessions/${encodeURIComponent(sessionKey)}`;
+  const path = `/api/v1/chat/sessions/${encodeURIComponent(sessionKey)}`;
   const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, options)}`, {
     method: 'DELETE',
     credentials: 'include',
@@ -622,8 +619,8 @@ export async function pauseSession(
   }
   const query = params.toString();
   const path = query
-    ? `/chat/agents/${encodeURIComponent(request.agentId)}/pause?${query}`
-    : `/chat/agents/${encodeURIComponent(request.agentId)}/pause`;
+    ? `/api/v1/chat/agents/${encodeURIComponent(request.agentId)}/pause?${query}`
+    : `/api/v1/chat/agents/${encodeURIComponent(request.agentId)}/pause`;
 
   const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, options)}`, {
     method: 'POST',
@@ -644,7 +641,7 @@ export async function listSessions(
   const params = new URLSearchParams();
   if (agentId) params.set('agentId', agentId);
   const query = params.toString();
-  const path = query ? `/chat/sessions?${query}` : '/chat/sessions';
+  const path = query ? `/api/v1/chat/sessions?${query}` : '/api/v1/chat/sessions';
   const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, options)}`, {
     credentials: 'include',
   });
@@ -667,7 +664,7 @@ export async function previewSessions(
   const params = new URLSearchParams();
   params.set('keys', keys.join(','));
   params.set('maxChars', '2000');
-  const path = `/chat/sessions/preview?${params.toString()}`;
+  const path = `/api/v1/chat/sessions/preview?${params.toString()}`;
   const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, options)}`, {
     credentials: 'include',
   });
@@ -688,7 +685,7 @@ export async function getSessionHistory(
       items: [],
     };
   }
-  const path = `/chat/sessions/${encodeURIComponent(normalizedSessionKey)}/history?limit=200`;
+  const path = `/api/v1/chat/sessions/${encodeURIComponent(normalizedSessionKey)}/history?limit=200`;
   const response = await fetch(`${API_BASE_URL}${withBusinessContext(path, options)}`, {
     credentials: 'include',
   });

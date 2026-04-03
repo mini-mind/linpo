@@ -1,6 +1,6 @@
 /**
  * Instance API client for instance management
- * Backend API: /instances/* with cookie-based session
+ * Backend API: /api/v1/instances/* with cookie-based session
  */
 
 import type {
@@ -15,10 +15,7 @@ import type {
   InstanceDeleteResponse,
   TaskOutputPreviewResponse,
 } from './types';
-
-const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
-const inferredApiBaseUrl = `${window.location.protocol}//${window.location.hostname}:8000`;
-const API_BASE_URL = configuredApiBaseUrl || inferredApiBaseUrl;
+import { API_BASE_URL } from './apiBaseUrl';
 
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -39,18 +36,18 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export async function listInstances(): Promise<InstanceItem[]> {
-  return fetchApi<InstanceItem[]>('/instances');
+  return fetchApi<InstanceItem[]>('/api/v1/instances');
 }
 
 export async function createInstance(payload: InstanceWriteRequest): Promise<InstanceItem> {
-  return fetchApi<InstanceItem>('/instances', {
+  return fetchApi<InstanceItem>('/api/v1/instances', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
 }
 
 export async function createInstanceByPairCode(payload: InstancePairCodeRequest): Promise<InstanceItem> {
-  return fetchApi<InstanceItem>('/instances/pair-code', {
+  return fetchApi<InstanceItem>('/api/v1/instances/pair-code', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
@@ -59,7 +56,7 @@ export async function createInstanceByPairCode(payload: InstancePairCodeRequest)
 export async function validateInstance(
   payload: InstanceWriteRequest
 ): Promise<InstanceValidationResponse> {
-  return fetchApi<InstanceValidationResponse>('/instances/validate', {
+  return fetchApi<InstanceValidationResponse>('/api/v1/instances/validate', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
@@ -68,7 +65,7 @@ export async function validateInstance(
 export async function validateInstanceByPairCode(
   payload: InstancePairCodeRequest
 ): Promise<InstanceValidationResponse> {
-  return fetchApi<InstanceValidationResponse>('/instances/pair-code/validate', {
+  return fetchApi<InstanceValidationResponse>('/api/v1/instances/pair-code/validate', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
@@ -78,14 +75,14 @@ export async function updateInstance(
   instanceId: string,
   payload: InstancePatchRequest
 ): Promise<InstanceItem> {
-  return fetchApi<InstanceItem>(`/instances/${instanceId}`, {
+  return fetchApi<InstanceItem>(`/api/v1/instances/${instanceId}`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
   });
 }
 
 export async function deleteInstance(instanceId: string): Promise<InstanceDeleteResponse> {
-  return fetchApi<InstanceDeleteResponse>(`/instances/${instanceId}`, {
+  return fetchApi<InstanceDeleteResponse>(`/api/v1/instances/${instanceId}`, {
     method: 'DELETE',
   });
 }
@@ -109,7 +106,7 @@ export async function listInstanceFiles(
     params.set('onlyExisting', 'true');
   }
   const suffix = params.toString() ? `?${params.toString()}` : '';
-  return fetchApi<InstanceFileListResponse>(`/instances/${encodeURIComponent(instanceId)}/files${suffix}`);
+  return fetchApi<InstanceFileListResponse>(`/api/v1/instances/${encodeURIComponent(instanceId)}/files${suffix}`);
 }
 
 export async function previewInstanceFile(
@@ -127,7 +124,7 @@ export async function previewInstanceFile(
     params.set('path', path.trim());
   }
   return fetchApi<TaskOutputPreviewResponse>(
-    `/instances/${encodeURIComponent(instanceId)}/files/preview?${params.toString()}`
+    `/api/v1/instances/${encodeURIComponent(instanceId)}/files/preview?${params.toString()}`
   );
 }
 
@@ -147,7 +144,7 @@ export async function listInstanceAgentDocs(
   }
   const suffix = params.toString() ? `?${params.toString()}` : '';
   return fetchApi<InstanceAgentDocListResponse>(
-    `/instances/${encodeURIComponent(instanceId)}/agent-docs${suffix}`
+    `/api/v1/instances/${encodeURIComponent(instanceId)}/agent-docs${suffix}`
   );
 }
 
@@ -160,7 +157,7 @@ export async function previewInstanceAgentDoc(
   params.set('agentId', agentId);
   params.set('name', name);
   return fetchApi<TaskOutputPreviewResponse>(
-    `/instances/${encodeURIComponent(instanceId)}/agent-docs/preview?${params.toString()}`
+    `/api/v1/instances/${encodeURIComponent(instanceId)}/agent-docs/preview?${params.toString()}`
   );
 }
 
@@ -176,7 +173,7 @@ export function buildInstanceAgentDocDownloadUrl(
   if (options?.download !== false) {
     params.set('download', 'true');
   }
-  return `${API_BASE_URL}/instances/${encodeURIComponent(instanceId)}/agent-docs/download?${params.toString()}`;
+  return `${API_BASE_URL}/api/v1/instances/${encodeURIComponent(instanceId)}/agent-docs/download?${params.toString()}`;
 }
 
 export function buildInstanceFileDownloadUrl(
@@ -194,7 +191,7 @@ export function buildInstanceFileDownloadUrl(
   if (options?.download !== false) {
     params.set('download', 'true');
   }
-  return `${API_BASE_URL}/instances/${encodeURIComponent(instanceId)}/files/download?${params.toString()}`;
+  return `${API_BASE_URL}/api/v1/instances/${encodeURIComponent(instanceId)}/files/download?${params.toString()}`;
 }
 
 export function isValidationError(

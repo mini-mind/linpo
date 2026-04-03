@@ -1,15 +1,12 @@
 import type React from 'react';
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { API_BASE_URL } from '../api/apiBaseUrl';
 
 type ConfirmState = 'processing' | 'success' | 'error';
 
-const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
-const inferredApiBaseUrl = `${window.location.protocol}//${window.location.hostname}:8000`;
-const API_BASE_URL = configuredApiBaseUrl || inferredApiBaseUrl;
-
 async function confirmReceipt(token: string): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/instances/agent-receipts/${encodeURIComponent(token)}/confirm`, {
+  const response = await fetch(`${API_BASE_URL}/api/v1/instances/agent-receipts/${encodeURIComponent(token)}/confirm`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

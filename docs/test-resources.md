@@ -74,7 +74,7 @@
 | `LINPO_SECRET_ENCRYPTION_KEY` | Gateway Token 加密存储 |
 | `LINPO_CORS_ALLOW_ORIGINS` | 公网前端联调时的 CORS 白名单 |
 | `LINPO_SESSION_COOKIE_SECURE` | 会话 Cookie `Secure` 开关；不显式配置时，若 `LINPO_CORS_ALLOW_ORIGINS` 含非本地域名则自动启用 |
-| `VITE_API_BASE_URL` | 前端 API 地址（如 `http://175.178.213.10:8000`） |
+| `VITE_API_BASE_URL` | 前端 API 地址（如 `http://175.178.213.10:8000`）；由 `frontend/.env(.local)` 注入 |
 | `OPENCLAW_BASE_URL` | OpenClaw 网关地址（v0.7 默认指向 claw1） |
 | `OPENCLAW_GATEWAY_TOKEN` | OpenClaw 网关令牌 |
 | `OPENCLAW_ORIGIN` | OpenClaw 请求来源标识 |
@@ -87,6 +87,8 @@
 | `LINPO_TASK_RUN_STALE_SECONDS` | `running` 任务无 heartbeat 的超时阈值（秒） |
 
 补充说明：任务事件回调当前采用 `callbackToken` + `occurredAt` 时间窗 + `callbackSignature(HMAC-SHA256)` 三层校验；签名 key 直接使用该次运行下发的 `callbackToken`。
+
+补充说明：本地使用 `fastapi dev app/main.py` 启动时，后端会自动从仓库根目录 `.env` 读取并注入未显式设置的环境变量（显式导出的环境变量优先级更高）。
 
 ## OpenClaw 参考
 

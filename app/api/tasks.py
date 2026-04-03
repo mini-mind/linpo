@@ -92,7 +92,7 @@ from app.services.provider_application_service import (
 )
 from app.services.task_service import TaskCreateInput, TaskService
 
-router = APIRouter(prefix="/api/v1/boards/{board_id}/tasks", tags=["tasks"])
+router = APIRouter(prefix="/api/v1/boards/{board_id}/tasks")
 
 _DEFAULT_STALE_RUNNING_SECONDS = 900
 _EVENT_KEY_MAX = 80
@@ -1268,7 +1268,7 @@ def _append_artifact(task: Task, item: str) -> None:
     task.artifacts = artifacts[-120:]
 
 
-@router.get("/flow/drafts", response_model=list[FlowDraftItem])
+@router.get("/flow/drafts", response_model=list[FlowDraftItem], tags=["flow"])
 def list_flow_drafts(
     board_id: str,
     db_session: Session = Depends(get_session),
@@ -1286,7 +1286,7 @@ def list_flow_drafts(
     return [_to_flow_draft_item(record) for record in records]
 
 
-@router.post("/flow/drafts", response_model=FlowDraftItem)
+@router.post("/flow/drafts", response_model=FlowDraftItem, tags=["flow"])
 def upsert_flow_draft(
     board_id: str,
     payload: FlowDraftUpsertRequest,
@@ -1346,7 +1346,7 @@ def upsert_flow_draft(
     return _to_flow_draft_item(record)
 
 
-@router.delete("/flow/drafts/{flow_id}", response_model=FlowDraftDeleteResponse)
+@router.delete("/flow/drafts/{flow_id}", response_model=FlowDraftDeleteResponse, tags=["flow"])
 def delete_flow_draft(
     board_id: str,
     flow_id: str,
@@ -1371,7 +1371,7 @@ def delete_flow_draft(
     return FlowDraftDeleteResponse(deleted=True, flow_id=normalized_flow_id)
 
 
-@router.post("/flow/generate", response_model=FlowGenerateResponse)
+@router.post("/flow/generate", response_model=FlowGenerateResponse, tags=["flow"])
 def generate_flow(
     board_id: str,
     request: Request,
@@ -1507,7 +1507,7 @@ def generate_flow(
     )
 
 
-@router.get("/flow/planner-sessions/{session_key}/exists", response_model=FlowPlannerSessionProbeResponse)
+@router.get("/flow/planner-sessions/{session_key}/exists", response_model=FlowPlannerSessionProbeResponse, tags=["flow"])
 def probe_flow_planner_session_exists(
     board_id: str,
     session_key: str,
@@ -1532,7 +1532,7 @@ def probe_flow_planner_session_exists(
     return FlowPlannerSessionProbeResponse(exists=True)
 
 
-@router.get("/flow/planner-sse", response_model=None)
+@router.get("/flow/planner-sse", response_model=None, tags=["flow"])
 async def flow_planner_sse(
     board_id: str,
     request: Request,
@@ -1829,7 +1829,7 @@ async def flow_planner_sse(
     )
 
 
-@router.post("/flow/planner-stop", response_model=FlowPlannerStopResponse)
+@router.post("/flow/planner-stop", response_model=FlowPlannerStopResponse, tags=["flow"])
 def stop_flow_planner(
     board_id: str,
     payload: FlowPlannerStopRequest,
@@ -1863,7 +1863,7 @@ def stop_flow_planner(
     )
 
 
-@router.post("/flow/planner-sessions/{session_key}/nodes/upsert", response_model=FlowPlannerSessionItem)
+@router.post("/flow/planner-sessions/{session_key}/nodes/upsert", response_model=FlowPlannerSessionItem, tags=["flow-internal"])
 def planner_upsert_single_node(
     board_id: str,
     session_key: str,
@@ -1888,7 +1888,7 @@ def planner_upsert_single_node(
     )
 
 
-@router.post("/flow/planner-sessions/{session_key}/nodes/delete", response_model=FlowPlannerSessionItem)
+@router.post("/flow/planner-sessions/{session_key}/nodes/delete", response_model=FlowPlannerSessionItem, tags=["flow-internal"])
 def planner_delete_single_node(
     board_id: str,
     session_key: str,
@@ -1913,7 +1913,7 @@ def planner_delete_single_node(
     )
 
 
-@router.post("/flow/planner-sessions/{session_key}/complete", response_model=FlowPlannerSessionItem)
+@router.post("/flow/planner-sessions/{session_key}/complete", response_model=FlowPlannerSessionItem, tags=["flow-internal"])
 def planner_complete_session(
     board_id: str,
     session_key: str,
@@ -1939,7 +1939,7 @@ def planner_complete_session(
     )
 
 
-@router.post("/flow/planner-sessions/{session_key}/fail", response_model=FlowPlannerSessionItem)
+@router.post("/flow/planner-sessions/{session_key}/fail", response_model=FlowPlannerSessionItem, tags=["flow-internal"])
 def planner_fail_session(
     board_id: str,
     session_key: str,
@@ -1964,7 +1964,7 @@ def planner_fail_session(
     )
 
 
-@router.post("/flow/confirm", response_model=FlowConfirmResponse)
+@router.post("/flow/confirm", response_model=FlowConfirmResponse, tags=["flow"])
 def confirm_flow(
     board_id: str,
     payload: FlowConfirmRequest,
@@ -2167,7 +2167,7 @@ def confirm_flow(
     )
 
 
-@router.post("/task-runs/{run_id}/events", response_model=TaskRunEventResponse)
+@router.post("/task-runs/{run_id}/events", response_model=TaskRunEventResponse, tags=["tasks"])
 def task_run_event_callback(
     board_id: str,
     run_id: str,
@@ -2289,7 +2289,7 @@ def task_run_event_callback(
     )
 
 
-@router.get("", response_model=list[TaskItem])
+@router.get("", response_model=list[TaskItem], tags=["tasks"])
 def list_tasks(
     board_id: str,
     instance_id: UUID | None = Query(default=None, alias="instanceId"),
@@ -2336,7 +2336,7 @@ def list_tasks(
     return [_to_task_item(task) for task in tasks]
 
 
-@router.get("/{task_id}/output-preview", response_model=TaskOutputPreviewResponse)
+@router.get("/{task_id}/output-preview", response_model=TaskOutputPreviewResponse, tags=["tasks"])
 def preview_task_output(
     board_id: str,
     task_id: UUID,
@@ -2369,7 +2369,7 @@ def preview_task_output(
     )
 
 
-@router.get("/{task_id}/output-file")
+@router.get("/{task_id}/output-file", tags=["tasks"])
 def download_task_output_file(
     board_id: str,
     task_id: UUID,
@@ -2477,7 +2477,7 @@ def _list_requirement_tasks(
     return matched
 
 
-@router.post("/requirements/{requirement_id}/rename", response_model=FlowRequirementRenameResponse)
+@router.post("/requirements/{requirement_id}/rename", response_model=FlowRequirementRenameResponse, tags=["flow"])
 def rename_requirement(
     board_id: str,
     requirement_id: str,
@@ -2518,7 +2518,7 @@ def rename_requirement(
     )
 
 
-@router.post("/requirements/{requirement_id}/stop", response_model=FlowRequirementStopResponse)
+@router.post("/requirements/{requirement_id}/stop", response_model=FlowRequirementStopResponse, tags=["flow"])
 def stop_requirement(
     board_id: str,
     requirement_id: str,
@@ -2620,7 +2620,7 @@ def stop_requirement(
     )
 
 
-@router.post("/requirements/{requirement_id}/continue", response_model=FlowRequirementContinueResponse)
+@router.post("/requirements/{requirement_id}/continue", response_model=FlowRequirementContinueResponse, tags=["flow"])
 def continue_requirement(
     board_id: str,
     requirement_id: str,
@@ -2686,7 +2686,7 @@ def continue_requirement(
     )
 
 
-@router.post("/requirements/{requirement_id}/sync", response_model=FlowRequirementSyncResponse)
+@router.post("/requirements/{requirement_id}/sync", response_model=FlowRequirementSyncResponse, tags=["flow"])
 def sync_requirement(
     board_id: str,
     requirement_id: str,
@@ -2871,7 +2871,7 @@ def sync_requirement(
     )
 
 
-@router.post("/{task_id}/interrupt", response_model=TaskInterruptResponse)
+@router.post("/{task_id}/interrupt", response_model=TaskInterruptResponse, tags=["tasks"])
 def interrupt_task(
     board_id: str,
     task_id: UUID,
@@ -2972,7 +2972,7 @@ def interrupt_task(
     )
 
 
-@router.post("/{task_id}/continue", response_model=TaskContinueResponse)
+@router.post("/{task_id}/continue", response_model=TaskContinueResponse, tags=["tasks"])
 def continue_task(
     board_id: str,
     task_id: UUID,
@@ -3125,7 +3125,7 @@ def _delete_task_impl(
     )
 
 
-@router.delete("/requirements/{requirement_id}", response_model=TaskDeleteResponse)
+@router.delete("/requirements/{requirement_id}", response_model=TaskDeleteResponse, tags=["flow"])
 def delete_requirement_tasks(
     board_id: str,
     requirement_id: str,
@@ -3146,7 +3146,7 @@ def delete_requirement_tasks(
     )
 
 
-@router.delete("/{task_id}", response_model=TaskDeleteResponse)
+@router.delete("/{task_id}", response_model=TaskDeleteResponse, tags=["tasks"])
 def delete_task(
     board_id: str,
     task_id: UUID,
@@ -3167,7 +3167,7 @@ def delete_task(
     )
 
 
-@router.post("/requirements/{requirement_id}/delete", response_model=TaskDeleteResponse)
+@router.post("/requirements/{requirement_id}/delete", response_model=TaskDeleteResponse, tags=["flow"])
 def delete_requirement_tasks_post(
     board_id: str,
     requirement_id: str,
@@ -3188,7 +3188,7 @@ def delete_requirement_tasks_post(
     )
 
 
-@router.post("/{task_id}/delete", response_model=TaskDeleteResponse)
+@router.post("/{task_id}/delete", response_model=TaskDeleteResponse, tags=["tasks"])
 def delete_task_post(
     board_id: str,
     task_id: UUID,
@@ -3209,7 +3209,7 @@ def delete_task_post(
     )
 
 
-@router.post("", response_model=TaskItem, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=TaskItem, status_code=status.HTTP_201_CREATED, tags=["tasks"])
 def create_task(
     board_id: str,
     payload: TaskCreateRequest,

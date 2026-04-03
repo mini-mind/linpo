@@ -141,7 +141,7 @@ describe('observer realtime client', () => {
     fakeSocket.emitOpen();
 
     expect(socketFactory).toHaveBeenCalledWith(
-      'ws://linpo.test:8000/ws/observer?data_source=openclaw&instanceId=instance-1'
+      'ws://linpo.test:8000/api/v1/ws/observer?data_source=openclaw&instanceId=instance-1'
     );
   });
 
@@ -162,7 +162,7 @@ describe('observer realtime client', () => {
     fakeSocket.emitOpen();
 
     expect(socketFactory).toHaveBeenCalledWith(
-      'ws://linpo.test:8000/ws/observer?data_source=stub'
+      'ws://linpo.test:8000/api/v1/ws/observer?data_source=stub'
     );
     expect(fakeSocket.sent).toEqual([
       JSON.stringify({ type: 'subscribe', channel: 'agents:list', last_seq: 12 }),
@@ -229,7 +229,7 @@ describe('observer realtime client', () => {
     fakeSocket.emitOpen();
 
     expect(socketFactory).toHaveBeenCalledWith(
-      'ws://linpo.test:8000/ws/observer?data_source=openclaw'
+      'ws://linpo.test:8000/api/v1/ws/observer?data_source=openclaw'
     );
     expect(fakeSocket.sent).toEqual([
       JSON.stringify({ type: 'subscribe', channel: 'agents:list' }),
@@ -252,7 +252,7 @@ describe('observer realtime client', () => {
     fakeSocket.emitOpen();
 
     expect(socketFactory).toHaveBeenCalledWith(
-      'ws://linpo.test:8000/ws/observer?data_source=openclaw'
+      'ws://linpo.test:8000/api/v1/ws/observer?data_source=openclaw'
     );
     expect(fakeSocket.sent).toEqual([
       JSON.stringify({ type: 'subscribe', channel: buildAgentDetailChannel('agent-1') }),
@@ -331,7 +331,7 @@ describe('board realtime sse client', () => {
     });
 
     client.connect();
-    expect(sourceFactory).toHaveBeenCalledWith('http://linpo.test:8000/sse/boards/default/tasks');
+    expect(sourceFactory).toHaveBeenCalledWith('http://linpo.test:8000/api/v1/sse/boards/default/tasks');
   });
 
   it('parses tasks_changed messages from sse stream', () => {

@@ -173,8 +173,9 @@
 
 ### 7.1 v0.7 任务 API 最小契约
 
+- 对外文档 canonical 路径统一采用 `/api/v1/**`；历史无前缀路径保留为兼容别名（不作为文档主入口）。
 - `GET /api/v1/boards/{board_id}/tasks`：返回当前登录用户在指定看板可见任务列表，作为看板主数据源。
-- `GET /sse/boards/{board_id}/tasks`：看板任务 SSE 实时事件通道（按当前登录用户隔离），推送 `snapshot_ready/tasks_changed/error` 事件；看板页与流程编辑页统一使用该通道同步任务与节点状态。
+- `GET /api/v1/sse/boards/{board_id}/tasks`：看板任务 SSE 实时事件通道（按当前登录用户隔离），推送 `snapshot_ready/tasks_changed/error` 事件；看板页与流程编辑页统一使用该通道同步任务与节点状态。
 - `POST /api/v1/boards/{board_id}/tasks`：创建任务并记录指派信息，创建成功后由应用层触发 OpenClaw `chat.send`。
 - `POST /api/v1/boards/{board_id}/tasks/flow/generate`：启动或续接一次 planner 增量编辑会话，不直接落看板任务；支持可选 `current_nodes/current_edges/planner_session_key` 以在已有流程上增量改图。后端固定以 `claw3` 作为 planner 目标，先持久化用户消息、当前工作流快照与 planner session 状态，再把“历史消息 + 当前快照 + 本次需求 + planner HTTP 接口信息”发送给 `claw3`。响应至少返回 `planner_session_key` 与当前 draft snapshot，不再要求等待完整整图生成结束。
 - `GET /api/v1/boards/{board_id}/tasks/flow/planner-sse?sessionKey=...`：流程规划 SSE 通道；固定连接 `FlowDecompositionService` 的 `claw3` planner session，除 `snapshot_ready/planner_messages_updated/error` 外，还需推送图补丁事件与快照事件，供流程页在消息流外同步实时改图。
@@ -202,25 +203,25 @@
 - `GET /api/v1/boards/{board_id}/tasks/{task_id}/output-file`：按任务关联路径返回文件流（支持 inline/attachment）。
 - `DELETE /api/v1/boards/{board_id}/tasks/{task_id}`：删除单个需求节点；若该节点被同需求下游节点依赖，后端移除对应依赖并重算可调度任务。
 - `DELETE /api/v1/boards/{board_id}/tasks/requirements/{requirement_id}`：删除整组需求节点（同 `requirement_id`）。
-- `GET/POST/PATCH/DELETE /instances*`：OpenClaw 实例配对管理契约，配对成功后前端写入 `linpo.currentInstanceId` 作为默认实例上下文。
-- `GET /instances/{instance_id}/files`：返回该实例下任务关联且位于 `/tmp/linpo/**` 的可访问产出文件列表（含存在性与大小信息）。
-- `GET /instances/{instance_id}/files/preview`：按实例+任务上下文预览位于 `/tmp/linpo/**` 的文件内容（文本/JSON/二进制占位）。
-- `GET /instances/{instance_id}/files/download`：按实例+任务上下文下载位于 `/tmp/linpo/**` 的文件流。
-- `GET /instances/{instance_id}/agent-docs`：转调 OpenClaw `agents.files.list`，返回该实例下可读 Agent 白名单文档清单。
-- `GET /instances/{instance_id}/agent-docs/preview`：转调 OpenClaw `agents.files.get`，返回指定 Agent 文档预览内容。
-- `GET /instances/{instance_id}/agent-docs/download`：下载指定 Agent 文档内容。
-- `GET /aggregate/topology`：实例列表详情态用于构建关系树（实例节点、Agent 节点、Session 节点），前端按选中实例筛选并渲染。
-- `GET /aggregate/overview`：摘要页与看板页的聚合入口，返回实例诊断、事件流、总 token 与按实例分组的 token 曲线样本。
-- `POST /instances/pair-code/validate`、`POST /instances/pair-code`：配对码校验与配对创建契约，后端负责将配对码解析为 `endpoint/gateway_token` 再复用实例校验与落库流程。
-- `POST /auth/register`：注册请求需包含 `username + email + password`，邮箱全局唯一。
-- `POST /auth/login`：登录请求支持 `identifier(用户名或邮箱) + password`。
-- `PATCH /auth/profile`：登录态下更新用户头像（`avatar_url`，`data:image/*;base64`）。
-- `POST /auth/password`：登录态下修改密码（校验 `current_password`，更新 `new_password`）。
-- `GET /instances/messages`：读取当前登录用户的消息中心列表（包含回执链接与确认状态）。
-- `POST /instances/messages/{message_id}/read`：将消息标记为已读。
-- `POST /instances/agent-mount/request`：免登录的 Agent 自助挂载申请，提交 `email + endpoint + gatewayToken`；后端按 email 定位用户并返回 `confirmation_url`，同时投递到用户消息中心。
-- `POST /instances/agent-unmount/request`：免登录的 Agent 自助卸载申请，提交 `email + instance_id`；后端校验实例归属并返回 `confirmation_url`，同时投递到用户消息中心。
-- `POST /instances/agent-receipts/{token}/confirm`：登录用户确认回执；需校验 token、TTL、一次性消费与“登录用户邮箱=回执目标邮箱”。
+- `GET/POST/PATCH/DELETE /api/v1/instances*`：OpenClaw 实例配对管理契约，配对成功后前端写入 `linpo.currentInstanceId` 作为默认实例上下文。
+- `GET /api/v1/instances/{instance_id}/files`：返回该实例下任务关联且位于 `/tmp/linpo/**` 的可访问产出文件列表（含存在性与大小信息）。
+- `GET /api/v1/instances/{instance_id}/files/preview`：按实例+任务上下文预览位于 `/tmp/linpo/**` 的文件内容（文本/JSON/二进制占位）。
+- `GET /api/v1/instances/{instance_id}/files/download`：按实例+任务上下文下载位于 `/tmp/linpo/**` 的文件流。
+- `GET /api/v1/instances/{instance_id}/agent-docs`：转调 OpenClaw `agents.files.list`，返回该实例下可读 Agent 白名单文档清单。
+- `GET /api/v1/instances/{instance_id}/agent-docs/preview`：转调 OpenClaw `agents.files.get`，返回指定 Agent 文档预览内容。
+- `GET /api/v1/instances/{instance_id}/agent-docs/download`：下载指定 Agent 文档内容。
+- `GET /api/v1/aggregate/topology`：实例列表详情态用于构建关系树（实例节点、Agent 节点、Session 节点），前端按选中实例筛选并渲染。
+- `GET /api/v1/aggregate/overview`：摘要页与看板页的聚合入口，返回实例诊断、事件流、总 token 与按实例分组的 token 曲线样本。
+- `POST /api/v1/instances/pair-code/validate`、`POST /api/v1/instances/pair-code`：配对码校验与配对创建契约，后端负责将配对码解析为 `endpoint/gateway_token` 再复用实例校验与落库流程。
+- `POST /api/v1/auth/register`：注册请求需包含 `username + email + password`，邮箱全局唯一。
+- `POST /api/v1/auth/login`：登录请求支持 `identifier(用户名或邮箱) + password`。
+- `PATCH /api/v1/auth/profile`：登录态下更新用户头像（`avatar_url`，`data:image/*;base64`）。
+- `POST /api/v1/auth/password`：登录态下修改密码（校验 `current_password`，更新 `new_password`）。
+- `GET /api/v1/instances/messages`：读取当前登录用户的消息中心列表（包含回执链接与确认状态）。
+- `POST /api/v1/instances/messages/{message_id}/read`：将消息标记为已读。
+- `POST /api/v1/instances/agent-mount/request`：免登录的 Agent 自助挂载申请，提交 `email + endpoint + gatewayToken`；后端按 email 定位用户并返回 `confirmation_url`，同时投递到用户消息中心。
+- `POST /api/v1/instances/agent-unmount/request`：免登录的 Agent 自助卸载申请，提交 `email + instance_id`；后端校验实例归属并返回 `confirmation_url`，同时投递到用户消息中心。
+- `POST /api/v1/instances/agent-receipts/{token}/confirm`：登录用户确认回执；需校验 token、TTL、一次性消费与“登录用户邮箱=回执目标邮箱”。
 - 为兼容部分网关对 `DELETE` 的限制，提供等价兜底：`POST /api/v1/boards/{board_id}/tasks/{task_id}/delete`、`POST /api/v1/boards/{board_id}/tasks/requirements/{requirement_id}/delete`。
 - v0.7 默认单看板，前端默认使用 `board_id=default`。
 - 任务状态机最小集遵循 `queued/running/blocked_by_approval/failed/completed`。

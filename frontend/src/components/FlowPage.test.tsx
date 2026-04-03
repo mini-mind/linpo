@@ -2336,4 +2336,38 @@ describe('FlowPage', () => {
       expect(screen.getByText('completed')).toBeInTheDocument();
     });
   });
+
+  it('does not emit unhandled rejection when board refresh fails during sse reconnect', async () => {
+    const unhandledRejectionHandler = vi.fn();
+    window.addEventListener('unhandledrejection', unhandledRejectionHandler);
+
+    mockListKanbanTasks.mockReset();
+    mockListKanbanTasks
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error('Failed to fetch'));
+
+    try {
+      renderFlowPage('/flow/edit/new');
+
+      await waitForFlowCanvasReady();
+      await waitFor(() => {
+        expect(mockCreateBoardTasksSseClient).toHaveBeenCalledTimes(1);
+      });
+      const realtimeOptions = mockCreateBoardTasksSseClient.mock.calls[0]?.[0];
+      expect(realtimeOptions).toBeDefined();
+
+      act(() => {
+        realtimeOptions.onDisconnected();
+      });
+
+      await waitFor(() => {
+        expect(mockCreateBoardTasksSseClient).toHaveBeenCalledTimes(2);
+      }, {
+        timeout: 2500,
+      });
+      expect(unhandledRejectionHandler).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener('unhandledrejection', unhandledRejectionHandler);
+    }
+  });
 });

@@ -194,7 +194,7 @@ def _extract_history_item_text(item: dict[str, object]) -> str:
 # === Observer API ===
 
 
-@router.get("/agents", response_model=list[AgentListItem])
+@router.get("/agents", response_model=list[AgentListItem], tags=["observer"])
 def list_agents(
     data_source: str | None = Query(default=None),
     request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
@@ -220,7 +220,7 @@ def list_agents(
         return _http_exception_response(exc)
 
 
-@router.get("/agents/{agent_id}", response_model=AgentDetailResponse)
+@router.get("/agents/{agent_id}", response_model=AgentDetailResponse, tags=["observer"])
 def get_agent_detail(
     agent_id: str,
     data_source: str | None = Query(default=None),
@@ -269,6 +269,7 @@ def get_agent_detail(
 @router.get(
     "/agents/{agent_id}/nodes/{node_id}",
     response_model=NodeDetailResponse,
+    tags=["observer"],
 )
 def get_node_detail(
     agent_id: str,
@@ -315,7 +316,7 @@ def get_node_detail(
 # === Models API ===
 
 
-@router.get("/chat/models", response_model=ModelsListResponse)
+@router.get("/chat/models", response_model=ModelsListResponse, tags=["chat"])
 def list_models(
     data_source: str | None = Query(default=None),
     request_context: RequestOpenClawContext | None = Depends(get_request_openclaw_context),
@@ -349,7 +350,7 @@ def list_models(
 # === Sessions API ===
 
 
-@router.post("/chat/agents/{agent_id}/send", response_model=ChatSendResponse)
+@router.post("/chat/agents/{agent_id}/send", response_model=ChatSendResponse, tags=["chat"])
 def send_chat_message(
     agent_id: str,
     body: ChatSendRequest,
@@ -379,7 +380,7 @@ def send_chat_message(
         return _http_exception_response(exc)
 
 
-@router.post("/chat/agents/{agent_id}/pause", response_model=ChatPauseResponse)
+@router.post("/chat/agents/{agent_id}/pause", response_model=ChatPauseResponse, tags=["chat"])
 def pause_agent(
     agent_id: str,
     session_key: str | None = Query(default=None, alias="sessionKey"),
@@ -404,7 +405,7 @@ def pause_agent(
         return _http_exception_response(exc)
 
 
-@router.get("/chat/sessions", response_model=SessionsListResponse)
+@router.get("/chat/sessions", response_model=SessionsListResponse, tags=["chat"])
 def list_sessions(
     agent_id: str | None = Query(default=None, alias="agentId"),
     include_derived_titles: bool = Query(default=True, alias="includeDerivedTitles"),
@@ -450,7 +451,7 @@ class SessionsPreviewResponse(BaseModel):
     previews: list[SessionPreview]
 
 
-@router.get("/chat/sessions/preview", response_model=SessionsPreviewResponse)
+@router.get("/chat/sessions/preview", response_model=SessionsPreviewResponse, tags=["chat"])
 def preview_sessions(
     keys: str = Query(...),
     limit: int = Query(default=20),
@@ -495,7 +496,7 @@ def preview_sessions(
         return _http_exception_response(exc)
 
 
-@router.get("/chat/sessions/{key}/history", response_model=SessionHistoryResponse)
+@router.get("/chat/sessions/{key}/history", response_model=SessionHistoryResponse, tags=["chat"])
 def chat_history(
     key: str,
     limit: int = Query(default=200, ge=1, le=1000),
@@ -526,7 +527,7 @@ def chat_history(
         return _http_exception_response(exc)
 
 
-@router.patch("/chat/sessions/{key}", response_model=SessionPatchResponse)
+@router.patch("/chat/sessions/{key}", response_model=SessionPatchResponse, tags=["chat"])
 def patch_session(
     key: str,
     body: SessionPatchRequest,
@@ -548,7 +549,7 @@ def patch_session(
         return _http_exception_response(exc)
 
 
-@router.post("/chat/sessions/{key}/reset", response_model=SessionResetResponse)
+@router.post("/chat/sessions/{key}/reset", response_model=SessionResetResponse, tags=["chat"])
 def reset_session(
     key: str,
     data_source: str | None = Query(default=None),
@@ -566,7 +567,7 @@ def reset_session(
         return _http_exception_response(exc)
 
 
-@router.delete("/chat/sessions/{key}", response_model=SessionDeleteResponse)
+@router.delete("/chat/sessions/{key}", response_model=SessionDeleteResponse, tags=["chat"])
 def delete_session(
     key: str,
     data_source: str | None = Query(default=None),

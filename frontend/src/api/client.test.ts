@@ -34,7 +34,7 @@ describe('business API client instance context', () => {
     await listAgents();
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8000/agents?data_source=openclaw&instanceId=instance-1',
+      'http://localhost:8000/api/v1/agents?data_source=openclaw&instanceId=instance-1',
       expect.objectContaining({ credentials: 'include' }),
     );
   });
@@ -57,7 +57,7 @@ describe('business API client instance context', () => {
     await getAggregateOverview();
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8000/aggregate/overview?data_source=openclaw&instanceId=instance-1',
+      'http://localhost:8000/api/v1/aggregate/overview?data_source=openclaw&instanceId=instance-1',
       expect.objectContaining({ credentials: 'include' }),
     );
   });
@@ -80,7 +80,7 @@ describe('business API client instance context', () => {
     await getAggregateOverview({ disableInstanceContext: true });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8000/aggregate/overview?data_source=openclaw',
+      'http://localhost:8000/api/v1/aggregate/overview?data_source=openclaw',
       expect.objectContaining({ credentials: 'include' }),
     );
   });
@@ -96,7 +96,7 @@ describe('business API client instance context', () => {
     await previewSessions(['session-a', 'session-b']);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8000/chat/sessions/preview?keys=session-a%2Csession-b&maxChars=2000&data_source=openclaw',
+      'http://localhost:8000/api/v1/chat/sessions/preview?keys=session-a%2Csession-b&maxChars=2000&data_source=openclaw',
       expect.objectContaining({ credentials: 'include' }),
     );
   });
@@ -112,7 +112,7 @@ describe('business API client instance context', () => {
     await getSessionHistory('agent:main:main');
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8000/chat/sessions/agent%3Amain%3Amain/history?limit=200&data_source=openclaw',
+      'http://localhost:8000/api/v1/chat/sessions/agent%3Amain%3Amain/history?limit=200&data_source=openclaw',
       expect.objectContaining({ credentials: 'include' }),
     );
   });
@@ -155,7 +155,7 @@ describe('business API client instance context', () => {
     await resetSession('session-a');
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8000/chat/sessions/session-a/reset?data_source=openclaw',
+      'http://localhost:8000/api/v1/chat/sessions/session-a/reset?data_source=openclaw',
       expect.objectContaining({
         method: 'POST',
         credentials: 'include',
@@ -174,7 +174,7 @@ describe('business API client instance context', () => {
     await deleteSession('session-a');
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8000/chat/sessions/session-a?data_source=openclaw',
+      'http://localhost:8000/api/v1/chat/sessions/session-a?data_source=openclaw',
       expect.objectContaining({
         method: 'DELETE',
         credentials: 'include',
@@ -197,7 +197,7 @@ describe('business API client instance context', () => {
     await pauseSession({ sessionKey: 'session-a', agentId: 'main' });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8000/chat/agents/main/pause?sessionKey=session-a&data_source=openclaw',
+      'http://localhost:8000/api/v1/chat/agents/main/pause?sessionKey=session-a&data_source=openclaw',
       expect.objectContaining({
         method: 'POST',
         credentials: 'include',

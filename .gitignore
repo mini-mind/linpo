@@ -21,3 +21,11 @@ node_modules
 .sisyphus/evidence/
 frontend/test-results/
 references/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example

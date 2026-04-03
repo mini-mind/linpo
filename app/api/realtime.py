@@ -1,5 +1,6 @@
 import asyncio
 import json
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from queue import Empty
 from typing import Any, Protocol, cast
@@ -182,7 +183,7 @@ async def observer_websocket(
         await websocket.close(code=1008)
 
 
-@router.get("/sse/boards/{board_id}/tasks")
+@router.get("/sse/boards/{board_id}/tasks", tags=["realtime"])
 async def board_tasks_sse(
     request: Request,
     board_id: str,
@@ -222,7 +223,7 @@ async def board_tasks_sse(
         board_id=normalized_board_id,
     )
 
-    async def event_stream() -> Any:
+    async def event_stream() -> AsyncIterator[str]:
         try:
             yield _to_sse_data(
                 {

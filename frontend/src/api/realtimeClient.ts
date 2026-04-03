@@ -1,4 +1,5 @@
 import { resolveCurrentInstanceId } from '../hooks/useCurrentInstance';
+import { resolveRequiredApiBaseUrl } from './apiBaseUrl';
 import {
   type FlowChatMessageItem,
   type FlowPlannerNodeDraft,
@@ -185,24 +186,11 @@ export interface FlowPlannerSseClient {
   close: () => void;
 }
 
-const OBSERVER_WS_PATH = '/ws/observer';
-const BOARD_TASKS_SSE_PREFIX = '/sse/boards/';
+const OBSERVER_WS_PATH = '/api/v1/ws/observer';
+const BOARD_TASKS_SSE_PREFIX = '/api/v1/sse/boards/';
 
 function resolveApiBaseUrl(overrideBaseUrl?: string): string {
-  if (overrideBaseUrl) {
-    return overrideBaseUrl;
-  }
-
-  const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL as string | undefined;
-  if (configuredApiBaseUrl) {
-    return configuredApiBaseUrl;
-  }
-
-  if (typeof window !== 'undefined') {
-    return `${window.location.protocol}//${window.location.hostname}:8000`;
-  }
-
-  throw new Error('baseUrl is required when window is not available');
+  return resolveRequiredApiBaseUrl(overrideBaseUrl);
 }
 
 function toWebSocketUrl(
