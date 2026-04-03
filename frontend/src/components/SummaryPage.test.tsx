@@ -502,6 +502,9 @@ describe('SummaryPage', () => {
     expect(screen.queryByRole('toolbar', { name: '摘要工具栏' })).not.toBeInTheDocument();
     expect(screen.getByTestId('summary-chart')).toBeInTheDocument();
     expect(screen.getByTestId('summary-approval-list')).toBeInTheDocument();
+    expect(screen.queryByTestId('summary-events-rail')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '打开事件流' }));
+    expect(await screen.findByRole('dialog', { name: '摘要事件流' })).toBeInTheDocument();
     expect(screen.getByTestId('summary-events-rail')).toBeInTheDocument();
 
     await act(async () => {

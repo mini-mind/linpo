@@ -19,7 +19,7 @@ test.describe('deployed core path smoke', () => {
     ));
     const overviewResponsePromise = page.waitForResponse((response) => (
       response.request().method() === 'GET'
-      && response.url().includes('/aggregate/overview')
+      && response.url().includes('/summary/overview')
       && response.ok()
     ));
 

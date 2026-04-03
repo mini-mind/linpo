@@ -87,8 +87,8 @@ def test_send_chat_message_returns_success_payload(monkeypatch: Any) -> None:
     assert status_code == 200
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
     assert payload == {
-        "request_id": "control-send-1",
-        "agent_id": "agent-root-observer",
+        "requestId": "control-send-1",
+        "agentId": "agent-root-observer",
         "status": "accepted",
         "message": None,
     }
@@ -135,8 +135,8 @@ def test_pause_agent_returns_success_payload(monkeypatch: Any) -> None:
     assert status_code == 200
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
     assert payload == {
-        "request_id": "control-pause-1",
-        "agent_id": "agent-root-observer",
+        "requestId": "control-pause-1",
+        "agentId": "agent-root-observer",
         "status": "accepted",
         "message": None,
     }
@@ -633,7 +633,7 @@ def test_list_sessions_returns_sessions_list(monkeypatch: Any) -> None:
     assert payload["count"] == 2
     assert len(payload["sessions"]) == 2
     assert payload["sessions"][0]["key"] == "agent:main:main"
-    assert payload["sessions"][0]["derived_title"] == "Session about Python"
+    assert payload["sessions"][0]["derivedTitle"] == "Session about Python"
 
 
 def test_preview_sessions_requires_openclaw_data_source() -> None:
@@ -918,7 +918,7 @@ def test_patch_session_updates_session_model(monkeypatch: Any) -> None:
     status_code, _, body = request(
         "PATCH",
         "/chat/sessions/agent:main:main?data_source=openclaw",
-        body=json.dumps({"model": "claude-sonnet-4", "thinking_level": "high"}).encode("utf-8"),
+        body=json.dumps({"model": "claude-sonnet-4", "thinkingLevel": "high"}).encode("utf-8"),
         headers={"content-type": "application/json"},
     )
     assert status_code == 200

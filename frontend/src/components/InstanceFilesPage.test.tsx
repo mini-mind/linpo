@@ -1,5 +1,6 @@
 import '@testing-library/jest-dom';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { userEvent } from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToastProvider } from '../hooks/useToast';
@@ -238,11 +239,15 @@ describe('InstanceFilesPage', () => {
 
     renderPage();
 
-    await screen.findByRole('button', { name: '查看任务文件 out.json' });
+    await screen.findByRole('button', { name: '打开文件侧栏' });
+    expect(screen.getByTestId('instance-files-content-frame')).toHaveStyle({ gridTemplateColumns: '1fr' });
+    expect(screen.getByTestId('instance-files-content-frame')).toHaveStyle({ gridTemplateRows: 'minmax(0, 1fr)' });
+
+    await userEvent.click(screen.getByRole('button', { name: '打开文件侧栏' }));
+    await screen.findByRole('dialog', { name: '文件侧栏抽屉' });
     expect(screen.getByRole('button', { name: '刷新' })).toBeInTheDocument();
     expect(screen.getByLabelText('选择实例')).toHaveStyle({ width: '100%' });
     expect(screen.getByLabelText('搜索实例文件')).toHaveStyle({ width: '100%' });
-    expect(screen.getByTestId('instance-files-content-frame')).toHaveStyle({ gridTemplateColumns: '1fr' });
 
     await act(async () => {
       window.innerWidth = originalWidth;

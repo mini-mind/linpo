@@ -27,7 +27,7 @@
 - `chat.history`（并已对外：`GET /chat/sessions/{key}/history`）
 - `agents.files.list`（并已对外：`GET /instances/{instance_id}/agent-docs`）
 - `agents.files.get`（并已对外：`GET /instances/{instance_id}/agent-docs/preview|download`）
-- `usage.cost`（已进入 Adapter 主链，用于 `GET /aggregate/overview` 的 token 聚合）
+- `usage.cost`（已进入 Adapter 主链，用于 `GET /summary/overview` 的 token 聚合）
 
 ## 1. Chat 相关
 
@@ -96,7 +96,7 @@
 | `status` | OpenClaw 系统状态 | ❌ 未接入 | 无对应实现 |
 | `doctor.memory.status` | 内存诊断状态 | ❌ 未接入 | 无对应实现 |
 | `usage.status` | 使用状态 | ❌ 未接入 | 无对应实现 |
-| `usage.cost` | 使用成本 | ✅ 已接入（Adapter） | 适配层用于摘要页 token 统计，当前通过 `GET /aggregate/overview` 间接对外暴露 |
+| `usage.cost` | 使用成本 | ✅ 已接入（Adapter） | 适配层用于摘要页 token 统计，当前通过 `GET /summary/overview` 间接对外暴露 |
 
 ## 8. 设备与配对
 

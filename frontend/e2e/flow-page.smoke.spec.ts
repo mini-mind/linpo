@@ -53,7 +53,7 @@ test.describe('flow page smoke', () => {
       });
     });
 
-    await page.route('**/aggregate/overview**', async (route) => {
+    await page.route('**/summary/overview**', async (route) => {
       await fulfillJson(route, overviewPayload());
     });
 

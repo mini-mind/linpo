@@ -62,17 +62,42 @@ def _planner_json_headers(planner_token: str) -> dict[str, str]:
     }
 
 
+_RAW_KEY_MAP_FIELDS = {"node_lane_by_id", "nodeLaneById"}
+
+
+def _to_camel_case(value: str) -> str:
+    parts = value.split("_")
+    if len(parts) <= 1:
+        return value
+    return parts[0] + "".join(part[:1].upper() + part[1:] for part in parts[1:])
+
+
+def _camelize_request_payload_keys(payload: object, *, parent_key: str | None = None) -> object:
+    if isinstance(payload, list):
+        return [_camelize_request_payload_keys(item, parent_key=parent_key) for item in payload]
+    if not isinstance(payload, dict):
+        return payload
+    if parent_key in _RAW_KEY_MAP_FIELDS:
+        return {str(key): value for key, value in payload.items()}
+    normalized: dict[str, object] = {}
+    for raw_key, raw_value in payload.items():
+        key = _to_camel_case(str(raw_key))
+        normalized[key] = _camelize_request_payload_keys(raw_value, parent_key=key)
+    return normalized
+
+
 def _request_json(
     method: str,
     path: str,
     payload: dict[str, object],
     cookie_header: str | None = None,
 ) -> tuple[int, dict[str, str], dict[str, Any]]:
+    normalized_payload = cast(dict[str, object], _camelize_request_payload_keys(payload))
     status_code, headers, body = request(
         method,
         path,
         headers=_json_headers(cookie_header),
-        body=json.dumps(payload).encode("utf-8"),
+        body=json.dumps(normalized_payload).encode("utf-8"),
     )
     return status_code, headers, cast(dict[str, Any], json.loads(body.decode("utf-8")))
 
@@ -88,6 +113,7 @@ def _planner_request_json(
     *,
     planner_token: str,
 ) -> tuple[int, dict[str, str], dict[str, Any]]:
+    normalized_payload = cast(dict[str, object], _camelize_request_payload_keys(payload))
     status_code, headers, body = request(
         method,
         path,
@@ -95,7 +121,7 @@ def _planner_request_json(
             "content-type": "application/json",
             "X-Linpo-Planner-Token": planner_token,
         },
-        body=json.dumps(payload).encode("utf-8"),
+        body=json.dumps(normalized_payload).encode("utf-8"),
     )
     return status_code, headers, cast(dict[str, Any], json.loads(body.decode("utf-8")))
 
@@ -348,10 +374,10 @@ def test_create_and_list_tasks_with_real_task_entity(
     )
     assert create_status == 201
     assert create_payload["title"] == "新增一个真实任务"
-    assert create_payload["board_id"] == "default"
+    assert create_payload["boardId"] == "default"
     assert create_payload["status"] == "running"
-    assert create_payload["agent_id"] == "agent-alpha"
-    assert create_payload["instance_id"] == instance["id"]
+    assert create_payload["agentId"] == "agent-alpha"
+    assert create_payload["instanceId"] == instance["id"]
     assert create_payload["extras"]["dispatch_status"] == "accepted"
     assert create_payload["extras"]["dispatch_request_id"] == "req-dispatch-1"
     assert "dispatch_callback_token" not in create_payload["extras"]
@@ -669,12 +695,12 @@ def test_flow_generate_starts_persistent_planner_session(
         auth_cookie,
     )
     assert status_code == 200
-    assert payload["board_id"] == "default"
-    assert payload["planner_session_key"] == "linpo:flow:default:planner:claw3"
-    assert isinstance(payload["manager_session_key"], str) and payload["manager_session_key"]
+    assert payload["boardId"] == "default"
+    assert payload["plannerSessionKey"] == "linpo:flow:default:planner:claw3"
+    assert isinstance(payload["managerSessionKey"], str) and payload["managerSessionKey"]
     assert payload["nodes"] == []
     assert payload["edges"] == []
-    assert payload["created_task_ids"] == []
+    assert payload["createdTaskIds"] == []
     assert [item["role"] for item in payload["messages"]] == ["user"]
     assert payload["messages"][0]["content"] == "拆分上线计划，执行主任务，最后审批"
 
@@ -768,7 +794,7 @@ def test_flow_generate_prompt_includes_history_workflow_json_and_planner_http_in
     assert len(send_calls) == 1
     assert send_calls[0]["agent_id"] == "claw3"
     prompt = cast(str, send_calls[0]["message"])
-    planner_token = _planner_token_for_session(isolated_database_url, payload["planner_session_key"])
+    planner_token = _planner_token_for_session(isolated_database_url, payload["plannerSessionKey"])
     assert "/flow/planner-sessions/" in prompt
     assert "/nodes/upsert" in prompt
     assert "/complete" in prompt
@@ -842,9 +868,9 @@ def test_flow_generate_returns_current_snapshot_from_persisted_planner_session(
     )
 
     assert status_code == 200
-    assert payload["planner_session_key"] == "linpo:flow:default:planner:claw3:current"
+    assert payload["plannerSessionKey"] == "linpo:flow:default:planner:claw3:current"
     assert [node["id"] for node in payload["nodes"]] == ["node_1", "node_2"]
-    assert payload["nodes"][1]["depends_on"] == ["node_1"]
+    assert payload["nodes"][1]["dependsOn"] == ["node_1"]
     assert payload["edges"] == [{"id": "edge-node_1-node_2", "source": "node_1", "target": "node_2"}]
     assert [item["role"] for item in payload["messages"]] == ["user"]
 
@@ -924,11 +950,11 @@ def test_flow_planner_sse_returns_latest_planner_messages_snapshot(
     assert '"type": "planner_messages_updated"' in text
     assert '"type": "planner_nodes_patched"' in text
     assert '"type": "planner_snapshot_updated"' in text
-    assert '"session_key": "linpo:flow:default:planner:claw3:test"' in text
+    assert '"sessionKey": "linpo:flow:default:planner:claw3:test"' in text
     assert '"revision": 2' in text
     assert '"type": "upsert_node"' in text
     assert '已生成初版流程节点。' in text
-    assert '"depends_on": ["node_1"]' in text
+    assert '"dependsOn": ["node_1"]' in text
 
 
 def test_flow_planner_sse_missing_session_snapshot_only_returns_404_without_chat_history_fallback(
@@ -1034,7 +1060,7 @@ def test_flow_planner_sse_missing_session_stream_returns_pending_events(
     assert '"type": "snapshot_ready"' in text
     assert '"status": "pending"' in text
     assert '"type": "planner_session_updated"' in text
-    assert f'"session_key": "{session_key}"' in text
+    assert f'"sessionKey": "{session_key}"' in text
 
 
 def test_flow_planner_http_node_edit_endpoints_return_serialized_updated_at(
@@ -1074,10 +1100,10 @@ def test_flow_planner_http_node_edit_endpoints_return_serialized_updated_at(
         planner_token=planner_token,
     )
     assert upsert_status == 200
-    assert upsert_payload["session_key"] == session_key
+    assert upsert_payload["sessionKey"] == session_key
     assert upsert_payload["status"] == "planning"
     assert upsert_payload["revision"] == 1
-    assert upsert_payload["updated_at"].endswith("Z")
+    assert upsert_payload["updatedAt"].endswith("Z")
 
     delete_status, _, delete_payload = _planner_request_json(
         "POST",
@@ -1088,10 +1114,10 @@ def test_flow_planner_http_node_edit_endpoints_return_serialized_updated_at(
         planner_token=planner_token,
     )
     assert delete_status == 200
-    assert delete_payload["session_key"] == session_key
+    assert delete_payload["sessionKey"] == session_key
     assert delete_payload["status"] == "planning"
     assert delete_payload["revision"] == 2
-    assert delete_payload["updated_at"].endswith("Z")
+    assert delete_payload["updatedAt"].endswith("Z")
 
     with Session(db_session.get_engine(isolated_database_url)) as session:
         planner_session = session.get(FlowPlannerSession, session_key)
@@ -1223,10 +1249,10 @@ def test_flow_planner_http_fail_endpoint_returns_serialized_updated_at(
         planner_token=planner_token,
     )
     assert fail_status == 200
-    assert fail_payload["session_key"] == session_key
+    assert fail_payload["sessionKey"] == session_key
     assert fail_payload["status"] == "failed"
     assert fail_payload["revision"] == 0
-    assert fail_payload["updated_at"].endswith("Z")
+    assert fail_payload["updatedAt"].endswith("Z")
 
     with Session(db_session.get_engine(isolated_database_url)) as session:
         planner_session = session.get(FlowPlannerSession, session_key)
@@ -1307,7 +1333,7 @@ def test_flow_planner_terminal_endpoints_reject_reentry_after_terminal_state(
             "POST",
             f"{DEFAULT_TASKS_PATH}/flow/planner-stop",
             headers=_json_headers(auth_cookie),
-            body=json.dumps({"planner_session_key": session_key}).encode("utf-8"),
+            body=json.dumps({"plannerSessionKey": session_key}).encode("utf-8"),
         )
         assert initial_status == 200
         initial_payload = cast(dict[str, Any], json.loads(initial_body.decode("utf-8")))
@@ -1335,7 +1361,7 @@ def test_flow_planner_terminal_endpoints_reject_reentry_after_terminal_state(
         "POST",
         f"{DEFAULT_TASKS_PATH}/flow/planner-stop",
         headers=_json_headers(auth_cookie),
-        body=json.dumps({"planner_session_key": session_key}).encode("utf-8"),
+        body=json.dumps({"plannerSessionKey": session_key}).encode("utf-8"),
     )
     assert stop_status == 409
     stop_payload = cast(dict[str, Any], json.loads(stop_body.decode("utf-8")))
@@ -1407,8 +1433,8 @@ def test_flow_confirm_enqueues_tasks_then_dispatches_from_queue(
         auth_cookie,
     )
     assert status_code == 200
-    assert len(payload["created_task_ids"]) == 2
-    assert len(payload["dispatched_task_ids"]) >= 1
+    assert len(payload["createdTaskIds"]) == 2
+    assert len(payload["dispatchedTaskIds"]) >= 1
     assert payload["nodes"][0]["status"] in {"running", "completed", "blocked_by_approval"}
 
     list_status, _, list_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
@@ -1482,7 +1508,7 @@ def test_flow_confirm_uses_node_depends_on_as_dependency_source(
     )
 
     assert status_code == 200
-    assert payload["nodes"][1]["depends_on"] == ["node_1"]
+    assert payload["nodes"][1]["dependsOn"] == ["node_1"]
 
     list_status, _, list_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
     assert list_status == 200
@@ -1710,9 +1736,9 @@ def test_flow_requirement_rename_updates_all_requirement_tasks(
         auth_cookie,
     )
     assert rename_status == 200
-    assert rename_payload["requirement_id"] == requirement_id
-    assert rename_payload["requirement_title"] == "新流程名"
-    assert len(rename_payload["updated_task_ids"]) == 2
+    assert rename_payload["requirementId"] == requirement_id
+    assert rename_payload["requirementTitle"] == "新流程名"
+    assert len(rename_payload["updatedTaskIds"]) == 2
 
     after_status, _, after_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
     assert after_status == 200
@@ -1801,9 +1827,9 @@ def test_flow_requirement_stop_marks_future_tasks_and_requests_running_stop(
         auth_cookie,
     )
     assert stop_status == 200
-    assert stop_payload["requirement_id"] == requirement_id
-    assert queued_before["id"] in stop_payload["stopped_task_ids"]
-    assert running_before["id"] in stop_payload["running_task_ids"]
+    assert stop_payload["requirementId"] == requirement_id
+    assert queued_before["id"] in stop_payload["stoppedTaskIds"]
+    assert running_before["id"] in stop_payload["runningTaskIds"]
 
     after_status, _, after_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
     assert after_status == 200
@@ -1917,9 +1943,9 @@ def test_flow_requirement_continue_resumes_interrupted_tasks(
         auth_cookie,
     )
     assert continue_status == 200
-    assert continue_payload["requirement_id"] == requirement_id
-    assert len(continue_payload["resumed_task_ids"]) >= 1
-    assert isinstance(continue_payload["dispatched_task_ids"], list)
+    assert continue_payload["requirementId"] == requirement_id
+    assert len(continue_payload["resumedTaskIds"]) >= 1
+    assert isinstance(continue_payload["dispatchedTaskIds"], list)
 
     after_status, _, after_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
     assert after_status == 200
@@ -2074,9 +2100,9 @@ def test_flow_requirement_sync_updates_blocked_unexecuted_nodes(
         auth_cookie,
     )
     assert sync_status == 200
-    assert sync_payload["requirement_id"] == requirement_id
-    assert len(sync_payload["updated_task_ids"]) >= 2
-    assert len(sync_payload["created_task_ids"]) == 1
+    assert sync_payload["requirementId"] == requirement_id
+    assert len(sync_payload["updatedTaskIds"]) >= 2
+    assert len(sync_payload["createdTaskIds"]) == 1
 
     after_status, _, after_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
     assert after_status == 200
@@ -2164,7 +2190,7 @@ def test_flow_drafts_are_persisted_and_queryable(
     assert upsert_status == 200
     assert upsert_payload["id"] == "draft-case-1"
     assert upsert_payload["name"] == "草稿流程A"
-    assert upsert_payload["planner_session_key"] == "linpo:flow:default:planner:claw3:draft-case-1"
+    assert upsert_payload["plannerSessionKey"] == "linpo:flow:default:planner:claw3:draft-case-1"
 
     list_status, _, list_payload_raw = request(
         "GET",
@@ -2175,7 +2201,7 @@ def test_flow_drafts_are_persisted_and_queryable(
     list_payload = cast(list[dict[str, Any]], json.loads(list_payload_raw.decode("utf-8")))
     assert len(list_payload) == 1
     assert list_payload[0]["id"] == "draft-case-1"
-    assert list_payload[0]["nodes"][1]["depends_on"] == ["node_a"]
+    assert list_payload[0]["nodes"][1]["dependsOn"] == ["node_a"]
 
     with Session(db_session.get_engine(isolated_database_url)) as session:
         stored = session.execute(
@@ -2193,7 +2219,7 @@ def test_flow_drafts_are_persisted_and_queryable(
     assert delete_status == 200
     delete_payload = cast(dict[str, Any], json.loads(delete_payload_raw.decode("utf-8")))
     assert delete_payload["deleted"] is True
-    assert delete_payload["flow_id"] == "draft-case-1"
+    assert delete_payload["flowId"] == "draft-case-1"
 
     final_status, _, final_payload_raw = request(
         "GET",
@@ -2266,8 +2292,8 @@ def test_task_run_completed_event_dispatches_next_queued_task(
         auth_cookie,
     )
     assert confirm_status == 200
-    assert len(confirm_payload["created_task_ids"]) == 2
-    assert len(confirm_payload["dispatched_task_ids"]) == 1
+    assert len(confirm_payload["createdTaskIds"]) == 2
+    assert len(confirm_payload["dispatchedTaskIds"]) == 1
 
     list_status, _, list_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
     assert list_status == 200
@@ -2291,8 +2317,8 @@ def test_task_run_completed_event_dispatches_next_queued_task(
     assert event_status == 200
     assert event_payload["accepted"] is True
     assert event_payload["status"] == "completed"
-    assert len(event_payload["dispatched_task_ids"]) == 1
-    assert event_payload["dispatched_task_ids"][0] == queued_task["id"]
+    assert len(event_payload["dispatchedTaskIds"]) == 1
+    assert event_payload["dispatchedTaskIds"][0] == queued_task["id"]
 
     after_status, _, after_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
     assert after_status == 200
@@ -2314,7 +2340,7 @@ def test_task_run_completed_event_dispatches_next_queued_task(
     )
     assert replay_status == 200
     assert replay_payload["accepted"] is True
-    assert replay_payload["dispatched_task_ids"] == []
+    assert replay_payload["dispatchedTaskIds"] == []
 
 
 def test_task_run_terminal_state_rejects_conflicting_non_idempotent_event(
@@ -2384,7 +2410,7 @@ def test_task_run_terminal_state_rejects_conflicting_non_idempotent_event(
     assert conflict_status == 200
     assert conflict_payload["accepted"] is False
     assert conflict_payload["status"] == "completed"
-    assert conflict_payload["dispatched_task_ids"] == []
+    assert conflict_payload["dispatchedTaskIds"] == []
 
     list_status, _, list_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
     assert list_status == 200
@@ -2894,10 +2920,10 @@ def test_interrupt_running_task_marks_blocked_and_dispatches_queue(
     assert interrupt_status == 200
     payload = cast(dict[str, Any], json.loads(interrupt_payload.decode("utf-8")))
     assert payload["accepted"] is True
-    assert payload["task_id"] == task_id
+    assert payload["taskId"] == task_id
     assert payload["status"] == "blocked_by_approval"
-    assert payload["pause_requested"] is True
-    assert isinstance(payload["dispatched_task_ids"], list)
+    assert payload["pauseRequested"] is True
+    assert isinstance(payload["dispatchedTaskIds"], list)
 
     assert len(pause_calls) == 1
     assert pause_calls[0]["agent_id"] == "agent-alpha"
@@ -2919,7 +2945,7 @@ def test_interrupt_running_task_marks_blocked_and_dispatches_queue(
     assert second_interrupt_status == 200
     second_payload = cast(dict[str, Any], json.loads(second_interrupt_body.decode("utf-8")))
     assert second_payload["status"] == "blocked_by_approval"
-    assert second_payload["pause_requested"] is False
+    assert second_payload["pauseRequested"] is False
 
 
 def test_continue_blocked_task_requeues_and_dispatches(
@@ -2985,9 +3011,9 @@ def test_continue_blocked_task_requeues_and_dispatches(
     assert continue_status == 200
     continue_payload = cast(dict[str, Any], json.loads(continue_body.decode("utf-8")))
     assert continue_payload["accepted"] is True
-    assert continue_payload["task_id"] == task_id
+    assert continue_payload["taskId"] == task_id
     assert continue_payload["status"] == "running"
-    assert task_id in continue_payload["dispatched_task_ids"]
+    assert task_id in continue_payload["dispatchedTaskIds"]
 
     list_status, _, list_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
     assert list_status == 200
@@ -3061,7 +3087,7 @@ def test_delete_task_node_rewires_dependencies_and_dispatches_next(
         auth_cookie,
     )
     assert confirm_status == 200
-    assert len(confirm_payload["created_task_ids"]) == 2
+    assert len(confirm_payload["createdTaskIds"]) == 2
 
     list_status, _, list_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
     assert list_status == 200
@@ -3077,7 +3103,7 @@ def test_delete_task_node_rewires_dependencies_and_dispatches_next(
     assert delete_status == 200
     delete_body = cast(dict[str, Any], json.loads(delete_payload.decode("utf-8")))
     assert delete_body["deleted"] is True
-    assert delete_body["deleted_task_ids"] == [task_node_1["id"]]
+    assert delete_body["deletedTaskIds"] == [task_node_1["id"]]
 
     after_status, _, after_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
     assert after_status == 200
@@ -3151,7 +3177,7 @@ def test_delete_requirement_tasks_removes_entire_requirement_group(
         auth_cookie,
     )
     assert confirm_status == 200
-    assert len(confirm_payload["created_task_ids"]) == 2
+    assert len(confirm_payload["createdTaskIds"]) == 2
 
     list_status, _, list_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
     assert list_status == 200
@@ -3167,8 +3193,8 @@ def test_delete_requirement_tasks_removes_entire_requirement_group(
     assert delete_status == 200
     payload = cast(dict[str, Any], json.loads(delete_body.decode("utf-8")))
     assert payload["deleted"] is True
-    assert payload["requirement_id"] == requirement_id
-    assert set(payload["deleted_task_ids"]) == created_task_ids
+    assert payload["requirementId"] == requirement_id
+    assert set(payload["deletedTaskIds"]) == created_task_ids
 
     after_status, _, after_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
     assert after_status == 200
@@ -3221,7 +3247,7 @@ def test_delete_task_node_post_alias_supported(
     assert delete_status == 200
     payload = cast(dict[str, Any], json.loads(delete_body.decode("utf-8")))
     assert payload["deleted"] is True
-    assert payload["deleted_task_ids"] == [task_id]
+    assert payload["deletedTaskIds"] == [task_id]
 
 
 def test_delete_requirement_post_alias_supported(
@@ -3301,7 +3327,7 @@ def test_delete_requirement_post_alias_supported(
     assert delete_status == 200
     payload = cast(dict[str, Any], json.loads(delete_body.decode("utf-8")))
     assert payload["deleted"] is True
-    assert payload["requirement_id"] == requirement_id
+    assert payload["requirementId"] == requirement_id
 
 
 def test_task_output_preview_and_download_with_task_scoped_path(
@@ -3375,7 +3401,7 @@ def test_task_output_preview_and_download_with_task_scoped_path(
     assert preview_payload["kind"] == "json"
     assert preview_payload["truncated"] is False
     assert '"result": "ok"' in str(preview_payload["content"])
-    assert f"/api/v1/boards/default/tasks/{task_id}/output-file" in preview_payload["download_url"]
+    assert f"/api/v1/boards/default/tasks/{task_id}/output-file" in preview_payload["downloadUrl"]
 
     file_path = DEFAULT_TASK_OUTPUT_FILE_PATH.format(task_id=task_id)
     file_status, file_headers, file_body = request(

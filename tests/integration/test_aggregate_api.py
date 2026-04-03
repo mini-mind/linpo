@@ -232,7 +232,7 @@ def auth_cookie(isolated_database_url: str) -> str:
     return _register_and_login("alice")
 
 
-@pytest.mark.parametrize("path", ["/aggregate/overview", "/aggregate/topology"])
+@pytest.mark.parametrize("path", ["/summary/overview", "/summary/topology"])
 def test_aggregate_routes_require_authentication(
     isolated_database_url: str,
     path: str,
@@ -373,7 +373,7 @@ def test_overview_returns_aggregated_agents_with_request_id_freshness_and_diagno
         },
     )
 
-    status_code, _, body = request("GET", "/aggregate/overview", headers={"cookie": auth_cookie})
+    status_code, _, body = request("GET", "/summary/overview", headers={"cookie": auth_cookie})
 
     assert status_code == 200
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
@@ -550,7 +550,7 @@ def test_overview_exposes_partial_failure_without_fake_empty_success(
         },
     )
 
-    status_code, _, body = request("GET", "/aggregate/overview", headers={"cookie": auth_cookie})
+    status_code, _, body = request("GET", "/summary/overview", headers={"cookie": auth_cookie})
 
     assert status_code == 200
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
@@ -630,7 +630,7 @@ def test_overview_returns_failed_freshness_when_all_instances_fail(
         },
     )
 
-    status_code, _, body = request("GET", "/aggregate/overview", headers={"cookie": auth_cookie})
+    status_code, _, body = request("GET", "/summary/overview", headers={"cookie": auth_cookie})
 
     assert status_code == 200
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
@@ -720,7 +720,7 @@ def test_overview_keeps_token_groups_when_observer_snapshot_fails_but_usage_cost
         },
     )
 
-    status_code, _, body = request("GET", "/aggregate/overview", headers={"cookie": auth_cookie})
+    status_code, _, body = request("GET", "/summary/overview", headers={"cookie": auth_cookie})
 
     assert status_code == 200
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
@@ -827,7 +827,7 @@ def test_topology_returns_four_lane_relationships_with_sessions_and_tools(
         },
     )
 
-    status_code, _, body = request("GET", "/aggregate/topology", headers={"cookie": auth_cookie})
+    status_code, _, body = request("GET", "/summary/topology", headers={"cookie": auth_cookie})
 
     assert status_code == 200
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))

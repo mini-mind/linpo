@@ -40,6 +40,7 @@ import type {
 } from '../api/types';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
+import { useDraggableFab } from '../hooks/useDraggableFab';
 import { MarkdownMessage } from './MarkdownMessage';
 import {
   buildDraftFlowName,
@@ -393,6 +394,11 @@ const PLANNER_MESSAGE_CACHE_MAX_SESSIONS = 24;
 const PLANNER_MESSAGE_CACHE_MAX_MESSAGES = 200;
 const FLOW_SIDEBAR_ORDER_STORAGE_KEY = 'linpo.flow_sidebar_order_v1';
 
+function buildUntitledFlowName(date: Date = new Date()): string {
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  return `未命名${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}`;
+}
+
 const NODE_DRAG_MOVE_THRESHOLD_PX = 6;
 const NODE_DRAG_MOVE_THRESHOLD_SQUARED = NODE_DRAG_MOVE_THRESHOLD_PX * NODE_DRAG_MOVE_THRESHOLD_PX;
 const flowSidebarSourceTagStyle: React.CSSProperties = {
@@ -405,6 +411,19 @@ const flowSidebarSourceTagStyle: React.CSSProperties = {
   fontWeight: 700,
   color: '#0f766e',
   background: 'rgba(15, 118, 110, 0.12)',
+};
+const mobileFlowListFabStyle: React.CSSProperties = {
+  position: 'fixed',
+  zIndex: 980,
+  border: '1px solid rgba(14, 116, 144, 0.42)',
+  borderRadius: '999px',
+  background: 'linear-gradient(120deg, #0f766e 0%, #0284c7 100%)',
+  color: '#f8fafc',
+  fontSize: '0.78rem',
+  fontWeight: 700,
+  padding: '0.52rem 0.84rem',
+  boxShadow: '0 12px 24px -22px rgba(15, 23, 42, 0.95)',
+  cursor: 'pointer',
 };
 
 function loadFlowSidebarOrder(): string[] {
@@ -513,6 +532,9 @@ export function FlowPage(): JSX.Element {
   const [isSubmitConfirmOpen, setIsSubmitConfirmOpen] = useState(false);
 
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [isCreateFlowModalOpen, setIsCreateFlowModalOpen] = useState(false);
+  const [createFlowNameInput, setCreateFlowNameInput] = useState('');
+  const [createFlowNamePlaceholder, setCreateFlowNamePlaceholder] = useState(() => buildUntitledFlowName());
   const [flowDisplayName, setFlowDisplayName] = useState('未命名流程');
   const [flowNameInput, setFlowNameInput] = useState('未命名流程');
   const [flowRequirement, setFlowRequirement] = useState('');
@@ -554,6 +576,7 @@ export function FlowPage(): JSX.Element {
   });
 
   const canvasViewportRef = useRef<HTMLDivElement | null>(null);
+  const flowFab = useDraggableFab('linpo.mobile_fab.flow_list', { x: 16, y: 88 });
   const blockedSyncSignatureRef = useRef('');
   const blockedSyncTimerRef = useRef<number | null>(null);
   const boardRealtimeRef = useRef<ReturnType<typeof createBoardTasksSseClient> | null>(null);
@@ -1537,13 +1560,13 @@ export function FlowPage(): JSX.Element {
     setPendingDetailFlowId('');
   }, [currentFlowId, flowDisplayName, pendingDetailFlowId]);
 
-  const handleCreateBlankFlow = useCallback(() => {
+  const createBlankFlow = useCallback((flowName: string) => {
     const createdAt = new Date().toISOString();
     const draftId = `draft_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     const fallbackLanes = buildInitialLanesFromAgent(flowPlannerAgent?.agent_id ?? '', overview?.agents ?? []);
     const draftRecord: FlowDraftRecord = {
       id: draftId,
-      name: buildDraftFlowName(''),
+      name: flowName.trim() || buildUntitledFlowName(),
       requirement: '',
       nodes: [],
       edges: [],
@@ -1565,6 +1588,19 @@ export function FlowPage(): JSX.Element {
     setIsMobileFlowSidebarOpen(false);
     navigate(`/flow/edit/${encodeURIComponent(draftId)}`);
   }, [flowPlannerAgent?.agent_id, navigate, overview?.agents, persistDraftRecord]);
+
+  const handleCreateBlankFlow = useCallback(() => {
+    setCreateFlowNameInput('');
+    setCreateFlowNamePlaceholder(buildUntitledFlowName());
+    setIsCreateFlowModalOpen(true);
+    setIsMobileFlowSidebarOpen(false);
+  }, []);
+
+  const handleConfirmCreateFlow = useCallback(() => {
+    const nextName = createFlowNameInput.trim() || createFlowNamePlaceholder.trim() || buildUntitledFlowName();
+    createBlankFlow(nextName);
+    setIsCreateFlowModalOpen(false);
+  }, [createBlankFlow, createFlowNameInput, createFlowNamePlaceholder]);
 
   const handleDeleteCurrentFlow = useCallback(async () => {
     const flowId = currentFlowId.trim();
@@ -1713,6 +1749,8 @@ export function FlowPage(): JSX.Element {
             <div style={flowSidebarSectionListStyle}>
               {orderedFlowSidebarItems.map((item) => {
                     const isActive = item.id === currentFlowId.trim();
+                    const sourceTagLabel = (item.hasSubmitted && item.hasDraft) ? '已提交 + 草稿' : item.hasSubmitted ? '已提交' : '草稿';
+                    const shouldShowStatusLabel = !(sourceTagLabel === '草稿' && item.statusLabel === '草稿');
                     const isActiveFlowRunnable =
                       isActive
                       && flowNodes.length > 0
@@ -1757,12 +1795,14 @@ export function FlowPage(): JSX.Element {
                           ref={mode === 'drawer' && isActive ? activeDrawerFlowButtonRef : undefined}
                         >
                           <span style={flowSidebarSourceTagStyle}>
-                            {(item.hasSubmitted && item.hasDraft) ? '已提交 + 草稿' : item.hasSubmitted ? '已提交' : '草稿'}
+                            {sourceTagLabel}
                           </span>
                           <span style={isDrawerMode ? { ...flowSidebarItemTitleStyle, ...flowSidebarItemTitleDrawerStyle } : flowSidebarItemTitleStyle}>{item.name}</span>
-                          <span style={isDrawerMode ? { ...flowSidebarItemMetaStyle, ...flowSidebarItemMetaDrawerStyle } : flowSidebarItemMetaStyle}>
-                            {item.statusLabel}
-                          </span>
+                          {shouldShowStatusLabel ? (
+                            <span style={isDrawerMode ? { ...flowSidebarItemMetaStyle, ...flowSidebarItemMetaDrawerStyle } : flowSidebarItemMetaStyle}>
+                              {item.statusLabel}
+                            </span>
+                          ) : null}
                           <span style={isDrawerMode ? { ...flowSidebarItemMetaStyle, ...flowSidebarItemMetaDrawerStyle } : flowSidebarItemMetaStyle}>节点 {item.nodeCount}</span>
                         </button>
                         <button
@@ -3534,6 +3574,7 @@ export function FlowPage(): JSX.Element {
     : flowRuntimeState === 'blocked'
       ? flowContinueButtonStyle
       : primaryButtonStyle;
+  const showDetailActionButton = flowRuntimeState !== 'idle';
   const detailActionDisabled = flowRuntimeState === 'running'
     ? (isFlowActioning || isPlanning)
     : flowRuntimeState === 'blocked'
@@ -3566,17 +3607,6 @@ export function FlowPage(): JSX.Element {
       data-testid="flow-canvas-floating-actions"
     >
       <div style={isMobile ? { ...canvasFloatingActionRowStyle, ...canvasFloatingActionRowMobileStyle } : canvasFloatingActionRowStyle}>
-        {isMobile ? (
-          <button
-            type="button"
-            style={secondaryButtonStyle}
-            onClick={() => setIsMobileFlowSidebarOpen(true)}
-            aria-label="流程列表"
-            ref={mobileFlowSidebarTriggerRef}
-          >
-            流程列表
-          </button>
-        ) : null}
         {showMobileNodeActions ? (
           <button
             type="button"
@@ -4021,6 +4051,24 @@ export function FlowPage(): JSX.Element {
     <section style={pageStyle} aria-label="flow-page">
       <style>{flowCanvasAnimationStyleText}</style>
 
+      {isMobile && !isMobileFlowSidebarOpen ? (
+        <button
+          type="button"
+          style={{ ...mobileFlowListFabStyle, left: `${flowFab.position.x}px`, top: `${flowFab.position.y}px`, touchAction: 'none' }}
+          onPointerDown={flowFab.handlePointerDown}
+          onClick={(event) => {
+            if (!flowFab.consumeClickIfDragged(event)) {
+              return;
+            }
+            setIsMobileFlowSidebarOpen(true);
+          }}
+          aria-label="流程列表"
+          ref={mobileFlowSidebarTriggerRef}
+        >
+          流程列表
+        </button>
+      ) : null}
+
       {isMobile && isMobileFlowSidebarOpen ? (
         <div
           style={flowSidebarDrawerOverlayStyle}
@@ -4046,6 +4094,40 @@ export function FlowPage(): JSX.Element {
         </div>
       ) : null}
 
+      {isCreateFlowModalOpen ? (
+        <div style={isMobile ? { ...confirmOverlayStyle, ...confirmOverlayMobileStyle } : confirmOverlayStyle} role="dialog" aria-modal="true" aria-label="新建流程">
+          <div style={isMobile ? { ...modalCardStyle, ...confirmCardMobileStyle } : modalCardStyle}>
+            <h3 style={confirmTitleStyle}>新建流程</h3>
+            <label style={formFieldStyle}>
+              <span style={formLabelStyle}>流程名称</span>
+              <input
+                value={createFlowNameInput}
+                onChange={(event) => setCreateFlowNameInput(event.target.value)}
+                style={formInputStyle}
+                placeholder={createFlowNamePlaceholder}
+                autoFocus
+              />
+            </label>
+            <div style={isMobile ? { ...actionRowStyle, ...actionRowMobileStyle } : actionRowStyle}>
+              <button
+                type="button"
+                style={isMobile ? { ...secondaryButtonStyle, ...secondaryButtonMobileStyle } : secondaryButtonStyle}
+                onClick={() => setIsCreateFlowModalOpen(false)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                style={isMobile ? { ...primaryButtonStyle, ...primaryButtonMobileStyle } : primaryButtonStyle}
+                onClick={handleConfirmCreateFlow}
+              >
+                创建
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {isDetailOpen ? (
         <div
           style={isMobile ? { ...confirmOverlayStyle, ...confirmOverlayMobileStyle } : confirmOverlayStyle}
@@ -4059,7 +4141,26 @@ export function FlowPage(): JSX.Element {
             aria-label="流程编辑窗口"
             onClick={(event) => event.stopPropagation()}
           >
-            <h3 style={flowDetailTitleStyle}>流程编辑</h3>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem' }}>
+              <h3 style={flowDetailTitleStyle}>流程编辑</h3>
+              <button
+                type="button"
+                aria-label="关闭流程编辑窗口"
+                onClick={() => setIsDetailOpen(false)}
+                disabled={isSubmittingFlow || isFlowActioning || isPlanning}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  color: 'rgba(229, 231, 235, 0.86)',
+                  fontSize: '1.2rem',
+                  lineHeight: 1,
+                  cursor: 'pointer',
+                  padding: '0.1rem 0.2rem',
+                }}
+              >
+                ×
+              </button>
+            </div>
             <label style={formFieldStyle}>
               <span style={formLabelStyle}>流程名称</span>
               <input
@@ -4071,14 +4172,16 @@ export function FlowPage(): JSX.Element {
               />
             </label>
             <div style={actionRowStyle}>
-              <button
-                type="button"
-                style={detailActionButtonStyle}
-                onClick={handleFlowActionFromDetail}
-                disabled={detailActionDisabled}
-              >
-                {detailActionButtonLabel}
-              </button>
+              {showDetailActionButton ? (
+                <button
+                  type="button"
+                  style={detailActionButtonStyle}
+                  onClick={handleFlowActionFromDetail}
+                  disabled={detailActionDisabled}
+                >
+                  {detailActionButtonLabel}
+                </button>
+              ) : null}
               <button
                 type="button"
                 style={dangerButtonStyle}
@@ -4086,14 +4189,6 @@ export function FlowPage(): JSX.Element {
                 disabled={isSubmittingFlow || isFlowActioning || isPlanning}
               >
                 删除流程
-              </button>
-              <button
-                type="button"
-                style={secondaryButtonStyle}
-                onClick={() => setIsDetailOpen(false)}
-                disabled={isSubmittingFlow || isFlowActioning || isPlanning}
-              >
-                关闭
               </button>
               <button
                 type="button"

@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.api.schemas import (
+from app.services.aggregate_models import (
     AggregateInstanceDiagnostic,
     AggregateOverviewAgentItem,
     AggregateOverviewGlobalEvent,

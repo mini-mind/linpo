@@ -17,6 +17,7 @@ import type {
   TaskOutputPreviewResponse,
 } from '../api/types';
 import { useCurrentInstanceId } from '../hooks/useCurrentInstance';
+import { useDraggableFab } from '../hooks/useDraggableFab';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
 import { MarkdownMessage } from './MarkdownMessage';
@@ -85,9 +86,11 @@ export function InstanceFilesPage(): JSX.Element {
   const [preview, setPreview] = useState<TaskOutputPreviewResponse | null>(null);
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [desktopSidebarWidth, setDesktopSidebarWidth] = useState(INSTANCE_FILES_SIDEBAR_WIDTH_PX);
   const [isSidebarResizing, setIsSidebarResizing] = useState(false);
   const sidebarResizeStateRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
+  const filesFab = useDraggableFab('linpo.mobile_fab.instance_files_sidebar', { x: 16, y: 88 });
 
   const selectedInstance = useMemo(
     () => instances.find((item) => item.id === selectedInstanceId) ?? null,
@@ -330,7 +333,9 @@ export function InstanceFilesPage(): JSX.Element {
     if (isMobile) {
       setIsSidebarResizing(false);
       sidebarResizeStateRef.current = null;
+      return;
     }
+    setIsMobileSidebarOpen(false);
   }, [isMobile]);
 
   useEffect(() => {
@@ -537,16 +542,58 @@ export function InstanceFilesPage(): JSX.Element {
   if (isMobile) {
     return (
       <section style={getWorkspacePageStyle()} aria-label="instance-files-page">
+        <button
+          type="button"
+          style={{ ...mobileFabButtonStyle, left: `${filesFab.position.x}px`, top: `${filesFab.position.y}px`, touchAction: 'none' }}
+          aria-label="打开文件侧栏"
+          onPointerDown={filesFab.handlePointerDown}
+          onClick={(event) => {
+            if (!filesFab.consumeClickIfDragged(event)) {
+              return;
+            }
+            setIsMobileSidebarOpen(true);
+          }}
+        >
+          文件侧栏
+        </button>
+        {isMobileSidebarOpen ? (
+          <div
+            style={mobileSidebarDrawerOverlayStyle}
+            role="dialog"
+            aria-modal="true"
+            aria-label="文件侧栏抽屉"
+            onClick={() => setIsMobileSidebarOpen(false)}
+          >
+            <div
+              style={mobileSidebarDrawerPanelStyle}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div style={mobileSidebarDrawerHeaderStyle}>
+                <h3 style={mobileSidebarDrawerTitleStyle}>文件侧栏</h3>
+                <button
+                  type="button"
+                  style={mobileSidebarDrawerCloseStyle}
+                  onClick={() => setIsMobileSidebarOpen(false)}
+                >
+                  关闭
+                </button>
+              </div>
+              {sidebarNode}
+            </div>
+          </div>
+        ) : null}
         <div style={getWorkspaceBodyShellStyle({ isMobile, extra: bodyShellMobileStyle })}>
           <div
             style={getWorkspaceBodyInnerStyle({
               isMobile,
               maxWidthPx: WORKSPACE_CONTENT_MAX_WIDTH_PX,
-              extra: getBodyStyle(true),
+              extra: {
+                ...getBodyStyle(true),
+                gridTemplateRows: 'minmax(0, 1fr)',
+              },
             })}
             data-testid="instance-files-content-frame"
           >
-            {sidebarNode}
             {previewNode}
           </div>
         </div>
@@ -864,6 +911,65 @@ const buttonStyle: React.CSSProperties = {
 
 const buttonMobileStyle: React.CSSProperties = {
   width: '100%',
+};
+
+const mobileFabButtonStyle: React.CSSProperties = {
+  position: 'fixed',
+  zIndex: 980,
+  border: '1px solid rgba(14, 116, 144, 0.42)',
+  borderRadius: '999px',
+  background: 'linear-gradient(120deg, #0f766e 0%, #0284c7 100%)',
+  color: '#f8fafc',
+  fontSize: '0.78rem',
+  fontWeight: 700,
+  padding: '0.52rem 0.84rem',
+  boxShadow: '0 12px 24px -22px rgba(15, 23, 42, 0.95)',
+  cursor: 'pointer',
+};
+
+const mobileSidebarDrawerOverlayStyle: React.CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  zIndex: 990,
+  background: 'rgba(15, 23, 42, 0.28)',
+  display: 'flex',
+  alignItems: 'stretch',
+  justifyContent: 'flex-start',
+  padding: '0.9rem 0.6rem 0.6rem',
+};
+
+const mobileSidebarDrawerPanelStyle: React.CSSProperties = {
+  width: 'min(92vw, 420px)',
+  maxWidth: '100%',
+  height: '100%',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.55rem',
+};
+
+const mobileSidebarDrawerHeaderStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '0.55rem',
+};
+
+const mobileSidebarDrawerTitleStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.9rem',
+  fontWeight: 700,
+  color: '#f8fafc',
+};
+
+const mobileSidebarDrawerCloseStyle: React.CSSProperties = {
+  border: '1px solid rgba(226, 232, 240, 0.44)',
+  background: 'rgba(15, 23, 42, 0.4)',
+  color: '#e2e8f0',
+  borderRadius: '0.42rem',
+  padding: '0.34rem 0.58rem',
+  fontSize: '0.74rem',
+  fontWeight: 600,
+  cursor: 'pointer',
 };
 
 const bodyShellMobileStyle: React.CSSProperties = {};

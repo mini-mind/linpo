@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  createKanbanTask,
   deleteSession,
   getAggregateOverview,
   getSessionHistory,
+  listKanbanTasks,
   listAgents,
   pauseSession,
   patchSession,
@@ -57,7 +59,7 @@ describe('business API client instance context', () => {
     await getAggregateOverview();
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8000/api/v1/aggregate/overview?data_source=openclaw&instanceId=instance-1',
+      'http://localhost:8000/api/v1/summary/overview?data_source=openclaw&instanceId=instance-1',
       expect.objectContaining({ credentials: 'include' }),
     );
   });
@@ -80,7 +82,7 @@ describe('business API client instance context', () => {
     await getAggregateOverview({ disableInstanceContext: true });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8000/api/v1/aggregate/overview?data_source=openclaw',
+      'http://localhost:8000/api/v1/summary/overview?data_source=openclaw',
       expect.objectContaining({ credentials: 'include' }),
     );
   });
@@ -221,15 +223,22 @@ describe('business API client instance context', () => {
       status: 200,
       statusText: 'OK',
       json: async () => ({
-        session_key: 'linpo:flow:default:planner:claw3:test',
+        sessionKey: 'linpo:flow:default:planner:claw3:test',
         status: 'stopped',
         revision: 3,
-        updated_at: '2026-04-03T10:00:00Z',
+        updatedAt: '2026-04-03T10:00:00Z',
       }),
     });
 
-    await stopFlowPlannerSession({
+    const result = await stopFlowPlannerSession({
       planner_session_key: 'linpo:flow:default:planner:claw3:test',
+    });
+
+    expect(result).toEqual({
+      session_key: 'linpo:flow:default:planner:claw3:test',
+      status: 'stopped',
+      revision: 3,
+      updated_at: '2026-04-03T10:00:00Z',
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -239,7 +248,7 @@ describe('business API client instance context', () => {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          planner_session_key: 'linpo:flow:default:planner:claw3:test',
+          plannerSessionKey: 'linpo:flow:default:planner:claw3:test',
         }),
       }),
     );
@@ -262,6 +271,102 @@ describe('business API client instance context', () => {
       'http://localhost:8000/api/v1/boards/default/tasks/flow/planner-sessions/linpo%3Aflow%3Adefault%3Aplanner%3Aclaw3%3Atest/exists?data_source=openclaw',
       expect.objectContaining({
         credentials: 'include',
+      }),
+    );
+  });
+
+  it('maps camelCase kanban task response to existing snake_case model', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: async () => ([
+        {
+          id: 'task-1',
+          boardId: 'default',
+          title: '节点A',
+          summary: '摘要',
+          status: 'queued',
+          source: 'flow',
+          agentId: null,
+          agentName: 'Agent A',
+          artifacts: ['artifact.md'],
+          extras: {
+            requirementId: 'flow-1',
+            flowNode: 'node_a',
+          },
+          instanceId: 'instance-1',
+          createdAt: '2026-04-03T00:00:00Z',
+          updatedAt: '2026-04-03T00:01:00Z',
+        },
+      ]),
+    });
+
+    const result = await listKanbanTasks();
+
+    expect(result).toEqual([
+      {
+        id: 'task-1',
+        board_id: 'default',
+        title: '节点A',
+        summary: '摘要',
+        status: 'queued',
+        source: 'flow',
+        agent_id: null,
+        agent_name: 'Agent A',
+        artifacts: ['artifact.md'],
+        extras: {
+          requirement_id: 'flow-1',
+          flow_node: 'node_a',
+        },
+        instance_id: 'instance-1',
+        created_at: '2026-04-03T00:00:00Z',
+        updated_at: '2026-04-03T00:01:00Z',
+      },
+    ]);
+  });
+
+  it('sends camelCase payload for createKanbanTask', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: async () => ({
+        id: 'task-created',
+        boardId: 'default',
+        title: '新任务',
+        summary: '',
+        status: 'queued',
+        source: 'flow',
+        agentId: 'agent-1',
+        agentName: 'Agent 1',
+        artifacts: [],
+        extras: {},
+        instanceId: 'instance-1',
+        createdAt: '2026-04-03T00:00:00Z',
+        updatedAt: '2026-04-03T00:00:00Z',
+      }),
+    });
+
+    await createKanbanTask({
+      requirement: '实现节点',
+      agent_id: 'agent-1',
+      agent_name: 'Agent 1',
+      instance_id: 'instance-1',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8000/api/v1/boards/default/tasks?data_source=openclaw',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requirement: '实现节点',
+          agentId: 'agent-1',
+          agentName: 'Agent 1',
+          instanceId: 'instance-1',
+        }),
       }),
     );
   });

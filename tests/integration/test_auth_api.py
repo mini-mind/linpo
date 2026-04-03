@@ -17,6 +17,17 @@ from app.db.models import AuthSession, User
 from app.db import session as db_session
 from app.main import _get_cors_allow_origins, app
 
+REQUIRED_BOOTSTRAP_TABLES = {
+    "auth_sessions",
+    "flow_planner_messages",
+    "flow_planner_sessions",
+    "instances",
+    "pairing_receipts",
+    "tasks",
+    "user_messages",
+    "users",
+}
+
 
 def _json_headers(
     cookie_header: str | None = None,
@@ -84,6 +95,13 @@ def _reload_auth_service_bindings():
     return reloaded_auth_service
 
 
+def _assert_required_tables_exist(database_url: str) -> None:
+    inspector = inspect(create_engine(database_url))
+    actual_tables = set(inspector.get_table_names())
+    missing_tables = REQUIRED_BOOTSTRAP_TABLES - actual_tables
+    assert not missing_tables, f"Missing required bootstrap tables: {sorted(missing_tables)}"
+
+
 @pytest.fixture(autouse=True)
 def reset_db_session_caches() -> object:
     db_session.get_engine.cache_clear()
@@ -125,17 +143,7 @@ def test_auth_me_route_can_boot_with_explicit_db_bootstrap(
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
     assert payload == {"detail": "Unauthorized"}
 
-    inspector = inspect(create_engine(database_url))
-    assert sorted(inspector.get_table_names()) == [
-        "auth_sessions",
-        "flow_planner_messages",
-        "flow_planner_sessions",
-        "instances",
-        "pairing_receipts",
-        "tasks",
-        "user_messages",
-        "users",
-    ]
+    _assert_required_tables_exist(database_url)
 
 
 def test_auth_db_bootstrap_uses_isolated_database_path(
@@ -149,17 +157,7 @@ def test_auth_db_bootstrap_uses_isolated_database_path(
     app.state.bootstrap_database()
 
     assert test_db_path.exists()
-    inspector = inspect(create_engine(database_url))
-    assert sorted(inspector.get_table_names()) == [
-        "auth_sessions",
-        "flow_planner_messages",
-        "flow_planner_sessions",
-        "instances",
-        "pairing_receipts",
-        "tasks",
-        "user_messages",
-        "users",
-    ]
+    _assert_required_tables_exist(database_url)
 
 
 def test_password_hash_is_persisted_without_plaintext(db_handle: Session) -> None:

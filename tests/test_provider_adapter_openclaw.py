@@ -1,8 +1,8 @@
 from typing import Any
 
-from fastapi import HTTPException
 import pytest
 
+from app.adapters.provider_adapter import ProviderUpstreamError
 from app.domain.provider_contract import DomainFreshnessStatus, DomainProviderCapability
 from app.domain.provider_contract_mapping import to_domain_request
 
@@ -11,6 +11,13 @@ def _make_request(
     capability: DomainProviderCapability = DomainProviderCapability.AGGREGATE_READ,
 ):
     return to_domain_request(request_id="req-provider-1", capability=capability)
+
+
+class _HTTPishError(Exception):
+    def __init__(self, *, status_code: int, detail: Any) -> None:
+        super().__init__(str(detail))
+        self.status_code = status_code
+        self.detail = detail
 
 
 def test_openclaw_adapter_fetch_snapshot_maps_success_to_domain_response() -> None:
@@ -63,17 +70,17 @@ def test_openclaw_adapter_fetch_snapshot_maps_success_to_domain_response() -> No
     ("exc", "expected_code", "expected_message_fragment"),
     [
         (
-            HTTPException(status_code=503, detail="OpenClaw connection failed: connection refused"),
+            ProviderUpstreamError(status_code=503, message="OpenClaw connection failed: connection refused"),
             "source_unavailable",
             "connection failed",
         ),
         (
-            HTTPException(status_code=403, detail="OpenClaw pairing required"),
+            ProviderUpstreamError(status_code=403, message="OpenClaw pairing required"),
             "auth_failed",
             "pairing required",
         ),
         (
-            HTTPException(
+            _HTTPishError(
                 status_code=503,
                 detail="OpenClaw returned unexpected handshake response id",
             ),

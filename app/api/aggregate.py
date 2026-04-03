@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import cast
 from uuid import UUID
 from uuid import uuid4
@@ -15,10 +16,11 @@ from app.api.schemas import (
     ErrorResponse,
 )
 from app.db.session import get_session
+from app.services import aggregate_models as service_models
 from app.services.aggregate_service import AggregateService
 from app.services.auth_service import get_authenticated_user
 
-router = APIRouter(prefix="/aggregate", tags=["aggregate"])
+router = APIRouter(prefix="/summary", tags=["aggregate"])
 
 
 def get_aggregate_service(request: Request) -> AggregateService:
@@ -47,6 +49,18 @@ def _error_response(
     )
 
 
+def _map_overview_response(
+    response: service_models.AggregateOverviewResponse,
+) -> AggregateOverviewResponse:
+    return AggregateOverviewResponse.model_validate(asdict(response))
+
+
+def _map_topology_response(
+    response: service_models.AggregateTopologyResponse,
+) -> AggregateTopologyResponse:
+    return AggregateTopologyResponse.model_validate(asdict(response))
+
+
 @router.get("/overview", response_model=AggregateOverviewResponse)
 def get_overview(
     request: Request,
@@ -62,9 +76,11 @@ def get_overview(
             recoverable=True,
             next_step="重新登录后重试",
         )
-    return aggregate_service.get_overview(
-        db_session,
-        user_id=cast(UUID, current_user.id),
+    return _map_overview_response(
+        aggregate_service.get_overview(
+            db_session,
+            user_id=cast(UUID, current_user.id),
+        )
     )
 
 
@@ -83,7 +99,9 @@ def get_topology(
             recoverable=True,
             next_step="重新登录后重试",
         )
-    return aggregate_service.get_topology(
-        db_session,
-        user_id=cast(UUID, current_user.id),
+    return _map_topology_response(
+        aggregate_service.get_topology(
+            db_session,
+            user_id=cast(UUID, current_user.id),
+        )
     )

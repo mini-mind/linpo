@@ -1366,13 +1366,18 @@ describe('FlowPage', () => {
     expect(document.querySelectorAll('[data-flow-edge-path="true"]').length).toBe(1);
   });
 
-  it('creates unnamed draft immediately from empty state without opening create modal', async () => {
+  it('opens create dialog and uses default timed name when creating from empty state', async () => {
     renderFlowPage('/flow/edit/new');
     expect(screen.queryByTestId('flow-canvas-floating-actions')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: '创建流程' }));
-    expect(screen.queryByRole('dialog', { name: '新建流程' })).not.toBeInTheDocument();
-    expect(await screen.findByRole('button', { name: '切换流程-未命名流程' })).toBeInTheDocument();
+    const createDialog = await screen.findByRole('dialog', { name: '新建流程' });
+    const nameInput = within(createDialog).getByRole('textbox', { name: '流程名称' }) as HTMLInputElement;
+    expect(nameInput.placeholder).toMatch(/^未命名\d{8}-\d{4}$/);
+    const fallbackName = nameInput.placeholder;
+    await userEvent.click(within(createDialog).getByRole('button', { name: '创建' }));
+
+    expect(await screen.findByRole('button', { name: `切换流程-${fallbackName}` })).toBeInTheDocument();
     expect(screen.queryByTestId('flow-empty-selection-overlay')).not.toBeInTheDocument();
     expect(mockGenerateFlowFromRequirement).not.toHaveBeenCalled();
   });
@@ -1565,7 +1570,7 @@ describe('FlowPage', () => {
     });
   });
 
-  it('opens mobile flow list as drawer from floating actions', async () => {
+  it('opens mobile flow list drawer from floating button', async () => {
     setViewportWidth(390);
     mockListKanbanTasks.mockResolvedValue([
       buildKanbanTask({
@@ -1581,10 +1586,10 @@ describe('FlowPage', () => {
     ]);
 
     renderFlowPage('/flow/edit/req-flow-drawer');
-    const actions = await findCanvasActionGroup();
+    await waitForFlowCanvasReady();
 
     expect(screen.queryByLabelText('流程列表侧栏')).not.toBeInTheDocument();
-    await userEvent.click(within(actions).getByRole('button', { name: '流程列表' }));
+    await userEvent.click(screen.getByRole('button', { name: '流程列表' }));
 
     expect(await screen.findByRole('dialog', { name: '流程列表抽屉' })).toBeInTheDocument();
     expect(screen.getByLabelText('流程列表侧栏')).toBeInTheDocument();
@@ -1671,6 +1676,7 @@ describe('FlowPage', () => {
     expect(currentCard).toHaveTextContent('已提交');
     expect(screen.getByRole('button', { name: '编辑流程-草稿流程C' })).toBeInTheDocument();
     expect(findFlowSidebarCard('草稿流程C')).toHaveTextContent('草稿');
+    expect(within(findFlowSidebarCard('草稿流程C')).getAllByText('草稿')).toHaveLength(1);
     expect(screen.getByRole('button', { name: '编辑流程-流程B' })).toBeInTheDocument();
   });
 
@@ -1763,10 +1769,13 @@ describe('FlowPage', () => {
     await waitForFlowCanvasReady();
 
     await userEvent.click(screen.getByRole('button', { name: '新建' }));
+    const createDialog = await screen.findByRole('dialog', { name: '新建流程' });
+    await userEvent.type(within(createDialog).getByRole('textbox', { name: '流程名称' }), '新增流程X');
+    await userEvent.click(within(createDialog).getByRole('button', { name: '创建' }));
 
     await waitFor(() => {
       const draftCards = within(screen.getByTestId('flow-sidebar')).getAllByRole('article');
-      expect(within(draftCards[0]).getByRole('button', { name: '切换流程-未命名流程', current: 'page' })).toBeInTheDocument();
+      expect(within(draftCards[0]).getByRole('button', { name: '切换流程-新增流程X', current: 'page' })).toBeInTheDocument();
     });
   });
 
@@ -2057,8 +2066,11 @@ describe('FlowPage', () => {
     expect(screen.queryByRole('dialog', { name: '创建节点' })).not.toBeInTheDocument();
 
     await userEvent.click(within(overlay).getByRole('button', { name: '创建流程' }));
-    expect(screen.queryByRole('dialog', { name: '新建流程' })).not.toBeInTheDocument();
-    expect(await screen.findByRole('button', { name: '切换流程-未命名流程' })).toBeInTheDocument();
+    const createDialog = await screen.findByRole('dialog', { name: '新建流程' });
+    const nameInput = within(createDialog).getByRole('textbox', { name: '流程名称' }) as HTMLInputElement;
+    const fallbackName = nameInput.placeholder;
+    await userEvent.click(within(createDialog).getByRole('button', { name: '创建' }));
+    expect(await screen.findByRole('button', { name: `切换流程-${fallbackName}` })).toBeInTheDocument();
     expect(screen.queryByTestId('flow-empty-selection-overlay')).not.toBeInTheDocument();
   });
 
@@ -2102,7 +2114,11 @@ describe('FlowPage', () => {
     renderFlowPage('/flow/edit/new');
     const overlay = await screen.findByTestId('flow-empty-selection-overlay');
     await userEvent.click(within(overlay).getByRole('button', { name: '创建流程' }));
-    await screen.findByRole('button', { name: '切换流程-未命名流程' });
+    const createDialog = await screen.findByRole('dialog', { name: '新建流程' });
+    const nameInput = within(createDialog).getByRole('textbox', { name: '流程名称' }) as HTMLInputElement;
+    const fallbackName = nameInput.placeholder;
+    await userEvent.click(within(createDialog).getByRole('button', { name: '创建' }));
+    await screen.findByRole('button', { name: `切换流程-${fallbackName}` });
 
     await waitFor(() => {
       const laneHeaders = Array.from(
@@ -2145,14 +2161,14 @@ describe('FlowPage', () => {
 
     await waitForFlowCanvasReady();
     expect(screen.queryByTestId('flow-canvas-floating-actions')).not.toBeInTheDocument();
-    const currentCard = findFlowSidebarCard('流程A');
-    expect(within(currentCard).getByRole('button', { name: '运行流程-流程A' })).toBeDisabled();
+    const currentCard = findCurrentFlowSidebarCard();
+    expect(within(currentCard).getByRole('button', { name: /运行流程-/ })).toBeDisabled();
     expect(screen.queryByRole('button', { name: '停止流程' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('流程实例面板')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '切换流程-流程A' })).toHaveTextContent('运行中');
+    expect(within(currentCard).getByRole('button', { current: 'page' })).toHaveTextContent('运行中');
     expect(screen.getByTestId('flow-planner-input')).toBeDisabled();
 
-    await userEvent.click(screen.getByRole('button', { name: '编辑流程-流程A' }));
+    await userEvent.click(within(currentCard).getByRole('button', { name: /编辑流程-/ }));
     const detailDialog = await screen.findByRole('dialog', { name: '流程编辑窗口' });
     expect(within(detailDialog).getByRole('button', { name: '中断' })).toBeInTheDocument();
   });
@@ -2234,7 +2250,7 @@ describe('FlowPage', () => {
     renderFlowPage('/flow/edit/req-flow-a');
 
     await waitForFlowCanvasReady();
-    await userEvent.click(screen.getByRole('button', { name: '编辑流程-流程A' }));
+    await userEvent.click(within(findCurrentFlowSidebarCard()).getByRole('button', { name: /编辑流程-/ }));
     const nameInput = screen.getByPlaceholderText('输入流程名称');
     await userEvent.clear(nameInput);
     await userEvent.type(nameInput, '新流程名');
@@ -2242,6 +2258,36 @@ describe('FlowPage', () => {
 
     await waitFor(() => {
       expect(mockRenameFlowRequirement).toHaveBeenCalledWith('req-flow-a', { name: '新流程名' }, undefined, 'default');
+    });
+  });
+
+  it('uses top-right close button in flow detail dialog and hides idle run action', async () => {
+    mockListKanbanTasks.mockResolvedValue([
+      buildKanbanTask({
+        id: 'task-a-1',
+        status: 'queued',
+        extras: {
+          requirement_id: 'req-flow-a',
+          requirement_title: '流程A',
+          flow_node: 'a_1',
+          dependencies: 'none',
+          sensitive: 'false',
+        },
+      }),
+    ]);
+
+    renderFlowPage('/flow/edit/req-flow-a');
+    await waitForFlowCanvasReady();
+
+    await userEvent.click(within(findCurrentFlowSidebarCard()).getByRole('button', { name: /编辑流程-/ }));
+    const detailDialog = await screen.findByRole('dialog', { name: '流程编辑窗口' });
+    expect(within(detailDialog).queryByRole('button', { name: '运行' })).not.toBeInTheDocument();
+    expect(within(detailDialog).queryByRole('button', { name: '关闭' })).not.toBeInTheDocument();
+
+    const closeButton = within(detailDialog).getByRole('button', { name: '关闭流程编辑窗口' });
+    await userEvent.click(closeButton);
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: '流程编辑窗口' })).not.toBeInTheDocument();
     });
   });
 
@@ -2278,7 +2324,7 @@ describe('FlowPage', () => {
     renderFlowPage('/flow/edit/req-flow-a');
 
     await waitForFlowCanvasReady();
-    await userEvent.click(screen.getByRole('button', { name: '编辑流程-流程A' }));
+    await userEvent.click(screen.getByRole('button', { name: /编辑流程-流程A/ }));
     await userEvent.click(screen.getByRole('button', { name: '删除流程' }));
 
     await waitFor(() => {

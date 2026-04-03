@@ -353,7 +353,7 @@ describe('board realtime sse client', () => {
         timestamp: '2026-03-31T00:00:00Z',
         payload: {
           action: 'delete',
-          task_id: 'task-2',
+          taskId: 'task-2',
         },
       })
     );
@@ -422,12 +422,12 @@ describe('flow planner sse client', () => {
         seq: 3,
         timestamp: '2026-04-01T00:00:00Z',
         payload: {
-          session_key: 'linpo:flow:default:planner:claw3:test',
+          sessionKey: 'linpo:flow:default:planner:claw3:test',
           messages: [
             {
               role: 'assistant',
               content: '流程草图已更新。',
-              created_at: '2026-04-01T00:00:00Z',
+              createdAt: '2026-04-01T00:00:00Z',
             },
           ],
         },
@@ -470,16 +470,16 @@ describe('flow planner sse client', () => {
         seq: 4,
         timestamp: '2026-04-02T00:00:00Z',
         payload: {
-          session_key: 'linpo:flow:default:planner:claw3:test',
+          sessionKey: 'linpo:flow:default:planner:claw3:test',
           revision: 2,
           operations: [
             {
-              type: 'upsert_node',
+              type: 'upsertNode',
               node: {
                 id: 'node_1',
                 title: '节点A',
                 description: '说明',
-                depends_on: [],
+                dependsOn: [],
                 sensitive: false,
               },
             },
@@ -530,14 +530,14 @@ describe('flow planner sse client', () => {
         seq: 5,
         timestamp: '2026-04-02T00:00:00Z',
         payload: {
-          session_key: 'linpo:flow:default:planner:claw3:test',
+          sessionKey: 'linpo:flow:default:planner:claw3:test',
           revision: 3,
           nodes: [
             {
               id: 'node_1',
               title: '节点A',
               description: '说明',
-              depends_on: [],
+              dependsOn: [],
               sensitive: false,
             },
           ],
@@ -584,16 +584,16 @@ describe('flow planner sse client', () => {
         seq: 4,
         timestamp: '2026-04-02T00:00:00Z',
         payload: {
-          session_key: 'linpo:flow:default:planner:claw3:test',
+          sessionKey: 'linpo:flow:default:planner:claw3:test',
           revision: 2,
           operations: [
             {
-              type: 'upsert_node',
+              type: 'upsertNode',
               node: {
                 id: 'node_1',
                 title: '节点A',
                 description: '增量更新',
-                depends_on: [],
+                dependsOn: [],
                 sensitive: false,
               },
             },
@@ -644,14 +644,14 @@ describe('flow planner sse client', () => {
         seq: 5,
         timestamp: '2026-04-02T00:00:00Z',
         payload: {
-          session_key: 'linpo:flow:default:planner:claw3:test',
+          sessionKey: 'linpo:flow:default:planner:claw3:test',
           revision: 3,
           nodes: [
             {
               id: 'node_1',
               title: '节点A',
               description: '完整快照',
-              depends_on: [],
+              dependsOn: [],
               sensitive: false,
             },
           ],
@@ -674,6 +674,48 @@ describe('flow planner sse client', () => {
               sensitive: false,
             },
           ],
+        },
+      })
+    );
+  });
+
+  it('parses planner session status updates with camelCase payload fields', () => {
+    const fakeSource = new FakeEventSource();
+    const onMessage = vi.fn();
+    const client = createFlowPlannerSseClient({
+      baseUrl: 'http://linpo.test:8000',
+      boardId: 'default',
+      sessionKey: 'linpo:flow:default:planner:claw3:test',
+      onMessage,
+      createEventSource: () => fakeSource,
+    });
+
+    client.connect();
+    fakeSource.emitMessage(
+      JSON.stringify({
+        type: 'planner_session_updated',
+        channel: 'session:linpo:flow:default:planner:claw3:test:messages',
+        seq: 6,
+        timestamp: '2026-04-02T00:00:00Z',
+        payload: {
+          sessionKey: 'linpo:flow:default:planner:claw3:test',
+          status: 'completed',
+          revision: 4,
+          updatedAt: '2026-04-02T00:02:00Z',
+          completedAt: '2026-04-02T00:02:01Z',
+        },
+      })
+    );
+
+    expect(onMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'planner_session_updated',
+        payload: {
+          session_key: 'linpo:flow:default:planner:claw3:test',
+          status: 'completed',
+          revision: 4,
+          updated_at: '2026-04-02T00:02:00Z',
+          completed_at: '2026-04-02T00:02:01Z',
         },
       })
     );

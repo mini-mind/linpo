@@ -1,5 +1,6 @@
 import '@testing-library/jest-dom';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { userEvent } from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -133,9 +134,14 @@ describe('CollabPage mobile scroll', () => {
     const board = await screen.findByTestId('kanban-board');
     expect(board).toHaveStyle({ overflowX: 'hidden' });
     expect(board).toHaveStyle({ touchAction: 'pan-y' });
-    expect(screen.getByText(/^1 \/ \d+$/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '打开看板菜单' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '待确认', level: 3 })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: '待调度', level: 3 })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '打开看板菜单' }));
+    const columnSelect = await screen.findByLabelText('查看列');
+    await userEvent.selectOptions(columnSelect, '1');
+    expect(screen.getByRole('heading', { name: '待调度', level: 3 })).toBeInTheDocument();
 
     fireEvent.touchStart(board, {
       touches: [{ clientX: 220, clientY: 120 }],
@@ -145,8 +151,7 @@ describe('CollabPage mobile scroll', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/^2 \/ \d+$/)).toBeInTheDocument();
-      expect(screen.getByRole('heading', { name: '待调度', level: 3 })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: '进行中', level: 3 })).toBeInTheDocument();
     });
   });
 });

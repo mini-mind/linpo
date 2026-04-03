@@ -31,6 +31,22 @@ class ProviderAdapterError(Exception):
         self.response = response
 
 
+class ProviderUpstreamError(Exception):
+    def __init__(self, *, status_code: int, message: str | None = None, detail: Any = None) -> None:
+        resolved_message = message
+        if resolved_message is None:
+            if isinstance(detail, str):
+                resolved_message = detail
+            elif detail is not None:
+                resolved_message = str(detail)
+            else:
+                resolved_message = "OpenClaw request failed"
+
+        super().__init__(resolved_message)
+        self.status_code = status_code
+        self.detail = detail if detail is not None else resolved_message
+
+
 class ProviderAdapter(Protocol):
     def config_key(self) -> tuple[str | None, str | None, str]: ...
 

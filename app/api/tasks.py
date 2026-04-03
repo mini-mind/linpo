@@ -2,10 +2,8 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 import asyncio
-import hashlib
-import hmac
 import json
 import os
 import re
@@ -44,6 +42,7 @@ from app.api.schemas import (
     FlowCanvasEdge,
     FlowCanvasNode,
     FlowChatMessageItem,
+    TaskBoardOutputPreviewResponse,
     FlowDraftDeleteResponse,
     FlowDraftItem,
     FlowDraftLaneItem,
@@ -71,7 +70,6 @@ from app.api.schemas import (
     TaskDeleteResponse,
     TaskInterruptResponse,
     TaskItem,
-    TaskOutputPreviewResponse,
     TaskRunEventRequest,
     TaskRunEventResponse,
     TaskSource,
@@ -90,6 +88,18 @@ from app.services.provider_application_service import (
     ProviderApplicationService,
     ProviderExecutionContext,
 )
+from app.services.task_callback_security import (
+    CallbackSignatureValidationError,
+    CallbackTimestampValidationError,
+    append_event_key as append_event_key_service,
+    build_task_callback_signature_payload as build_task_callback_signature_payload_service,
+    derive_event_key as derive_event_key_service,
+    event_keys_from_raw as event_keys_from_raw_service,
+    sign_task_callback_event as sign_task_callback_event_service,
+    validate_callback_event_timestamp as validate_callback_event_timestamp_service,
+    validate_task_callback_signature as validate_task_callback_signature_service,
+)
+from app.services.task_dispatch_service import TaskDispatchService
 from app.services.task_service import TaskCreateInput, TaskService
 
 router = APIRouter(prefix="/api/v1/boards/{board_id}/tasks")
@@ -120,6 +130,10 @@ def get_provider_application_service(request: Request) -> ProviderApplicationSer
 
 def get_flow_decomposition_service() -> FlowDecompositionService:
     return FlowDecompositionService()
+
+
+def get_task_dispatch_service() -> TaskDispatchService:
+    return TaskDispatchService()
 
 
 def get_current_user(
@@ -450,7 +464,25 @@ def _planner_snapshot_to_canvas_nodes(snapshot: object) -> list[FlowCanvasNode]:
 
 
 def _to_sse_data(payload: dict[str, object]) -> str:
-    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+    return f"data: {json.dumps(_camelize_payload_keys(payload), ensure_ascii=False)}\n\n"
+
+
+def _camelize_key(value: str) -> str:
+    parts = value.split("_")
+    if len(parts) <= 1:
+        return value
+    return parts[0] + "".join(part[:1].upper() + part[1:] for part in parts[1:])
+
+
+def _camelize_payload_keys(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            _camelize_key(str(key)): _camelize_payload_keys(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_camelize_payload_keys(item) for item in value]
+    return value
 
 
 def _parse_dependencies(raw: str | None) -> list[str]:
@@ -646,29 +678,31 @@ def _parse_iso_datetime(value: str | None) -> datetime | None:
 
 
 def _validate_callback_event_timestamp(value: str | None) -> datetime:
-    parsed = _parse_iso_datetime(value)
-    if parsed is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="occurredAt is required")
-    now = datetime.now(UTC)
-    if abs((now - parsed).total_seconds()) > _TASK_RUN_CALLBACK_ALLOWED_SKEW_SECONDS:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Callback event is outside the allowed time window",
+    try:
+        return validate_callback_event_timestamp_service(
+            value,
+            allowed_skew_seconds=_TASK_RUN_CALLBACK_ALLOWED_SKEW_SECONDS,
         )
-    return parsed
+    except CallbackTimestampValidationError as exc:
+        detail = str(exc)
+        status_code = (
+            status.HTTP_400_BAD_REQUEST
+            if detail == "occurredAt is required"
+            else status.HTTP_401_UNAUTHORIZED
+        )
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 def _event_keys_from_extras(extras: dict[str, str]) -> list[str]:
-    raw = extras.get("dispatch_event_keys", "")
-    return [item for item in raw.split(",") if item]
+    return event_keys_from_raw_service(extras.get("dispatch_event_keys", ""))
 
 
 def _append_event_key(extras: dict[str, str], key: str) -> None:
-    existing = _event_keys_from_extras(extras)
-    if key in existing:
-        return
-    existing.append(key)
-    extras["dispatch_event_keys"] = ",".join(existing[-_EVENT_KEY_MAX:])
+    extras["dispatch_event_keys"] = append_event_key_service(
+        extras.get("dispatch_event_keys", ""),
+        key,
+        event_key_max=_EVENT_KEY_MAX,
+    )
 
 
 def _derive_event_key(
@@ -679,15 +713,13 @@ def _derive_event_key(
     request_id: str | None,
     occurred_at: str | None,
 ) -> str:
-    if isinstance(idempotency_key, str) and idempotency_key.strip():
-        return idempotency_key.strip()
-    parts = [
-        run_id.strip(),
-        event_type.strip(),
-        (request_id or "").strip(),
-        (occurred_at or "").strip(),
-    ]
-    return "|".join(parts)
+    return derive_event_key_service(
+        run_id=run_id,
+        event_type=event_type,
+        idempotency_key=idempotency_key,
+        request_id=request_id,
+        occurred_at=occurred_at,
+    )
 
 
 def _task_callback_signature_payload(
@@ -700,19 +732,14 @@ def _task_callback_signature_payload(
     artifact: str | None,
     occurred_at: str | None,
 ) -> str:
-    return json.dumps(
-        {
-            "artifact": (artifact or "").strip(),
-            "eventType": event_type.strip(),
-            "idempotencyKey": (idempotency_key or "").strip(),
-            "message": (message or "").strip(),
-            "occurredAt": (occurred_at or "").strip(),
-            "requestId": (request_id or "").strip(),
-            "runId": run_id.strip(),
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
+    return build_task_callback_signature_payload_service(
+        run_id=run_id,
+        event_type=event_type,
+        idempotency_key=idempotency_key,
+        request_id=request_id,
+        message=message,
+        artifact=artifact,
+        occurred_at=occurred_at,
     )
 
 
@@ -727,7 +754,8 @@ def _sign_task_callback_event(
     artifact: str | None,
     occurred_at: str | None,
 ) -> str:
-    payload = _task_callback_signature_payload(
+    return sign_task_callback_event_service(
+        callback_token=callback_token,
         run_id=run_id,
         event_type=event_type,
         idempotency_key=idempotency_key,
@@ -736,7 +764,6 @@ def _sign_task_callback_event(
         artifact=artifact,
         occurred_at=occurred_at,
     )
-    return hmac.new(callback_token.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def _validate_task_callback_signature(
@@ -745,21 +772,20 @@ def _validate_task_callback_signature(
     expected_callback_token: str,
     payload: TaskRunEventRequest,
 ) -> None:
-    provided_signature = (payload.callback_signature or "").strip()
-    if provided_signature == "":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing callback signature")
-    expected_signature = _sign_task_callback_event(
-        callback_token=expected_callback_token,
-        run_id=run_id,
-        event_type=payload.event_type,
-        idempotency_key=payload.idempotency_key,
-        request_id=payload.request_id,
-        message=payload.message,
-        artifact=payload.artifact,
-        occurred_at=payload.occurred_at,
-    )
-    if not hmac.compare_digest(expected_signature, provided_signature):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid callback signature")
+    try:
+        validate_task_callback_signature_service(
+            provided_signature=payload.callback_signature,
+            callback_token=expected_callback_token,
+            run_id=run_id,
+            event_type=payload.event_type,
+            idempotency_key=payload.idempotency_key,
+            request_id=payload.request_id,
+            message=payload.message,
+            artifact=payload.artifact,
+            occurred_at=payload.occurred_at,
+        )
+    except CallbackSignatureValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
 
 
 def _to_flow_drafts_from_canvas(
@@ -957,143 +983,21 @@ def _dispatch_next_queued_task(
     board_id: str,
     instance_id: UUID | None = None,
 ) -> _DispatchResult | None:
-    tasks = _sorted_board_tasks(
-        task_service,
+    dispatch_service = TaskDispatchService(
+        task_service=task_service,
+        provider_application_service=provider_application_service,
+        callback_base_url_candidates_resolver=_event_callback_base_url_candidates,
+    )
+    result = dispatch_service.dispatch_next_queued_task(
         db_session,
         user_id=user_id,
         board_id=board_id,
+        execution_context=execution_context,
         instance_id=instance_id,
     )
-    tasks_by_flow_node: dict[tuple[str, str], Task] = {}
-    for task in tasks:
-        extras = task.extras if isinstance(task.extras, dict) else {}
-        flow_id = str(extras.get("flow_id", "")).strip()
-        node_id = str(extras.get("flow_node", "")).strip()
-        if flow_id and node_id:
-            tasks_by_flow_node[(flow_id, node_id)] = task
-
-    candidate: Task | None = None
-    for task in tasks:
-        if _is_runnable_queued_task(task, tasks_by_flow_node):
-            candidate = task
-            break
-
-    if candidate is None:
+    if result is None:
         return None
-
-    extras = dict(candidate.extras if isinstance(candidate.extras, dict) else {})
-
-    if not _claim_task_for_dispatch(db_session=db_session, task_id=candidate.id):
-        return None
-    db_session.refresh(candidate)
-    extras = dict(candidate.extras if isinstance(candidate.extras, dict) else {})
-
-    if not isinstance(candidate.agent_id, str) or candidate.agent_id.strip() == "":
-        extras["dispatch_status"] = "failed"
-        extras["dispatch_error"] = "task agent_id is required"
-        extras["finished_at"] = _iso_now()
-        task_service.update_task_status(
-            db_session,
-            task=candidate,
-            status="failed",
-            extras=extras,
-        )
-        return _DispatchResult(task_id=str(candidate.id), run_id=None)
-
-    session_key = str(extras.get("execution_session_key", "__new__")).strip() or "__new__"
-    run_id = uuid4().hex
-    callback_token = uuid4().hex
-    callback_base_urls = _event_callback_base_url_candidates(execution_context=execution_context)
-    if not callback_base_urls:
-        extras["dispatch_status"] = "failed"
-        extras["dispatch_error"] = "callback base url unavailable; set LINPO_TASK_EVENT_CALLBACK_BASE_URL"
-        extras["finished_at"] = _iso_now()
-        task_service.update_task_status(
-            db_session,
-            task=candidate,
-            status="failed",
-            extras=extras,
-        )
-        return _DispatchResult(task_id=str(candidate.id), run_id=run_id)
-    extras["dispatch_run_id"] = run_id
-    extras["dispatch_callback_token"] = callback_token
-    extras["dispatch_callback_urls"] = ",".join(callback_base_urls)
-    extras["dispatch_status"] = "running"
-    extras["dispatch_error"] = ""
-    extras["dispatch_last_event"] = "dispatched"
-    extras["dispatch_event_keys"] = ""
-    extras["dispatch_last_event_at"] = _iso_now()
-    extras["dispatched_at"] = _iso_now()
-    extras["dispatch_last_heartbeat_at"] = extras["dispatch_last_event_at"]
-    task_service.update_task_status(
-        db_session,
-        task=candidate,
-        status="running",
-        extras=extras,
-    )
-
-    dispatch_message = _build_task_dispatch_prompt(
-        board_id=board_id,
-        task=candidate,
-        run_id=run_id,
-        callback_token=callback_token,
-        callback_base_urls=callback_base_urls,
-    )
-
-    try:
-        send_result = provider_application_service.send_chat_message(
-            data_source="openclaw",
-            execution_context=execution_context,
-            agent_id=candidate.agent_id,
-            message=dispatch_message,
-            session_key=session_key,
-        )
-    except HTTPException as exc:
-        extras["dispatch_status"] = "failed"
-        extras["dispatch_error"] = str(exc.detail)
-        extras["finished_at"] = _iso_now()
-        task_service.update_task_status(
-            db_session,
-            task=candidate,
-            status="failed",
-            extras=extras,
-        )
-        return _DispatchResult(task_id=str(candidate.id), run_id=run_id)
-    except Exception as exc:  # pragma: no cover - exercised via integration tests
-        extras["dispatch_status"] = "failed"
-        extras["dispatch_error"] = str(exc) or exc.__class__.__name__
-        extras["finished_at"] = _iso_now()
-        task_service.update_task_status(
-            db_session,
-            task=candidate,
-            status="failed",
-            extras=extras,
-        )
-        return _DispatchResult(task_id=str(candidate.id), run_id=run_id)
-
-    if not isinstance(send_result, dict):
-        extras["dispatch_status"] = "failed"
-        extras["dispatch_error"] = "dispatch response must be an object"
-        extras["finished_at"] = _iso_now()
-        task_service.update_task_status(
-            db_session,
-            task=candidate,
-            status="failed",
-            extras=extras,
-        )
-        return _DispatchResult(task_id=str(candidate.id), run_id=run_id)
-
-    extras["dispatch_status"] = str(send_result.get("status", "accepted"))
-    request_id = send_result.get("request_id")
-    if isinstance(request_id, str) and request_id:
-        extras["dispatch_request_id"] = request_id
-    task_service.update_task_status(
-        db_session,
-        task=candidate,
-        status="running",
-        extras=extras,
-    )
-    return _DispatchResult(task_id=str(candidate.id), run_id=run_id)
+    return _DispatchResult(task_id=result.task_id, run_id=result.run_id)
 
 
 def _reconcile_stale_running_tasks(
@@ -1104,40 +1008,14 @@ def _reconcile_stale_running_tasks(
     board_id: str,
     instance_id: UUID | None = None,
 ) -> bool:
-    changed = False
-    stale_window = timedelta(seconds=_stale_running_seconds())
-    now = datetime.now(UTC)
-    tasks = _sorted_board_tasks(
-        task_service,
+    dispatch_service = TaskDispatchService(task_service=task_service)
+    result = dispatch_service.reconcile_stale_running_tasks(
         db_session,
         user_id=user_id,
         board_id=board_id,
         instance_id=instance_id,
     )
-    for task in tasks:
-        if task.status != "running":
-            continue
-
-        extras = dict(task.extras if isinstance(task.extras, dict) else {})
-        last_heartbeat = _parse_iso_datetime(extras.get("dispatch_last_heartbeat_at"))
-        fallback_updated_at = task.updated_at.astimezone(UTC) if task.updated_at.tzinfo else task.updated_at.replace(tzinfo=UTC)
-        heartbeat_at = last_heartbeat or fallback_updated_at
-        if now - heartbeat_at <= stale_window:
-            continue
-
-        extras["dispatch_status"] = "failed"
-        extras["dispatch_error"] = "task run stale timeout"
-        extras["dispatch_last_event"] = "stale_timeout"
-        extras["dispatch_last_event_at"] = _iso_now()
-        extras["finished_at"] = _iso_now()
-        task_service.update_task_status(
-            db_session,
-            task=task,
-            status="failed",
-            extras=extras,
-        )
-        changed = True
-    return changed
+    return result.changed
 
 
 def _dispatch_queue(
@@ -2336,7 +2214,7 @@ def list_tasks(
     return [_to_task_item(task) for task in tasks]
 
 
-@router.get("/{task_id}/output-preview", response_model=TaskOutputPreviewResponse, tags=["tasks"])
+@router.get("/{task_id}/output-preview", response_model=TaskBoardOutputPreviewResponse, tags=["tasks"])
 def preview_task_output(
     board_id: str,
     task_id: UUID,
@@ -2344,7 +2222,7 @@ def preview_task_output(
     current_user: User = Depends(get_current_user),
     db_session: Session = Depends(get_session),
     task_service: TaskService = Depends(get_task_service),
-) -> TaskOutputPreviewResponse:
+) -> TaskBoardOutputPreviewResponse:
     task = _get_board_task_for_user(
         board_id=board_id,
         task_id=task_id,
@@ -2362,11 +2240,12 @@ def preview_task_output(
             )
         output_path = fallback
     normalized_board_id = board_id.strip() or "default"
-    return build_task_output_preview_helper(
+    preview = build_task_output_preview_helper(
         board_id=normalized_board_id,
         task=task,
         output_path=output_path,
     )
+    return TaskBoardOutputPreviewResponse.model_validate(preview.model_dump(mode="json"))
 
 
 @router.get("/{task_id}/output-file", tags=["tasks"])

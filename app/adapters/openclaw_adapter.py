@@ -5,13 +5,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 
-from fastapi import HTTPException
-
 from app.adapters.provider_adapter import (
     ProviderAdapterError,
     ProviderPayloadResult,
     ProviderSnapshotResult,
     ProviderStreamEvent,
+    ProviderUpstreamError,
 )
 from app.domain.provider_contract import DomainProviderRequest
 from app.domain.provider_contract_mapping import (
@@ -366,7 +365,10 @@ class OpenClawAdapter:
                 if isinstance(raw_message, str) and raw_message:
                     message = raw_message
             return ProviderPayloadResult(
-                response=self._failure_response(request, HTTPException(status_code=503, detail=message)),
+                response=self._failure_response(
+                    request,
+                    ProviderUpstreamError(status_code=503, message=message),
+                ),
                 payload=None,
             )
 
@@ -421,12 +423,16 @@ class OpenClawAdapter:
 def _normalize_exception_message(exc: Exception) -> tuple[int, str]:
     if isinstance(exc, TimeoutError):
         return (503, str(exc) or "OpenClaw operation timed out")
-    if isinstance(exc, HTTPException):
-        if isinstance(exc.detail, str):
-            return (exc.status_code, exc.detail)
-        if exc.detail is not None:
-            return (exc.status_code, str(exc.detail))
-        return (exc.status_code, "OpenClaw request failed")
+
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        detail = getattr(exc, "detail", None)
+        if isinstance(detail, str):
+            return (status_code, detail)
+        if detail is not None:
+            return (status_code, str(detail))
+        return (status_code, str(exc) or "OpenClaw request failed")
+
     return (503, str(exc) or exc.__class__.__name__)
 
 

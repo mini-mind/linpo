@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from dataclasses import asdict
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -51,7 +52,7 @@ def test_safe_build_token_group_maps_usage_cost_daily_samples() -> None:
 
     assert token_group.instance_name == "alpha-instance"
     assert token_group.total_tokens == 75
-    assert [sample.model_dump() for sample in token_group.samples] == [
+    assert [asdict(sample) for sample in token_group.samples] == [
         {
             "label": "2026-03-31",
             "input_tokens": 10,
@@ -113,7 +114,7 @@ def test_safe_build_token_group_accepts_snake_case_and_string_numbers() -> None:
     )
 
     assert token_group.total_tokens == 96
-    assert [sample.model_dump() for sample in token_group.samples] == [
+    assert [asdict(sample) for sample in token_group.samples] == [
         {
             "label": "2026-03-31",
             "input_tokens": 24,

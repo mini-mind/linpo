@@ -5,6 +5,8 @@
 
 import type {
   InstanceAgentDocListResponse,
+  InstanceAgentDocItem,
+  InstanceFileItem,
   InstanceFileListResponse,
   InstanceItem,
   InstancePairCodeRequest,
@@ -16,6 +18,52 @@ import type {
   TaskOutputPreviewResponse,
 } from './types';
 import { API_BASE_URL } from './apiBaseUrl';
+
+function normalizeInstanceItem(payload: unknown): InstanceItem {
+  const record = (payload && typeof payload === 'object') ? (payload as Record<string, unknown>) : {};
+  return {
+    id: String(record.id ?? ''),
+    name: String(record.name ?? ''),
+    type: String(record.type ?? ''),
+    endpoint: String(record.endpoint ?? ''),
+    status: String(record.status ?? ''),
+    last_check_at: (record.last_check_at as string | null | undefined) ?? (record.lastCheckAt as string | null | undefined) ?? null,
+    created_at: String(record.created_at ?? record.createdAt ?? ''),
+  };
+}
+
+function normalizeInstanceFileItem(payload: unknown): InstanceFileItem {
+  const record = (payload && typeof payload === 'object') ? (payload as Record<string, unknown>) : {};
+  return {
+    id: String(record.id ?? ''),
+    task_id: String(record.task_id ?? record.taskId ?? ''),
+    agent_id: String(record.agent_id ?? record.agentId ?? ''),
+    agent_name: String(record.agent_name ?? record.agentName ?? ''),
+    task_title: String(record.task_title ?? record.taskTitle ?? ''),
+    task_status: String(record.task_status ?? record.taskStatus ?? 'queued') as InstanceFileItem['task_status'],
+    requirement_id: (record.requirement_id as string | null | undefined) ?? (record.requirementId as string | null | undefined) ?? null,
+    requirement_title: (record.requirement_title as string | null | undefined) ?? (record.requirementTitle as string | null | undefined) ?? null,
+    path: String(record.path ?? ''),
+    name: String(record.name ?? ''),
+    exists: Boolean(record.exists),
+    size_bytes: (record.size_bytes as number | null | undefined) ?? (record.sizeBytes as number | null | undefined) ?? null,
+    updated_at: String(record.updated_at ?? record.updatedAt ?? ''),
+  };
+}
+
+function normalizeInstanceAgentDocItem(payload: unknown): InstanceAgentDocItem {
+  const record = (payload && typeof payload === 'object') ? (payload as Record<string, unknown>) : {};
+  return {
+    id: String(record.id ?? ''),
+    agent_id: String(record.agent_id ?? record.agentId ?? ''),
+    agent_name: String(record.agent_name ?? record.agentName ?? ''),
+    path: String(record.path ?? ''),
+    name: String(record.name ?? ''),
+    exists: Boolean(record.exists),
+    size_bytes: (record.size_bytes as number | null | undefined) ?? (record.sizeBytes as number | null | undefined) ?? null,
+    updated_at: String(record.updated_at ?? record.updatedAt ?? ''),
+  };
+}
 
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -36,21 +84,24 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export async function listInstances(): Promise<InstanceItem[]> {
-  return fetchApi<InstanceItem[]>('/api/v1/instances');
+  const payload = await fetchApi<unknown[]>('/api/v1/instances');
+  return Array.isArray(payload) ? payload.map((item) => normalizeInstanceItem(item)) : [];
 }
 
 export async function createInstance(payload: InstanceWriteRequest): Promise<InstanceItem> {
-  return fetchApi<InstanceItem>('/api/v1/instances', {
+  const created = await fetchApi<unknown>('/api/v1/instances', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
+  return normalizeInstanceItem(created);
 }
 
 export async function createInstanceByPairCode(payload: InstancePairCodeRequest): Promise<InstanceItem> {
-  return fetchApi<InstanceItem>('/api/v1/instances/pair-code', {
+  const created = await fetchApi<unknown>('/api/v1/instances/pair-code', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
+  return normalizeInstanceItem(created);
 }
 
 export async function validateInstance(
@@ -75,10 +126,11 @@ export async function updateInstance(
   instanceId: string,
   payload: InstancePatchRequest
 ): Promise<InstanceItem> {
-  return fetchApi<InstanceItem>(`/api/v1/instances/${instanceId}`, {
+  const updated = await fetchApi<unknown>(`/api/v1/instances/${instanceId}`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
   });
+  return normalizeInstanceItem(updated);
 }
 
 export async function deleteInstance(instanceId: string): Promise<InstanceDeleteResponse> {
@@ -106,7 +158,13 @@ export async function listInstanceFiles(
     params.set('onlyExisting', 'true');
   }
   const suffix = params.toString() ? `?${params.toString()}` : '';
-  return fetchApi<InstanceFileListResponse>(`/api/v1/instances/${encodeURIComponent(instanceId)}/files${suffix}`);
+  const payload = await fetchApi<Record<string, unknown>>(`/api/v1/instances/${encodeURIComponent(instanceId)}/files${suffix}`);
+  const items = Array.isArray(payload.items) ? payload.items.map((item) => normalizeInstanceFileItem(item)) : [];
+  return {
+    items,
+    total: Number(payload.total ?? items.length),
+    existing_count: Number(payload.existing_count ?? payload.existingCount ?? items.filter((item) => item.exists).length),
+  };
 }
 
 export async function previewInstanceFile(
@@ -143,9 +201,15 @@ export async function listInstanceAgentDocs(
     params.set('onlyExisting', 'true');
   }
   const suffix = params.toString() ? `?${params.toString()}` : '';
-  return fetchApi<InstanceAgentDocListResponse>(
+  const payload = await fetchApi<Record<string, unknown>>(
     `/api/v1/instances/${encodeURIComponent(instanceId)}/agent-docs${suffix}`
   );
+  const items = Array.isArray(payload.items) ? payload.items.map((item) => normalizeInstanceAgentDocItem(item)) : [];
+  return {
+    items,
+    total: Number(payload.total ?? items.length),
+    existing_count: Number(payload.existing_count ?? payload.existingCount ?? items.filter((item) => item.exists).length),
+  };
 }
 
 export async function previewInstanceAgentDoc(

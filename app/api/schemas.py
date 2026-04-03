@@ -6,6 +6,21 @@ from app.domain.agent import AgentStatus
 from app.domain.event import EventType
 
 
+def _to_camel_case(value: str) -> str:
+    parts = value.split("_")
+    if len(parts) <= 1:
+        return value
+    return parts[0] + "".join(part[:1].upper() + part[1:] for part in parts[1:])
+
+
+class _CommonCamelResponseModel(BaseModel):
+    model_config = ConfigDict(alias_generator=_to_camel_case, populate_by_name=True)
+
+
+class _CommonCamelRequestModel(BaseModel):
+    model_config = ConfigDict(alias_generator=_to_camel_case, populate_by_name=False)
+
+
 class AgentListItem(BaseModel):
     id: str
     name: str
@@ -52,19 +67,19 @@ class NodeDetailResponse(BaseModel):
     events: list[EventRecordItem]
 
 
-class ChatSendRequest(BaseModel):
+class ChatSendRequest(_CommonCamelRequestModel):
     message: str
-    session_key: str = Field(default="", alias="sessionKey")
+    session_key: str = Field(default="")
 
 
-class ChatSendResponse(BaseModel):
+class ChatSendResponse(_CommonCamelResponseModel):
     request_id: str
     agent_id: str
     status: str
     message: str | None = None
 
 
-class ChatPauseResponse(BaseModel):
+class ChatPauseResponse(_CommonCamelResponseModel):
     request_id: str
     agent_id: str
     status: str
@@ -74,7 +89,7 @@ class ChatPauseResponse(BaseModel):
 # === Session API Schemas ===
 
 
-class SessionListItem(BaseModel):
+class SessionListItem(_CommonCamelResponseModel):
     key: str
     kind: str  # direct | group | global | unknown
     label: str | None = None
@@ -83,25 +98,25 @@ class SessionListItem(BaseModel):
     updated_at: int | None = None
 
 
-class SessionsListResponse(BaseModel):
+class SessionsListResponse(_CommonCamelResponseModel):
     ts: int
     count: int
     sessions: list[SessionListItem]
     defaults: dict[str, Any] | None = None
 
 
-class SessionPreviewItem(BaseModel):
+class SessionPreviewItem(_CommonCamelResponseModel):
     role: str  # user | assistant | tool | system | other
     text: str
 
 
-class SessionPreview(BaseModel):
+class SessionPreview(_CommonCamelResponseModel):
     key: str
     status: str  # ok | empty | missing | error
     items: list[SessionPreviewItem]
 
 
-class SessionHistoryResponse(BaseModel):
+class SessionHistoryResponse(_CommonCamelResponseModel):
     ts: int
     items: list[SessionPreviewItem]
 
@@ -124,48 +139,42 @@ class ModelsListResponse(BaseModel):
 # === Session Write API Schemas ===
 
 
-class SessionPatchRequest(BaseModel):
+class SessionPatchRequest(_CommonCamelRequestModel):
     agent_id: str | None = None
     model: str | None = None
     thinking_level: str | None = None
 
 
-class SessionPatchResponse(BaseModel):
+class SessionPatchResponse(_CommonCamelResponseModel):
     updated: bool
 
 
-class SessionResetResponse(BaseModel):
+class SessionResetResponse(_CommonCamelResponseModel):
     reset: bool
 
 
-class SessionDeleteResponse(BaseModel):
+class SessionDeleteResponse(_CommonCamelResponseModel):
     deleted: bool
 
 
-class InstanceWriteRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
+class InstanceWriteRequest(_CommonCamelRequestModel):
     name: str
     type: str
     endpoint: str
-    gateway_token: str = Field(alias="gatewayToken")
+    gateway_token: str
 
 
-class InstancePairCodeRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
+class InstancePairCodeRequest(_CommonCamelRequestModel):
     name: str
     type: str
-    pair_code: str = Field(alias="pairCode")
+    pair_code: str
 
 
-class InstancePatchRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
+class InstancePatchRequest(_CommonCamelRequestModel):
     name: str | None = None
     type: str | None = None
     endpoint: str | None = None
-    gateway_token: str | None = Field(default=None, alias="gatewayToken")
+    gateway_token: str | None = Field(default=None)
 
     @field_validator("gateway_token", mode="before")
     @classmethod
@@ -175,7 +184,7 @@ class InstancePatchRequest(BaseModel):
         return value
 
 
-class InstanceItem(BaseModel):
+class InstanceItem(_CommonCamelResponseModel):
     id: str
     name: str
     type: str
@@ -185,25 +194,25 @@ class InstanceItem(BaseModel):
     created_at: str
 
 
-class InstanceValidationResponse(BaseModel):
+class InstanceValidationResponse(_CommonCamelResponseModel):
     ok: bool
     status: str
     message: str
     code: str | None = None
 
 
-class InstanceValidationErrorResponse(BaseModel):
+class InstanceValidationErrorResponse(_CommonCamelResponseModel):
     ok: bool
     status: str
     message: str
     code: str | None = None
 
 
-class InstanceDeleteResponse(BaseModel):
+class InstanceDeleteResponse(_CommonCamelResponseModel):
     deleted: bool
 
 
-class InstanceFileItem(BaseModel):
+class InstanceFileItem(_CommonCamelResponseModel):
     id: str
     task_id: str
     agent_id: str
@@ -219,13 +228,13 @@ class InstanceFileItem(BaseModel):
     updated_at: str
 
 
-class InstanceFileListResponse(BaseModel):
+class InstanceFileListResponse(_CommonCamelResponseModel):
     items: list[InstanceFileItem]
     total: int
     existing_count: int
 
 
-class InstanceAgentDocItem(BaseModel):
+class InstanceAgentDocItem(_CommonCamelResponseModel):
     id: str
     agent_id: str
     agent_name: str
@@ -236,36 +245,32 @@ class InstanceAgentDocItem(BaseModel):
     updated_at: str
 
 
-class InstanceAgentDocListResponse(BaseModel):
+class InstanceAgentDocListResponse(_CommonCamelResponseModel):
     items: list[InstanceAgentDocItem]
     total: int
     existing_count: int
 
 
-class AgentMountRequestPayload(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
+class AgentMountRequestPayload(_CommonCamelRequestModel):
     email: str
     name: str
     type: str
     endpoint: str
-    gateway_token: str = Field(alias="gatewayToken")
+    gateway_token: str
 
 
-class AgentUnmountRequestPayload(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
+class AgentUnmountRequestPayload(_CommonCamelRequestModel):
     email: str
-    instance_id: str = Field(alias="instanceId")
+    instance_id: str
 
 
-class AgentPairingRequestResponse(BaseModel):
+class AgentPairingRequestResponse(_CommonCamelResponseModel):
     confirmation_url: str
     expires_at: str
     expires_in_seconds: int
 
 
-class AgentReceiptConfirmResponse(BaseModel):
+class AgentReceiptConfirmResponse(_CommonCamelResponseModel):
     action: str
     mounted: bool
     unmounted: bool
@@ -273,7 +278,7 @@ class AgentReceiptConfirmResponse(BaseModel):
     instance_id: str | None = None
 
 
-class UserMessageItem(BaseModel):
+class UserMessageItem(_CommonCamelResponseModel):
     id: str
     target_email: str
     action: str
@@ -286,7 +291,7 @@ class UserMessageItem(BaseModel):
     created_at: str
 
 
-class UserMessageReadResponse(BaseModel):
+class UserMessageReadResponse(_CommonCamelResponseModel):
     read: bool
 
 
@@ -436,7 +441,15 @@ TaskSource = Literal["provider", "flow"]
 TaskRunEventType = Literal["started", "heartbeat", "progress", "need_approval", "completed", "failed"]
 
 
-class TaskItem(BaseModel):
+class _TasksFlowResponseModel(BaseModel):
+    model_config = ConfigDict(alias_generator=_to_camel_case, populate_by_name=True)
+
+
+class _TasksFlowRequestModel(BaseModel):
+    model_config = ConfigDict(alias_generator=_to_camel_case, populate_by_name=False)
+
+
+class TaskItem(_TasksFlowResponseModel):
     id: str
     board_id: str
     title: str
@@ -452,14 +465,14 @@ class TaskItem(BaseModel):
     updated_at: str
 
 
-class TaskCreateRequest(BaseModel):
+class TaskCreateRequest(_TasksFlowRequestModel):
     requirement: str = Field(min_length=1, max_length=4000)
     agent_id: str = Field(min_length=1, max_length=128)
     agent_name: str = Field(min_length=1, max_length=128)
     instance_id: str = Field(min_length=1)
 
 
-class FlowGenerateRequest(BaseModel):
+class FlowGenerateRequest(_TasksFlowRequestModel):
     requirement: str = Field(min_length=1, max_length=4000)
     instance_id: str = Field(min_length=1)
     executor_agent_id: str = Field(min_length=1, max_length=128)
@@ -467,11 +480,11 @@ class FlowGenerateRequest(BaseModel):
     manager_agent_id: str | None = Field(default=None, max_length=128)
     planner_session_key: str | None = Field(default=None, max_length=256)
     flow_name: str | None = Field(default=None, max_length=256)
-    current_nodes: list["FlowCanvasNode"] = Field(default_factory=list)
-    current_edges: list["FlowCanvasEdge"] = Field(default_factory=list)
+    current_nodes: list["FlowCanvasNodeRequest"] = Field(default_factory=list)
+    current_edges: list["FlowCanvasEdgeRequest"] = Field(default_factory=list)
 
 
-class FlowConfirmRequest(BaseModel):
+class FlowConfirmRequest(_TasksFlowRequestModel):
     instance_id: str = Field(min_length=1)
     requirement_id: str | None = Field(default=None, max_length=128)
     executor_agent_id: str = Field(min_length=1, max_length=128)
@@ -479,21 +492,21 @@ class FlowConfirmRequest(BaseModel):
     requirement_title: str | None = Field(default=None, max_length=4000)
     planner_session_key: str | None = Field(default=None, max_length=256)
     execution_session_prefix: str | None = Field(default=None, max_length=256)
-    nodes: list["FlowCanvasNode"]
-    edges: list["FlowCanvasEdge"]
+    nodes: list["FlowCanvasNodeRequest"]
+    edges: list["FlowCanvasEdgeRequest"]
 
 
 FlowChatRole = Literal["user", "assistant", "system"]
 FlowPlannerSessionStatus = Literal["planning", "completed", "stopped", "failed"]
 
 
-class FlowChatMessageItem(BaseModel):
+class FlowChatMessageItem(_TasksFlowResponseModel):
     role: FlowChatRole
     content: str
     created_at: str
 
 
-class FlowCanvasNode(BaseModel):
+class FlowCanvasNode(_TasksFlowResponseModel):
     id: str
     title: str
     description: str | None = Field(default=None, max_length=16000)
@@ -525,20 +538,20 @@ class FlowCanvasNode(BaseModel):
         return normalized
 
 
-class FlowCanvasEdge(BaseModel):
+class FlowCanvasEdge(_TasksFlowResponseModel):
     id: str
     source: str
     target: str
 
 
-class FlowDraftLaneItem(BaseModel):
+class FlowDraftLaneItem(_TasksFlowResponseModel):
     id: str
     name: str
     agent_id: str | None = None
     created_at: str
 
 
-class FlowDraftItem(BaseModel):
+class FlowDraftItem(_TasksFlowResponseModel):
     id: str
     name: str
     requirement: str
@@ -568,14 +581,30 @@ class FlowDraftItem(BaseModel):
         return normalized
 
 
-class FlowDraftUpsertRequest(BaseModel):
+class FlowChatMessageRequest(FlowChatMessageItem):
+    model_config = ConfigDict(alias_generator=_to_camel_case, populate_by_name=False)
+
+
+class FlowCanvasNodeRequest(FlowCanvasNode):
+    model_config = ConfigDict(alias_generator=_to_camel_case, populate_by_name=False)
+
+
+class FlowCanvasEdgeRequest(FlowCanvasEdge):
+    model_config = ConfigDict(alias_generator=_to_camel_case, populate_by_name=False)
+
+
+class FlowDraftLaneRequest(FlowDraftLaneItem):
+    model_config = ConfigDict(alias_generator=_to_camel_case, populate_by_name=False)
+
+
+class FlowDraftUpsertRequest(_TasksFlowRequestModel):
     id: str
     name: str
     requirement: str
-    nodes: list[FlowCanvasNode] = Field(default_factory=list)
-    edges: list[FlowCanvasEdge] = Field(default_factory=list)
-    planner_messages: list[FlowChatMessageItem] = Field(default_factory=list)
-    lanes: list[FlowDraftLaneItem] = Field(default_factory=list)
+    nodes: list[FlowCanvasNodeRequest] = Field(default_factory=list)
+    edges: list[FlowCanvasEdgeRequest] = Field(default_factory=list)
+    planner_messages: list[FlowChatMessageRequest] = Field(default_factory=list)
+    lanes: list[FlowDraftLaneRequest] = Field(default_factory=list)
     node_lane_by_id: dict[str, str] = Field(default_factory=dict)
     planner_session_key: str | None = None
     execution_session_prefix: str | None = None
@@ -598,12 +627,12 @@ class FlowDraftUpsertRequest(BaseModel):
         return normalized
 
 
-class FlowDraftDeleteResponse(BaseModel):
+class FlowDraftDeleteResponse(_TasksFlowResponseModel):
     deleted: bool
     flow_id: str
 
 
-class FlowGenerateResponse(BaseModel):
+class FlowGenerateResponse(_TasksFlowResponseModel):
     board_id: str
     planner_session_key: str
     manager_session_key: str
@@ -614,7 +643,7 @@ class FlowGenerateResponse(BaseModel):
     created_task_ids: list[str]
 
 
-class FlowConfirmResponse(BaseModel):
+class FlowConfirmResponse(_TasksFlowResponseModel):
     board_id: str
     planner_session_key: str
     manager_session_key: str
@@ -626,29 +655,29 @@ class FlowConfirmResponse(BaseModel):
     dispatched_task_ids: list[str]
 
 
-class FlowPlannerSessionItem(BaseModel):
+class FlowPlannerSessionItem(_TasksFlowResponseModel):
     session_key: str
     status: FlowPlannerSessionStatus
     revision: int
     updated_at: str
 
 
-class FlowPlannerStopRequest(BaseModel):
+class FlowPlannerStopRequest(_TasksFlowRequestModel):
     planner_session_key: str = Field(min_length=1, max_length=256)
 
 
-class FlowPlannerStopResponse(BaseModel):
+class FlowPlannerStopResponse(_TasksFlowResponseModel):
     session_key: str
     status: FlowPlannerSessionStatus
     revision: int
     updated_at: str
 
 
-class FlowPlannerSessionProbeResponse(BaseModel):
+class FlowPlannerSessionProbeResponse(_TasksFlowResponseModel):
     exists: bool
 
 
-class FlowPlannerNodeDraftItem(BaseModel):
+class FlowPlannerNodeDraftItem(_TasksFlowResponseModel):
     id: str
     title: str
     description: str | None = Field(default="")
@@ -675,24 +704,28 @@ class FlowPlannerNodeDraftItem(BaseModel):
         return normalized
 
 
-class FlowPlannerNodeUpsertRequest(BaseModel):
-    node: FlowPlannerNodeDraftItem
+class FlowPlannerNodeDraftRequest(FlowPlannerNodeDraftItem):
+    model_config = ConfigDict(alias_generator=_to_camel_case, populate_by_name=False)
 
 
-class FlowPlannerNodeDeleteRequest(BaseModel):
+class FlowPlannerNodeUpsertRequest(_TasksFlowRequestModel):
+    node: FlowPlannerNodeDraftRequest
+
+
+class FlowPlannerNodeDeleteRequest(_TasksFlowRequestModel):
     node_id: str = Field(min_length=1, max_length=128)
 
 
-class FlowPlannerSessionCompleteRequest(BaseModel):
-    nodes: list[FlowPlannerNodeDraftItem] = Field(default_factory=list)
+class FlowPlannerSessionCompleteRequest(_TasksFlowRequestModel):
+    nodes: list[FlowPlannerNodeDraftRequest] = Field(default_factory=list)
     summary: str | None = Field(default=None, max_length=4000)
 
 
-class FlowPlannerSessionFailRequest(BaseModel):
+class FlowPlannerSessionFailRequest(_TasksFlowRequestModel):
     reason: str = Field(min_length=1, max_length=4000)
 
-class TaskRunEventRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+
+class TaskRunEventRequest(_TasksFlowRequestModel):
 
     event_type: TaskRunEventType = Field(alias="eventType")
     callback_token: str = Field(min_length=1, max_length=128, alias="callbackToken")
@@ -704,7 +737,7 @@ class TaskRunEventRequest(BaseModel):
     occurred_at: str | None = Field(default=None, max_length=64, alias="occurredAt")
 
 
-class TaskRunEventResponse(BaseModel):
+class TaskRunEventResponse(_TasksFlowResponseModel):
     accepted: bool
     task_id: str
     run_id: str
@@ -712,7 +745,7 @@ class TaskRunEventResponse(BaseModel):
     dispatched_task_ids: list[str]
 
 
-class TaskInterruptResponse(BaseModel):
+class TaskInterruptResponse(_TasksFlowResponseModel):
     accepted: bool
     task_id: str
     status: TaskStatus
@@ -721,7 +754,7 @@ class TaskInterruptResponse(BaseModel):
     message: str | None = None
 
 
-class TaskContinueResponse(BaseModel):
+class TaskContinueResponse(_TasksFlowResponseModel):
     accepted: bool
     task_id: str
     status: TaskStatus
@@ -729,7 +762,7 @@ class TaskContinueResponse(BaseModel):
     message: str | None = None
 
 
-class TaskDeleteResponse(BaseModel):
+class TaskDeleteResponse(_TasksFlowResponseModel):
     deleted: bool
     deleted_task_ids: list[str]
     requirement_id: str | None = None
@@ -748,35 +781,45 @@ class TaskOutputPreviewResponse(BaseModel):
     download_url: str
 
 
-class FlowRequirementRenameRequest(BaseModel):
+class TaskBoardOutputPreviewResponse(_TasksFlowResponseModel):
+    path: str
+    kind: TaskOutputPreviewKind
+    mime_type: str
+    size_bytes: int
+    truncated: bool
+    content: str | None
+    download_url: str
+
+
+class FlowRequirementRenameRequest(_TasksFlowRequestModel):
     name: str = Field(min_length=1, max_length=255)
 
 
-class FlowRequirementRenameResponse(BaseModel):
+class FlowRequirementRenameResponse(_TasksFlowResponseModel):
     requirement_id: str
     requirement_title: str
     updated_task_ids: list[str]
 
 
-class FlowRequirementStopResponse(BaseModel):
+class FlowRequirementStopResponse(_TasksFlowResponseModel):
     requirement_id: str
     stopped_task_ids: list[str]
     running_task_ids: list[str]
 
 
-class FlowRequirementContinueResponse(BaseModel):
+class FlowRequirementContinueResponse(_TasksFlowResponseModel):
     requirement_id: str
     resumed_task_ids: list[str]
     dispatched_task_ids: list[str]
 
 
-class FlowRequirementSyncRequest(BaseModel):
+class FlowRequirementSyncRequest(_TasksFlowRequestModel):
     requirement_title: str | None = Field(default=None, max_length=4000)
-    nodes: list[FlowCanvasNode]
-    edges: list[FlowCanvasEdge]
+    nodes: list[FlowCanvasNodeRequest]
+    edges: list[FlowCanvasEdgeRequest]
 
 
-class FlowRequirementSyncResponse(BaseModel):
+class FlowRequirementSyncResponse(_TasksFlowResponseModel):
     requirement_id: str
     updated_task_ids: list[str]
     created_task_ids: list[str]

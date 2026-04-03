@@ -12,6 +12,13 @@ import {
   parseObserverRealtimeMessage,
   type ResyncRequiredMessage,
 } from './types';
+import {
+  decodeFlowChatMessageItem,
+  decodeFlowPlannerNodeDraft,
+  decodeFlowPlannerNodeOperation,
+  decodeFlowPlannerSessionStatus,
+  decodeKanbanTaskItem,
+} from './taskFlowContract';
 
 export interface WebSocketLike {
   addEventListener(type: string, listener: (event?: unknown) => void): void;
@@ -341,22 +348,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-function isKanbanTaskItem(value: unknown): value is KanbanTaskItem {
-  if (!isRecord(value)) {
-    return false;
+function readPayloadString(payload: Record<string, unknown>, snakeKey: string, camelKey: string): string {
+  const value = snakeKey in payload ? payload[snakeKey] : payload[camelKey];
+  if (typeof value !== 'string') {
+    throw new Error('Invalid realtime payload field');
   }
-  return (
-    typeof value.id === 'string' &&
-    typeof value.board_id === 'string' &&
-    typeof value.title === 'string' &&
-    typeof value.summary === 'string' &&
-    typeof value.status === 'string' &&
-    typeof value.source === 'string' &&
-    Array.isArray(value.artifacts) &&
-    isRecord(value.extras) &&
-    typeof value.created_at === 'string' &&
-    typeof value.updated_at === 'string'
-  );
+  return value;
+}
+
+function decodeRequired<T>(value: T | null): T {
+  if (value !== null) {
+    return value;
+  }
+  throw new Error('Invalid realtime payload');
+}
+
+function decodeArray<T>(value: unknown, decoder: (item: unknown) => T | null): T[] {
+  if (!Array.isArray(value)) {
+    throw new Error('Invalid realtime payload');
+  }
+  return value.map((item) => decodeRequired(decoder(item)));
 }
 
 function isBoardChannel(value: unknown): value is `board:${string}:tasks` {
@@ -409,9 +420,7 @@ function parseBoardRealtimeMessage(raw: string): BoardRealtimeMessage {
       throw new Error('Invalid board realtime message');
     }
     if (action === 'upsert') {
-      if (!isKanbanTaskItem(payload.task)) {
-        throw new Error('Invalid board realtime message');
-      }
+      const task = decodeRequired(decodeKanbanTaskItem(payload.task));
       return {
         type,
         channel,
@@ -419,11 +428,12 @@ function parseBoardRealtimeMessage(raw: string): BoardRealtimeMessage {
         timestamp,
         payload: {
           action: 'upsert',
-          task: payload.task,
+          task,
         },
       };
     }
-    if (typeof payload.task_id !== 'string' || payload.task_id.trim() === '') {
+    const taskId = readPayloadString(payload, 'task_id', 'taskId');
+    if (taskId.trim() === '') {
       throw new Error('Invalid board realtime message');
     }
     return {
@@ -433,7 +443,7 @@ function parseBoardRealtimeMessage(raw: string): BoardRealtimeMessage {
       timestamp,
       payload: {
         action: 'delete',
-        task_id: payload.task_id,
+        task_id: taskId,
       },
     };
   }
@@ -454,48 +464,6 @@ function parseBoardRealtimeMessage(raw: string): BoardRealtimeMessage {
   }
 
   throw new Error('Invalid board realtime message');
-}
-
-function isFlowChatMessageItem(value: unknown): value is FlowChatMessageItem {
-  if (!isRecord(value)) {
-    return false;
-  }
-  return (
-    (value.role === 'user' || value.role === 'assistant' || value.role === 'system') &&
-    typeof value.content === 'string' &&
-    typeof value.created_at === 'string'
-  );
-}
-
-function isFlowPlannerNodeDraft(value: unknown): value is FlowPlannerNodeDraft {
-  if (!isRecord(value)) {
-    return false;
-  }
-  return (
-    typeof value.id === 'string' &&
-    typeof value.title === 'string' &&
-    (value.description === undefined || value.description === null || typeof value.description === 'string') &&
-    Array.isArray(value.depends_on) &&
-    value.depends_on.every((item) => typeof item === 'string') &&
-    typeof value.sensitive === 'boolean'
-  );
-}
-
-function isFlowPlannerNodeOperation(value: unknown): value is FlowPlannerNodeOperation {
-  if (!isRecord(value) || typeof value.type !== 'string') {
-    return false;
-  }
-  if (value.type === 'upsert_node') {
-    return isFlowPlannerNodeDraft(value.node);
-  }
-  if (value.type === 'delete_node') {
-    return typeof value.node_id === 'string' && value.node_id.trim() !== '';
-  }
-  return false;
-}
-
-function isFlowPlannerSessionStatus(value: unknown): value is FlowPlannerSessionStatus {
-  return value === 'planning' || value === 'completed' || value === 'stopped' || value === 'failed';
 }
 
 function isSessionMessagesChannel(value: unknown): value is `session:${string}:messages` {
@@ -532,81 +500,70 @@ function parseFlowPlannerRealtimeMessage(raw: string): FlowPlannerRealtimeMessag
   }
 
   if (type === 'planner_messages_updated') {
-    if (
-      typeof payload.session_key !== 'string' ||
-      !Array.isArray(payload.messages) ||
-      !payload.messages.every((item) => isFlowChatMessageItem(item))
-    ) {
-      throw new Error('Invalid flow planner realtime message');
-    }
+    const sessionKey = readPayloadString(payload, 'session_key', 'sessionKey');
+    const messages = decodeArray(payload.messages, decodeFlowChatMessageItem);
     return {
       type,
       channel,
       seq,
       timestamp,
       payload: {
-        session_key: payload.session_key,
-        messages: payload.messages,
+        session_key: sessionKey,
+        messages,
       },
     };
   }
 
   if (type === 'planner_nodes_patched') {
-    if (
-      typeof payload.session_key !== 'string' ||
-      typeof payload.revision !== 'number' ||
-      !Number.isInteger(payload.revision) ||
-      payload.revision < 0 ||
-      !Array.isArray(payload.operations) ||
-      !payload.operations.every((item) => isFlowPlannerNodeOperation(item))
-    ) {
+    const sessionKey = readPayloadString(payload, 'session_key', 'sessionKey');
+    if (typeof payload.revision !== 'number' || !Number.isInteger(payload.revision) || payload.revision < 0) {
       throw new Error('Invalid flow planner realtime message');
     }
+    const operations = decodeArray(payload.operations, decodeFlowPlannerNodeOperation);
     return {
       type,
       channel,
       seq,
       timestamp,
       payload: {
-        session_key: payload.session_key,
+        session_key: sessionKey,
         revision: payload.revision,
-        operations: payload.operations,
+        operations,
       },
     };
   }
 
   if (type === 'planner_snapshot_updated') {
-    if (
-      typeof payload.session_key !== 'string' ||
-      typeof payload.revision !== 'number' ||
-      !Number.isInteger(payload.revision) ||
-      payload.revision < 0 ||
-      !Array.isArray(payload.nodes) ||
-      !payload.nodes.every((item) => isFlowPlannerNodeDraft(item))
-    ) {
+    const sessionKey = readPayloadString(payload, 'session_key', 'sessionKey');
+    if (typeof payload.revision !== 'number' || !Number.isInteger(payload.revision) || payload.revision < 0) {
       throw new Error('Invalid flow planner realtime message');
     }
+    const nodes = decodeArray(payload.nodes, decodeFlowPlannerNodeDraft);
     return {
       type,
       channel,
       seq,
       timestamp,
       payload: {
-        session_key: payload.session_key,
+        session_key: sessionKey,
         revision: payload.revision,
-        nodes: payload.nodes,
+        nodes,
       },
     };
   }
 
   if (type === 'planner_session_updated') {
+    const sessionKey = readPayloadString(payload, 'session_key', 'sessionKey');
+    const status = decodeFlowPlannerSessionStatus(payload.status);
+    if (!status || typeof payload.revision !== 'number' || !Number.isInteger(payload.revision) || payload.revision < 0) {
+      throw new Error('Invalid flow planner realtime message');
+    }
+    const updatedAt = readPayloadString(payload, 'updated_at', 'updatedAt');
+    const completedAtValue = 'completed_at' in payload ? payload.completed_at : payload.completedAt;
     if (
-      typeof payload.session_key !== 'string' ||
-      !isFlowPlannerSessionStatus(payload.status) ||
-      typeof payload.revision !== 'number' ||
-      !Number.isInteger(payload.revision) ||
-      payload.revision < 0 ||
-      typeof payload.updated_at !== 'string'
+      completedAtValue !== undefined &&
+      completedAtValue !== null &&
+      typeof completedAtValue !== 'string'
     ) {
       throw new Error('Invalid flow planner realtime message');
     }
@@ -616,13 +573,13 @@ function parseFlowPlannerRealtimeMessage(raw: string): FlowPlannerRealtimeMessag
       seq,
       timestamp,
       payload: {
-        session_key: payload.session_key,
-        status: payload.status,
+        session_key: sessionKey,
+        status,
         revision: payload.revision,
-        updated_at: payload.updated_at,
+        updated_at: updatedAt,
         completed_at:
-          typeof payload.completed_at === 'string' || payload.completed_at === null
-            ? payload.completed_at
+          typeof completedAtValue === 'string' || completedAtValue === null
+            ? completedAtValue
             : undefined,
       },
     };

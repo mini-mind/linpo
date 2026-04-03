@@ -210,8 +210,8 @@
 - `GET /api/v1/instances/{instance_id}/agent-docs`：转调 OpenClaw `agents.files.list`，返回该实例下可读 Agent 白名单文档清单。
 - `GET /api/v1/instances/{instance_id}/agent-docs/preview`：转调 OpenClaw `agents.files.get`，返回指定 Agent 文档预览内容。
 - `GET /api/v1/instances/{instance_id}/agent-docs/download`：下载指定 Agent 文档内容。
-- `GET /api/v1/aggregate/topology`：实例列表详情态用于构建关系树（实例节点、Agent 节点、Session 节点），前端按选中实例筛选并渲染。
-- `GET /api/v1/aggregate/overview`：摘要页与看板页的聚合入口，返回实例诊断、事件流、总 token 与按实例分组的 token 曲线样本。
+- `GET /api/v1/summary/topology`：实例列表详情态用于构建关系树（实例节点、Agent 节点、Session 节点），前端按选中实例筛选并渲染。
+- `GET /api/v1/summary/overview`：摘要页与看板页的聚合入口，返回实例诊断、事件流、总 token 与按实例分组的 token 曲线样本。
 - `POST /api/v1/instances/pair-code/validate`、`POST /api/v1/instances/pair-code`：配对码校验与配对创建契约，后端负责将配对码解析为 `endpoint/gateway_token` 再复用实例校验与落库流程。
 - `POST /api/v1/auth/register`：注册请求需包含 `username + email + password`，邮箱全局唯一。
 - `POST /api/v1/auth/login`：登录请求支持 `identifier(用户名或邮箱) + password`。
@@ -282,5 +282,53 @@
 - 多页 IA 相关入口在 v0.7 迁移后不再作为主路径维护。
 - 旧页面能力如需保留，仅作为过渡代码，不作为产品契约。
 - 文档与实现不一致时先修文档或修实现，禁止长期漂移。
+
+## 11. 后端重构终局设计（2026-04）
+
+### 11.1 终局目标
+
+- 严格分层调用链保持为：`API -> Application -> Domain Contract -> Provider Adapter -> Infra/Persistence`。
+- API 层只承担协议职责：鉴权、参数校验、错误映射、HTTP/SSE 序列化。
+- Application 层承担业务编排，不依赖 `app/api/*`，不得返回 API schema 类型。
+- Adapter 层只处理 Provider 协议与映射，不依赖 FastAPI 等 Web 框架类型。
+- Domain Contract 保持框架无关，仅承载领域对象与跨层契约 DTO。
+
+### 11.2 冻结约束
+
+- 禁止 `app/services` 导入 `app/api/*`。
+- 禁止 `app/adapters` 导入 FastAPI/Starlette 的请求或异常类型。
+- API 层不得直接内嵌复杂调度状态机；复杂流程需下沉到 Application Service。
+- 新增功能默认先在 Application 层设计输入输出 DTO，再由 API 做映射。
+- 对外 API 命名规范统一为 `camelCase`；`tasks/flow` 相关请求与响应字段不再维护 `snake_case` 兼容别名。
+
+### 11.3 模块重构落点
+
+- 聚合链路：
+  - 新增 `app/services/aggregate_models.py`（或同级契约模块）承载服务层 DTO。
+  - `AggregateService` 返回服务层 DTO；`app/api/aggregate.py` 负责映射到 `app/api/schemas.py`。
+- Provider 适配链路：
+  - `app/adapters/openclaw_adapter.py` 仅抛 adapter/domain 错误类型。
+  - API/Application 统一完成 `ProviderAdapterError -> HTTP` 的边界映射。
+- 任务链路：
+  - `app/api/tasks.py` 逐步拆分：`TaskDispatchService`、`TaskRunCallbackService`、`FlowRequirementService`。
+  - 路由层仅保留请求/响应组装与调用编排入口。
+
+### 11.4 分阶段推进
+
+- Phase 1（立即执行）：修复跨层反向依赖、adapter 框架耦合、测试红线（全绿基线）。
+- Phase 2（短期）：抽离任务调度/回调编排服务，缩减 `tasks.py` 职责密度。
+- Phase 3（中期）：拆分超大服务（`observer_data`、`flow_planner_session_service`）为 repository/rules/publisher/mapper。
+
+### 11.5 验收标准
+
+- 架构验收：
+  - 代码库中无 `service -> api` 导入；
+  - adapter 层不出现 FastAPI 依赖；
+  - 新增路由控制器保持薄层。
+- 测试验收：
+  - 后端 `pytest` 全绿；
+  - 关键路径（auth/task/instance/realtime/provider）均有回归测试。
+- 可维护性验收：
+  - 关键模块职责单一，新增需求无需跨 3 层以上同时改动才能落地。
 
 若文档冲突涉及产品边界、交互口径或成功标准，以 `docs/prd.md` 为准；若 `docs/prd.md` 未明示实现细节，则以 `docs/architecture.md` 为准；`docs/test-resources.md` 仅承载测试与联调资源，不单独覆盖前两者。

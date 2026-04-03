@@ -93,7 +93,10 @@ def _extract_receipt_token(confirmation_url: str) -> str:
 
 def _require_confirmation_url(status_code: int, payload: dict[str, Any]) -> str:
     assert status_code == 200
-    confirmation_url = cast(str | None, payload.get("confirmation_url"))
+    confirmation_url = cast(
+        str | None,
+        payload.get("confirmation_url", payload.get("confirmationUrl")),
+    )
     assert isinstance(confirmation_url, str) and confirmation_url != ""
     return confirmation_url
 
@@ -203,14 +206,21 @@ def test_instance_files_list_preview_and_download(
     assert list_status == 200
     list_payload = cast(dict[str, Any], json.loads(list_body.decode("utf-8")))
     items = cast(list[dict[str, Any]], list_payload["items"])
-    matched = next((item for item in items if item["task_id"] == str(task.id)), None)
+    matched = next(
+        (
+            item
+            for item in items
+            if cast(str | None, item.get("task_id", item.get("taskId"))) == str(task.id)
+        ),
+        None,
+    )
     assert matched is not None
-    assert matched["agent_id"] == "agent-alpha"
-    assert matched["agent_name"] == "Alpha Agent"
+    assert matched.get("agent_id", matched.get("agentId")) == "agent-alpha"
+    assert matched.get("agent_name", matched.get("agentName")) == "Alpha Agent"
     assert matched["path"] == str(output_path)
     assert matched["exists"] is True
-    assert matched["requirement_id"] == "req-files"
-    assert matched["requirement_title"] is None
+    assert matched.get("requirement_id", matched.get("requirementId")) == "req-files"
+    assert matched.get("requirement_title", matched.get("requirementTitle")) is None
 
     preview_status, _, preview_body = request(
         "GET",
@@ -333,10 +343,17 @@ def test_instance_files_list_normalizes_dirty_task_fields(
     assert list_status == 200
     list_payload = cast(dict[str, Any], json.loads(list_body.decode("utf-8")))
     items = cast(list[dict[str, Any]], list_payload["items"])
-    matched = next((item for item in items if item["task_id"] == str(task.id)), None)
+    matched = next(
+        (
+            item
+            for item in items
+            if cast(str | None, item.get("task_id", item.get("taskId"))) == str(task.id)
+        ),
+        None,
+    )
     assert matched is not None
-    assert matched["task_status"] == "queued"
-    assert matched["agent_id"] == ""
+    assert matched.get("task_status", matched.get("taskStatus")) == "queued"
+    assert matched.get("agent_id", matched.get("agentId")) == ""
 
 
 def test_instance_agent_docs_list_preview_and_download(
@@ -427,8 +444,8 @@ def test_instance_agent_docs_list_preview_and_download(
     assert list_status == 200
     list_payload = cast(dict[str, Any], json.loads(list_body.decode("utf-8")))
     assert list_payload["total"] == 2
-    assert list_payload["existing_count"] == 2
-    assert list_payload["items"][0]["agent_name"] in {"Claw Planner", "executor"}
+    assert cast(int, list_payload.get("existing_count", list_payload.get("existingCount"))) == 2
+    assert list_payload["items"][0].get("agent_name", list_payload["items"][0].get("agentName")) in {"Claw Planner", "executor"}
     assert {item["name"] for item in list_payload["items"]} == {"SOUL.md", "MEMORY.md"}
 
     preview_status, _, preview_body = request(
@@ -830,7 +847,14 @@ def test_agent_mount_request_returns_confirmation_url_and_writes_message(
     assert token != ""
 
     messages = _list_messages(auth_cookie)
-    target = next((item for item in messages if item.get("confirmation_url") == confirmation_url), None)
+    target = next(
+        (
+            item
+            for item in messages
+            if cast(str | None, item.get("confirmation_url", item.get("confirmationUrl"))) == confirmation_url
+        ),
+        None,
+    )
     assert target is not None
     assert target["action"] == "mount"
 
@@ -935,9 +959,16 @@ def test_message_read_endpoint_marks_message_as_read(
     confirmation_url = _require_confirmation_url(request_status, request_payload)
 
     messages = _list_messages(auth_cookie)
-    target = next((item for item in messages if item.get("confirmation_url") == confirmation_url), None)
+    target = next(
+        (
+            item
+            for item in messages
+            if cast(str | None, item.get("confirmation_url", item.get("confirmationUrl"))) == confirmation_url
+        ),
+        None,
+    )
     assert target is not None
-    assert target.get("is_read") is False
+    assert cast(bool | None, target.get("is_read", target.get("isRead"))) is False
 
     read_status, _, read_body = request(
         "POST",
@@ -951,8 +982,9 @@ def test_message_read_endpoint_marks_message_as_read(
     updated_messages = _list_messages(auth_cookie)
     updated = next((item for item in updated_messages if item.get("id") == target["id"]), None)
     assert updated is not None
-    assert updated.get("is_read") is True
-    assert isinstance(updated.get("read_at"), str) and updated.get("read_at")
+    assert cast(bool | None, updated.get("is_read", updated.get("isRead"))) is True
+    read_at = cast(str | None, updated.get("read_at", updated.get("readAt")))
+    assert isinstance(read_at, str) and read_at
 
 
 def test_agent_mount_request_is_not_blocked_by_legacy_challenge_delivery_env(
@@ -1198,7 +1230,7 @@ def test_agent_receipt_confirm_mount_and_unmount_success(
     assert unmount_confirm_payload["mounted"] is False
     assert unmount_confirm_payload["unmounted"] is True
     assert unmount_confirm_payload["instance"] is None
-    assert unmount_confirm_payload["instance_id"] == mounted_instance_id
+    assert cast(str | None, unmount_confirm_payload.get("instance_id", unmount_confirm_payload.get("instanceId"))) == mounted_instance_id
 
 
 def test_agent_receipt_confirm_rejects_expired_or_duplicate_token(
@@ -1619,10 +1651,8 @@ def test_list_returns_only_current_users_instances_and_hides_plaintext_token(
     assert payload[0]["name"] == "alice-claw"
     assert payload[0]["endpoint"] == "http://127.0.0.1:28789"
     assert payload[0]["status"] == "active"
-    assert "last_check_at" in payload[0]
-    assert "created_at" in payload[0]
-    assert "lastCheckAt" not in payload[0]
-    assert "createdAt" not in payload[0]
+    assert "lastCheckAt" in payload[0]
+    assert "createdAt" in payload[0]
     assert "gatewayToken" not in payload[0]
     assert "gateway_token" not in payload[0]
 

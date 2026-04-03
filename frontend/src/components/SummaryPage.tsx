@@ -23,6 +23,7 @@ import type {
 import { buildAgentDetailChannel } from '../api/types';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
+import { useDraggableFab } from '../hooks/useDraggableFab';
 import {
   getWorkspaceBodyInnerStyle,
   getWorkspaceBodyShellStyle,
@@ -84,10 +85,12 @@ export function SummaryPage(): JSX.Element {
   const [selectedTokenSeriesIds, setSelectedTokenSeriesIds] = useState<string[]>([]);
   const [eventQuery, setEventQuery] = useState('');
   const [eventPage, setEventPage] = useState(1);
+  const [isMobileEventsOpen, setIsMobileEventsOpen] = useState(false);
   const boardRealtimeRef = useRef<ReturnType<typeof createBoardTasksSseClient> | null>(null);
   const agentsListRealtimeRef = useRef<ObserverRealtimeClient | null>(null);
   const agentRealtimeRefs = useRef<Map<string, ObserverRealtimeClient>>(new Map());
   const overviewRefreshTimerRef = useRef<number | null>(null);
+  const eventsFab = useDraggableFab('linpo.mobile_fab.summary_events', { x: 16, y: 88 });
 
   const loadOverview = useCallback(async () => {
     try {
@@ -548,6 +551,52 @@ export function SummaryPage(): JSX.Element {
 
   return (
     <section style={getWorkspacePageStyle({ extra: summaryPageStyle })} data-testid="summary-page">
+      {isMobile ? (
+        <button
+          type="button"
+          style={{ ...mobileEventsFabStyle, left: `${eventsFab.position.x}px`, top: `${eventsFab.position.y}px`, touchAction: 'none' }}
+          aria-label="打开事件流"
+          onPointerDown={eventsFab.handlePointerDown}
+          onClick={(event) => {
+            if (!eventsFab.consumeClickIfDragged(event)) {
+              return;
+            }
+            setIsMobileEventsOpen(true);
+          }}
+        >
+          事件流
+        </button>
+      ) : null}
+      {isMobile && isMobileEventsOpen ? (
+        <div
+          style={mobileEventsOverlayStyle}
+          role="dialog"
+          aria-modal="true"
+          aria-label="摘要事件流"
+          onClick={() => setIsMobileEventsOpen(false)}
+        >
+          <div style={mobileEventsDialogStyle} onClick={(event) => event.stopPropagation()}>
+            <div style={mobileEventsDialogHeaderStyle}>
+              <h3 style={mobileEventsDialogTitleStyle}>事件流</h3>
+              <button type="button" style={mobileEventsDialogCloseStyle} onClick={() => setIsMobileEventsOpen(false)}>
+                关闭
+              </button>
+            </div>
+            <EventsPane
+              events={pagedEvents}
+              totalCount={events.length}
+              filteredCount={filteredEvents.length}
+              currentPage={eventPage}
+              totalPages={totalEventPages}
+              query={eventQuery}
+              isMobile
+              onQueryChange={setEventQuery}
+              onPrevPage={() => setEventPage((current) => Math.max(1, current - 1))}
+              onNextPage={() => setEventPage((current) => Math.min(totalEventPages, current + 1))}
+            />
+          </div>
+        </div>
+      ) : null}
       <div style={getWorkspaceBodyShellStyle({ isMobile, extra: isMobile ? bodyShellMobileStyle : bodyShellStyle })}>
         <div style={getWorkspaceBodyInnerStyle({ isMobile, maxWidthPx: WORKSPACE_CONTENT_MAX_WIDTH_PX, extra: getBodyStyle(isMobile) })} data-testid="summary-content-frame">
           <div style={getContentStyle(isMobile)}>
@@ -568,18 +617,20 @@ export function SummaryPage(): JSX.Element {
                 onApprovalInstanceFilterChange={setApprovalInstanceFilter}
                 isMobile={isMobile}
               />
-              <EventsPane
-                events={pagedEvents}
-                totalCount={events.length}
-                filteredCount={filteredEvents.length}
-                currentPage={eventPage}
-                totalPages={totalEventPages}
-                query={eventQuery}
-                isMobile={isMobile}
-                onQueryChange={setEventQuery}
-                onPrevPage={() => setEventPage((current) => Math.max(1, current - 1))}
-                onNextPage={() => setEventPage((current) => Math.min(totalEventPages, current + 1))}
-              />
+              {!isMobile ? (
+                <EventsPane
+                  events={pagedEvents}
+                  totalCount={events.length}
+                  filteredCount={filteredEvents.length}
+                  currentPage={eventPage}
+                  totalPages={totalEventPages}
+                  query={eventQuery}
+                  isMobile={isMobile}
+                  onQueryChange={setEventQuery}
+                  onPrevPage={() => setEventPage((current) => Math.max(1, current - 1))}
+                  onNextPage={() => setEventPage((current) => Math.min(totalEventPages, current + 1))}
+                />
+              ) : null}
             </div>
           </div>
         </div>
@@ -1307,6 +1358,65 @@ const bodyShellStyle: React.CSSProperties = {
 
 const bodyShellMobileStyle: React.CSSProperties = {
   flex: '0 0 auto',
+};
+
+const mobileEventsFabStyle: React.CSSProperties = {
+  position: 'fixed',
+  zIndex: 980,
+  border: '1px solid rgba(14, 116, 144, 0.42)',
+  borderRadius: '999px',
+  background: 'linear-gradient(120deg, #0f766e 0%, #0284c7 100%)',
+  color: '#f8fafc',
+  fontSize: '0.78rem',
+  fontWeight: 700,
+  padding: '0.52rem 0.84rem',
+  boxShadow: '0 12px 24px -22px rgba(15, 23, 42, 0.95)',
+  cursor: 'pointer',
+};
+
+const mobileEventsOverlayStyle: React.CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  zIndex: 990,
+  background: 'rgba(15, 23, 42, 0.28)',
+  display: 'flex',
+  alignItems: 'flex-start',
+  justifyContent: 'flex-start',
+  padding: '0.9rem 0.6rem 0.6rem',
+};
+
+const mobileEventsDialogStyle: React.CSSProperties = {
+  width: 'min(92vw, 440px)',
+  maxWidth: '100%',
+  maxHeight: 'calc(100vh - 1.5rem)',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.55rem',
+};
+
+const mobileEventsDialogHeaderStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '0.55rem',
+};
+
+const mobileEventsDialogTitleStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.9rem',
+  fontWeight: 700,
+  color: '#f8fafc',
+};
+
+const mobileEventsDialogCloseStyle: React.CSSProperties = {
+  border: '1px solid rgba(226, 232, 240, 0.44)',
+  background: 'rgba(15, 23, 42, 0.4)',
+  color: '#e2e8f0',
+  borderRadius: '0.42rem',
+  padding: '0.34rem 0.58rem',
+  fontSize: '0.74rem',
+  fontWeight: 600,
+  cursor: 'pointer',
 };
 
 function getContentStyle(isMobile: boolean): React.CSSProperties {

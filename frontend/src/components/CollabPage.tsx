@@ -39,6 +39,7 @@ import { buildSessionMessagesChannel } from '../api/types';
 import type { BoardTask, BoardViewMode, TaskStatus } from './kanbanTypes';
 import { MarkdownMessage } from './MarkdownMessage';
 import { useCurrentInstanceId } from '../hooks/useCurrentInstance';
+import { useDraggableFab } from '../hooks/useDraggableFab';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
 import {
@@ -129,7 +130,9 @@ export default function CollabPage(): JSX.Element {
   const [customAgentNames, setCustomAgentNames] = useState<string[]>([]);
   const [collapsedColumnIds, setCollapsedColumnIds] = useState<string[]>([]);
   const [mobileVisibleColumnIndex, setMobileVisibleColumnIndex] = useState(0);
+  const [isMobileBoardMenuOpen, setIsMobileBoardMenuOpen] = useState(false);
   const boardTouchStartXRef = useRef<number | null>(null);
+  const boardFab = useDraggableFab('linpo.mobile_fab.kanban_menu', { x: 16, y: 88 });
 
   useEffect(() => {
     const handleResize = () => {
@@ -439,6 +442,7 @@ export default function CollabPage(): JSX.Element {
   }, [allAgentNames, allTasks, viewMode]);
 
   const isNarrowMobileBoard = viewportWidth < WORKSPACE_NARROW_MOBILE_BREAKPOINT_PX;
+  const currentMobileColumnIndex = columns.length > 0 ? Math.min(mobileVisibleColumnIndex, columns.length - 1) : 0;
   const resolvedInstanceSelection = (currentInstanceId ?? '').trim();
   const hasInstanceOptions = instances.length > 0;
   const visibleBoardColumns = isNarrowMobileBoard
@@ -921,7 +925,106 @@ export default function CollabPage(): JSX.Element {
 
   return (
     <section style={pageStyle} aria-label="kanban-workbench">
-      <header style={isMobile ? { ...flatToolbarStyle, ...flatToolbarMobileStyle } : flatToolbarStyle}>
+      {isMobile ? (
+        <button
+          type="button"
+          style={{ ...mobileBoardFabStyle, left: `${boardFab.position.x}px`, top: `${boardFab.position.y}px`, touchAction: 'none' }}
+          aria-label="打开看板菜单"
+          onPointerDown={boardFab.handlePointerDown}
+          onClick={(event) => {
+            if (!boardFab.consumeClickIfDragged(event)) {
+              return;
+            }
+            setIsMobileBoardMenuOpen(true);
+          }}
+        >
+          看板菜单
+        </button>
+      ) : null}
+
+      {isMobile && isMobileBoardMenuOpen ? (
+        <div
+          style={mobileBoardMenuOverlayStyle}
+          role="dialog"
+          aria-modal="true"
+          aria-label="看板菜单"
+          onClick={() => setIsMobileBoardMenuOpen(false)}
+        >
+          <div style={mobileBoardMenuCardStyle} onClick={(event) => event.stopPropagation()}>
+            <div style={mobileBoardMenuHeaderStyle}>
+              <h3 style={mobileBoardMenuTitleStyle}>看板菜单</h3>
+              <button type="button" style={mobileBoardMenuCloseStyle} onClick={() => setIsMobileBoardMenuOpen(false)}>
+                关闭
+              </button>
+            </div>
+            <div style={mobileBoardMenuStatsStyle}>
+              <span style={statsItemStyle}>流程数量 {requirementCount}</span>
+              {columns.length > 0 ? (
+                <span style={statsItemStyle}>当前列 {currentMobileColumnIndex + 1} / {columns.length}</span>
+              ) : null}
+            </div>
+            <label style={mobileBoardMenuFieldStyle}>
+              <span style={mobileBoardMenuLabelStyle}>看板实例</span>
+              <select
+                aria-label="看板实例"
+                value={resolvedInstanceSelection}
+                onChange={(event) => {
+                  const nextValue = event.target.value.trim();
+                  setCurrentInstanceId(nextValue || null);
+                }}
+                style={{ ...viewSelectStyle, ...viewSelectMobileStyle }}
+                disabled={!hasInstanceOptions}
+              >
+                <option value="">{hasInstanceOptions ? '全部实例' : '暂无实例'}</option>
+                {instances.map((instance) => (
+                  <option key={instance.id} value={instance.id}>
+                    {instance.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={mobileBoardMenuFieldStyle}>
+              <span style={mobileBoardMenuLabelStyle}>分列方式</span>
+              <select
+                aria-label="分列方式"
+                value={viewMode}
+                onChange={(event) => {
+                  setViewMode(event.target.value as BoardViewMode);
+                  setMobileVisibleColumnIndex(0);
+                }}
+                style={{ ...viewSelectStyle, ...viewSelectMobileStyle }}
+              >
+                <option value="status">按状态分列</option>
+                <option value="agent">按 Agent 分列</option>
+                <option value="flow">按流程分列</option>
+              </select>
+            </label>
+            <label style={mobileBoardMenuFieldStyle}>
+              <span style={mobileBoardMenuLabelStyle}>查看列</span>
+              <select
+                aria-label="查看列"
+                value={String(currentMobileColumnIndex)}
+                onChange={(event) => {
+                  const nextIndex = Number.parseInt(event.target.value, 10);
+                  setMobileVisibleColumnIndex(Number.isFinite(nextIndex) ? Math.max(0, nextIndex) : 0);
+                }}
+                style={{ ...viewSelectStyle, ...viewSelectMobileStyle }}
+                disabled={columns.length === 0}
+              >
+                {columns.length === 0 ? <option value="0">暂无列</option> : null}
+                {columns.map((column, index) => (
+                  <option key={column.id} value={String(index)}>
+                    {column.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </div>
+      ) : null}
+
+      {!isMobile ? (
+      <header style={flatToolbarStyle}>
         <div style={isMobile ? { ...toolbarInnerStyle, ...toolbarInnerMobileStyle } : toolbarInnerStyle}>
           <div style={isMobile ? { ...toolbarStatsStyle, ...toolbarStatsMobileStyle } : toolbarStatsStyle} aria-label="看板统计">
             <span style={statsItemStyle}>流程数量 {requirementCount}</span>
@@ -961,6 +1064,7 @@ export default function CollabPage(): JSX.Element {
           </div>
         </div>
       </header>
+      ) : null}
 
       {isCreateModalOpen ? (
         <div style={modalOverlayStyle} role="dialog" aria-modal="true" aria-label="创建任务入口">
@@ -2279,6 +2383,87 @@ const pageStyle: React.CSSProperties = {
   flexDirection: 'column',
   gap: '0.8rem',
   background: 'transparent',
+};
+
+const mobileBoardFabStyle: React.CSSProperties = {
+  position: 'fixed',
+  zIndex: 980,
+  border: '1px solid rgba(14, 116, 144, 0.42)',
+  borderRadius: '999px',
+  background: 'linear-gradient(120deg, #0f766e 0%, #0284c7 100%)',
+  color: '#f8fafc',
+  fontSize: '0.78rem',
+  fontWeight: 700,
+  padding: '0.52rem 0.84rem',
+  boxShadow: '0 12px 24px -22px rgba(15, 23, 42, 0.95)',
+  cursor: 'pointer',
+};
+
+const mobileBoardMenuOverlayStyle: React.CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  zIndex: 990,
+  background: 'rgba(15, 23, 42, 0.28)',
+  display: 'flex',
+  alignItems: 'flex-start',
+  justifyContent: 'flex-start',
+  padding: '0.9rem 0.6rem 0.6rem',
+};
+
+const mobileBoardMenuCardStyle: React.CSSProperties = {
+  width: 'min(92vw, 420px)',
+  maxWidth: '100%',
+  border: '1px solid rgba(148, 163, 184, 0.32)',
+  borderRadius: '0.82rem',
+  background: 'rgba(255, 255, 255, 0.97)',
+  boxShadow: '0 22px 42px -30px rgba(15, 23, 42, 0.92)',
+  padding: '0.72rem',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.62rem',
+};
+
+const mobileBoardMenuHeaderStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '0.5rem',
+};
+
+const mobileBoardMenuTitleStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.9rem',
+  fontWeight: 700,
+  color: '#0f172a',
+};
+
+const mobileBoardMenuCloseStyle: React.CSSProperties = {
+  border: '1px solid rgba(148, 163, 184, 0.42)',
+  background: 'rgba(255, 255, 255, 0.86)',
+  color: '#334155',
+  borderRadius: '0.42rem',
+  padding: '0.34rem 0.58rem',
+  fontSize: '0.74rem',
+  fontWeight: 600,
+  cursor: 'pointer',
+};
+
+const mobileBoardMenuStatsStyle: React.CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '0.45rem',
+};
+
+const mobileBoardMenuFieldStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.28rem',
+};
+
+const mobileBoardMenuLabelStyle: React.CSSProperties = {
+  fontSize: '0.72rem',
+  fontWeight: 700,
+  color: '#334155',
 };
 
 const boardFrameStyle: React.CSSProperties = {
