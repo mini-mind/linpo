@@ -537,6 +537,12 @@ export const plannerMessageAssistantCardStyle: React.CSSProperties = {
   background: 'rgba(236, 253, 245, 0.9)',
 };
 
+export const plannerMessageSystemCardStyle: React.CSSProperties = {
+  ...plannerMessageBaseCardStyle,
+  background: 'rgba(241, 245, 249, 0.92)',
+  border: '1px solid rgba(148, 163, 184, 0.3)',
+};
+
 export const plannerMessageRoleStyle: React.CSSProperties = {
   fontSize: '0.68rem',
   fontWeight: 700,

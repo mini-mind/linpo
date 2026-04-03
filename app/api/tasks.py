@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, s
 from fastapi.responses import FileResponse
 from fastapi.responses import Response
 from fastapi.responses import StreamingResponse
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.api.task_output_helpers import (
@@ -44,6 +44,10 @@ from app.api.schemas import (
     FlowCanvasEdge,
     FlowCanvasNode,
     FlowChatMessageItem,
+    FlowDraftDeleteResponse,
+    FlowDraftItem,
+    FlowDraftLaneItem,
+    FlowDraftUpsertRequest,
     FlowConfirmRequest,
     FlowConfirmResponse,
     FlowGenerateRequest,
@@ -52,6 +56,7 @@ from app.api.schemas import (
     FlowPlannerSessionItem,
     FlowPlannerNodeUpsertRequest,
     FlowPlannerSessionCompleteRequest,
+    FlowPlannerSessionProbeResponse,
     FlowPlannerSessionFailRequest,
     FlowPlannerStopRequest,
     FlowPlannerStopResponse,
@@ -72,7 +77,7 @@ from app.api.schemas import (
     TaskSource,
     TaskStatus,
 )
-from app.db.models import Task, User
+from app.db.models import FlowDraft, Task, User
 from app.db.session import get_session
 from app.services.auth_service import get_authenticated_user
 from app.services.flow_decomposition_service import FlowDecompositionService
@@ -160,6 +165,97 @@ def _to_task_item(task: Task) -> TaskItem:
         instance_id=None if task.instance_id is None else str(task.instance_id),
         created_at=task.created_at.isoformat(),
         updated_at=task.updated_at.isoformat(),
+    )
+
+
+def _parse_or_now_iso_datetime(raw: str | None) -> datetime:
+    value = (raw or "").strip()
+    if value:
+        normalized = value.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=UTC)
+            return parsed.astimezone(UTC)
+        except ValueError:
+            pass
+    return datetime.now(UTC)
+
+
+def _normalize_flow_draft_nodes(
+    *,
+    nodes: list[FlowCanvasNode],
+    edges: list[FlowCanvasEdge],
+) -> list[FlowCanvasNode]:
+    return _normalize_canvas_nodes(nodes=nodes, edges=edges)
+
+
+def _to_flow_draft_item(draft: FlowDraft) -> FlowDraftItem:
+    raw_nodes = draft.nodes if isinstance(draft.nodes, list) else []
+    raw_edges = draft.edges if isinstance(draft.edges, list) else []
+    parsed_nodes: list[FlowCanvasNode] = []
+    parsed_edges: list[FlowCanvasEdge] = []
+    parsed_messages: list[FlowChatMessageItem] = []
+    parsed_lanes: list[FlowDraftLaneItem] = []
+
+    for raw_node in raw_nodes:
+        if not isinstance(raw_node, dict):
+            continue
+        try:
+            parsed_nodes.append(FlowCanvasNode.model_validate(raw_node))
+        except Exception:
+            continue
+    for raw_edge in raw_edges:
+        if not isinstance(raw_edge, dict):
+            continue
+        try:
+            parsed_edges.append(FlowCanvasEdge.model_validate(raw_edge))
+        except Exception:
+            continue
+    for raw_message in draft.planner_messages if isinstance(draft.planner_messages, list) else []:
+        if not isinstance(raw_message, dict):
+            continue
+        try:
+            parsed_messages.append(FlowChatMessageItem.model_validate(raw_message))
+        except Exception:
+            continue
+    for raw_lane in draft.lanes if isinstance(draft.lanes, list) else []:
+        if not isinstance(raw_lane, dict):
+            continue
+        try:
+            parsed_lanes.append(FlowDraftLaneItem.model_validate(raw_lane))
+        except Exception:
+            continue
+
+    normalized_nodes = _normalize_flow_draft_nodes(nodes=parsed_nodes, edges=parsed_edges)
+    normalized_node_ids = {node.id for node in normalized_nodes}
+    normalized_lanes = [lane for lane in parsed_lanes if lane.id.strip() != ""]
+    normalized_lane_ids = {lane.id for lane in normalized_lanes}
+    node_lane_mapping = draft.node_lane_by_id if isinstance(draft.node_lane_by_id, dict) else {}
+    normalized_node_lane_mapping: dict[str, str] = {}
+    for raw_node_id, raw_lane_id in node_lane_mapping.items():
+        node_id = str(raw_node_id).strip()
+        lane_id = str(raw_lane_id).strip()
+        if node_id == "" or lane_id == "":
+            continue
+        if node_id not in normalized_node_ids or lane_id not in normalized_lane_ids:
+            continue
+        normalized_node_lane_mapping[node_id] = lane_id
+
+    return FlowDraftItem(
+        id=draft.flow_id,
+        name=draft.name,
+        requirement=draft.requirement,
+        nodes=normalized_nodes,
+        edges=parsed_edges,
+        planner_messages=parsed_messages,
+        lanes=normalized_lanes,
+        node_lane_by_id=normalized_node_lane_mapping,
+        planner_session_key=draft.planner_session_key,
+        execution_session_prefix=draft.execution_session_prefix,
+        executor_agent_id=draft.executor_agent_id,
+        created_at=_serialize_iso_datetime(draft.created_at),
+        updated_at=_serialize_iso_datetime(draft.updated_at),
     )
 
 
@@ -1172,6 +1268,109 @@ def _append_artifact(task: Task, item: str) -> None:
     task.artifacts = artifacts[-120:]
 
 
+@router.get("/flow/drafts", response_model=list[FlowDraftItem])
+def list_flow_drafts(
+    board_id: str,
+    db_session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> list[FlowDraftItem]:
+    normalized_board_id = board_id.strip() or "default"
+    records = db_session.execute(
+        select(FlowDraft)
+        .where(
+            FlowDraft.user_id == current_user.id,
+            FlowDraft.board_id == normalized_board_id,
+        )
+        .order_by(FlowDraft.updated_at.desc(), FlowDraft.created_at.desc())
+    ).scalars().all()
+    return [_to_flow_draft_item(record) for record in records]
+
+
+@router.post("/flow/drafts", response_model=FlowDraftItem)
+def upsert_flow_draft(
+    board_id: str,
+    payload: FlowDraftUpsertRequest,
+    db_session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> FlowDraftItem:
+    normalized_board_id = board_id.strip() or "default"
+    normalized_flow_id = payload.id.strip()
+    if normalized_flow_id == "":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="flow draft id is required")
+
+    existing = db_session.execute(
+        select(FlowDraft).where(
+            FlowDraft.user_id == current_user.id,
+            FlowDraft.board_id == normalized_board_id,
+            FlowDraft.flow_id == normalized_flow_id,
+        )
+    ).scalar_one_or_none()
+    now = datetime.now(UTC)
+    created_at = existing.created_at if existing is not None else _parse_or_now_iso_datetime(payload.created_at)
+    normalized_nodes = _normalize_flow_draft_nodes(nodes=payload.nodes, edges=payload.edges)
+    normalized_edges = payload.edges
+    normalized_messages = payload.planner_messages
+    normalized_lanes = [lane for lane in payload.lanes if lane.id.strip() != ""]
+    lane_ids = {lane.id for lane in normalized_lanes}
+    node_ids = {node.id for node in normalized_nodes}
+    normalized_node_lane_by_id = {
+        node_id: lane_id
+        for node_id, lane_id in payload.node_lane_by_id.items()
+        if node_id in node_ids and lane_id in lane_ids
+    }
+
+    record = existing or FlowDraft(
+        user_id=current_user.id,
+        board_id=normalized_board_id,
+        flow_id=normalized_flow_id,
+        created_at=created_at,
+    )
+    record.name = payload.name.strip() or "未命名流程"
+    record.requirement = payload.requirement
+    record.nodes = [node.model_dump(mode="json") for node in normalized_nodes]
+    record.edges = [edge.model_dump(mode="json") for edge in normalized_edges]
+    record.planner_messages = [item.model_dump(mode="json") for item in normalized_messages]
+    record.lanes = [lane.model_dump(mode="json") for lane in normalized_lanes]
+    record.node_lane_by_id = normalized_node_lane_by_id
+    planner_session_key = (payload.planner_session_key or "").strip()
+    execution_session_prefix = (payload.execution_session_prefix or "").strip()
+    executor_agent_id = (payload.executor_agent_id or "").strip()
+    record.planner_session_key = planner_session_key or None
+    record.execution_session_prefix = execution_session_prefix or None
+    record.executor_agent_id = executor_agent_id or None
+    record.updated_at = now
+    if existing is None:
+        db_session.add(record)
+    db_session.commit()
+    db_session.refresh(record)
+    return _to_flow_draft_item(record)
+
+
+@router.delete("/flow/drafts/{flow_id}", response_model=FlowDraftDeleteResponse)
+def delete_flow_draft(
+    board_id: str,
+    flow_id: str,
+    db_session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> FlowDraftDeleteResponse:
+    normalized_board_id = board_id.strip() or "default"
+    normalized_flow_id = flow_id.strip()
+    if normalized_flow_id == "":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="flow draft id is required")
+    existing = db_session.execute(
+        select(FlowDraft).where(
+            FlowDraft.user_id == current_user.id,
+            FlowDraft.board_id == normalized_board_id,
+            FlowDraft.flow_id == normalized_flow_id,
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        return FlowDraftDeleteResponse(deleted=False, flow_id=normalized_flow_id)
+    db_session.delete(existing)
+    db_session.commit()
+    return FlowDraftDeleteResponse(deleted=True, flow_id=normalized_flow_id)
+
+
 @router.post("/flow/generate", response_model=FlowGenerateResponse)
 def generate_flow(
     board_id: str,
@@ -1308,6 +1507,31 @@ def generate_flow(
     )
 
 
+@router.get("/flow/planner-sessions/{session_key}/exists", response_model=FlowPlannerSessionProbeResponse)
+def probe_flow_planner_session_exists(
+    board_id: str,
+    session_key: str,
+    db_session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+    flow_planner_session_service: FlowPlannerSessionService = Depends(get_flow_planner_session_service),
+) -> FlowPlannerSessionProbeResponse:
+    del board_id
+    normalized_session_key = session_key.strip()
+    if normalized_session_key == "":
+        return FlowPlannerSessionProbeResponse(exists=False)
+    try:
+        flow_planner_session_service.get_snapshot_for_user(
+            db_session=db_session,
+            user_id=current_user.id,
+            session_key=normalized_session_key,
+        )
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_404_NOT_FOUND:
+            return FlowPlannerSessionProbeResponse(exists=False)
+        raise
+    return FlowPlannerSessionProbeResponse(exists=True)
+
+
 @router.get("/flow/planner-sse", response_model=None)
 async def flow_planner_sse(
     board_id: str,
@@ -1331,11 +1555,42 @@ async def flow_planner_sse(
     }
 
     db_session.expire_all()
-    snapshot = flow_planner_session_service.get_snapshot_for_user(
-        db_session=db_session,
-        user_id=current_user.id,
-        session_key=normalized_session_key,
-    )
+    try:
+        snapshot = flow_planner_session_service.get_snapshot_for_user(
+            db_session=db_session,
+            user_id=current_user.id,
+            session_key=normalized_session_key,
+        )
+    except HTTPException as error:
+        if error.status_code != status.HTTP_404_NOT_FOUND:
+            raise
+        if snapshot_only:
+            raise
+        now = datetime.now(tz=UTC).isoformat()
+        payload = _to_sse_data(
+            {
+                "type": "snapshot_ready",
+                "channel": channel,
+                "seq": 0,
+                "timestamp": now,
+                "payload": {"status": "pending"},
+            }
+        ) + _to_sse_data(
+            {
+                "type": "planner_session_updated",
+                "channel": channel,
+                "seq": 1,
+                "timestamp": now,
+                "payload": {
+                    "session_key": normalized_session_key,
+                    "status": "planning",
+                    "revision": 0,
+                    "updated_at": now,
+                    "last_error": "planner session not found",
+                },
+            }
+        )
+        return Response(content=payload, media_type="text/event-stream", headers=headers)
 
     def build_snapshot_events(*, seq_start: int) -> list[str]:
         seq = seq_start

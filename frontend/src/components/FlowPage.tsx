@@ -8,16 +8,21 @@ import {
   type FlowPlannerRealtimeMessage,
 } from '../api/realtimeClient';
 import {
+  ApiError,
   deleteKanbanRequirementTasks,
+  deleteFlowDraftRecord,
   continueFlowRequirement,
   confirmFlowToKanban,
   generateFlowFromRequirement,
   getAggregateOverview,
+  listFlowDraftRecords,
   listKanbanTasks,
   renameFlowRequirement,
+  probeFlowPlannerSession,
   stopFlowPlannerSession,
   stopFlowRequirement,
   syncFlowRequirement,
+  upsertFlowDraftRecord,
 } from '../api/client';
 import type {
   AggregateOverviewAgentItem,
@@ -151,6 +156,7 @@ import {
   floatingPlannerMessagesStyle,
   plannerMessageUserCardStyle,
   plannerMessageAssistantCardStyle,
+  plannerMessageSystemCardStyle,
   plannerMessageRoleStyle,
   plannerMessageTextStyle,
   canvasPaneStyle,
@@ -244,9 +250,79 @@ type FlowRouteState = {
 function hasPendingPlannerReply(messages: FlowChatMessageItem[]): boolean {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
+    if (message.role === 'system') {
+      const normalizedContent = String(message.content ?? '').trim();
+      if (normalizedContent === PLANNER_STATUS_PLANNING_TEXT || normalizedContent === PLANNER_STATUS_STOPPED_TEXT) {
+        continue;
+      }
+    }
     return message.role === 'user';
   }
   return false;
+}
+
+const PLANNER_STATUS_PLANNING_TEXT = '⚙️ 正在规划';
+const PLANNER_STATUS_STOPPED_TEXT = '⏹️ 已停止';
+const LEGACY_PLANNER_REQUEST_TEXT = '已发送规划请求，等待 claw3 逐节点编辑工作流。';
+const LEGACY_PLANNER_STOPPED_TEXT = '已停止当前规划会话。';
+
+function sanitizePlannerMessages(messages: FlowChatMessageItem[]): FlowChatMessageItem[] {
+  return messages.map((item) => sanitizePlannerMessage(item));
+}
+
+function sanitizePlannerMessage(message: FlowChatMessageItem): FlowChatMessageItem {
+  const content = String(message.content ?? '').trim();
+  if (!content) {
+    return message;
+  }
+  if (content === LEGACY_PLANNER_REQUEST_TEXT || content === '规划中') {
+    return { ...message, role: 'system', content: PLANNER_STATUS_PLANNING_TEXT };
+  }
+  if (content === LEGACY_PLANNER_STOPPED_TEXT) {
+    return { ...message, role: 'system', content: PLANNER_STATUS_STOPPED_TEXT };
+  }
+  if (looksLikePlannerHttpCall(content)) {
+    const nodeId = extractNodeIdFromPlannerHttpCall(content);
+    return {
+      ...message,
+      role: 'system',
+      content: nodeId ? `🧩 编辑了${nodeId}` : '🧩 编辑了节点',
+    };
+  }
+  return message;
+}
+
+function looksLikePlannerHttpCall(content: string): boolean {
+  const normalized = content.toLowerCase();
+  const hasHttpHint =
+    normalized.includes('http://')
+    || normalized.includes('https://')
+    || normalized.includes('curl ')
+    || normalized.includes('fetch(')
+    || normalized.includes('axios')
+    || normalized.includes('requests.')
+    || normalized.includes('post /')
+    || normalized.includes('patch /')
+    || normalized.includes('put /');
+  const hasNodeHint = normalized.includes('node_id') || /\bnode[_-]/i.test(content);
+  return hasHttpHint && hasNodeHint;
+}
+
+function extractNodeIdFromPlannerHttpCall(content: string): string | null {
+  const patterns = [
+    /["']node_id["']\s*[:=]\s*["']([a-zA-Z0-9._:-]+)["']/i,
+    /\bnode_id\s*[:=]\s*([a-zA-Z0-9._:-]+)/i,
+    /\/nodes\/([a-zA-Z0-9._:-]+)/i,
+    /\b(node_[a-zA-Z0-9._:-]+)\b/i,
+  ];
+  for (const pattern of patterns) {
+    const matched = content.match(pattern);
+    const candidate = matched?.[1]?.trim();
+    if (candidate) {
+      return candidate;
+    }
+  }
+  return null;
 }
 
 type NodeModalState = {
@@ -301,12 +377,6 @@ type FlowSidebarItem = {
   hasDraft: boolean;
 };
 
-type FlowSidebarSection = {
-  key: 'draft' | 'submitted';
-  label: string;
-  items: FlowSidebarItem[];
-};
-
 type PendingPlannerRequest = {
   requestId: number;
   sessionKey: string;
@@ -321,9 +391,98 @@ type PendingPlannerSnapshot = {
 
 const PLANNER_MESSAGE_CACHE_MAX_SESSIONS = 24;
 const PLANNER_MESSAGE_CACHE_MAX_MESSAGES = 200;
+const FLOW_SIDEBAR_ORDER_STORAGE_KEY = 'linpo.flow_sidebar_order_v1';
 
 const NODE_DRAG_MOVE_THRESHOLD_PX = 6;
 const NODE_DRAG_MOVE_THRESHOLD_SQUARED = NODE_DRAG_MOVE_THRESHOLD_PX * NODE_DRAG_MOVE_THRESHOLD_PX;
+const flowSidebarSourceTagStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  width: 'fit-content',
+  padding: '0.16rem 0.42rem',
+  borderRadius: '999px',
+  fontSize: '0.64rem',
+  fontWeight: 700,
+  color: '#0f766e',
+  background: 'rgba(15, 118, 110, 0.12)',
+};
+
+function loadFlowSidebarOrder(): string[] {
+  try {
+    const raw = window.localStorage.getItem(FLOW_SIDEBAR_ORDER_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return dedupeFlowIds(parsed.map((item) => String(item ?? '').trim()).filter((item) => item !== ''));
+  } catch {
+    return [];
+  }
+}
+
+function saveFlowSidebarOrder(order: string[]): void {
+  try {
+    window.localStorage.setItem(FLOW_SIDEBAR_ORDER_STORAGE_KEY, JSON.stringify(dedupeFlowIds(order)));
+  } catch {
+    // ignore storage failures
+  }
+}
+
+function dedupeFlowIds(ids: string[]): string[] {
+  const seen = new Set<string>();
+  const next: string[] = [];
+  for (const item of ids) {
+    const normalized = String(item ?? '').trim();
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    next.push(normalized);
+  }
+  return next;
+}
+
+function areFlowIdOrdersEqual(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function moveFlowIdInOrder(currentOrder: string[], sourceId: string, targetId: string): string[] {
+  const normalizedSourceId = sourceId.trim();
+  const normalizedTargetId = targetId.trim();
+  if (!normalizedSourceId || !normalizedTargetId || normalizedSourceId === normalizedTargetId) {
+    return currentOrder;
+  }
+  const deduped = dedupeFlowIds(currentOrder);
+  const sourceIndex = deduped.indexOf(normalizedSourceId);
+  const targetIndex = deduped.indexOf(normalizedTargetId);
+  if (sourceIndex < 0 || targetIndex < 0) {
+    return deduped;
+  }
+  const next = [...deduped];
+  const [sourceValue] = next.splice(sourceIndex, 1);
+  const insertIndex = next.indexOf(normalizedTargetId);
+  next.splice(insertIndex < 0 ? next.length : insertIndex, 0, sourceValue);
+  return next;
+}
+
+function getRealtimeReconnectDelayMs(reconnectAttempts: number): number {
+  return Math.min(4000, 400 * Math.max(1, 2 ** reconnectAttempts));
+}
+
+function isApiNotFoundError(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.status === 404;
+}
 
 export function FlowPage(): JSX.Element {
   const navigate = useNavigate();
@@ -367,6 +526,9 @@ export function FlowPage(): JSX.Element {
   const [isMobileFlowSidebarOpen, setIsMobileFlowSidebarOpen] = useState(false);
   const [isPlannerExpanded, setIsPlannerExpanded] = useState(false);
   const [pendingDetailFlowId, setPendingDetailFlowId] = useState('');
+  const [flowSidebarOrder, setFlowSidebarOrder] = useState<string[]>(() => loadFlowSidebarOrder());
+  const [draggingSidebarItemId, setDraggingSidebarItemId] = useState<string | null>(null);
+  const [draftStoreVersion, setDraftStoreVersion] = useState(0);
 
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
@@ -420,6 +582,8 @@ export function FlowPage(): JSX.Element {
   const plannerMessagesRef = useRef<HTMLDivElement | null>(null);
   const wasMobileDrawerOpenRef = useRef(false);
   const skipNextDraftPersistRef = useRef(false);
+  const hasDraftSyncErrorToastRef = useRef(false);
+  const draftApiAvailabilityRef = useRef<'unknown' | 'enabled' | 'disabled'>('unknown');
 
   const routeState = useMemo<FlowRouteState | null>(() => {
     const value = location.state as FlowRouteState | null;
@@ -454,6 +618,74 @@ export function FlowPage(): JSX.Element {
     setFlowTasks(tasks);
     return tasks;
   }, []);
+
+  const bumpDraftStoreVersion = useCallback(() => {
+    setDraftStoreVersion((current) => current + 1);
+  }, []);
+
+  const reportDraftSyncFailure = useCallback((error: unknown) => {
+    if (hasDraftSyncErrorToastRef.current) {
+      return;
+    }
+    hasDraftSyncErrorToastRef.current = true;
+    const message = error instanceof Error ? error.message : '草稿落库失败，已保留本地草稿';
+    addToast(message, 'warning');
+  }, [addToast]);
+
+  const persistDraftRecord = useCallback((record: FlowDraftRecord, options?: { silentFailure?: boolean }) => {
+    upsertFlowDraft(record);
+    bumpDraftStoreVersion();
+    if (draftApiAvailabilityRef.current === 'disabled') {
+      return;
+    }
+    void upsertFlowDraftRecord(
+      {
+        ...record,
+        planner_messages: record.planner_messages ?? [],
+      },
+      undefined,
+      'default'
+    )
+      .then(() => {
+        draftApiAvailabilityRef.current = 'enabled';
+        hasDraftSyncErrorToastRef.current = false;
+      })
+      .catch((error) => {
+        if (isApiNotFoundError(error)) {
+          draftApiAvailabilityRef.current = 'disabled';
+          return;
+        }
+        if (!options?.silentFailure) {
+          reportDraftSyncFailure(error);
+        }
+      });
+  }, [bumpDraftStoreVersion, reportDraftSyncFailure]);
+
+  const removeDraftRecord = useCallback((flowId: string, options?: { silentFailure?: boolean }) => {
+    const normalizedFlowId = flowId.trim();
+    if (!normalizedFlowId) {
+      return;
+    }
+    deleteFlowDraft(normalizedFlowId);
+    bumpDraftStoreVersion();
+    if (draftApiAvailabilityRef.current === 'disabled') {
+      return;
+    }
+    void deleteFlowDraftRecord(normalizedFlowId, undefined, 'default')
+      .then(() => {
+        draftApiAvailabilityRef.current = 'enabled';
+        hasDraftSyncErrorToastRef.current = false;
+      })
+      .catch((error) => {
+        if (isApiNotFoundError(error)) {
+          draftApiAvailabilityRef.current = 'disabled';
+          return;
+        }
+        if (!options?.silentFailure) {
+          reportDraftSyncFailure(error);
+        }
+      });
+  }, [bumpDraftStoreVersion, reportDraftSyncFailure]);
 
   const applyBoardRealtimeUpdate = useCallback((message: BoardRealtimeMessage) => {
     if (message.type !== 'tasks_changed') {
@@ -504,6 +736,70 @@ export function FlowPage(): JSX.Element {
   }, [addToast, refreshFlowTasks]);
 
   useEffect(() => {
+    let active = true;
+    void listFlowDraftRecords(undefined, 'default')
+      .then((remoteDrafts) => {
+        if (!active) {
+          return;
+        }
+        draftApiAvailabilityRef.current = 'enabled';
+        const currentLocalDrafts = listFlowDrafts();
+        const localById = new Map(currentLocalDrafts.map((draft) => [draft.id, draft]));
+        const remoteById = new Map(remoteDrafts.map((draft) => [draft.id, draft]));
+        let localChanged = false;
+
+        for (const remoteDraft of remoteDrafts) {
+          const localDraft = localById.get(remoteDraft.id);
+          const shouldReplaceLocal = !localDraft || toEpochMillis(remoteDraft.updated_at) >= toEpochMillis(localDraft.updated_at);
+          if (!shouldReplaceLocal) {
+            continue;
+          }
+          upsertFlowDraft(remoteDraft);
+          localChanged = true;
+        }
+
+        if (localChanged) {
+          bumpDraftStoreVersion();
+        }
+
+        const mergedLocalDrafts = listFlowDrafts();
+        for (const localDraft of mergedLocalDrafts) {
+          const remoteDraft = remoteById.get(localDraft.id);
+          if (!remoteDraft || toEpochMillis(localDraft.updated_at) > toEpochMillis(remoteDraft.updated_at)) {
+            void upsertFlowDraftRecord(
+              {
+                ...localDraft,
+                planner_messages: localDraft.planner_messages ?? [],
+              },
+              undefined,
+              'default'
+            )
+              .then(() => {
+                hasDraftSyncErrorToastRef.current = false;
+              })
+              .catch(() => {
+                // keep local draft silently when backend sync fails
+              });
+          }
+        }
+      })
+      .catch((error) => {
+        if (!active) {
+          return;
+        }
+        if (isApiNotFoundError(error)) {
+          draftApiAvailabilityRef.current = 'disabled';
+          return;
+        }
+        reportDraftSyncFailure(error);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [bumpDraftStoreVersion, reportDraftSyncFailure]);
+
+  useEffect(() => {
     let cancelled = false;
     let reconnectAttempts = 0;
     let reconnectTimerId: number | null = null;
@@ -532,7 +828,7 @@ export function FlowPage(): JSX.Element {
           if (cancelled || reconnectTimerId !== null) {
             return;
           }
-          const delay = Math.min(4000, 400 * Math.max(1, 2 ** reconnectAttempts));
+          const delay = getRealtimeReconnectDelayMs(reconnectAttempts);
           reconnectAttempts += 1;
           reconnectTimerId = window.setTimeout(() => {
             reconnectTimerId = null;
@@ -632,6 +928,26 @@ export function FlowPage(): JSX.Element {
     return plannerMessagesBySessionRef.current[normalizedSessionKey] ?? [];
   }, []);
 
+  const appendPlannerSystemMessage = useCallback((sessionKey: string | null | undefined, content: string) => {
+    const normalizedSessionKey = sessionKey?.trim() ?? '';
+    const nextMessage: FlowChatMessageItem = {
+      role: 'system',
+      content,
+      created_at: new Date().toISOString(),
+    };
+    setPlannerMessages((current) => {
+      const last = current[current.length - 1];
+      if (last?.role === 'system' && String(last.content ?? '').trim() === content) {
+        return current;
+      }
+      const next = [...current, nextMessage];
+      if (normalizedSessionKey) {
+        cachePlannerMessages(normalizedSessionKey, next);
+      }
+      return next;
+    });
+  }, [cachePlannerMessages]);
+
   const applyPlannerDraftNodes = useCallback(
     (draftNodes: FlowPlannerNodeDraft[], sessionKey: string) => {
       const reconciled = reconcilePlannerCanvasState(
@@ -713,12 +1029,13 @@ export function FlowPage(): JSX.Element {
         }
         plannerSessionStatusRef.current = message.payload.status;
         setPlannerSessionStatus(message.payload.status);
-        setIsPlannerExpanded(true);
         if (message.payload.status === 'planning') {
+          setIsPlannerExpanded(true);
           clearPlannerFinishTimer();
           setPlannerOverlayCloseBlockedWithRef(true);
           setIsPlanning(true);
           setIsPlannerStopping(false);
+          appendPlannerSystemMessage(sessionKey, PLANNER_STATUS_PLANNING_TEXT);
           return;
         }
         clearPlannerStepTimer();
@@ -734,6 +1051,8 @@ export function FlowPage(): JSX.Element {
         if (message.payload.status === 'stopped') {
           clearPlannerFinishTimer();
           setPlannerOverlayCloseBlockedWithRef(false);
+          setIsPlannerExpanded(false);
+          appendPlannerSystemMessage(sessionKey, PLANNER_STATUS_STOPPED_TEXT);
           return;
         }
         setPlannerOverlayCloseBlockedWithRef(true);
@@ -744,11 +1063,17 @@ export function FlowPage(): JSX.Element {
         if (message.payload.session_key !== sessionKey) {
           return;
         }
-        cachePlannerMessages(sessionKey, message.payload.messages);
+        const sanitizedMessages = sanitizePlannerMessages(message.payload.messages);
+        cachePlannerMessages(sessionKey, sanitizedMessages);
         setPlannerMessages((current) =>
-          areFlowChatMessagesEqual(current, message.payload.messages) ? current : message.payload.messages
+          areFlowChatMessagesEqual(current, sanitizedMessages) ? current : sanitizedMessages
         );
         const currentPlannerStatus = plannerSessionStatusRef.current;
+        if (currentPlannerStatus === 'stopped') {
+          clearPlannerFinishTimer();
+          setPlannerOverlayCloseBlockedWithRef(false);
+          return;
+        }
         if (isTerminalPlannerSessionStatus(currentPlannerStatus)) {
           setPlannerOverlayCloseBlockedWithRef(true);
           schedulePlannerOverlayCloseUnlock();
@@ -810,6 +1135,7 @@ export function FlowPage(): JSX.Element {
       applyPlannerDraftNodes(message.payload.nodes, sessionKey);
     },
     [
+      appendPlannerSystemMessage,
       applyPlannerDraftNodes,
       cachePlannerMessages,
       clearPlannerFinishTimer,
@@ -827,6 +1153,14 @@ export function FlowPage(): JSX.Element {
     if (!normalizedPlannerSessionKey) {
       return;
     }
+    const shouldSubscribePlannerRealtime =
+      isPlanning
+      || isPlannerStopping
+      || plannerSessionStatus !== 'idle'
+      || hasPendingPlannerReply(plannerMessages);
+    if (!shouldSubscribePlannerRealtime) {
+      return;
+    }
     plannerRevisionBySessionRef.current[normalizedPlannerSessionKey] =
       plannerRevisionBySessionRef.current[normalizedPlannerSessionKey] ?? -1;
 
@@ -839,6 +1173,11 @@ export function FlowPage(): JSX.Element {
         window.clearTimeout(reconnectTimerId);
         reconnectTimerId = null;
       }
+    };
+    const clearPlannerSessionIfStale = () => {
+      setPlannerSessionKey((current) =>
+        current?.trim() === normalizedPlannerSessionKey ? null : current
+      );
     };
 
     const connectRealtime = () => {
@@ -859,7 +1198,7 @@ export function FlowPage(): JSX.Element {
           if (cancelled || reconnectTimerId !== null) {
             return;
           }
-          const delay = Math.min(4000, 400 * Math.max(1, 2 ** reconnectAttempts));
+          const delay = getRealtimeReconnectDelayMs(reconnectAttempts);
           reconnectAttempts += 1;
           reconnectTimerId = window.setTimeout(() => {
             reconnectTimerId = null;
@@ -871,14 +1210,42 @@ export function FlowPage(): JSX.Element {
       plannerRealtimeRef.current = client;
     };
 
-    connectRealtime();
+    void probeFlowPlannerSession(normalizedPlannerSessionKey, undefined, 'default')
+      .then(({ exists }) => {
+        if (cancelled) {
+          return;
+        }
+        if (!exists) {
+          clearPlannerSessionIfStale();
+          return;
+        }
+        connectRealtime();
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+        if (isApiNotFoundError(error)) {
+          clearPlannerSessionIfStale();
+          return;
+        }
+        connectRealtime();
+      });
+
     return () => {
       cancelled = true;
       clearReconnectTimer();
       plannerRealtimeRef.current?.close();
       plannerRealtimeRef.current = null;
     };
-  }, [applyPlannerRealtimeUpdate, plannerSessionKey]);
+  }, [
+    applyPlannerRealtimeUpdate,
+    isPlannerStopping,
+    isPlanning,
+    plannerMessages,
+    plannerSessionKey,
+    plannerSessionStatus,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -988,27 +1355,32 @@ export function FlowPage(): JSX.Element {
       });
     }
 
-    return Array.from(items.values()).sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
-  }, [currentFlowId, flowCatalog, flowDisplayName, flowNodes.length, flowTasksByRequirement, isSubmittedFlow]);
+    return Array.from(items.values());
+  }, [currentFlowId, draftStoreVersion, flowCatalog, flowDisplayName, flowNodes.length, flowTasksByRequirement, isSubmittedFlow]);
 
-  const flowSidebarSections = useMemo<FlowSidebarSection[]>(() => {
-    const draftFlowItems: FlowSidebarItem[] = [];
-    const submittedFlowItems: FlowSidebarItem[] = [];
-
-    for (const item of flowSidebarItems) {
-      if (item.hasDraft) {
-        draftFlowItems.push(item);
-        continue;
+  useEffect(() => {
+    const itemIds = flowSidebarItems.map((item) => item.id);
+    setFlowSidebarOrder((current) => {
+      const dedupCurrent = dedupeFlowIds(current);
+      const kept = dedupCurrent.filter((id) => itemIds.includes(id));
+      const newIds = itemIds.filter((id) => !kept.includes(id));
+      const next = [...newIds, ...kept];
+      if (areFlowIdOrdersEqual(next, dedupCurrent)) {
+        return dedupCurrent;
       }
-      submittedFlowItems.push(item);
-    }
-
-    const sections: FlowSidebarSection[] = [
-      { key: 'draft', label: '草稿', items: draftFlowItems },
-      { key: 'submitted', label: '已提交', items: submittedFlowItems },
-    ];
-    return sections.filter((section) => section.items.length > 0);
+      saveFlowSidebarOrder(next);
+      return next;
+    });
   }, [flowSidebarItems]);
+
+  const orderedFlowSidebarItems = useMemo(() => {
+    const itemById = new Map(flowSidebarItems.map((item) => [item.id, item]));
+    const knownIds = flowSidebarOrder.filter((id) => itemById.has(id));
+    const newIds = flowSidebarItems.map((item) => item.id).filter((id) => !knownIds.includes(id));
+    return [...newIds, ...knownIds]
+      .map((id) => itemById.get(id))
+      .filter((item): item is FlowSidebarItem => item !== undefined);
+  }, [flowSidebarItems, flowSidebarOrder]);
 
   const flowPlannerAgent = useMemo(() => {
     const directMatch = overview?.agents.find((agent) => agent.agent_id.trim() === FIXED_FLOW_PLANNER_AGENT_ID) ?? null;
@@ -1185,10 +1557,10 @@ export function FlowPage(): JSX.Element {
       created_at: createdAt,
       updated_at: createdAt,
     };
-    upsertFlowDraft(draftRecord);
+    persistDraftRecord(draftRecord);
     setIsMobileFlowSidebarOpen(false);
     navigate(`/flow/edit/${encodeURIComponent(draftId)}`);
-  }, [flowPlannerAgent?.agent_id, navigate, overview?.agents]);
+  }, [flowPlannerAgent?.agent_id, navigate, overview?.agents, persistDraftRecord]);
 
   const handleDeleteCurrentFlow = useCallback(async () => {
     const flowId = currentFlowId.trim();
@@ -1210,9 +1582,9 @@ export function FlowPage(): JSX.Element {
           current.filter((task) => getRequirementIdFromTask(task) !== submittedRequirementId)
         );
       }
-      deleteFlowDraft(flowId);
+      removeDraftRecord(flowId, { silentFailure: true });
       if (submittedRequirementId && submittedRequirementId !== flowId) {
-        deleteFlowDraft(submittedRequirementId);
+        removeDraftRecord(submittedRequirementId, { silentFailure: true });
       }
       setIsDetailOpen(false);
       setCurrentFlowId('');
@@ -1241,6 +1613,7 @@ export function FlowPage(): JSX.Element {
     }
   }, [
     addToast,
+    appendPlannerSystemMessage,
     clearPlannerFinishTimer,
     currentFlowId,
     flowCatalog,
@@ -1249,8 +1622,56 @@ export function FlowPage(): JSX.Element {
     navigate,
     refreshFlowTasks,
     resolvedFlowId,
+    removeDraftRecord,
     setPlannerOverlayCloseBlockedWithRef,
   ]);
+
+  const moveSidebarCard = useCallback((sourceId: string, targetId: string) => {
+    setFlowSidebarOrder((current) => {
+      const next = moveFlowIdInOrder(current, sourceId, targetId);
+      if (areFlowIdOrdersEqual(next, current)) {
+        return current;
+      }
+      saveFlowSidebarOrder(next);
+      return next;
+    });
+  }, []);
+
+  const handleSidebarCardDragStart = useCallback(
+    (flowId: string) => (event: React.DragEvent<HTMLElement>) => {
+      setDraggingSidebarItemId(flowId);
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', flowId);
+      }
+    },
+    []
+  );
+
+  const handleSidebarCardDragOver = useCallback((event: React.DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'move';
+    }
+  }, []);
+
+  const handleSidebarCardDrop = useCallback(
+    (targetFlowId: string) => (event: React.DragEvent<HTMLElement>) => {
+      event.preventDefault();
+      const sourceFlowId = draggingSidebarItemId ?? String(event.dataTransfer?.getData('text/plain') ?? '').trim();
+      if (!sourceFlowId || sourceFlowId === targetFlowId) {
+        setDraggingSidebarItemId(null);
+        return;
+      }
+      moveSidebarCard(sourceFlowId, targetFlowId);
+      setDraggingSidebarItemId(null);
+    },
+    [draggingSidebarItemId, moveSidebarCard]
+  );
+
+  const handleSidebarCardDragEnd = useCallback(() => {
+    setDraggingSidebarItemId(null);
+  }, []);
 
   const renderFlowSidebarContent = useCallback(
     (mode: 'desktop' | 'drawer') => {
@@ -1282,25 +1703,11 @@ export function FlowPage(): JSX.Element {
           </div>
         </div>
         <div style={isDrawerMode ? { ...flowSidebarListStyle, ...flowSidebarListDrawerStyle } : flowSidebarListStyle}>
-          {flowSidebarSections.length === 0 ? (
+          {orderedFlowSidebarItems.length === 0 ? (
             <div style={isDrawerMode ? { ...flowSidebarEmptyStyle, ...flowSidebarEmptyDrawerStyle } : flowSidebarEmptyStyle}>暂无流程，点击新建开始编辑。</div>
           ) : (
-            flowSidebarSections.map((section) => (
-              <section
-                key={section.key}
-                style={isDrawerMode ? { ...flowSidebarSectionStyle, ...flowSidebarSectionDrawerStyle } : flowSidebarSectionStyle}
-                aria-label={`流程分组-${section.label}`}
-              >
-                <div style={flowSidebarSectionHeaderStyle}>
-                  <span style={isDrawerMode ? { ...flowSidebarSectionTitleStyle, ...flowSidebarSectionTitleDrawerStyle } : flowSidebarSectionTitleStyle}>
-                    {section.label}
-                  </span>
-                  <span style={isDrawerMode ? { ...flowSidebarSectionCountStyle, ...flowSidebarSectionCountDrawerStyle } : flowSidebarSectionCountStyle}>
-                    {section.items.length}
-                  </span>
-                </div>
-                <div style={flowSidebarSectionListStyle}>
-                  {section.items.map((item) => {
+            <div style={flowSidebarSectionListStyle}>
+              {orderedFlowSidebarItems.map((item) => {
                     const isActive = item.id === currentFlowId.trim();
                     const isActiveFlowRunnable =
                       isActive
@@ -1313,6 +1720,12 @@ export function FlowPage(): JSX.Element {
                     return (
                       <article
                         key={item.id}
+                        draggable
+                        onDragStart={handleSidebarCardDragStart(item.id)}
+                        onDragOver={handleSidebarCardDragOver}
+                        onDrop={handleSidebarCardDrop(item.id)}
+                        onDragEnd={handleSidebarCardDragEnd}
+                        data-testid={`flow-sidebar-card-${item.id}`}
                         style={isDrawerMode ? { ...flowSidebarItemCardStyle, ...flowSidebarItemCardDrawerStyle } : flowSidebarItemCardStyle}
                       >
                         <button
@@ -1339,9 +1752,12 @@ export function FlowPage(): JSX.Element {
                           aria-current={isActive ? 'page' : undefined}
                           ref={mode === 'drawer' && isActive ? activeDrawerFlowButtonRef : undefined}
                         >
+                          <span style={flowSidebarSourceTagStyle}>
+                            {(item.hasSubmitted && item.hasDraft) ? '已提交 + 草稿' : item.hasSubmitted ? '已提交' : '草稿'}
+                          </span>
                           <span style={isDrawerMode ? { ...flowSidebarItemTitleStyle, ...flowSidebarItemTitleDrawerStyle } : flowSidebarItemTitleStyle}>{item.name}</span>
                           <span style={isDrawerMode ? { ...flowSidebarItemMetaStyle, ...flowSidebarItemMetaDrawerStyle } : flowSidebarItemMetaStyle}>
-                            {(item.hasSubmitted && item.hasDraft) ? '已提交 + 草稿' : item.hasSubmitted ? '已提交' : '草稿'} · {item.statusLabel}
+                            {item.statusLabel}
                           </span>
                           <span style={isDrawerMode ? { ...flowSidebarItemMetaStyle, ...flowSidebarItemMetaDrawerStyle } : flowSidebarItemMetaStyle}>节点 {item.nodeCount}</span>
                         </button>
@@ -1367,9 +1783,7 @@ export function FlowPage(): JSX.Element {
                       </article>
                     );
                   })}
-                </div>
-              </section>
-            ))
+            </div>
           )}
         </div>
       </>
@@ -1378,7 +1792,11 @@ export function FlowPage(): JSX.Element {
     [
       currentFlowId,
       flowNodes.length,
-      flowSidebarSections,
+      orderedFlowSidebarItems,
+      handleSidebarCardDragEnd,
+      handleSidebarCardDragOver,
+      handleSidebarCardDragStart,
+      handleSidebarCardDrop,
       handleCreateBlankFlow,
       isFlowActioning,
       isPlanning,
@@ -1392,7 +1810,7 @@ export function FlowPage(): JSX.Element {
     const normalizedName = draft.name.trim() || '未命名流程';
     const normalizedNodes = normalizeFlowNodes(draft.nodes, draft.edges);
     const derivedEdges = deriveEdgesFromNodes(normalizedNodes);
-    const persistedPlannerMessages = draft.planner_messages ?? [];
+    const persistedPlannerMessages = sanitizePlannerMessages(draft.planner_messages ?? []);
     resetPlannerRuntimeState();
     setCurrentFlowId(draft.id);
     setFlowDisplayName(normalizedName);
@@ -1418,7 +1836,7 @@ export function FlowPage(): JSX.Element {
       cachePlannerMessages(restoredResponse.planner_session_key, persistedPlannerMessages);
     }
     const cachedMessages = getCachedPlannerMessages(restoredResponse?.planner_session_key);
-    setPlannerMessages(cachedMessages.length > 0 ? cachedMessages : persistedPlannerMessages);
+    setPlannerMessages(cachedMessages.length > 0 ? sanitizePlannerMessages(cachedMessages) : persistedPlannerMessages);
     setSelectedExecutorAgentId(draft.executor_agent_id?.trim() || '');
     const normalizedLanes = normalizeDraftLanes(draft.lanes);
     if (normalizedLanes.length > 0) {
@@ -1465,8 +1883,8 @@ export function FlowPage(): JSX.Element {
       edges: deriveEdgesFromNodes(normalizedNodes),
     });
     setPlannerSessionKey(snapshot.lastResponse.planner_session_key);
-    const cachedMessages = getCachedPlannerMessages(snapshot.lastResponse.planner_session_key);
-    setPlannerMessages(cachedMessages.length > 0 ? cachedMessages : (snapshot.lastResponse.messages ?? []));
+    const cachedMessages = sanitizePlannerMessages(getCachedPlannerMessages(snapshot.lastResponse.planner_session_key));
+    setPlannerMessages(cachedMessages.length > 0 ? cachedMessages : sanitizePlannerMessages(snapshot.lastResponse.messages ?? []));
     setSelectedExecutorAgentId(snapshot.executorAgentId.trim());
     setIsDraftCanvas(false);
     setIsSubmittedFlow(true);
@@ -1621,10 +2039,11 @@ export function FlowPage(): JSX.Element {
           edges: deriveEdgesFromNodes(normalizedNodes),
         });
         setPlannerSessionKey(snapshot.lastResponse.planner_session_key);
-        setPlannerMessages(snapshot.lastResponse.messages ?? []);
+        setPlannerMessages(sanitizePlannerMessages(snapshot.lastResponse.messages ?? []));
       }
     }
   }, [
+    draftStoreVersion,
     flowDisplayName,
     flowEdges.length,
     flowNodes.length,
@@ -1710,7 +2129,7 @@ export function FlowPage(): JSX.Element {
       return;
     }
 
-    upsertFlowDraft(nextDraftRecord);
+    persistDraftRecord(nextDraftRecord, { silentFailure: true });
   }, [
     currentFlowId,
     flowDisplayName,
@@ -1725,6 +2144,7 @@ export function FlowPage(): JSX.Element {
     nodeLaneById,
     plannerSessionKey,
     plannerMessages,
+    persistDraftRecord,
     selectedExecutorAgentId,
   ]);
 
@@ -2530,7 +2950,7 @@ export function FlowPage(): JSX.Element {
       window.clearTimeout(blockedSyncTimerRef.current);
       blockedSyncTimerRef.current = null;
     }
-    if (flowRuntimeState !== 'blocked' || isPlanning || isFlowActioning || isSubmittingFlow) {
+    if (flowRuntimeState === 'running' || isPlanning || isFlowActioning || isSubmittingFlow) {
       blockedSyncSignatureRef.current = '';
       return;
     }
@@ -2580,7 +3000,7 @@ export function FlowPage(): JSX.Element {
           await refreshFlowTasks();
         })
         .catch((error) => {
-          const message = error instanceof Error ? error.message : '阻塞流程同步失败';
+          const message = error instanceof Error ? error.message : '流程同步失败';
           addToast(message, 'error');
         })
         .finally(() => {
@@ -2657,6 +3077,7 @@ export function FlowPage(): JSX.Element {
       cachePlannerMessages(resolvedPlannerSessionKey, nextMessages);
       return nextMessages;
     });
+    appendPlannerSystemMessage(resolvedPlannerSessionKey, PLANNER_STATUS_PLANNING_TEXT);
     const requestId = plannerRequestSeqRef.current + 1;
     plannerRequestSeqRef.current = requestId;
     pendingPlannerRequestRef.current = {
@@ -2725,6 +3146,7 @@ export function FlowPage(): JSX.Element {
       }
       setLastResponse({
         ...response,
+        messages: sanitizePlannerMessages(response.messages ?? []),
         nodes: nextNodes,
         edges: deriveEdgesFromNodes(nextNodes),
       });
@@ -2761,6 +3183,7 @@ export function FlowPage(): JSX.Element {
     }
   }, [
     addToast,
+    appendPlannerSystemMessage,
     canPromptPlanner,
     cachePlannerMessages,
     clearPlannerFinishTimer,
@@ -2799,17 +3222,20 @@ export function FlowPage(): JSX.Element {
 
   const handleStopPlanning = useCallback(async () => {
     const sessionKey = plannerSessionKey?.trim() ?? '';
+    pendingPlannerRequestRef.current = null;
+    plannerOperationQueueRef.current = [];
+    clearPlannerStepTimer();
+    clearPlannerFinishTimer();
+    plannerSessionStatusRef.current = 'stopped';
+    setPlannerSessionStatus('stopped');
+    setIsPlanning(false);
+    setIsPlannerExpanded(false);
+    setPlannerOverlayCloseBlockedWithRef(false);
+    appendPlannerSystemMessage(sessionKey, PLANNER_STATUS_STOPPED_TEXT);
     if (!sessionKey) {
-      plannerSessionStatusRef.current = 'stopped';
-      setIsPlanning(false);
-      setPlannerSessionStatus('stopped');
-      clearPlannerFinishTimer();
-      setPlannerOverlayCloseBlockedWithRef(false);
       return;
     }
     setIsPlannerStopping(true);
-    clearPlannerFinishTimer();
-    setPlannerOverlayCloseBlockedWithRef(true);
     try {
       const response = await stopFlowPlannerSession(
         {
@@ -2821,12 +3247,9 @@ export function FlowPage(): JSX.Element {
       plannerSessionStatusRef.current = response.status;
       setPlannerSessionStatus(response.status);
       setIsPlanning(!isTerminalPlannerSessionStatus(response.status));
-      pendingPlannerRequestRef.current = null;
-      plannerOperationQueueRef.current = [];
-      clearPlannerStepTimer();
       if (response.status === 'stopped') {
-        clearPlannerFinishTimer();
         setPlannerOverlayCloseBlockedWithRef(false);
+        setIsPlannerExpanded(false);
       } else if (isTerminalPlannerSessionStatus(response.status)) {
         setPlannerOverlayCloseBlockedWithRef(true);
         schedulePlannerOverlayCloseUnlock();
@@ -2988,7 +3411,7 @@ export function FlowPage(): JSX.Element {
       const firstCreatedTask = tasks.find((task) => createdIds.has(task.id));
       const nextRequirementId = firstCreatedTask ? getRequirementIdFromTask(firstCreatedTask) : '';
       if (currentFlowId.trim()) {
-        deleteFlowDraft(currentFlowId.trim());
+        removeDraftRecord(currentFlowId.trim(), { silentFailure: true });
       }
 
       setIsDraftCanvas(false);
@@ -3027,6 +3450,7 @@ export function FlowPage(): JSX.Element {
     nodeLaneById,
     normalizedLanes,
     refreshFlowTasks,
+    removeDraftRecord,
     selectedExecutorAgentId,
     uniqueAgents,
   ]);
@@ -3048,7 +3472,7 @@ export function FlowPage(): JSX.Element {
       if (normalizedDraftId) {
         const existingDraft = getFlowDraftById(normalizedDraftId);
         if (existingDraft || isDraftCanvas) {
-          upsertFlowDraft({
+          persistDraftRecord({
             id: normalizedDraftId,
             name: nextName,
             requirement: flowRequirement,
@@ -3091,6 +3515,7 @@ export function FlowPage(): JSX.Element {
     normalizedLanes,
     plannerSessionKey,
     plannerMessages,
+    persistDraftRecord,
     refreshFlowTasks,
     selectedExecutorAgentId,
   ]);
@@ -3516,7 +3941,13 @@ export function FlowPage(): JSX.Element {
                 plannerMessages.map((message, index) => (
                   <article
                     key={`${message.created_at}-${message.role}-${index}`}
-                    style={message.role === 'user' ? plannerMessageUserCardStyle : plannerMessageAssistantCardStyle}
+                    style={
+                      message.role === 'user'
+                        ? plannerMessageUserCardStyle
+                        : message.role === 'system'
+                          ? plannerMessageSystemCardStyle
+                          : plannerMessageAssistantCardStyle
+                    }
                   >
                     <span style={plannerMessageRoleStyle}>
                       {message.role === 'user'

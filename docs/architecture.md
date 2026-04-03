@@ -183,6 +183,9 @@
   - `planner_snapshot_updated`：负载包含 `session_key/revision/nodes[]`，前端用于重连首屏或重同步纠偏。
 - `GET /api/v1/boards/{board_id}/tasks/flow/planner-sse` 还需推送 `planner_session_updated`，至少包含 `session_key/status/revision/updated_at`，用于前端维持“遮罩/停止按钮/恢复编辑”状态。
 - `POST /api/v1/boards/{board_id}/tasks/flow/planner-stop`：前端停止当前 planner 会话；后端需落持久化状态并尝试暂停 `claw3`。
+- `GET /api/v1/boards/{board_id}/tasks/flow/drafts`：返回当前登录用户在该看板下的流程草稿列表（后端真源）。
+- `POST /api/v1/boards/{board_id}/tasks/flow/drafts`：新增或更新流程草稿，落库字段至少覆盖 `nodes/edges/planner_messages/lanes/node_lane_by_id` 与 session 元数据。
+- `DELETE /api/v1/boards/{board_id}/tasks/flow/drafts/{flow_id}`：删除指定流程草稿。
 - `POST /api/v1/boards/{board_id}/tasks/flow/planner-sessions/{session_key}/nodes/upsert`：planner 内部接口，基于 token 单节点创建或更新。
 - `POST /api/v1/boards/{board_id}/tasks/flow/planner-sessions/{session_key}/nodes/delete`：planner 内部接口，基于 token 删除单节点。
 - `POST /api/v1/boards/{board_id}/tasks/flow/planner-sessions/{session_key}/complete`：planner 内部接口，提交最终节点集并触发完整校验。

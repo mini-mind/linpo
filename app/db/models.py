@@ -70,6 +70,35 @@ class Task(Base):
     )
 
 
+class FlowDraft(Base):
+    __tablename__ = "flow_drafts"
+    __table_args__ = (
+        UniqueConstraint("user_id", "board_id", "flow_id", name="uq_flow_drafts_user_board_flow"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    board_id: Mapped[str] = mapped_column(String(64), default="default", index=True)
+    flow_id: Mapped[str] = mapped_column(String(128), index=True)
+    name: Mapped[str] = mapped_column(String(256), default="未命名流程")
+    requirement: Mapped[str] = mapped_column(Text, default="")
+    nodes: Mapped[list[dict[str, object]]] = mapped_column(JSON, default=list)
+    edges: Mapped[list[dict[str, object]]] = mapped_column(JSON, default=list)
+    planner_messages: Mapped[list[dict[str, object]]] = mapped_column(JSON, default=list)
+    lanes: Mapped[list[dict[str, object]]] = mapped_column(JSON, default=list)
+    node_lane_by_id: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+    planner_session_key: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    execution_session_prefix: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    executor_agent_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=_utc_now,
+        onupdate=_utc_now,
+        index=True,
+    )
+
+
 class PairingReceipt(Base):
     __tablename__ = "pairing_receipts"
 

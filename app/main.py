@@ -1,6 +1,7 @@
 import os
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request, Response
 
@@ -64,18 +65,42 @@ def _get_cors_allow_headers(request: Request) -> str:
     return "content-type"
 
 
+def _is_origin_allowed(request: Request, origin: str | None) -> bool:
+    if origin is None:
+        return False
+    if origin in _ALLOWED_CORS_ORIGINS:
+        return True
+
+    parsed = urlparse(origin)
+    origin_host = (parsed.hostname or "").strip().lower()
+    if origin_host == "":
+        return False
+    if parsed.scheme not in {"http", "https"}:
+        return False
+
+    request_host_header = request.headers.get("host", "")
+    request_host = request_host_header.split(":", 1)[0].strip().lower()
+    if request_host == "":
+        request_host = (request.url.hostname or "").strip().lower()
+    if request_host == "":
+        return False
+
+    return origin_host == request_host
+
+
 @app.middleware("http")
 async def add_http_cors_headers(
     request: Request,
     call_next: Callable[[Request], Awaitable[Response]],
 ) -> Response:
     origin = request.headers.get("origin")
-    if request.method == "OPTIONS" and origin in _ALLOWED_CORS_ORIGINS:
+    origin_allowed = _is_origin_allowed(request, origin)
+    if request.method == "OPTIONS" and origin_allowed:
         response = Response(status_code=200)
     else:
         response = await call_next(request)
 
-    if origin in _ALLOWED_CORS_ORIGINS:
+    if origin_allowed and origin is not None:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
         response.headers["Access-Control-Allow-Methods"] = _ALLOWED_CORS_METHODS

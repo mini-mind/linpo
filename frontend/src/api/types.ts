@@ -399,6 +399,50 @@ export interface FlowCanvasEdge {
   target: string;
 }
 
+export interface FlowDraftLaneItem {
+  id: string;
+  name: string;
+  agent_id: string | null;
+  created_at: string;
+}
+
+export interface FlowDraftItem {
+  id: string;
+  name: string;
+  requirement: string;
+  nodes: FlowCanvasNode[];
+  edges: FlowCanvasEdge[];
+  planner_messages: FlowChatMessageItem[];
+  lanes: FlowDraftLaneItem[];
+  node_lane_by_id: Record<string, string>;
+  planner_session_key: string | null;
+  execution_session_prefix: string | null;
+  executor_agent_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FlowDraftUpsertRequest {
+  id: string;
+  name: string;
+  requirement: string;
+  nodes: FlowCanvasNode[];
+  edges: FlowCanvasEdge[];
+  planner_messages?: FlowChatMessageItem[];
+  lanes?: FlowDraftLaneItem[];
+  node_lane_by_id?: Record<string, string>;
+  planner_session_key?: string | null;
+  execution_session_prefix?: string | null;
+  executor_agent_id?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface FlowDraftDeleteResponse {
+  deleted: boolean;
+  flow_id: string;
+}
+
 export interface FlowGenerateRequest {
   requirement: string;
   instance_id: string;
@@ -455,6 +499,10 @@ export interface FlowPlannerStopResponse {
   status: FlowPlannerSessionStatus;
   revision: number;
   updated_at: string;
+}
+
+export interface FlowPlannerSessionProbeResponse {
+  exists: boolean;
 }
 
 export interface FlowRequirementRenameRequest {

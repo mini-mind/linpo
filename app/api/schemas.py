@@ -531,6 +531,78 @@ class FlowCanvasEdge(BaseModel):
     target: str
 
 
+class FlowDraftLaneItem(BaseModel):
+    id: str
+    name: str
+    agent_id: str | None = None
+    created_at: str
+
+
+class FlowDraftItem(BaseModel):
+    id: str
+    name: str
+    requirement: str
+    nodes: list[FlowCanvasNode] = Field(default_factory=list)
+    edges: list[FlowCanvasEdge] = Field(default_factory=list)
+    planner_messages: list[FlowChatMessageItem] = Field(default_factory=list)
+    lanes: list[FlowDraftLaneItem] = Field(default_factory=list)
+    node_lane_by_id: dict[str, str] = Field(default_factory=dict)
+    planner_session_key: str | None = None
+    execution_session_prefix: str | None = None
+    executor_agent_id: str | None = None
+    created_at: str
+    updated_at: str
+
+    @field_validator("node_lane_by_id", mode="before")
+    @classmethod
+    def _normalize_node_lane_mapping(cls, value: Any) -> dict[str, str]:
+        if not isinstance(value, dict):
+            return {}
+        normalized: dict[str, str] = {}
+        for raw_node_id, raw_lane_id in value.items():
+            node_id = str(raw_node_id).strip()
+            lane_id = str(raw_lane_id).strip()
+            if node_id == "" or lane_id == "":
+                continue
+            normalized[node_id] = lane_id
+        return normalized
+
+
+class FlowDraftUpsertRequest(BaseModel):
+    id: str
+    name: str
+    requirement: str
+    nodes: list[FlowCanvasNode] = Field(default_factory=list)
+    edges: list[FlowCanvasEdge] = Field(default_factory=list)
+    planner_messages: list[FlowChatMessageItem] = Field(default_factory=list)
+    lanes: list[FlowDraftLaneItem] = Field(default_factory=list)
+    node_lane_by_id: dict[str, str] = Field(default_factory=dict)
+    planner_session_key: str | None = None
+    execution_session_prefix: str | None = None
+    executor_agent_id: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+    @field_validator("node_lane_by_id", mode="before")
+    @classmethod
+    def _normalize_upsert_node_lane_mapping(cls, value: Any) -> dict[str, str]:
+        if not isinstance(value, dict):
+            return {}
+        normalized: dict[str, str] = {}
+        for raw_node_id, raw_lane_id in value.items():
+            node_id = str(raw_node_id).strip()
+            lane_id = str(raw_lane_id).strip()
+            if node_id == "" or lane_id == "":
+                continue
+            normalized[node_id] = lane_id
+        return normalized
+
+
+class FlowDraftDeleteResponse(BaseModel):
+    deleted: bool
+    flow_id: str
+
+
 class FlowGenerateResponse(BaseModel):
     board_id: str
     planner_session_key: str
@@ -570,6 +642,10 @@ class FlowPlannerStopResponse(BaseModel):
     status: FlowPlannerSessionStatus
     revision: int
     updated_at: str
+
+
+class FlowPlannerSessionProbeResponse(BaseModel):
+    exists: bool
 
 
 class FlowPlannerNodeDraftItem(BaseModel):

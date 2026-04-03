@@ -22,4 +22,11 @@ ravin 测试服务域名：`linpo.duckdns.org`
 - 架构边界：`docs/architecture.md`（分层、契约与技术边界）
 - 测试资源：`docs/test-resources.md`（环境、构建、联调、验收与 OpenClaw 参考）
 - OpenClaw 全量接口：`docs/openclaw-api-catalog.md`（含当前接入状态与未接入项清单）
-- 变更记录：`docs/changelog.md`
+
+## 文档读取建议（按需，不全读）
+
+- 默认先读：`README.md`
+- 功能/交互变更：读 `docs/prd.md`
+- 技术实现/边界变更：读 `docs/architecture.md`
+- 测试、部署、联调或外部协议细节：读 `docs/test-resources.md`
+- 查询未接入接口或当前接入状态：读 `docs/openclaw-api-catalog.md`

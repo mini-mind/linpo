@@ -221,6 +221,27 @@ def test_cors_preflight_allows_patch_for_auth_profile(
     assert "PATCH" in allowed_methods
 
 
+def test_cors_preflight_allows_same_host_origin_even_if_not_in_static_allow_list(
+    isolated_database_url: str,
+) -> None:
+    del isolated_database_url
+
+    status_code, headers, _ = request(
+        "OPTIONS",
+        "/auth/me",
+        headers={
+            "origin": "http://175.178.213.10:5173",
+            "host": "175.178.213.10:8000",
+            "access-control-request-method": "GET",
+            "access-control-request-headers": "content-type",
+        },
+    )
+
+    assert status_code == 200
+    assert headers["access-control-allow-origin"] == "http://175.178.213.10:5173"
+    assert headers["access-control-allow-credentials"] == "true"
+
+
 def test_encrypt_secret_round_trips_without_plaintext_leak(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

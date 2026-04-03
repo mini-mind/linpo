@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.adapters.provider_adapter import ProviderPayloadResult, ProviderSnapshotResult
 from app.api.tasks import _sign_task_callback_event
-from app.db.models import FlowPlannerSession, Task, User
+from app.db.models import FlowDraft, FlowPlannerSession, Task, User
 from app.db import session as db_session
 from app.domain.provider_contract import (
     DomainFreshness,
@@ -35,11 +35,13 @@ from tests.integration._asgi import request
 DEFAULT_TASKS_PATH = "/api/v1/boards/default/tasks"
 DEFAULT_FLOW_GENERATE_PATH = "/api/v1/boards/default/tasks/flow/generate"
 DEFAULT_FLOW_PLANNER_SSE_PATH = "/api/v1/boards/default/tasks/flow/planner-sse"
+DEFAULT_FLOW_PLANNER_SESSION_PROBE_PATH = "/api/v1/boards/default/tasks/flow/planner-sessions/{session_key}/exists"
 DEFAULT_FLOW_PLANNER_NODE_UPSERT_PATH = "/api/v1/boards/default/tasks/flow/planner-sessions/{session_key}/nodes/upsert"
 DEFAULT_FLOW_PLANNER_NODE_DELETE_PATH = "/api/v1/boards/default/tasks/flow/planner-sessions/{session_key}/nodes/delete"
 DEFAULT_FLOW_PLANNER_COMPLETE_PATH = "/api/v1/boards/default/tasks/flow/planner-sessions/{session_key}/complete"
 DEFAULT_FLOW_PLANNER_FAIL_PATH = "/api/v1/boards/default/tasks/flow/planner-sessions/{session_key}/fail"
 DEFAULT_FLOW_CONFIRM_PATH = "/api/v1/boards/default/tasks/flow/confirm"
+DEFAULT_FLOW_DRAFTS_PATH = "/api/v1/boards/default/tasks/flow/drafts"
 DEFAULT_TASK_INTERRUPT_PATH = "/api/v1/boards/default/tasks/{task_id}/interrupt"
 DEFAULT_TASK_CONTINUE_PATH = "/api/v1/boards/default/tasks/{task_id}/continue"
 DEFAULT_TASK_OUTPUT_PREVIEW_PATH = "/api/v1/boards/default/tasks/{task_id}/output-preview"
@@ -929,7 +931,7 @@ def test_flow_planner_sse_returns_latest_planner_messages_snapshot(
     assert '"depends_on": ["node_1"]' in text
 
 
-def test_flow_planner_sse_missing_session_returns_404_without_chat_history_fallback(
+def test_flow_planner_sse_missing_session_snapshot_only_returns_404_without_chat_history_fallback(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -957,6 +959,82 @@ def test_flow_planner_sse_missing_session_returns_404_without_chat_history_fallb
     assert headers["content-type"].startswith("application/json")
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
     assert payload["detail"] == "missing planner snapshot"
+
+
+def test_flow_planner_session_probe_returns_exists_true_for_existing_session(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    auth_cookie = _register_and_login("flow-planner-probe-hit-user")
+    monkeypatch.setattr(
+        "app.services.flow_planner_session_service.FlowPlannerSessionService.get_snapshot_for_user",
+        lambda self, db_session, *, user_id, session_key: object(),
+    )
+
+    status_code, _, body = request(
+        "GET",
+        DEFAULT_FLOW_PLANNER_SESSION_PROBE_PATH.format(
+            session_key=quote("linpo:flow:default:planner:claw3:probe-hit", safe="")
+        ),
+        headers={"cookie": auth_cookie},
+    )
+
+    assert status_code == 200
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {"exists": True}
+
+
+def test_flow_planner_session_probe_returns_exists_false_for_missing_session(
+    isolated_database_url: str,
+) -> None:
+    del isolated_database_url
+    auth_cookie = _register_and_login("flow-planner-probe-miss-user")
+
+    status_code, _, body = request(
+        "GET",
+        DEFAULT_FLOW_PLANNER_SESSION_PROBE_PATH.format(
+            session_key=quote("linpo:flow:default:planner:claw3:probe-miss", safe="")
+        ),
+        headers={"cookie": auth_cookie},
+    )
+
+    assert status_code == 200
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {"exists": False}
+
+
+def test_flow_planner_sse_missing_session_stream_returns_pending_events(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    auth_cookie = _register_and_login("flow-planner-sse-missing-stream-user")
+    session_key = "linpo:flow:default:planner:claw3:missing-stream"
+    monkeypatch.setattr(
+        "app.services.flow_planner_session_service.FlowPlannerSessionService.get_snapshot_for_user",
+        lambda self, db_session, *, user_id, session_key: (_ for _ in ()).throw(
+            HTTPException(status_code=404, detail="missing planner snapshot")
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.chat_history",
+        lambda self, **kwargs: pytest.fail("chat_history fallback should not be called"),
+    )
+
+    status_code, headers, body = request(
+        "GET",
+        f"{DEFAULT_FLOW_PLANNER_SSE_PATH}?sessionKey={quote(session_key, safe='')}",
+        headers={"cookie": auth_cookie},
+    )
+
+    assert status_code == 200
+    assert headers["content-type"].startswith("text/event-stream")
+    text = body.decode("utf-8")
+    assert '"type": "snapshot_ready"' in text
+    assert '"status": "pending"' in text
+    assert '"type": "planner_session_updated"' in text
+    assert f'"session_key": "{session_key}"' in text
 
 
 def test_flow_planner_http_node_edit_endpoints_return_serialized_updated_at(
@@ -2011,6 +2089,120 @@ def test_flow_requirement_sync_updates_blocked_unexecuted_nodes(
     created_node_3 = next(item for item in flow_tasks if item["extras"]["flow_node"] == "node_3")
     assert created_node_3["status"] == "blocked_by_approval"
     assert created_node_3["extras"]["dispatch_status"] == "interrupted"
+
+
+def test_flow_drafts_are_persisted_and_queryable(
+    isolated_database_url: str,
+) -> None:
+    auth_cookie = _register_and_login("flow-draft-user")
+
+    upsert_status, _, upsert_payload = _request_json(
+        "POST",
+        DEFAULT_FLOW_DRAFTS_PATH,
+        {
+            "id": "draft-case-1",
+            "name": "草稿流程A",
+            "requirement": "需要落库的草稿",
+            "nodes": [
+                {
+                    "id": "node_a",
+                    "title": "节点A",
+                    "description": "描述A",
+                    "depends_on": [],
+                    "x": 100,
+                    "y": 100,
+                    "layer": 1,
+                    "sensitive": False,
+                    "status": "queued",
+                    "agent_id": "agent-alpha",
+                },
+                {
+                    "id": "node_b",
+                    "title": "节点B",
+                    "description": "描述B",
+                    "depends_on": ["node_a"],
+                    "x": 360,
+                    "y": 100,
+                    "layer": 2,
+                    "sensitive": False,
+                    "status": "queued",
+                    "agent_id": "agent-alpha",
+                },
+            ],
+            "edges": [
+                {
+                    "id": "edge-node_a-node_b",
+                    "source": "node_a",
+                    "target": "node_b",
+                }
+            ],
+            "planner_messages": [
+                {
+                    "role": "system",
+                    "content": "⚙️ 正在规划",
+                    "created_at": "2026-04-03T00:00:00Z",
+                }
+            ],
+            "lanes": [
+                {
+                    "id": "lane_alpha",
+                    "name": "Alpha",
+                    "agent_id": "agent-alpha",
+                    "created_at": "2026-04-03T00:00:00Z",
+                }
+            ],
+            "node_lane_by_id": {
+                "node_a": "lane_alpha",
+                "node_b": "lane_alpha",
+            },
+            "planner_session_key": "linpo:flow:default:planner:claw3:draft-case-1",
+            "execution_session_prefix": "linpo:flow:default:exec",
+            "executor_agent_id": "agent-alpha",
+        },
+        auth_cookie,
+    )
+    assert upsert_status == 200
+    assert upsert_payload["id"] == "draft-case-1"
+    assert upsert_payload["name"] == "草稿流程A"
+    assert upsert_payload["planner_session_key"] == "linpo:flow:default:planner:claw3:draft-case-1"
+
+    list_status, _, list_payload_raw = request(
+        "GET",
+        DEFAULT_FLOW_DRAFTS_PATH,
+        headers={"cookie": auth_cookie},
+    )
+    assert list_status == 200
+    list_payload = cast(list[dict[str, Any]], json.loads(list_payload_raw.decode("utf-8")))
+    assert len(list_payload) == 1
+    assert list_payload[0]["id"] == "draft-case-1"
+    assert list_payload[0]["nodes"][1]["depends_on"] == ["node_a"]
+
+    with Session(db_session.get_engine(isolated_database_url)) as session:
+        stored = session.execute(
+            select(FlowDraft).where(FlowDraft.flow_id == "draft-case-1")
+        ).scalar_one_or_none()
+        assert stored is not None
+        assert stored.name == "草稿流程A"
+        assert stored.user_id == _user_id_for_username(isolated_database_url, "flow-draft-user")
+
+    delete_status, _, delete_payload_raw = request(
+        "DELETE",
+        f"{DEFAULT_FLOW_DRAFTS_PATH}/draft-case-1",
+        headers={"cookie": auth_cookie},
+    )
+    assert delete_status == 200
+    delete_payload = cast(dict[str, Any], json.loads(delete_payload_raw.decode("utf-8")))
+    assert delete_payload["deleted"] is True
+    assert delete_payload["flow_id"] == "draft-case-1"
+
+    final_status, _, final_payload_raw = request(
+        "GET",
+        DEFAULT_FLOW_DRAFTS_PATH,
+        headers={"cookie": auth_cookie},
+    )
+    assert final_status == 200
+    final_payload = cast(list[dict[str, Any]], json.loads(final_payload_raw.decode("utf-8")))
+    assert final_payload == []
 
 
 def test_task_run_completed_event_dispatches_next_queued_task(

@@ -204,6 +204,7 @@ v0.7 目标是打通以下闭环：
 - 流程拆解由 Linpo 后端 `Flow Decomposition Service` 统一提供，后端固定调用 `claw3` 完成“需求 -> 流程节点”的转化；`flow.generate` 必须显式把 planner 目标解析为 `claw3`，不得回退到其他默认 agent。
 - 流程页浮窗消息流通过后端 SSE 通道订阅 `planner_session_key` 对应会话；消息真源是 Linpo 持久化的 planner session，而不是 `flow.generate` 响应体内的静态 `messages` 数组或 OpenClaw `chat.history` 的瞬时结果。前端按 `planner_messages_updated / planner_nodes_patched / planner_snapshot_updated / planner_session_updated` 处理增量。
 - planner session 需要由 Linpo 后端持久化保存消息、当前节点快照、修订号与会话状态，前端刷新后可按 `planner_session_key` 恢复消息流与最新草稿。
+- 流程草稿（未提交流程）必须落库到 Linpo 后端，不得仅依赖浏览器本地存储；前端本地缓存仅作临时容错，后端草稿记录为真源。
 - 流程拆解图模型以 `nodes[].depends_on` 为唯一依赖来源；边是派生视图，不是 planner 协议的独立写入对象。
 - 流程拆解协议升级为“增量改图”：planner 在 session 中持续输出节点级操作流，Linpo 后端维护该 session 对应的流程草稿快照，并通过 SSE 向前端推送实时操作与最新快照。
 - planner 的增量改图入口从“assistant 直接回整图 JSON”进一步收敛为“planner 通过 Linpo 内部 HTTP 接口单节点编辑”：至少支持 `upsert_node/delete_node/complete/fail/stop`，每次请求都要写入会话消息流并更新最新草稿快照。

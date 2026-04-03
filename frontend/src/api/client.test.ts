@@ -7,8 +7,10 @@ import {
   listAgents,
   pauseSession,
   patchSession,
+  probeFlowPlannerSession,
   previewSessions,
   resetSession,
+  stopFlowPlannerSession,
 } from './client';
 
 const fetchMock = vi.fn();
@@ -211,5 +213,56 @@ describe('business API client instance context', () => {
       status: 400,
       message: 'agentId is required to pause session',
     });
+  });
+
+  it('stopFlowPlannerSession calls planner-stop endpoint with POST body', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: async () => ({
+        session_key: 'linpo:flow:default:planner:claw3:test',
+        status: 'stopped',
+        revision: 3,
+        updated_at: '2026-04-03T10:00:00Z',
+      }),
+    });
+
+    await stopFlowPlannerSession({
+      planner_session_key: 'linpo:flow:default:planner:claw3:test',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8000/api/v1/boards/default/tasks/flow/planner-stop?data_source=openclaw',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          planner_session_key: 'linpo:flow:default:planner:claw3:test',
+        }),
+      }),
+    );
+  });
+
+  it('probeFlowPlannerSession short-circuits empty key and encodes non-empty key', async () => {
+    await expect(probeFlowPlannerSession('   ')).resolves.toEqual({ exists: false });
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: async () => ({ exists: true }),
+    });
+
+    await probeFlowPlannerSession('linpo:flow:default:planner:claw3:test');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8000/api/v1/boards/default/tasks/flow/planner-sessions/linpo%3Aflow%3Adefault%3Aplanner%3Aclaw3%3Atest/exists?data_source=openclaw',
+      expect.objectContaining({
+        credentials: 'include',
+      }),
+    );
   });
 });

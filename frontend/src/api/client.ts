@@ -10,8 +10,12 @@ import type {
 	ErrorResponse,
 	FlowConfirmRequest,
 	FlowConfirmResponse,
+	FlowDraftDeleteResponse,
+	FlowDraftItem,
+	FlowDraftUpsertRequest,
 	FlowGenerateRequest,
 	FlowGenerateResponse,
+	FlowPlannerSessionProbeResponse,
 	FlowPlannerStopRequest,
 	FlowPlannerStopResponse,
 	FlowRequirementRenameRequest,
@@ -166,6 +170,51 @@ export async function listKanbanTasks(
 ): Promise<KanbanTaskItem[]> {
   const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
   return fetchApi<KanbanTaskItem[]>(`/api/v1/boards/${encodedBoardId}/tasks`, undefined, options);
+}
+
+export async function listFlowDraftRecords(
+  options?: ObserverRequestOptions,
+  boardId?: string | null
+): Promise<FlowDraftItem[]> {
+  const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
+  return fetchApi<FlowDraftItem[]>(
+    `/api/v1/boards/${encodedBoardId}/tasks/flow/drafts`,
+    undefined,
+    options
+  );
+}
+
+export async function upsertFlowDraftRecord(
+  payload: FlowDraftUpsertRequest,
+  options?: ObserverRequestOptions,
+  boardId?: string | null
+): Promise<FlowDraftItem> {
+  const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
+  return fetchApi<FlowDraftItem>(
+    `/api/v1/boards/${encodedBoardId}/tasks/flow/drafts`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+    options
+  );
+}
+
+export async function deleteFlowDraftRecord(
+  flowId: string,
+  options?: ObserverRequestOptions,
+  boardId?: string | null
+): Promise<FlowDraftDeleteResponse> {
+  const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
+  const encodedFlowId = encodeURIComponent(flowId);
+  return fetchApi<FlowDraftDeleteResponse>(
+    `/api/v1/boards/${encodedBoardId}/tasks/flow/drafts/${encodedFlowId}`,
+    {
+      method: 'DELETE',
+    },
+    options
+  );
 }
 
 export async function createKanbanTask(
@@ -383,19 +432,20 @@ export async function stopFlowPlannerSession(
   );
 }
 
-export async function stopFlowPlanner(
-  payload: FlowPlannerStopRequest,
+export async function probeFlowPlannerSession(
+  sessionKey: string,
   options?: ObserverRequestOptions,
   boardId?: string | null
-): Promise<FlowPlannerStopResponse> {
+): Promise<{ exists: boolean }> {
+  const normalizedSessionKey = sessionKey.trim();
+  if (!normalizedSessionKey) {
+    return { exists: false };
+  }
   const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
-  return fetchApi<FlowPlannerStopResponse>(
-    `/api/v1/boards/${encodedBoardId}/tasks/flow/planner-stop`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    },
+  const encodedSessionKey = encodeURIComponent(normalizedSessionKey);
+  return fetchApi<FlowPlannerSessionProbeResponse>(
+    `/api/v1/boards/${encodedBoardId}/tasks/flow/planner-sessions/${encodedSessionKey}/exists`,
+    undefined,
     options
   );
 }
