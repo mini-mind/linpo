@@ -2,9 +2,10 @@ import type React from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { getAggregateTopology } from '../api/client';
-import { listInstances } from '../api/instanceClient';
+import { createInstance, listInstances } from '../api/instanceClient';
 import type { AggregateTopologyResponse, InstanceItem } from '../api/types';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { useToast } from '../hooks/useToast';
 
 type InstanceListModalProps = {
   open: boolean;
@@ -23,17 +24,27 @@ type AgentTreeItem = {
   }>;
 };
 
+type InstanceModalTab =
+  | { kind: 'create' }
+  | { kind: 'instance'; instanceId: string };
+
 export function InstanceListModal({ open, onClose }: InstanceListModalProps): JSX.Element | null {
   const isMobile = useIsMobile(960);
+  const { addToast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [instances, setInstances] = useState<InstanceItem[]>([]);
   const [topology, setTopology] = useState<AggregateTopologyResponse | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedTab, setSelectedTab] = useState<InstanceModalTab>({ kind: 'create' });
   const [errorText, setErrorText] = useState<string | null>(null);
+  const [createName, setCreateName] = useState('claw2');
+  const [createEndpoint, setCreateEndpoint] = useState('');
+  const [createToken, setCreateToken] = useState('');
+  const [createHintText, setCreateHintText] = useState('');
 
   const selectedInstance = useMemo(
-    () => instances.find((item) => item.id === selectedId) ?? null,
-    [instances, selectedId]
+    () => (selectedTab.kind === 'instance' ? instances.find((item) => item.id === selectedTab.instanceId) ?? null : null),
+    [instances, selectedTab]
   );
 
   const topologyAgents = useMemo<AgentTreeItem[]>(() => {
@@ -74,11 +85,14 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
       const [instanceList, topologyData] = await Promise.all([listInstances(), getAggregateTopology()]);
       setInstances(instanceList);
       setTopology(topologyData);
-      setSelectedId((current) => {
-        if (current && instanceList.some((item) => item.id === current)) {
+      setSelectedTab((current) => {
+        if (current.kind === 'instance' && instanceList.some((item) => item.id === current.instanceId)) {
           return current;
         }
-        return instanceList[0]?.id ?? null;
+        if (current.kind === 'create' && instanceList.length === 0) {
+          return current;
+        }
+        return instanceList[0] ? { kind: 'instance', instanceId: instanceList[0].id } : { kind: 'create' };
       });
     } catch (error) {
       setErrorText(error instanceof Error ? error.message : '读取实例数据失败');
@@ -86,6 +100,35 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
       setIsLoading(false);
     }
   }, []);
+
+  const handleCreateInstance = useCallback(async () => {
+    if (!createName.trim() || !createEndpoint.trim() || !createToken.trim()) {
+      setCreateHintText('请填写实例名、endpoint 和 token');
+      addToast('请填写实例名、endpoint 和 token', 'warning');
+      return;
+    }
+    setIsCreating(true);
+    setCreateHintText('');
+    try {
+      const created = await createInstance({
+        name: createName.trim(),
+        type: 'openclaw',
+        endpoint: createEndpoint.trim(),
+        gatewayToken: createToken.trim(),
+      });
+      setCreateToken('');
+      setCreateHintText(`创建成功：${created.name}`);
+      addToast(`创建成功：${created.name}`, 'success');
+      await loadData();
+      setSelectedTab({ kind: 'instance', instanceId: created.id });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '创建实例失败';
+      setCreateHintText(message);
+      addToast(message, 'error');
+    } finally {
+      setIsCreating(false);
+    }
+  }, [addToast, createEndpoint, createName, createToken, loadData]);
 
   useEffect(() => {
     if (!open) {
@@ -135,18 +178,27 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
 
         <div style={getBodyStyle(isMobile)}>
           <aside style={getListStyle(isMobile)}>
+            <button
+              type="button"
+              style={getListItemStyle(selectedTab.kind === 'create')}
+              onClick={() => setSelectedTab({ kind: 'create' })}
+              aria-label="添加实例"
+            >
+              <span style={itemNameStyle}>添加实例</span>
+              <span style={itemMetaStyle}>表单</span>
+            </button>
             {errorText ? <p style={errorStyle}>{errorText}</p> : null}
             {!errorText && isLoading ? <p style={hintStyle}>加载中...</p> : null}
             {!errorText && !isLoading && instances.length === 0 ? <p style={hintStyle}>暂无实例</p> : null}
             {!errorText && instances.length > 0
               ? instances.map((item) => {
-                  const active = selectedId === item.id;
+                  const active = selectedTab.kind === 'instance' && selectedTab.instanceId === item.id;
                   return (
                     <button
                       key={item.id}
                       type="button"
                       style={getListItemStyle(active)}
-                      onClick={() => setSelectedId(item.id)}
+                      onClick={() => setSelectedTab({ kind: 'instance', instanceId: item.id })}
                     >
                       <span style={itemNameStyle}>{item.name}</span>
                       <span style={itemMetaStyle}>{item.status}</span>
@@ -157,7 +209,55 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
           </aside>
 
           <article style={detailStyle}>
-            {selectedInstance ? (
+            {selectedTab.kind === 'create' ? (
+              <>
+                <h4 style={detailTitleStyle}>添加实例</h4>
+                <section style={createCardStyle} aria-label="添加实例表单">
+                  <label style={fieldLabelStyle}>
+                    实例名称
+                    <input
+                      value={createName}
+                      onChange={(event) => setCreateName(event.target.value)}
+                      placeholder="例如 claw2"
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={fieldLabelStyle}>
+                    OpenClaw Endpoint
+                    <input
+                      value={createEndpoint}
+                      onChange={(event) => setCreateEndpoint(event.target.value)}
+                      placeholder="http://127.0.0.1:28789"
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={fieldLabelStyle}>
+                    Gateway Token
+                    <input
+                      value={createToken}
+                      onChange={(event) => setCreateToken(event.target.value)}
+                      placeholder="从 OpenClaw 对话复制 token"
+                      style={inputStyle}
+                    />
+                  </label>
+                  {createHintText ? <p style={hintStyle}>{createHintText}</p> : null}
+                  <button
+                    type="button"
+                    style={createButtonStyle}
+                    onClick={() => void handleCreateInstance()}
+                    disabled={isCreating}
+                  >
+                    {isCreating ? '创建中...' : '创建实例'}
+                  </button>
+                </section>
+                <section style={treeWrapStyle} aria-label="添加实例教程">
+                  <p style={treeTitleStyle}>教程</p>
+                  <p style={hintStyle}>1. 在 OpenClaw 对话中获取 endpoint 与 gateway token。</p>
+                  <p style={hintStyle}>2. 在本页填写实例信息并创建。</p>
+                  <p style={hintStyle}>3. 创建成功后可切换为当前实例并查看拓扑。</p>
+                </section>
+              </>
+            ) : selectedInstance ? (
               <>
                 <h4 style={detailTitleStyle}>{selectedInstance.name}</h4>
                 <div style={infoGridStyle}>
@@ -293,6 +393,47 @@ const headerActionStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: '0.45rem',
+};
+
+const createCardStyle: React.CSSProperties = {
+  border: '1px solid rgba(148, 163, 184, 0.32)',
+  borderRadius: '0.55rem',
+  padding: '0.52rem',
+  marginBottom: '0.55rem',
+  background: 'rgba(255, 255, 255, 0.9)',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.42rem',
+};
+
+const fieldLabelStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.2rem',
+  fontSize: '0.72rem',
+  color: '#334155',
+};
+
+const inputStyle: React.CSSProperties = {
+  width: '100%',
+  boxSizing: 'border-box',
+  border: '1px solid rgba(148, 163, 184, 0.45)',
+  borderRadius: '0.42rem',
+  background: '#fff',
+  color: '#0f172a',
+  padding: '0.36rem 0.45rem',
+  fontSize: '0.74rem',
+};
+
+const createButtonStyle: React.CSSProperties = {
+  border: '1px solid rgba(14, 116, 144, 0.42)',
+  borderRadius: '0.42rem',
+  background: 'linear-gradient(120deg, #0f766e 0%, #0284c7 100%)',
+  color: '#f8fafc',
+  fontSize: '0.76rem',
+  fontWeight: 700,
+  padding: '0.4rem 0.62rem',
+  cursor: 'pointer',
 };
 
 const ghostButtonStyle: React.CSSProperties = {
