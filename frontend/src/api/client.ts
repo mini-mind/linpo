@@ -45,6 +45,7 @@ const DEFAULT_BOARD_ID = 'default';
 
 interface ObserverRequestOptions {
   instanceId?: string | null;
+  disableInstanceContext?: boolean;
 }
 
 function resolveBoardId(boardId?: string | null): string {
@@ -58,6 +59,9 @@ function withDefaultDataSource(path: string): string {
 }
 
 function withInstanceContext(path: string, options?: ObserverRequestOptions): string {
+  if (options?.disableInstanceContext) {
+    return path;
+  }
   const instanceId = resolveCurrentInstanceId(options?.instanceId);
   if (!instanceId) {
     return path;

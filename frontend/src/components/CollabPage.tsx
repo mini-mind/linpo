@@ -16,6 +16,7 @@ import {
   previewKanbanTaskOutput,
   stopFlowRequirement,
 } from '../api/client';
+import { listInstances } from '../api/instanceClient';
 import {
   createBoardTasksSseClient,
   createObserverRealtimeClient,
@@ -24,6 +25,7 @@ import {
 } from '../api/realtimeClient';
 import type {
   AggregateOverviewResponse,
+  InstanceItem,
   ObserverRealtimeMessage,
   KanbanTaskItem,
   SessionPreviewItem,
@@ -33,6 +35,7 @@ import type {
 import { buildSessionMessagesChannel } from '../api/types';
 import type { BoardTask, BoardViewMode, TaskStatus } from './kanbanTypes';
 import { MarkdownMessage } from './MarkdownMessage';
+import { useCurrentInstanceId } from '../hooks/useCurrentInstance';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
 import {
@@ -89,8 +92,10 @@ export default function CollabPage(): JSX.Element {
   const navigate = useNavigate();
   const isMobile = useIsMobile(960);
   const { addToast } = useToast();
+  const [currentInstanceId, setCurrentInstanceId] = useCurrentInstanceId();
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window === 'undefined' ? 1280 : window.innerWidth));
   const [overview, setOverview] = useState<AggregateOverviewResponse | null>(null);
+  const [instances, setInstances] = useState<InstanceItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [taskRecords, setTaskRecords] = useState<BoardTask[]>([]);
@@ -133,6 +138,16 @@ export default function CollabPage(): JSX.Element {
     };
   }, []);
 
+  const loadInstancesData = useCallback(async () => {
+    try {
+      const data = await listInstances();
+      setInstances(data);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '获取实例列表失败';
+      addToast(message, 'error');
+    }
+  }, [addToast]);
+
   const loadOverview = useCallback(async () => {
     try {
       setLoading(true);
@@ -149,8 +164,12 @@ export default function CollabPage(): JSX.Element {
   }, []);
 
   useEffect(() => {
+    void loadInstancesData();
+  }, [loadInstancesData]);
+
+  useEffect(() => {
     void loadOverview();
-  }, [loadOverview]);
+  }, [currentInstanceId, loadOverview]);
 
   const applyBoardRealtimeUpdate = useCallback((message: BoardRealtimeMessage) => {
     if (message.type === 'error') {
@@ -234,7 +253,7 @@ export default function CollabPage(): JSX.Element {
       boardRealtimeRef.current?.close();
       boardRealtimeRef.current = null;
     };
-  }, [applyBoardRealtimeUpdate]);
+  }, [applyBoardRealtimeUpdate, currentInstanceId]);
 
   const allTasks = useMemo(() => taskRecords, [taskRecords]);
   const assignableAgents = useMemo<AssignableAgent[]>(() => {
@@ -417,6 +436,8 @@ export default function CollabPage(): JSX.Element {
   }, [allAgentNames, allTasks, viewMode]);
 
   const isNarrowMobileBoard = viewportWidth < WORKSPACE_NARROW_MOBILE_BREAKPOINT_PX;
+  const resolvedInstanceSelection = (currentInstanceId ?? '').trim();
+  const hasInstanceOptions = instances.length > 0;
   const visibleBoardColumns = isNarrowMobileBoard
     ? columns.length > 0
       ? [columns[Math.min(mobileVisibleColumnIndex, columns.length - 1)]]
@@ -869,6 +890,23 @@ export default function CollabPage(): JSX.Element {
             ) : null}
           </div>
           <div style={isMobile ? { ...toolbarGroupStyle, ...toolbarGroupMobileStyle } : toolbarGroupStyle}>
+            <select
+              aria-label="看板实例"
+              value={resolvedInstanceSelection}
+              onChange={(event) => {
+                const nextValue = event.target.value.trim();
+                setCurrentInstanceId(nextValue || null);
+              }}
+              style={isMobile ? { ...viewSelectStyle, ...viewSelectMobileStyle } : viewSelectStyle}
+              disabled={!hasInstanceOptions}
+            >
+              <option value="">{hasInstanceOptions ? '全部实例' : '暂无实例'}</option>
+              {instances.map((instance) => (
+                <option key={instance.id} value={instance.id}>
+                  {instance.name}
+                </option>
+              ))}
+            </select>
             <select
               id="view-mode"
               aria-label="分列方式"

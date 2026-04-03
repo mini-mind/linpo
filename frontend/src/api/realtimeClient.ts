@@ -22,6 +22,7 @@ export interface ObserverRealtimeClientOptions {
   baseUrl?: string;
   dataSource: string;
   instanceId?: string | null;
+  disableInstanceContext?: boolean;
   channel: RealtimeObserverChannel;
   lastSeq?: number;
   onMessage: (message: ObserverRealtimeMessage) => void;
@@ -207,12 +208,13 @@ function resolveApiBaseUrl(overrideBaseUrl?: string): string {
 function toWebSocketUrl(
   apiBaseUrl: string,
   dataSource: string,
-  instanceId?: string | null
+  instanceId?: string | null,
+  disableInstanceContext?: boolean
 ): string {
   const url = new URL(OBSERVER_WS_PATH, apiBaseUrl);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   url.searchParams.set('data_source', dataSource);
-  const resolvedInstanceId = resolveCurrentInstanceId(instanceId);
+  const resolvedInstanceId = disableInstanceContext ? null : resolveCurrentInstanceId(instanceId);
   if (resolvedInstanceId) {
     url.searchParams.set('instanceId', resolvedInstanceId);
   }
@@ -276,7 +278,7 @@ export function createObserverRealtimeClient(
     opened = false;
     closedBeforeOpen = false;
     const ws = createWebSocket(
-      toWebSocketUrl(apiBaseUrl, options.dataSource, options.instanceId)
+      toWebSocketUrl(apiBaseUrl, options.dataSource, options.instanceId, options.disableInstanceContext)
     );
     socket = ws;
 

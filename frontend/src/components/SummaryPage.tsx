@@ -21,7 +21,6 @@ import type {
   ObserverRealtimeMessage,
 } from '../api/types';
 import { buildAgentDetailChannel } from '../api/types';
-import { useCurrentInstanceId } from '../hooks/useCurrentInstance';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
 import {
@@ -68,7 +67,6 @@ const EVENTS_PAGE_SIZE = 10;
 export function SummaryPage(): JSX.Element {
   const isMobile = useIsMobile(960);
   const { addToast } = useToast();
-  const [currentInstanceId] = useCurrentInstanceId();
   const [overview, setOverview] = useState<AggregateOverviewResponse | null>(null);
   const [tasks, setTasks] = useState<KanbanTaskItem[]>([]);
   const [events, setEvents] = useState<SummaryEventItem[]>([]);
@@ -82,11 +80,10 @@ export function SummaryPage(): JSX.Element {
   const agentsListRealtimeRef = useRef<ObserverRealtimeClient | null>(null);
   const agentRealtimeRefs = useRef<Map<string, ObserverRealtimeClient>>(new Map());
   const overviewRefreshTimerRef = useRef<number | null>(null);
-  const eventBaselineInstanceRef = useRef<string | null>(null);
 
   const loadOverview = useCallback(async () => {
     try {
-      const data = await getAggregateOverview();
+      const data = await getAggregateOverview({ disableInstanceContext: true });
       setOverview(data);
       setOverviewError(null);
     } catch (error) {
@@ -96,7 +93,7 @@ export function SummaryPage(): JSX.Element {
 
   const loadTasks = useCallback(async () => {
     try {
-      const result = await listKanbanTasks();
+      const result = await listKanbanTasks({ disableInstanceContext: true });
       setTasks(result);
       setTasksError(null);
     } catch (error) {
@@ -113,36 +110,27 @@ export function SummaryPage(): JSX.Element {
     }
   }, [loadOverview, loadTasks]);
 
-  const currentInstanceName = useMemo(() => {
-    if (!currentInstanceId) {
-      return null;
-    }
-    const byTask = tasks.find((task) => task.instance_id === currentInstanceId);
-    if (byTask) {
-      const value = String(byTask.extras.instance_name ?? '').trim();
-      if (value) {
-        return value;
-      }
-    }
-    const byAgent = overview?.agents.find((item) => item.instance_id === currentInstanceId);
-    return byAgent?.instance_name ?? null;
-  }, [currentInstanceId, overview?.agents, tasks]);
-
-  const currentInstanceAgentMap = useMemo(() => {
-    const map = new Map<string, string>();
+  const aggregateAgentEntries = useMemo(() => {
+    const map = new Map<string, { instanceId: string; instanceName: string; agentId: string; agentName: string }>();
     for (const item of overview?.agents ?? []) {
-      if (currentInstanceId && item.instance_id !== currentInstanceId) {
+      const instanceId = item.instance_id.trim();
+      const agentId = item.agent_id.trim();
+      if (!instanceId || !agentId) {
         continue;
       }
-      map.set(item.agent_id, item.agent_name);
+      const key = `${instanceId}::${agentId}`;
+      if (map.has(key)) {
+        continue;
+      }
+      map.set(key, {
+        instanceId,
+        instanceName: item.instance_name.trim() || instanceId,
+        agentId,
+        agentName: item.agent_name.trim() || agentId,
+      });
     }
-    return map;
-  }, [currentInstanceId, overview?.agents]);
-
-  const currentInstanceAgentIds = useMemo(
-    () => [...currentInstanceAgentMap.keys()].sort((left, right) => left.localeCompare(right)),
-    [currentInstanceAgentMap]
-  );
+    return Array.from(map.values());
+  }, [overview?.agents]);
 
   useEffect(() => {
     void loadPage();
@@ -166,7 +154,7 @@ export function SummaryPage(): JSX.Element {
           id: `board-error:${Date.now()}`,
           type: 'error',
           timestamp: new Date().toISOString(),
-          instanceName: currentInstanceName ?? '当前实例',
+          instanceName: '全部实例',
           agentName: null,
           description: message.payload.detail || '审批任务实时同步失败',
         });
@@ -194,7 +182,7 @@ export function SummaryPage(): JSX.Element {
         scheduleOverviewRefresh();
       }
     },
-    [currentInstanceName, scheduleOverviewRefresh]
+    [scheduleOverviewRefresh]
   );
 
   useEffect(() => {
@@ -269,16 +257,9 @@ export function SummaryPage(): JSX.Element {
     if (!overview) {
       return;
     }
-    const baselineKey = currentInstanceId ?? '__all__';
-    const incoming = buildInitialEvents(overview.global_events, currentInstanceId);
-    setEvents((current) => {
-      if (eventBaselineInstanceRef.current !== baselineKey) {
-        eventBaselineInstanceRef.current = baselineKey;
-        return sortSummaryEvents(incoming);
-      }
-      return mergeSummaryEvents(current, incoming);
-    });
-  }, [currentInstanceId, overview]);
+    const incoming = buildInitialEvents(overview.global_events);
+    setEvents((current) => mergeSummaryEvents(current, incoming));
+  }, [overview]);
 
   const appendRealtimeEvent = useCallback((item: SummaryEventItem) => {
     appendSummaryEvent(setEvents, item);
@@ -294,51 +275,52 @@ export function SummaryPage(): JSX.Element {
   }, []);
 
   useEffect(() => {
-    closeRealtimeConnections();
-    if (!currentInstanceId) {
-      return undefined;
-    }
+    return () => {
+      closeRealtimeConnections();
+    };
+  }, [closeRealtimeConnections]);
 
+  useEffect(() => {
     const client = createObserverRealtimeClient({
       dataSource: 'openclaw',
-      instanceId: currentInstanceId,
+      disableInstanceContext: true,
       channel: 'agents:list',
-        onMessage: (message) => {
-          if (message.type === 'error') {
-            appendRealtimeEvent(
-              toSummaryEventFromObserver({
-                id: `observer-error:${message.channel}:${message.seq}`,
-                type: 'error',
-                timestamp: message.timestamp,
-                instanceName: currentInstanceName ?? '当前实例',
-                agentName: null,
-                description: message.payload.detail || '实例事件订阅失败',
-              })
-            );
-            return;
-          }
-          if (message.type === 'resync_required') {
-            appendRealtimeEvent(
-              toSummaryEventFromObserver({
-                id: `observer-resync:${message.channel}:${message.seq}`,
-                type: 'resync_required',
-                timestamp: message.timestamp,
-                instanceName: currentInstanceName ?? '当前实例',
-                agentName: null,
-                description: message.payload.reason || '实例事件需要重新同步',
-              })
-            );
-            return;
-          }
-          if (message.type !== 'agent_summary_updated') {
-            return;
-          }
+      onMessage: (message) => {
+        if (message.type === 'error') {
+          appendRealtimeEvent(
+            toSummaryEventFromObserver({
+              id: `observer-error:${message.channel}:${message.seq}`,
+              type: 'error',
+              timestamp: message.timestamp,
+              instanceName: '全部实例',
+              agentName: null,
+              description: message.payload.detail || '实例事件订阅失败',
+            })
+          );
+          return;
+        }
+        if (message.type === 'resync_required') {
+          appendRealtimeEvent(
+            toSummaryEventFromObserver({
+              id: `observer-resync:${message.channel}:${message.seq}`,
+              type: 'resync_required',
+              timestamp: message.timestamp,
+              instanceName: '全部实例',
+              agentName: null,
+              description: message.payload.reason || '实例事件需要重新同步',
+            })
+          );
+          return;
+        }
+        if (message.type !== 'agent_summary_updated') {
+          return;
+        }
         appendRealtimeEvent(
           toSummaryEventFromObserver({
             id: `agent-summary:${message.channel}:${message.seq}`,
             type: 'agent_summary_updated',
             timestamp: message.timestamp,
-            instanceName: currentInstanceName ?? '当前实例',
+            instanceName: '全部实例',
             agentName: message.payload.agent.name ?? message.payload.agent.id,
             description: `${message.payload.agent.name ?? message.payload.agent.id} 状态已更新`,
           })
@@ -354,55 +336,41 @@ export function SummaryPage(): JSX.Element {
         agentsListRealtimeRef.current = null;
       }
     };
-  }, [appendRealtimeEvent, closeRealtimeConnections, currentInstanceId, currentInstanceName]);
+  }, [appendRealtimeEvent]);
 
   useEffect(() => {
-    if (!currentInstanceId) {
-      closeRealtimeConnections();
-      return;
-    }
-    const activeSet = new Set(currentInstanceAgentIds);
-    for (const [agentId, client] of agentRealtimeRefs.current.entries()) {
-      if (!activeSet.has(agentId)) {
+    const activeSet = new Set(aggregateAgentEntries.map((item) => `${item.instanceId}::${item.agentId}`));
+    for (const [agentKey, client] of agentRealtimeRefs.current.entries()) {
+      if (!activeSet.has(agentKey)) {
         client.close();
-        agentRealtimeRefs.current.delete(agentId);
+        agentRealtimeRefs.current.delete(agentKey);
       }
     }
-    for (const agentId of currentInstanceAgentIds) {
-      if (agentRealtimeRefs.current.has(agentId)) {
+    for (const entry of aggregateAgentEntries) {
+      const agentKey = `${entry.instanceId}::${entry.agentId}`;
+      if (agentRealtimeRefs.current.has(agentKey)) {
         continue;
       }
       const detailClient = createObserverRealtimeClient({
         dataSource: 'openclaw',
-        instanceId: currentInstanceId,
-        channel: buildAgentDetailChannel(agentId),
+        instanceId: entry.instanceId,
+        channel: buildAgentDetailChannel(entry.agentId),
         onMessage: (message) => {
           handleAgentDetailRealtimeMessage({
             message,
-            agentId,
-            agentName: currentInstanceAgentMap.get(agentId) ?? agentId,
-            instanceName: currentInstanceName ?? '当前实例',
+            agentId: entry.agentId,
+            agentName: entry.agentName,
+            instanceName: entry.instanceName,
             appendRealtimeEvent,
           });
         },
       });
       detailClient.connect();
-      agentRealtimeRefs.current.set(agentId, detailClient);
-    }
-
-    return () => {
-      for (const client of agentRealtimeRefs.current.values()) {
-        client.close();
-      }
-      agentRealtimeRefs.current.clear();
+      agentRealtimeRefs.current.set(agentKey, detailClient);
     };
   }, [
+    aggregateAgentEntries,
     appendRealtimeEvent,
-    closeRealtimeConnections,
-    currentInstanceAgentIds,
-    currentInstanceAgentMap,
-    currentInstanceId,
-    currentInstanceName,
   ]);
 
   const approvalTasks = useMemo(
@@ -418,8 +386,8 @@ export function SummaryPage(): JSX.Element {
   );
 
   const metric = useMemo(
-    () => buildSummaryMetric(overview?.token_groups ?? [], tasks, currentInstanceId),
-    [currentInstanceId, overview?.token_groups, tasks]
+    () => buildSummaryMetric(overview?.token_groups ?? [], tasks),
+    [overview?.token_groups, tasks]
   );
 
   const filteredEvents = useMemo(() => events.filter((item) => matchesEventQuery(item, eventQuery)), [eventQuery, events]);
@@ -438,10 +406,10 @@ export function SummaryPage(): JSX.Element {
   }, [totalEventPages]);
 
   const handleContinueTask = useCallback(
-    async (taskId: string) => {
+    async (taskId: string, instanceId?: string | null) => {
       try {
         setContinuingTaskId(taskId);
-        await continueKanbanTask(taskId);
+        await continueKanbanTask(taskId, { instanceId: instanceId ?? null });
         addToast('审批项已继续执行', 'success');
         await Promise.all([loadTasks(), loadOverview()]);
       } catch (error) {
@@ -627,7 +595,7 @@ function ApprovalPane({
   approvalTasks: KanbanTaskItem[];
   tasksError: string | null;
   continuingTaskId: string | null;
-  onContinueTask: (taskId: string) => void;
+  onContinueTask: (taskId: string, instanceId?: string | null) => void;
   isMobile: boolean;
 }): JSX.Element {
   return (
@@ -679,7 +647,7 @@ function ApprovalPane({
                   <button
                     type="button"
                     style={primaryButtonStyle}
-                    onClick={() => onContinueTask(task.id)}
+                    onClick={() => onContinueTask(task.id, task.instance_id)}
                     disabled={continuingTaskId === task.id}
                   >
                     {continuingTaskId === task.id ? '继续中...' : '继续'}
@@ -863,12 +831,8 @@ function toSummaryEventFromObserver(item: {
   };
 }
 
-function buildInitialEvents(
-  events: AggregateOverviewGlobalEvent[],
-  currentInstanceId: string | null
-): SummaryEventItem[] {
+function buildInitialEvents(events: AggregateOverviewGlobalEvent[]): SummaryEventItem[] {
   return events
-    .filter((item) => !currentInstanceId || item.instance_id === currentInstanceId)
     .map((item) => ({
       id: item.id,
       type: item.type,
@@ -1007,23 +971,13 @@ function EnvelopeErrorSummary({ envelope }: { envelope: ErrorEnvelope }): JSX.El
 
 function buildSummaryMetric(
   tokenGroups: AggregateOverviewTokenGroup[],
-  tasks: KanbanTaskItem[],
-  currentInstanceId: string | null
+  tasks: KanbanTaskItem[]
 ): SummaryMetric {
-  const scopedTokenGroups =
-    currentInstanceId === null
-      ? tokenGroups
-      : tokenGroups.filter((group) => group.instance_id === currentInstanceId);
-  const scopedTasks =
-    currentInstanceId === null
-      ? tasks
-      : tasks.filter((task) => task.instance_id === currentInstanceId);
-
-  const tokenMetric = buildTokenMetric(scopedTokenGroups);
+  const tokenMetric = buildTokenMetric(tokenGroups);
   if (tokenMetric) {
     return tokenMetric;
   }
-  return buildTaskFallbackMetric(scopedTasks);
+  return buildTaskFallbackMetric(tasks);
 }
 
 function buildTokenMetric(tokenGroups: AggregateOverviewTokenGroup[]): SummaryMetric | null {
@@ -1047,7 +1001,7 @@ function buildTokenMetric(tokenGroups: AggregateOverviewTokenGroup[]): SummaryMe
   return {
     kind: 'tokens',
     title: 'Token 消耗趋势',
-    hint: '按实例聚合展示 OpenClaw 最近窗口内的 token 消耗。',
+    hint: '按实例分组展示并支持多实例聚合统计。',
     labels,
     series,
     totalLabel: total > 0 ? `${total.toLocaleString('en-US')} tokens` : '暂无总量',

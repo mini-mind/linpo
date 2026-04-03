@@ -188,6 +188,7 @@ describe('SummaryPage', () => {
     renderPage();
 
     await screen.findByTestId('summary-chart');
+    expect(mockGetAggregateOverview).toHaveBeenCalledWith({ disableInstanceContext: true });
 
     expect(screen.getByText('Token 消耗趋势')).toBeInTheDocument();
     expect(screen.getByText('120 tokens')).toBeInTheDocument();
@@ -202,7 +203,7 @@ describe('SummaryPage', () => {
     expect(channels).toContain('agent:agent-alpha:detail');
   });
 
-  it('uses current instance token samples for summary trend', async () => {
+  it('aggregates token samples across multiple instances for summary trend', async () => {
     mockGetAggregateOverview.mockResolvedValue(
       buildOverview({
         token_groups: [
@@ -233,9 +234,9 @@ describe('SummaryPage', () => {
 
     await screen.findByTestId('summary-chart');
 
-    expect(screen.getByText('180 tokens')).toBeInTheDocument();
+    expect(screen.getByText('240 tokens')).toBeInTheDocument();
     expect(screen.getByText('alpha-instance')).toBeInTheDocument();
-    expect(screen.queryByText('beta-instance')).not.toBeInTheDocument();
+    expect(screen.getByText('beta-instance')).toBeInTheDocument();
   });
 
   it('continues blocked task from summary page', async () => {
@@ -245,7 +246,7 @@ describe('SummaryPage', () => {
     await userEvent.click(continueButton);
 
     await waitFor(() => {
-      expect(mockContinueKanbanTask).toHaveBeenCalledWith('task-alpha');
+      expect(mockContinueKanbanTask).toHaveBeenCalledWith('task-alpha', { instanceId: 'instance-alpha' });
     });
   });
 
@@ -298,7 +299,9 @@ describe('SummaryPage', () => {
     renderPage();
 
     const rail = await screen.findByTestId('summary-events-rail');
-    expect(rail).toHaveTextContent('类型 ·');
+    await waitFor(() => {
+      expect(rail).toHaveTextContent('类型 ·');
+    });
     expect(screen.queryByRole('button', { name: '全部展开' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Agent' })).not.toBeInTheDocument();
     expect(screen.getByText('第 1 / 2 页')).toBeInTheDocument();
