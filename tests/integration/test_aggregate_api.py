@@ -100,6 +100,10 @@ def _create_instance(
         auth_cookie,
     )
     assert status_code == 201
+    if "last_check_at" not in payload and "lastCheckAt" in payload:
+        payload["last_check_at"] = payload["lastCheckAt"]
+    if "created_at" not in payload and "createdAt" in payload:
+        payload["created_at"] = payload["createdAt"]
     return payload
 
 

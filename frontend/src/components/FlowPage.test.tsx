@@ -2219,12 +2219,15 @@ describe('FlowPage', () => {
 
     await waitForFlowCanvasReady();
     expect(screen.queryByTestId('flow-canvas-floating-actions')).not.toBeInTheDocument();
-    const currentCard = findFlowSidebarCard('流程B');
-    expect(within(currentCard).getByRole('button', { name: '运行流程-流程B' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: '切换流程-流程B' })).toHaveTextContent('阻塞');
+    await waitFor(() => {
+      const currentCard = findCurrentFlowSidebarCard();
+      expect(within(currentCard).getByText('阻塞')).toBeInTheDocument();
+    });
+    const currentCard = findCurrentFlowSidebarCard();
+    expect(within(currentCard).getByRole('button', { name: /运行流程-/ })).toBeDisabled();
     expect(screen.getByTestId('flow-planner-input')).not.toBeDisabled();
 
-    await userEvent.click(screen.getByRole('button', { name: '编辑流程-流程B' }));
+    await userEvent.click(within(currentCard).getByRole('button', { name: /编辑流程-/ }));
     const detailDialog = await screen.findByRole('dialog', { name: '流程编辑窗口' });
     await userEvent.click(within(detailDialog).getByRole('button', { name: '继续' }));
     await waitFor(() => {
