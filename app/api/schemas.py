@@ -620,6 +620,7 @@ class TaskRunEventRequest(BaseModel):
 
     event_type: TaskRunEventType = Field(alias="eventType")
     callback_token: str = Field(min_length=1, max_length=128, alias="callbackToken")
+    callback_signature: str | None = Field(default=None, max_length=128, alias="callbackSignature")
     idempotency_key: str | None = Field(default=None, max_length=128, alias="idempotencyKey")
     request_id: str | None = Field(default=None, max_length=128, alias="requestId")
     message: str | None = Field(default=None, max_length=4000)

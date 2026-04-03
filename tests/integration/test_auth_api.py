@@ -128,6 +128,8 @@ def test_auth_me_route_can_boot_with_explicit_db_bootstrap(
     inspector = inspect(create_engine(database_url))
     assert sorted(inspector.get_table_names()) == [
         "auth_sessions",
+        "flow_planner_messages",
+        "flow_planner_sessions",
         "instances",
         "pairing_receipts",
         "tasks",
@@ -150,6 +152,8 @@ def test_auth_db_bootstrap_uses_isolated_database_path(
     inspector = inspect(create_engine(database_url))
     assert sorted(inspector.get_table_names()) == [
         "auth_sessions",
+        "flow_planner_messages",
+        "flow_planner_sessions",
         "instances",
         "pairing_receipts",
         "tasks",
@@ -184,13 +188,13 @@ def test_cors_allow_origins_parses_trimmed_deduplicated_values(
 ) -> None:
     monkeypatch.setenv(
         "LINPO_CORS_ALLOW_ORIGINS",
-        " http://175.178.213.10:5173, https://linpo.duckdns.org, , https://linpo.duckdns.org ",
+        " http://example.local:5173, https://linpo.duckdns.org, , https://linpo.duckdns.org ",
     )
 
     origins = _get_cors_allow_origins()
 
     assert "http://127.0.0.1:5173" in origins
-    assert origins.count("http://175.178.213.10:5173") == 1
+    assert origins.count("http://example.local:5173") == 1
     assert origins.count("https://linpo.duckdns.org") == 1
     assert "" not in origins
 
@@ -204,14 +208,14 @@ def test_cors_preflight_allows_patch_for_auth_profile(
         "OPTIONS",
         "/auth/profile",
         headers={
-            "origin": "http://175.178.213.10:5173",
+            "origin": "http://127.0.0.1:5173",
             "access-control-request-method": "PATCH",
             "access-control-request-headers": "content-type",
         },
     )
 
     assert status_code == 200
-    assert headers["access-control-allow-origin"] == "http://175.178.213.10:5173"
+    assert headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
     assert headers["access-control-allow-credentials"] == "true"
     allowed_methods = {method.strip().upper() for method in headers["access-control-allow-methods"].split(",")}
     assert "PATCH" in allowed_methods
@@ -325,6 +329,22 @@ def test_session_cookie_uses_configured_samesite(monkeypatch: pytest.MonkeyPatch
     assert "SameSite=strict" in response.headers["set-cookie"]
 
 
+def test_session_cookie_defaults_to_secure_for_non_local_cors_origin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.auth_service import create_session, set_session_cookie
+
+    monkeypatch.delenv("LINPO_SESSION_COOKIE_SECURE", raising=False)
+    monkeypatch.setenv("LINPO_CORS_ALLOW_ORIGINS", "https://linpo.example")
+
+    response = Response()
+    session_state = create_session(uuid4(), now=datetime(2026, 3, 18, tzinfo=timezone.utc))
+
+    set_session_cookie(response, session_state)
+
+    assert "Secure" in response.headers["set-cookie"]
+
+
 def test_session_cookie_rejects_invalid_samesite(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.services.auth_service import create_session, set_session_cookie
 
@@ -388,14 +408,14 @@ def test_register_sets_session_cookie_and_me_returns_current_user(isolated_datab
         "POST",
         "/auth/register",
         {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
-        extra_headers={"Origin": "http://175.178.213.10:5173"},
+        extra_headers={"Origin": "http://127.0.0.1:5173"},
     )
 
     assert register_status == 201
     assert register_payload["username"] == "alice"
     assert register_payload["id"]
     assert "set-cookie" in register_headers
-    assert register_headers["access-control-allow-origin"] == "http://175.178.213.10:5173"
+    assert register_headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
     assert register_headers["access-control-allow-credentials"] == "true"
 
     me_status, _, me_body = request(
@@ -447,14 +467,14 @@ def test_auth_register_preflight_echoes_requested_content_type_header() -> None:
         "OPTIONS",
         "/auth/register",
         headers={
-            "Origin": "http://175.178.213.10:5173",
+            "Origin": "http://127.0.0.1:5173",
             "Access-Control-Request-Method": "POST",
             "Access-Control-Request-Headers": "content-type",
         },
     )
 
     assert status_code == 200
-    assert headers["access-control-allow-origin"] == "http://175.178.213.10:5173"
+    assert headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
     assert headers["access-control-allow-credentials"] == "true"
     assert headers["access-control-allow-headers"] == "content-type"
 
@@ -464,14 +484,14 @@ def test_auth_me_preflight_echoes_requested_content_type_header() -> None:
         "OPTIONS",
         "/auth/me",
         headers={
-            "Origin": "http://175.178.213.10:5173",
+            "Origin": "http://127.0.0.1:5173",
             "Access-Control-Request-Method": "GET",
             "Access-Control-Request-Headers": "content-type",
         },
     )
 
     assert status_code == 200
-    assert headers["access-control-allow-origin"] == "http://175.178.213.10:5173"
+    assert headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
     assert headers["access-control-allow-credentials"] == "true"
     assert headers["access-control-allow-headers"] == "content-type"
 

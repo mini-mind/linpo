@@ -35,7 +35,18 @@ jobs:
 
       - name: Backend risk suites
         run: |
-          pytest tests/test_task_output_helpers.py tests/integration/test_tasks_api.py tests/integration/test_instances_api.py -q
+          pytest \
+            tests/test_task_output_helpers.py \
+            tests/integration/test_tasks_api.py \
+            tests/integration/test_instances_api.py \
+            tests/integration/test_auth_api.py::test_cors_allow_origins_parses_trimmed_deduplicated_values \
+            tests/integration/test_auth_api.py::test_cors_preflight_allows_patch_for_auth_profile \
+            tests/integration/test_auth_api.py::test_session_cookie_uses_configured_samesite \
+            tests/integration/test_auth_api.py::test_login_sets_session_cookie_and_me_returns_current_user \
+            tests/integration/test_aggregate_api.py \
+            tests/integration/test_observer_ws.py::test_websocket_subscribe_to_agents_list_returns_snapshot_ready \
+            tests/integration/test_observer_ws.py::test_websocket_pushes_topology_update_after_subscription \
+            -q
 
   frontend-gate:
     name: Frontend Gate
@@ -59,7 +70,15 @@ jobs:
 
       - name: Frontend unit gate
         run: |
-          npm test -- --run src/components/FlowPage.test.tsx src/components/flowPageUtils.test.ts src/components/flowCanvasGeometryUtils.test.ts
+          npm test -- --run \
+            src/components/LoginPage.test.tsx \
+            src/components/SummaryPage.test.tsx \
+            src/components/CollabPage.test.tsx \
+            src/components/FlowPage.test.tsx \
+            src/components/InstanceFilesPage.test.tsx \
+            src/components/PairingPage.test.tsx \
+            src/components/flowPageUtils.test.ts \
+            src/components/flowCanvasGeometryUtils.test.ts
 
       - name: Frontend build gate
         run: npm run build
@@ -102,4 +121,4 @@ jobs:
             sleep 1
           done
 
-          PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173 npx playwright test e2e/flow-page.smoke.spec.ts --project=chromium
+          PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173 npm run e2e -- e2e/flow-page.smoke.spec.ts

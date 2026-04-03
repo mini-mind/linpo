@@ -202,20 +202,20 @@ v0.7 目标是打通以下闭环：
 - v0.7 任务接口采用 board 资源风格：`/api/v1/boards/{board_id}/tasks`，默认看板 `board_id=default`。
 - 流程创建入口收敛到流程编辑页左侧侧栏“新建”按钮：点击即生成空白草稿并切换到 `/flow/edit/:flow_id`，后续需求输入统一通过流程页底部规划浮窗完成。
 - 流程拆解由 Linpo 后端 `Flow Decomposition Service` 统一提供，后端固定调用 `claw3` 完成“需求 -> 流程节点”的转化；`flow.generate` 必须显式把 planner 目标解析为 `claw3`，不得回退到其他默认 agent。
-- 流程页浮窗消息流通过后端 SSE 通道订阅 `planner_session_key` 对应会话，消息真源是 Linpo 持久化的 planner session，而不是 `flow.generate` 响应体内的静态 `messages` 数组或 OpenClaw `chat.history` 的瞬时结果。
+- 流程页浮窗消息流通过后端 SSE 通道订阅 `planner_session_key` 对应会话；消息真源是 Linpo 持久化的 planner session，而不是 `flow.generate` 响应体内的静态 `messages` 数组或 OpenClaw `chat.history` 的瞬时结果。前端按 `planner_messages_updated / planner_nodes_patched / planner_snapshot_updated / planner_session_updated` 处理增量。
 - planner session 需要由 Linpo 后端持久化保存消息、当前节点快照、修订号与会话状态，前端刷新后可按 `planner_session_key` 恢复消息流与最新草稿。
 - 流程拆解图模型以 `nodes[].depends_on` 为唯一依赖来源；边是派生视图，不是 planner 协议的独立写入对象。
 - 流程拆解协议升级为“增量改图”：planner 在 session 中持续输出节点级操作流，Linpo 后端维护该 session 对应的流程草稿快照，并通过 SSE 向前端推送实时操作与最新快照。
 - planner 的增量改图入口从“assistant 直接回整图 JSON”进一步收敛为“planner 通过 Linpo 内部 HTTP 接口单节点编辑”：至少支持 `upsert_node/delete_node/complete/fail/stop`，每次请求都要写入会话消息流并更新最新草稿快照。
 - 流程拆解提示词需显式鼓励并行：优先识别可独立子任务并拆为并行分支，鼓励执行侧通过 subagent 并发完成可拆分节点。
-- 流程拆解提示词需显式约束“文件交接可访问性”：节点描述需包含可访问输出策略，若默认临时路径不可访问，需在节点说明中明确替代输出与回传方式。
+- 流程拆解提示词需显式约束“文件交接可访问性”：节点描述中的输出策略必须与 Linpo 产物沙箱一致；可预览、可下载的产物路径统一限制在 `/tmp/linpo/**`。
 - 流程编排最小角色包含：`decomposer(claw3)`（流程拆解服务）、`manager agent`（会话与任务分配），并由 `executor agent` 执行节点任务。
-- 任务执行闭环采用“事件主链 + 补偿副链”：`task-run event callback` 负责主状态推进，仅在超时场景触发低频补偿巡检。
-- 任务投放提示词需包含“路径不可访问兜底”：优先写入指定 `temp_output_path`；若受沙箱限制不可写，必须写入可访问工作目录并在 `completed` 事件 `artifact/message` 中同时回传实际路径与原因。
+- 任务执行闭环采用“事件主链 + 补偿副链”：`task-run event callback` 负责主状态推进；超时补偿巡检用于把 stale `running` 任务转为 `failed(stale_timeout)`，当前实现由任务读取链路触发（非独立后台定时任务）。
+- 任务投放提示词需包含“路径不可访问失败”约束：优先写入指定 `temp_output_path`；若受沙箱限制不可写，不得静默回退到其他目录并宣告 `completed`，必须回调 `failed` 并写明不可访问路径与原因。
 - 前端不再编辑 `layer`；提交前按 DAG 动态计算拓扑层级并回填 `layer` 兼容字段。
 - 任务落库时写入 `requirement_id` / `requirement_title`，用于看板“按流程分列、删除整组流程节点”与流程名展示。
 - 实例文件访问边界：
-  - 任务产物侧只允许访问“任务显式上报或任务元数据声明”的文件路径（如 `artifact`、`temp_output_path`），不开放任意主机路径浏览。
+  - 任务产物侧只允许访问“任务显式上报或任务元数据声明”且位于 `/tmp/linpo/**` 的文件路径（如 `artifact`、`temp_output_path`），不开放任意主机路径浏览。
   - Agent 文档侧只允许访问 OpenClaw `agents.files.*` 白名单文档，不开放任意工作区路径浏览。
 - 实例文件页展示约束：
   - 文件树的根节点文案使用实例名代替 `workspace`；其子节点仍映射真实工作区目录结构并支持递归展开。
@@ -233,4 +233,4 @@ v0.7 目标是打通以下闭环：
 - 任务卡片可稳定展示文本与文件预览结果。
 - 前端可以通过 Tauri 构建产出桌面应用。
 
-若产品边界或成功标准与 `docs/architecture.md` 或 `docs/test-resources.md` 冲突，以 `docs/prd.md` 为准。
+若文档冲突涉及产品边界、交互口径或成功标准，以 `docs/prd.md` 为准；若 `docs/prd.md` 未明示实现细节，则以 `docs/architecture.md` 为准；`docs/test-resources.md` 仅承载测试与联调资源，不单独覆盖前两者。

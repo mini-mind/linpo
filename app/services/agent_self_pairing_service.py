@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import Instance, User
 from app.services.auth_service import normalize_email
+from app.services.crypto import decrypt_secret, encrypt_secret
 from app.services.instance_service import (
     InstanceCreateInput,
     InstanceNotFoundError,
@@ -88,7 +89,7 @@ class AgentSelfPairingService:
                 "name": payload.name,
                 "type": payload.type,
                 "endpoint": payload.endpoint,
-                "gateway_token": payload.gateway_token,
+                "gateway_token_enc": encrypt_secret(payload.gateway_token),
             },
         )
         self._message_center_service.create_pairing_receipt_message(
@@ -156,26 +157,36 @@ class AgentSelfPairingService:
             allowed_actions={"mount", "unmount"},
         )
 
-        if receipt.action == "mount":
-            instance = self._instance_service.create_instance(
+        try:
+            if receipt.action == "mount":
+                gateway_token = self._gateway_token_from_payload(receipt.payload)
+                instance = self._instance_service.create_instance(
+                    db_session,
+                    user_id=receipt.user_id,
+                    payload=InstanceCreateInput(
+                        name=str(receipt.payload["name"]),
+                        type=str(receipt.payload["type"]),
+                        endpoint=str(receipt.payload["endpoint"]),
+                        gateway_token=gateway_token,
+                    ),
+                    commit=False,
+                )
+                db_session.commit()
+                db_session.refresh(instance)
+                return AgentReceiptConfirmResult(action="mount", instance=instance)
+            raw_instance_id = str(receipt.payload.get("instance_id", "")).strip()
+            instance_id = UUID(raw_instance_id)
+            self._instance_service.delete_instance(
                 db_session,
                 user_id=receipt.user_id,
-                payload=InstanceCreateInput(
-                    name=str(receipt.payload["name"]),
-                    type=str(receipt.payload["type"]),
-                    endpoint=str(receipt.payload["endpoint"]),
-                    gateway_token=str(receipt.payload["gateway_token"]),
-                ),
+                instance_id=instance_id,
+                commit=False,
             )
-            return AgentReceiptConfirmResult(action="mount", instance=instance)
-        raw_instance_id = str(receipt.payload.get("instance_id", "")).strip()
-        instance_id = UUID(raw_instance_id)
-        self._instance_service.delete_instance(
-            db_session,
-            user_id=receipt.user_id,
-            instance_id=instance_id,
-        )
-        return AgentReceiptConfirmResult(action="unmount", instance_id=instance_id)
+            db_session.commit()
+            return AgentReceiptConfirmResult(action="unmount", instance_id=instance_id)
+        except Exception:
+            db_session.rollback()
+            raise
 
     def _resolve_user_by_email(self, db_session: Session, *, email: str) -> User:
         normalized_email = normalize_email(email)
@@ -183,3 +194,9 @@ class AgentSelfPairingService:
         if user is None:
             raise AgentSelfPairingUserNotFoundError
         return user
+
+    def _gateway_token_from_payload(self, payload: dict[str, str]) -> str:
+        gateway_token_enc = str(payload.get("gateway_token_enc", "")).strip()
+        if gateway_token_enc:
+            return decrypt_secret(gateway_token_enc)
+        return str(payload["gateway_token"])

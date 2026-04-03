@@ -65,7 +65,7 @@ describe('app routes', () => {
     window.history.pushState({}, '', '/');
   });
 
-  it('redirects unknown path to /kanban in authenticated app shell', async () => {
+  it('redirects unknown path to /summary in authenticated app shell', async () => {
     document.body.innerHTML = '<div id="root"></div>';
     window.history.pushState({}, '', '/unknown');
 
@@ -74,10 +74,10 @@ describe('app routes', () => {
     });
 
     await waitFor(() => {
-      expect(window.location.pathname).toBe('/kanban');
+      expect(window.location.pathname).toBe('/summary');
     });
 
-    expect(screen.getByText('kanban-page')).toBeInTheDocument();
+    expect(screen.getByText('summary-page')).toBeInTheDocument();
   });
 
   it('renders /kanban as first-class app route', async () => {

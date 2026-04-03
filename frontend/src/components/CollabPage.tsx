@@ -1,9 +1,9 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   buildKanbanTaskOutputFileUrl,
   buildKanbanTaskOutputDownloadUrl,
+  confirmFlowToKanban,
   continueKanbanTask,
   continueFlowRequirement,
   createKanbanTask,
@@ -25,6 +25,9 @@ import {
 } from '../api/realtimeClient';
 import type {
   AggregateOverviewResponse,
+  AggregateOverviewAgentItem,
+  FlowCanvasEdge,
+  FlowCanvasNode,
   InstanceItem,
   ObserverRealtimeMessage,
   KanbanTaskItem,
@@ -89,7 +92,6 @@ const TASK_SESSION_REALTIME_DATA_SOURCE = getDefaultObserverDataSource();
 const KANBAN_BOARD_REALTIME_ID = 'default';
 
 export default function CollabPage(): JSX.Element {
-  const navigate = useNavigate();
   const isMobile = useIsMobile(960);
   const { addToast } = useToast();
   const [currentInstanceId, setCurrentInstanceId] = useCurrentInstanceId();
@@ -110,6 +112,7 @@ export default function CollabPage(): JSX.Element {
   const [isContinuingTaskId, setIsContinuingTaskId] = useState<string | null>(null);
   const [interruptingFlowId, setInterruptingFlowId] = useState<string | null>(null);
   const [continuingFlowId, setContinuingFlowId] = useState<string | null>(null);
+  const [runningFlowId, setRunningFlowId] = useState<string | null>(null);
   const [taskSessionItems, setTaskSessionItems] = useState<SessionPreviewItem[]>([]);
   const [isTaskSessionLoading, setIsTaskSessionLoading] = useState(false);
   const [taskSessionError, setTaskSessionError] = useState<string | null>(null);
@@ -569,6 +572,43 @@ export default function CollabPage(): JSX.Element {
       setContinuingFlowId(null);
     }
   }, [addToast, loadOverview]);
+
+  const handleRunFlow = useCallback(async (targetRequirementId: string, targetTitle: string, tasks: BoardTask[]) => {
+    const confirmed = window.confirm(`确认运行流程「${targetTitle}」吗？这会按当前流程节点重新入队。`);
+    if (!confirmed) {
+      return;
+    }
+
+    const payload = buildFlowConfirmPayloadFromBoardTasks({
+      requirementId: targetRequirementId,
+      requirementTitle: targetTitle,
+      tasks,
+      agents: overview?.agents ?? [],
+    });
+    if (!payload) {
+      addToast('当前流程缺少可用 Agent 或实例上下文，请先在流程页校正后再运行', 'warning');
+      return;
+    }
+
+    setRunningFlowId(targetRequirementId);
+    try {
+      const response = await confirmFlowToKanban(
+        payload,
+        { instanceId: payload.instance_id },
+        'default'
+      );
+      addToast(
+        `已重新入队 ${response.created_task_ids.length} 个任务，已投放 ${response.dispatched_task_ids.length} 个`,
+        'success'
+      );
+      await loadOverview();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '运行流程失败';
+      addToast(message, 'error');
+    } finally {
+      setRunningFlowId(null);
+    }
+  }, [addToast, loadOverview, overview?.agents]);
 
   const handleInterruptSelectedTask = useCallback(async () => {
     if (!selectedTask) {
@@ -1383,17 +1423,20 @@ export default function CollabPage(): JSX.Element {
                             type="button"
                             style={runFlowButtonStyle}
                             aria-label={`运行流程 ${column.title}`}
-                            onClick={() => navigate(`/flow/edit/${encodeURIComponent(column.flowId as string)}`)}
+                            onClick={() => void handleRunFlow(column.flowId as string, column.title, column.tasks)}
                             onDoubleClick={(event) => {
                               event.preventDefault();
                               event.stopPropagation();
                             }}
                             disabled={
-                              continuingFlowId === column.flowId
+                              runningFlowId === column.flowId
+                              || continuingFlowId === column.flowId
                               || interruptingFlowId === column.flowId
+                              || column.tasks.length === 0
                             }
+                            title={column.tasks.length === 0 ? '当前流程缺少可运行节点' : '按当前流程节点重新入队'}
                           >
-                            运行流程
+                            {runningFlowId === column.flowId ? '运行中...' : '运行流程'}
                           </button>
                         ) : null}
                       </>
@@ -1497,6 +1540,103 @@ function parseDependencyNodeIds(raw: string | null | undefined): string[] {
     .split(',')
     .map((item) => item.trim())
     .filter((item) => item !== '');
+}
+
+function parseFlowLayer(raw: string | undefined): number {
+  const normalized = (raw ?? '').trim();
+  if (!normalized) {
+    return 1;
+  }
+  const matched = normalized.match(/^L(\d+)$/i);
+  if (matched) {
+    const parsed = Number.parseInt(matched[1] ?? '', 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+  }
+  const parsed = Number.parseInt(normalized, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+}
+
+function getFlowNodeIdForTask(task: BoardTask): string {
+  const fromExtras = task.extras.flow_node?.trim();
+  if (fromExtras) {
+    return fromExtras;
+  }
+  return task.id;
+}
+
+function buildFlowConfirmPayloadFromBoardTasks({
+  requirementId,
+  requirementTitle,
+  tasks,
+  agents,
+}: {
+  requirementId: string;
+  requirementTitle: string;
+  tasks: BoardTask[];
+  agents: AggregateOverviewAgentItem[];
+}) {
+  if (tasks.length === 0) {
+    return null;
+  }
+
+  const candidateAgent = tasks
+    .map((task) => {
+      const taskAgentId = task.agentId?.trim() ?? '';
+      const taskInstanceId = task.instanceId?.trim() ?? '';
+      if (!taskAgentId || !taskInstanceId) {
+        return null;
+      }
+      return (
+        agents.find((agent) => agent.agent_id.trim() === taskAgentId && agent.instance_id.trim() === taskInstanceId)
+        ?? null
+      );
+    })
+    .find((agent): agent is AggregateOverviewAgentItem => agent !== null);
+  if (!candidateAgent) {
+    return null;
+  }
+
+  const nodeIds = new Set(tasks.map((task) => getFlowNodeIdForTask(task)));
+  const nodes: FlowCanvasNode[] = tasks.map((task, index) => {
+    const nodeId = getFlowNodeIdForTask(task);
+    const layer = parseFlowLayer(task.extras.layer);
+    const dependencies = parseDependencyNodeIds(task.extras.dependencies).filter(
+      (dependency) => dependency !== nodeId && nodeIds.has(dependency)
+    );
+    return {
+      id: nodeId,
+      title: task.title,
+      description: task.extras.flow_node_description?.trim() || task.summary,
+      depends_on: dependencies,
+      x: 48 + (layer - 1) * 180,
+      y: 48 + index * 132,
+      layer,
+      sensitive: String(task.extras.sensitive ?? '').trim().toLowerCase() === 'true',
+      status: 'queued',
+      agent_id: task.agentId?.trim() || candidateAgent.agent_id.trim(),
+    };
+  });
+  const edges: FlowCanvasEdge[] = nodes.flatMap((node) =>
+    node.depends_on.map((dependency) => ({
+      id: `edge-${dependency}-${node.id}`,
+      source: dependency,
+      target: node.id,
+    }))
+  );
+
+  return {
+    instance_id: candidateAgent.instance_id.trim(),
+    requirement_id: requirementId,
+    executor_agent_id: candidateAgent.agent_id.trim(),
+    manager_agent_id: candidateAgent.agent_id.trim(),
+    requirement_title: requirementTitle.trim() || null,
+    planner_session_key: tasks[0]?.extras.planner_session_key?.trim() || null,
+    execution_session_prefix: tasks[0]?.extras.execution_session_key?.trim()
+      ? tasks[0].extras.execution_session_key.trim().split(':').slice(0, -1).join(':')
+      : null,
+    nodes,
+    edges,
+  };
 }
 
 function resolveStatusColumnKey(task: BoardTask): StatusColumnKey {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any, cast
@@ -13,8 +14,16 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import FlowPlannerSession, User
+from app.adapters.provider_adapter import ProviderPayloadResult, ProviderSnapshotResult
+from app.api.tasks import _sign_task_callback_event
+from app.db.models import FlowPlannerSession, Task, User
 from app.db import session as db_session
+from app.domain.provider_contract import (
+    DomainFreshness,
+    DomainProviderCapability,
+    DomainProviderRequest,
+    DomainProviderResponse,
+)
 from app.main import app
 from app.services.flow_planner_session_service import (
     FlowPlannerSessionService,
@@ -64,6 +73,10 @@ def _request_json(
         body=json.dumps(payload).encode("utf-8"),
     )
     return status_code, headers, cast(dict[str, Any], json.loads(body.decode("utf-8")))
+
+
+def _iso_now(*, delta_seconds: int = 0) -> str:
+    return (datetime.now(UTC) + timedelta(seconds=delta_seconds)).isoformat()
 
 
 def _planner_request_json(
@@ -153,6 +166,73 @@ def _planner_token_for_session(database_url: str, session_key: str) -> str:
 def _user_id_for_username(database_url: str, username: str) -> Any:
     with Session(db_session.get_engine(database_url)) as session:
         return session.execute(select(User.id).where(User.username == username)).scalar_one()
+
+
+def _task_by_id(database_url: str, task_id: str) -> Task:
+    with Session(db_session.get_engine(database_url)) as session:
+        task = next((item for item in session.execute(select(Task)).scalars().all() if str(item.id) == task_id), None)
+        assert task is not None
+        return task
+
+
+def _dispatch_callback_token_for_task_id(database_url: str, task_id: str) -> str:
+    task = _task_by_id(database_url, task_id)
+    extras = task.extras if isinstance(task.extras, dict) else {}
+    return str(extras.get("dispatch_callback_token", ""))
+
+
+def _signed_task_run_event_payload(
+    *,
+    run_id: str,
+    callback_token: str,
+    event_type: str,
+    idempotency_key: str | None = None,
+    request_id: str | None = None,
+    message: str | None = None,
+    artifact: str | None = None,
+    occurred_at: str | None = None,
+) -> dict[str, object]:
+    normalized_occurred_at = occurred_at or _iso_now()
+    return {
+        "eventType": event_type,
+        "callbackToken": callback_token,
+        "callbackSignature": _sign_task_callback_event(
+            callback_token=callback_token,
+            run_id=run_id,
+            event_type=event_type,
+            idempotency_key=idempotency_key,
+            request_id=request_id,
+            message=message,
+            artifact=artifact,
+            occurred_at=normalized_occurred_at,
+        ),
+        "idempotencyKey": idempotency_key,
+        "requestId": request_id,
+        "message": message,
+        "artifact": artifact,
+        "occurredAt": normalized_occurred_at,
+    }
+
+
+def _provider_response() -> DomainProviderResponse:
+    return DomainProviderResponse(
+        request=DomainProviderRequest(
+            request_id="test-request",
+            capability=DomainProviderCapability.SESSION_READ,
+        ),
+        freshness=DomainFreshness(status="fresh", checked_at=None),
+        partial_failure=False,
+        diagnostics=(),
+        error=None,
+    )
+
+
+def _provider_payload_result(payload: dict[str, Any]) -> ProviderPayloadResult:
+    return ProviderPayloadResult(response=_provider_response(), payload=payload)
+
+
+def _provider_snapshot_result(snapshot: dict[str, Any]) -> ProviderSnapshotResult:
+    return ProviderSnapshotResult(response=_provider_response(), snapshot=snapshot)
 
 
 def _seed_planner_session(
@@ -272,6 +352,8 @@ def test_create_and_list_tasks_with_real_task_entity(
     assert create_payload["instance_id"] == instance["id"]
     assert create_payload["extras"]["dispatch_status"] == "accepted"
     assert create_payload["extras"]["dispatch_request_id"] == "req-dispatch-1"
+    assert "dispatch_callback_token" not in create_payload["extras"]
+    assert "dispatch_callback_urls" not in create_payload["extras"]
     assert isinstance(create_payload["id"], str) and create_payload["id"]
 
     list_status, _, list_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
@@ -280,6 +362,8 @@ def test_create_and_list_tasks_with_real_task_entity(
     assert len(list_payload) == 1
     assert list_payload[0]["title"] == "新增一个真实任务"
     assert list_payload[0]["id"] == create_payload["id"]
+    assert "dispatch_callback_token" not in list_payload[0]["extras"]
+    assert "dispatch_callback_urls" not in list_payload[0]["extras"]
 
 
 def test_task_list_is_isolated_by_user(
@@ -845,48 +929,22 @@ def test_flow_planner_sse_returns_latest_planner_messages_snapshot(
     assert '"depends_on": ["node_1"]' in text
 
 
-def test_flow_planner_sse_404_fallback_does_not_raise_500(
+def test_flow_planner_sse_missing_session_returns_404_without_chat_history_fallback(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     del isolated_database_url
     auth_cookie = _register_and_login("flow-planner-sse-fallback-user")
     session_key = "linpo:flow:default:planner:claw3:fallback-404"
-    original_get_snapshot = FlowPlannerSessionService.get_snapshot_for_user
-    hit_count = {"value": 0}
-
-    def _get_snapshot_with_first_404(
-        self: FlowPlannerSessionService,
-        db_session: Session,
-        *,
-        user_id: Any,
-        session_key: str,
-    ) -> Any:
-        if session_key == "linpo:flow:default:planner:claw3:fallback-404" and hit_count["value"] == 0:
-            hit_count["value"] += 1
-            raise HTTPException(status_code=404, detail="missing planner snapshot")
-        return original_get_snapshot(
-            self,
-            db_session=db_session,
-            user_id=user_id,
-            session_key=session_key,
-        )
-
     monkeypatch.setattr(
         "app.services.flow_planner_session_service.FlowPlannerSessionService.get_snapshot_for_user",
-        _get_snapshot_with_first_404,
+        lambda self, db_session, *, user_id, session_key: (_ for _ in ()).throw(
+            HTTPException(status_code=404, detail="missing planner snapshot")
+        ),
     )
     monkeypatch.setattr(
         "app.services.provider_application_service.ProviderApplicationService.chat_history",
-        lambda self, **kwargs: {"messages": []},
-    )
-    monkeypatch.setattr(
-        "app.api.tasks.FlowDecompositionService.build_realtime_execution_context",
-        lambda self: object(),
-    )
-    monkeypatch.setattr(
-        "app.api.tasks.FlowDecompositionService.snapshot_from_history_messages",
-        lambda self, **kwargs: None,
+        lambda self, **kwargs: pytest.fail("chat_history fallback should not be called"),
     )
 
     status_code, headers, body = request(
@@ -895,11 +953,10 @@ def test_flow_planner_sse_404_fallback_does_not_raise_500(
         headers={"cookie": auth_cookie},
     )
 
-    assert status_code == 200
-    assert headers["content-type"].startswith("text/event-stream")
-    text = body.decode("utf-8")
-    assert '"type": "snapshot_ready"' in text
-    assert f'"session_key": "{session_key}"' in text
+    assert status_code == 404
+    assert headers["content-type"].startswith("application/json")
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload["detail"] == "missing planner snapshot"
 
 
 def test_flow_planner_http_node_edit_endpoints_return_serialized_updated_at(
@@ -964,6 +1021,99 @@ def test_flow_planner_http_node_edit_endpoints_return_serialized_updated_at(
         assert planner_session.current_nodes == []
 
 
+def test_flow_planner_http_node_edit_endpoints_reject_terminal_sessions(
+    isolated_database_url: str,
+) -> None:
+    auth_cookie = _register_and_login("flow-planner-http-terminal-user")
+    del auth_cookie
+    planner_service = get_flow_planner_session_service()
+    session_key = "linpo:flow:default:planner:claw3:http-terminal"
+
+    with Session(db_session.get_engine(isolated_database_url)) as session:
+        user_id = session.execute(select(User.id).where(User.username == "flow-planner-http-terminal-user")).scalar_one()
+        record = planner_service.create_or_restore_session(
+            user_id=user_id,
+            board_id="default",
+            planner_agent_id="claw3",
+            planner_session_key=session_key,
+            flow_name="HTTP 终态测试",
+            current_nodes=[
+                {
+                    "id": "node_http_1",
+                    "title": "HTTP 节点1",
+                    "description": "通过接口新增",
+                    "depends_on": [],
+                    "sensitive": True,
+                },
+                {
+                    "id": "node_http_2",
+                    "title": "HTTP 节点2",
+                    "description": "第二个节点",
+                    "depends_on": ["node_http_1"],
+                    "sensitive": False,
+                }
+            ],
+            db_session=session,
+            publish_realtime=False,
+        )
+        planner_token = record.planner_token
+
+    complete_status, _, complete_payload = _planner_request_json(
+        "POST",
+        f"{DEFAULT_TASKS_PATH}/flow/planner-sessions/{session_key}/complete",
+        {
+            "nodes": [
+                {
+                    "id": "node_http_1",
+                    "title": "HTTP 节点1",
+                    "description": "通过接口新增",
+                    "depends_on": [],
+                    "sensitive": True,
+                },
+                {
+                    "id": "node_http_2",
+                    "title": "HTTP 节点2",
+                    "description": "第二个节点",
+                    "depends_on": ["node_http_1"],
+                    "sensitive": False,
+                }
+            ],
+            "summary": "完成",
+        },
+        planner_token=planner_token,
+    )
+    assert complete_status == 200
+    assert complete_payload["status"] == "completed"
+
+    upsert_status, _, upsert_payload = _planner_request_json(
+        "POST",
+        f"{DEFAULT_TASKS_PATH}/flow/planner-sessions/{session_key}/nodes/upsert",
+        {
+            "node": {
+                "id": "node_http_3",
+                "title": "HTTP 节点3",
+                "description": "终态后尝试新增",
+                "depends_on": ["node_http_2"],
+                "sensitive": False,
+            }
+        },
+        planner_token=planner_token,
+    )
+    assert upsert_status == 409
+    assert upsert_payload["detail"] == "planner session is already completed"
+
+    delete_status, _, delete_payload = _planner_request_json(
+        "POST",
+        f"{DEFAULT_TASKS_PATH}/flow/planner-sessions/{session_key}/nodes/delete",
+        {
+            "node_id": "node_http_1",
+        },
+        planner_token=planner_token,
+    )
+    assert delete_status == 409
+    assert delete_payload["detail"] == "planner session is already completed"
+
+
 def test_flow_planner_http_fail_endpoint_returns_serialized_updated_at(
     isolated_database_url: str,
 ) -> None:
@@ -1005,6 +1155,113 @@ def test_flow_planner_http_fail_endpoint_returns_serialized_updated_at(
         assert planner_session is not None
         assert planner_session.status == "failed"
         assert planner_session.last_error == "planner 接口测试失败"
+
+
+@pytest.mark.parametrize(
+    ("initial_action", "terminal_status"),
+    [
+        ("complete", "completed"),
+        ("fail", "failed"),
+        ("stop", "stopped"),
+    ],
+)
+def test_flow_planner_terminal_endpoints_reject_reentry_after_terminal_state(
+    isolated_database_url: str,
+    initial_action: str,
+    terminal_status: str,
+) -> None:
+    auth_cookie = _register_and_login(f"flow-planner-terminal-{initial_action}-user")
+    planner_service = get_flow_planner_session_service()
+    session_key = f"linpo:flow:default:planner:claw3:terminal-{initial_action}"
+    base_nodes = [
+        {
+            "id": "node_terminal_1",
+            "title": "终态节点1",
+            "description": "terminal-1",
+            "depends_on": [],
+            "sensitive": True,
+        },
+        {
+            "id": "node_terminal_2",
+            "title": "终态节点2",
+            "description": "terminal-2",
+            "depends_on": ["node_terminal_1"],
+            "sensitive": False,
+        },
+    ]
+
+    with Session(db_session.get_engine(isolated_database_url)) as session:
+        user_id = session.execute(
+            select(User.id).where(User.username == f"flow-planner-terminal-{initial_action}-user")
+        ).scalar_one()
+        record = planner_service.create_or_restore_session(
+            user_id=user_id,
+            board_id="default",
+            planner_agent_id="claw3",
+            planner_session_key=session_key,
+            flow_name="终态重入保护测试",
+            current_nodes=base_nodes,
+            db_session=session,
+            publish_realtime=False,
+        )
+        planner_token = record.planner_token
+
+    if initial_action == "complete":
+        initial_status, _, initial_payload = _planner_request_json(
+            "POST",
+            f"{DEFAULT_TASKS_PATH}/flow/planner-sessions/{session_key}/complete",
+            {"nodes": base_nodes, "summary": "完成终态"},
+            planner_token=planner_token,
+        )
+        assert initial_status == 200
+        assert initial_payload["status"] == "completed"
+    elif initial_action == "fail":
+        initial_status, _, initial_payload = _planner_request_json(
+            "POST",
+            f"{DEFAULT_TASKS_PATH}/flow/planner-sessions/{session_key}/fail",
+            {"reason": "失败终态"},
+            planner_token=planner_token,
+        )
+        assert initial_status == 200
+        assert initial_payload["status"] == "failed"
+    else:
+        initial_status, _, initial_body = request(
+            "POST",
+            f"{DEFAULT_TASKS_PATH}/flow/planner-stop",
+            headers=_json_headers(auth_cookie),
+            body=json.dumps({"planner_session_key": session_key}).encode("utf-8"),
+        )
+        assert initial_status == 200
+        initial_payload = cast(dict[str, Any], json.loads(initial_body.decode("utf-8")))
+        assert initial_payload["status"] == "stopped"
+
+    complete_status, _, complete_payload = _planner_request_json(
+        "POST",
+        f"{DEFAULT_TASKS_PATH}/flow/planner-sessions/{session_key}/complete",
+        {"nodes": base_nodes, "summary": "再次完成"},
+        planner_token=planner_token,
+    )
+    assert complete_status == 409
+    assert complete_payload["detail"] == f"planner session is already {terminal_status}"
+
+    fail_status, _, fail_payload = _planner_request_json(
+        "POST",
+        f"{DEFAULT_TASKS_PATH}/flow/planner-sessions/{session_key}/fail",
+        {"reason": "再次失败"},
+        planner_token=planner_token,
+    )
+    assert fail_status == 409
+    assert fail_payload["detail"] == f"planner session is already {terminal_status}"
+
+    stop_status, _, stop_body = request(
+        "POST",
+        f"{DEFAULT_TASKS_PATH}/flow/planner-stop",
+        headers=_json_headers(auth_cookie),
+        body=json.dumps({"planner_session_key": session_key}).encode("utf-8"),
+    )
+    assert stop_status == 409
+    stop_payload = cast(dict[str, Any], json.loads(stop_body.decode("utf-8")))
+    assert stop_payload["detail"] == f"planner session is already {terminal_status}"
 
 
 def test_flow_confirm_enqueues_tasks_then_dispatches_from_queue(
@@ -1163,7 +1420,6 @@ def test_flow_confirm_reuse_requirement_id_replaces_previous_tasks(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    del isolated_database_url
     _allow_instance_validation(monkeypatch)
     auth_cookie = _register_and_login("flow-instance-user")
     instance = _create_instance(
@@ -1235,16 +1491,17 @@ def test_flow_confirm_reuse_requirement_id_replaces_previous_tasks(
     )
 
     run_id_1 = first_running["extras"]["dispatch_run_id"]
-    callback_token_1 = first_running["extras"]["dispatch_callback_token"]
+    callback_token_1 = _dispatch_callback_token_for_task_id(isolated_database_url, first_running["id"])
     event_status_1, _, _ = _request_json(
         "POST",
         f"/api/v1/boards/default/tasks/task-runs/{run_id_1}/events",
-        {
-            "eventType": "completed",
-            "callbackToken": callback_token_1,
-            "idempotencyKey": "evt-flow-instance-1",
-            "message": "node-1 done",
-        },
+        _signed_task_run_event_payload(
+            run_id=run_id_1,
+            callback_token=callback_token_1,
+            event_type="completed",
+            idempotency_key="evt-flow-instance-1",
+            message="node-1 done",
+        ),
     )
     assert event_status_1 == 200
 
@@ -1260,16 +1517,17 @@ def test_flow_confirm_reuse_requirement_id_replaces_previous_tasks(
     )
 
     run_id_2 = first_instance_node2["extras"]["dispatch_run_id"]
-    callback_token_2 = first_instance_node2["extras"]["dispatch_callback_token"]
+    callback_token_2 = _dispatch_callback_token_for_task_id(isolated_database_url, first_instance_node2["id"])
     event_status_2, _, _ = _request_json(
         "POST",
         f"/api/v1/boards/default/tasks/task-runs/{run_id_2}/events",
-        {
-            "eventType": "completed",
-            "callbackToken": callback_token_2,
-            "idempotencyKey": "evt-flow-instance-2",
-            "message": "node-2 done",
-        },
+        _signed_task_run_event_payload(
+            run_id=run_id_2,
+            callback_token=callback_token_2,
+            event_type="completed",
+            idempotency_key="evt-flow-instance-2",
+            message="node-2 done",
+        ),
     )
     assert event_status_2 == 200
 
@@ -1759,7 +2017,6 @@ def test_task_run_completed_event_dispatches_next_queued_task(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    del isolated_database_url
     _allow_instance_validation(monkeypatch)
     auth_cookie = _register_and_login("flow-event-user")
     instance = _create_instance(
@@ -1826,17 +2083,18 @@ def test_task_run_completed_event_dispatches_next_queued_task(
     running_task = next(item for item in tasks if item["status"] == "running")
     queued_task = next(item for item in tasks if item["status"] == "queued")
     run_id = running_task["extras"]["dispatch_run_id"]
-    callback_token = running_task["extras"]["dispatch_callback_token"]
+    callback_token = _dispatch_callback_token_for_task_id(isolated_database_url, running_task["id"])
 
     event_status, _, event_payload = _request_json(
         "POST",
         f"/api/v1/boards/default/tasks/task-runs/{run_id}/events",
-        {
-            "eventType": "completed",
-            "callbackToken": callback_token,
-            "idempotencyKey": "evt-1",
-            "message": "节点执行完成",
-        },
+        _signed_task_run_event_payload(
+            run_id=run_id,
+            callback_token=callback_token,
+            event_type="completed",
+            idempotency_key="evt-1",
+            message="节点执行完成",
+        ),
     )
     assert event_status == 200
     assert event_payload["accepted"] is True
@@ -1854,12 +2112,13 @@ def test_task_run_completed_event_dispatches_next_queued_task(
     replay_status, _, replay_payload = _request_json(
         "POST",
         f"/api/v1/boards/default/tasks/task-runs/{run_id}/events",
-        {
-            "eventType": "completed",
-            "callbackToken": callback_token,
-            "idempotencyKey": "evt-1",
-            "message": "重复投递",
-        },
+        _signed_task_run_event_payload(
+            run_id=run_id,
+            callback_token=callback_token,
+            event_type="completed",
+            idempotency_key="evt-1",
+            message="重复投递",
+        ),
     )
     assert replay_status == 200
     assert replay_payload["accepted"] is True
@@ -1870,7 +2129,6 @@ def test_task_run_terminal_state_rejects_conflicting_non_idempotent_event(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    del isolated_database_url
     _allow_instance_validation(monkeypatch)
     auth_cookie = _register_and_login("flow-event-terminal-user")
     instance = _create_instance(
@@ -1903,17 +2161,18 @@ def test_task_run_terminal_state_rejects_conflicting_non_idempotent_event(
     assert create_status == 201
     assert create_payload["status"] == "running"
     run_id = create_payload["extras"]["dispatch_run_id"]
-    callback_token = create_payload["extras"]["dispatch_callback_token"]
+    callback_token = _dispatch_callback_token_for_task_id(isolated_database_url, create_payload["id"])
 
     complete_status, _, complete_payload = _request_json(
         "POST",
         f"/api/v1/boards/default/tasks/task-runs/{run_id}/events",
-        {
-            "eventType": "completed",
-            "callbackToken": callback_token,
-            "idempotencyKey": "evt-complete-1",
-            "message": "执行完成",
-        },
+        _signed_task_run_event_payload(
+            run_id=run_id,
+            callback_token=callback_token,
+            event_type="completed",
+            idempotency_key="evt-complete-1",
+            message="执行完成",
+        ),
     )
     assert complete_status == 200
     assert complete_payload["accepted"] is True
@@ -1922,12 +2181,13 @@ def test_task_run_terminal_state_rejects_conflicting_non_idempotent_event(
     conflict_status, _, conflict_payload = _request_json(
         "POST",
         f"/api/v1/boards/default/tasks/task-runs/{run_id}/events",
-        {
-            "eventType": "failed",
-            "callbackToken": callback_token,
-            "idempotencyKey": "evt-conflict-1",
-            "message": "冲突失败事件",
-        },
+        _signed_task_run_event_payload(
+            run_id=run_id,
+            callback_token=callback_token,
+            event_type="failed",
+            idempotency_key="evt-conflict-1",
+            message="冲突失败事件",
+        ),
     )
     assert conflict_status == 200
     assert conflict_payload["accepted"] is False
@@ -1946,7 +2206,6 @@ def test_task_dispatch_prompt_contains_tasks_callback_path(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    del isolated_database_url
     _allow_instance_validation(monkeypatch)
     monkeypatch.setenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", "http://linpo.local:8000")
 
@@ -1990,7 +2249,7 @@ def test_task_dispatch_prompt_contains_tasks_callback_path(
     assert captured_messages
 
     run_id = create_payload["extras"]["dispatch_run_id"]
-    callback_token = create_payload["extras"]["dispatch_callback_token"]
+    callback_token = _dispatch_callback_token_for_task_id(isolated_database_url, create_payload["id"])
     expected_callback = (
         f"http://linpo.local:8000/api/v1/boards/default/tasks/task-runs/{run_id}/events"
     )
@@ -1998,6 +2257,8 @@ def test_task_dispatch_prompt_contains_tasks_callback_path(
     assert expected_callback in captured_messages[0]
     assert "回调地址候选(按顺序尝试，直到返回 accepted=true):" in captured_messages[0]
     assert f"回调令牌: {callback_token}" in captured_messages[0]
+    assert "callbackSignature = HMAC-SHA256(key=callbackToken, message=canonical_json)" in captured_messages[0]
+    assert '"callbackSignature":"<hex_hmac_sha256>"' in captured_messages[0]
     assert "若无法落地到指定输出路径，不得回调 completed，必须回调 failed" in captured_messages[0]
     assert "completed 事件请同时填写 artifact=最终输出文件绝对路径" in captured_messages[0]
 
@@ -2054,12 +2315,284 @@ def test_task_dispatch_prompt_derives_public_callback_from_instance_endpoint(
     public_callback = (
         f"http://175.178.213.10:8000/api/v1/boards/default/tasks/task-runs/{run_id}/events"
     )
-    local_callback = (
-        f"http://127.0.0.1:8000/api/v1/boards/default/tasks/task-runs/{run_id}/events"
-    )
     assert f"主回调地址: {public_callback}" in captured_messages[0]
     assert f"1) {public_callback}" in captured_messages[0]
-    assert f"2) {local_callback}" in captured_messages[0]
+
+
+def test_task_dispatch_fails_when_callback_candidate_list_is_empty(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+
+    auth_cookie = _register_and_login("dispatch-empty-candidates-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-dispatch-empty-candidates",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-dispatch-empty-candidates",
+    )
+
+    monkeypatch.setattr(
+        "app.api.tasks._event_callback_base_url_candidates",
+        lambda **kwargs: [],
+    )
+    send_invoked = {"value": False}
+
+    def _fake_send(self: Any, **kwargs: Any) -> dict[str, str]:
+        del self, kwargs
+        send_invoked["value"] = True
+        return {"request_id": "req-unexpected-send", "agent_id": "agent-alpha", "status": "accepted"}
+
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
+        _fake_send,
+    )
+
+    create_status, _, create_payload = _request_json(
+        "POST",
+        DEFAULT_TASKS_PATH,
+        {
+            "requirement": "验证回调候选为空时失败",
+            "agent_id": "agent-alpha",
+            "agent_name": "Alpha Agent",
+            "instance_id": instance["id"],
+        },
+        auth_cookie,
+    )
+    assert create_status == 201
+    assert create_payload["status"] == "failed"
+    assert create_payload["extras"]["dispatch_status"] == "failed"
+    assert "callback base url unavailable" in create_payload["extras"]["dispatch_error"]
+    assert send_invoked["value"] is False
+
+
+def test_task_run_event_callback_requires_fresh_occurred_at(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("event-freshness-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-event-freshness",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-event-freshness",
+    )
+
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
+        lambda self, **kwargs: {
+            "request_id": "req-freshness",
+            "agent_id": kwargs["agent_id"],
+            "status": "accepted",
+        },
+    )
+
+    create_status, _, create_payload = _request_json(
+        "POST",
+        DEFAULT_TASKS_PATH,
+        {
+            "requirement": "验证回调时间窗",
+            "agent_id": "agent-alpha",
+            "agent_name": "Alpha Agent",
+            "instance_id": instance["id"],
+        },
+        auth_cookie,
+    )
+    assert create_status == 201
+
+    run_id = create_payload["extras"]["dispatch_run_id"]
+    callback_token = _dispatch_callback_token_for_task_id(isolated_database_url, create_payload["id"])
+
+    stale_status, _, stale_payload = _request_json(
+        "POST",
+        f"/api/v1/boards/default/tasks/task-runs/{run_id}/events",
+        _signed_task_run_event_payload(
+            run_id=run_id,
+            callback_token=callback_token,
+            event_type="heartbeat",
+            idempotency_key="evt-stale-heartbeat",
+            occurred_at=_iso_now(delta_seconds=-1200),
+        ),
+    )
+    assert stale_status == 401
+    assert stale_payload["detail"] == "Callback event is outside the allowed time window"
+
+    fresh_status, _, fresh_payload = _request_json(
+        "POST",
+        f"/api/v1/boards/default/tasks/task-runs/{run_id}/events",
+        _signed_task_run_event_payload(
+            run_id=run_id,
+            callback_token=callback_token,
+            event_type="completed",
+            idempotency_key="evt-fresh-complete",
+            occurred_at=_iso_now(),
+            message="新鲜回调成功",
+        ),
+    )
+    assert fresh_status == 200
+    assert fresh_payload["accepted"] is True
+    assert fresh_payload["status"] == "completed"
+
+
+def test_task_run_event_callback_rejects_missing_or_invalid_signature(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("event-signature-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-event-signature",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-event-signature",
+    )
+
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
+        lambda self, **kwargs: {
+            "request_id": "req-signature",
+            "agent_id": kwargs["agent_id"],
+            "status": "accepted",
+        },
+    )
+
+    create_status, _, create_payload = _request_json(
+        "POST",
+        DEFAULT_TASKS_PATH,
+        {
+            "requirement": "验证回调签名",
+            "agent_id": "agent-alpha",
+            "agent_name": "Alpha Agent",
+            "instance_id": instance["id"],
+        },
+        auth_cookie,
+    )
+    assert create_status == 201
+
+    run_id = create_payload["extras"]["dispatch_run_id"]
+    callback_token = _dispatch_callback_token_for_task_id(isolated_database_url, create_payload["id"])
+    occurred_at = _iso_now()
+
+    missing_status, _, missing_payload = _request_json(
+        "POST",
+        f"/api/v1/boards/default/tasks/task-runs/{run_id}/events",
+        {
+            "eventType": "heartbeat",
+            "callbackToken": callback_token,
+            "idempotencyKey": "evt-missing-signature",
+            "occurredAt": occurred_at,
+        },
+    )
+    assert missing_status == 401
+    assert missing_payload["detail"] == "Missing callback signature"
+
+    invalid_payload = _signed_task_run_event_payload(
+        run_id=run_id,
+        callback_token=callback_token,
+        event_type="heartbeat",
+        idempotency_key="evt-invalid-signature",
+        occurred_at=occurred_at,
+        message="tampered",
+    )
+    invalid_payload["callbackSignature"] = "0" * 64
+    invalid_status, _, invalid_response = _request_json(
+        "POST",
+        f"/api/v1/boards/default/tasks/task-runs/{run_id}/events",
+        invalid_payload,
+    )
+    assert invalid_status == 401
+    assert invalid_response["detail"] == "Invalid callback signature"
+
+
+def test_instance_agent_docs_filters_to_whitelist_and_rejects_non_whitelist_access(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("agent-docs-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-agent-docs",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-agent-docs",
+    )
+
+    class _FakeOpenClawAdapter:
+        def fetch_snapshot(self, request: Any) -> ProviderSnapshotResult:
+            del request
+            return _provider_snapshot_result(
+                {
+                    "health": {
+                        "agents": [
+                            {
+                                "agentId": "main",
+                                "displayName": "Main Agent",
+                            }
+                        ]
+                    }
+                }
+            )
+
+        def agents_files_list(self, request: Any, *, agent_id: str) -> ProviderPayloadResult:
+            del request, agent_id
+            return _provider_payload_result(
+                {
+                    "files": [
+                        {"name": "AGENTS.md", "path": "/workspace/AGENTS.md", "size": 10, "updatedAtMs": 1000},
+                        {"name": "secret.txt", "path": "/workspace/secret.txt", "size": 20, "updatedAtMs": 2000},
+                    ]
+                }
+            )
+
+        def agents_files_get(self, request: Any, *, agent_id: str, name: str) -> ProviderPayloadResult:
+            del request, agent_id
+            return _provider_payload_result(
+                {
+                    "file": {
+                        "name": name,
+                        "path": f"/workspace/{name}",
+                        "content": f"# {name}\n",
+                        "size": len(name) + 3,
+                        "missing": False,
+                    }
+                }
+            )
+
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService._adapter_for_openclaw",
+        lambda self, **kwargs: _FakeOpenClawAdapter(),
+    )
+
+    list_status, _, list_body = request(
+        "GET",
+        f"/instances/{instance['id']}/agent-docs",
+        headers={"cookie": auth_cookie},
+    )
+    assert list_status == 200
+    list_payload = cast(dict[str, Any], json.loads(list_body.decode("utf-8")))
+    assert [item["name"] for item in list_payload["items"]] == ["AGENTS.md"]
+
+    preview_status, _, preview_body = request(
+        "GET",
+        f"/instances/{instance['id']}/agent-docs/preview?agentId=main&name=secret.txt",
+        headers={"cookie": auth_cookie},
+    )
+    assert preview_status == 404
+    preview_payload = cast(dict[str, Any], json.loads(preview_body.decode("utf-8")))
+    assert preview_payload["detail"] == "Agent doc not found"
+
+    download_status, _, download_body = request(
+        "GET",
+        f"/instances/{instance['id']}/agent-docs/download?agentId=main&name=secret.txt&download=true",
+        headers={"cookie": auth_cookie},
+    )
+    assert download_status == 404
+    download_payload = cast(dict[str, Any], json.loads(download_body.decode("utf-8")))
+    assert download_payload["detail"] == "Agent doc not found"
 
 
 def test_create_task_sets_requirement_metadata(

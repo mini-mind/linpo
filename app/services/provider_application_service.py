@@ -21,6 +21,21 @@ class ProviderExecutionContext:
     cache_key: object
 
 
+ALLOWED_AGENT_DOC_NAMES: frozenset[str] = frozenset(
+    {
+        "AGENTS.md",
+        "SOUL.md",
+        "TOOLS.md",
+        "IDENTITY.md",
+        "USER.md",
+        "HEARTBEAT.md",
+        "BOOTSTRAP.md",
+        "MEMORY.md",
+        "memory.md",
+    }
+)
+
+
 class ProviderApplicationService:
     def __init__(
         self,
@@ -314,15 +329,18 @@ class ProviderApplicationService:
                 path = entry.get("path")
                 if not isinstance(name, str) or not isinstance(path, str):
                     continue
+                normalized_name = name.strip()
+                if normalized_name not in ALLOWED_AGENT_DOC_NAMES:
+                    continue
                 size_value = entry.get("size")
                 updated_at_value = entry.get("updatedAtMs")
                 items.append(
                     {
-                        "id": f"{agent_id}:{name}",
+                        "id": f"{agent_id}:{normalized_name}",
                         "agent_id": agent_id,
                         "agent_name": agent_name,
                         "path": path,
-                        "name": name,
+                        "name": normalized_name,
                         "exists": not bool(entry.get("missing")),
                         "size_bytes": size_value if isinstance(size_value, int) and size_value >= 0 else None,
                         "updated_at": self._to_iso_from_millis(updated_at_value),
@@ -347,6 +365,9 @@ class ProviderApplicationService:
         agent_id: str,
         name: str,
     ) -> dict[str, Any]:
+        normalized_name = name.strip()
+        if normalized_name not in ALLOWED_AGENT_DOC_NAMES:
+            raise HTTPException(status_code=404, detail="Agent doc not found")
         adapter = self._adapter_for_openclaw(
             data_source=data_source,
             execution_context=execution_context,
@@ -359,7 +380,7 @@ class ProviderApplicationService:
                     capability=DomainProviderCapability.SESSION_READ,
                 ),
                 agent_id=agent_id,
-                name=name,
+                name=normalized_name,
             )
         )
         file_payload = payload.get("file")

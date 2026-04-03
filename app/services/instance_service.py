@@ -108,6 +108,7 @@ class InstanceService:
         *,
         user_id: UUID,
         payload: InstanceCreateInput,
+        commit: bool = True,
     ) -> Instance:
         validation_result = self.validate_instance(db_session, user_id=user_id, payload=payload)
         if not validation_result.ok:
@@ -126,8 +127,11 @@ class InstanceService:
                 last_check_at=_utc_now(),
             )
             db_session.add(instance)
-            db_session.commit()
-            db_session.refresh(instance)
+            if commit:
+                db_session.commit()
+                db_session.refresh(instance)
+            else:
+                db_session.flush()
             return instance
 
     def update_instance(
@@ -191,13 +195,17 @@ class InstanceService:
         *,
         user_id: UUID,
         instance_id: UUID,
+        commit: bool = True,
     ) -> None:
         instance = self._get_owned_instance(db_session, user_id=user_id, instance_id=instance_id)
         if instance is None:
             raise InstanceNotFoundError
 
         db_session.delete(instance)
-        db_session.commit()
+        if commit:
+            db_session.commit()
+        else:
+            db_session.flush()
 
     def get_openclaw_context(
         self,

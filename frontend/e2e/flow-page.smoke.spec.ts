@@ -42,6 +42,8 @@ async function fulfillJson(route: Route, payload: unknown, status = 200): Promis
 }
 
 test.describe('flow page smoke', () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
   test('opens flow page and supports basic node creation path', async ({ page }) => {
     await page.route('**/auth/me**', async (route) => {
       await fulfillJson(route, {
@@ -66,7 +68,11 @@ test.describe('flow page smoke', () => {
     await page.goto('/flow');
     await expect(page).toHaveURL(/\/flow\/edit\/new$/);
 
-    await expect(page.getByTestId('flow-sidebar')).toBeVisible();
+    const createFlowButton = page.getByRole('button', { name: '创建流程' });
+    await expect(createFlowButton).toBeVisible();
+    await createFlowButton.click({ force: true });
+    await expect(page).toHaveURL(/\/flow\/edit\/draft_/);
+
     await expect(page.getByTestId('flow-canvas-viewport')).toBeVisible();
 
     const createNodeButton = page.getByRole('button', { name: '新建节点' });

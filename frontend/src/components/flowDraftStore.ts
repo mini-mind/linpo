@@ -1,4 +1,4 @@
-import type { FlowCanvasEdge, FlowCanvasNode } from '../api/types';
+import type { FlowCanvasEdge, FlowCanvasNode, FlowChatMessageItem } from '../api/types';
 
 const FLOW_DRAFTS_STORAGE_KEY = 'linpo_flow_drafts_v1';
 
@@ -15,6 +15,7 @@ export type FlowDraftRecord = {
   requirement: string;
   nodes: FlowCanvasNode[];
   edges: FlowCanvasEdge[];
+  planner_messages?: FlowChatMessageItem[];
   lanes: FlowDraftLaneRecord[];
   node_lane_by_id: Record<string, string>;
   planner_session_key: string | null;
@@ -56,6 +57,30 @@ function normalizeDraft(raw: unknown): FlowDraftRecord | null {
     requirement: String(item.requirement ?? ''),
     nodes: Array.isArray(item.nodes) ? item.nodes : [],
     edges: Array.isArray(item.edges) ? item.edges : [],
+    planner_messages: Array.isArray(item.planner_messages)
+      ? item.planner_messages
+          .map((message) => {
+            if (!message || typeof message !== 'object') {
+              return null;
+            }
+            const messageItem = message as Partial<FlowChatMessageItem>;
+            const role = String(messageItem.role ?? '').trim();
+            const content = String(messageItem.content ?? '');
+            const createdAt = String(messageItem.created_at ?? '').trim();
+            if (
+              (role !== 'user' && role !== 'assistant' && role !== 'system')
+              || createdAt === ''
+            ) {
+              return null;
+            }
+            return {
+              role,
+              content,
+              created_at: createdAt,
+            } satisfies FlowChatMessageItem;
+          })
+          .filter((message): message is FlowChatMessageItem => message !== null)
+      : [],
     lanes: Array.isArray(item.lanes)
       ? item.lanes
           .map((lane) => {

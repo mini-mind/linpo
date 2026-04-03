@@ -1,5 +1,23 @@
 # Linpo 文档变更记录
 
+## 2026-04-03
+
+- 治理规则调整：执行方式改为“优先委派子代理”，主 agent 负责调度、核验与集成，极小高耦合任务允许直接执行。
+- 治理规则调整：新增 subagent 模型约束，默认统一使用 `gpt-5.3-codex`（用户明确指定时可例外）。
+- 治理规则调整：工作准则新增“BUG/疑难问题默认红绿测试（先红后绿）”，并明确“简单小改动可不新增测试脚本，但需最小化验证”。
+- PRD/Architecture/Test-Resources 收敛 planner SSE 契约：统一状态事件名为 `planner_session_updated`，并明确 planner session 缺失时直接返回 `404`，不再从 `chat.history` 回填。
+- PRD/Architecture 收敛产物路径口径：可预览、可下载的任务产物统一限制在 `/tmp/linpo/**`；若 `temp_output_path` 不可写，执行端必须回调 `failed`，不得静默回退后仍宣告完成。
+- PRD/Architecture 收敛文档优先级条款：产品边界/交互/成功标准以 `docs/prd.md` 为准；PRD 未明示的实现细节以 `docs/architecture.md` 为准；`docs/test-resources.md` 不单独覆盖前两者。
+- Architecture 收敛 `flow.generate` 语义：统一为“启动或续接 planner 增量编辑会话”，移除旧整图草稿描述的重复口径。
+- Test-Resources 脱敏：移除仓库内明文 OpenClaw token，改为通过本地安全配置注入。
+- 运行样例脱敏：`.env.example` 与集成测试中的公开示例 token 改为占位值，避免仓库内保留真实网关令牌。
+- 安全基线收紧：后端默认 CORS 白名单移除固定公网源，改为本地开发源；公网域名需通过 `LINPO_CORS_ALLOW_ORIGINS` 显式注入。
+- 回调配置收敛：`LINPO_TASK_EVENT_CALLBACK_BASE_URL` 未配置时仅尝试按实例 endpoint 推导公网回调地址；无法推导时任务投放失败，不再附带本地回调兜底。
+- PRD/Architecture 同步补充 stale 补偿实现口径：当前由任务读取链路触发，不是独立后台定时巡检。
+- 认证安全口径补充：`LINPO_SESSION_COOKIE_SECURE` 未显式配置时，若 CORS 白名单包含非本地域名则自动启用 `Secure` Cookie。
+- 治理规则与 PRD 对齐：`AGENTS.md` 中 v0.7 主工作区更新为“摘要 + 看板 + 流程列表 + 流程编辑 + 文件”，不再保留旧 IA 口径。
+- E2E 运行收敛：`frontend/playwright.config.ts` 默认 `baseURL` 改为本地 `http://127.0.0.1:4173`，CI/CD workflow 改为 `npm run e2e -- ...`，避免 `npx playwright` 版本漂移风险。
+
 ## 2026-04-02
 
 - 新增 Node 基线：仓库与前端目录均新增 `.nvmrc`，统一到 `Node 20.19.0`；前端 `package.json` 增加 `engines(node>=20,npm>=10)` 约束。
@@ -159,6 +177,7 @@
 - 测试资源文档补充 `claw3` 作为流程拆解默认实例的联调约束。
 - 流程编排链路调整为“两段式”：`flow.generate` 仅生成草图，`flow.confirm` 确认后入队；任务默认 `queued`，由后端队列调度器串行拉取执行并按结果流转 `running/completed/blocked_by_approval/failed`。
 - 任务执行判定从 `chat.history` 轮询主链升级为 `task-run event callback` 主链，并新增低频 stale 补偿巡检；补充回调契约与 `LINPO_TASK_EVENT_CALLBACK_BASE_URL` / `LINPO_TASK_RUN_STALE_SECONDS` 配置口径。
+- 任务回调契约补强 HMAC 完整性签名：新投放任务要求 `callbackSignature`，服务端按升序紧凑 JSON 与派生签名密钥重算 `HMAC-SHA256` 校验。
 - 看板新增“按需求分列 + 按需求筛选 + 删除需求节点”能力：后端补充 `requirement_id/requirement_title` 元数据写入与 `DELETE /tasks/{task_id}`、`DELETE /tasks/requirements/{requirement_id}` 接口，并提供 `POST .../delete` 兼容兜底。
 - 看板停止读取历史 `localStorage(flow_tasks)` 作为渲染数据源，统一只展示后端真实 Task，避免需求分列被旧节点缓存污染。
 - 看板工具栏移除“新增任务”入口及其弹窗逻辑；左侧改为需求数量统计，需求筛选展示改为桌面端 20 字截断、移动端 `…`。

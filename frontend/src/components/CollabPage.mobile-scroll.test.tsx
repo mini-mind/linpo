@@ -133,9 +133,9 @@ describe('CollabPage mobile scroll', () => {
     const board = await screen.findByTestId('kanban-board');
     expect(board).toHaveStyle({ overflowX: 'hidden' });
     expect(board).toHaveStyle({ touchAction: 'pan-y' });
-    expect(screen.getByText('1 / 6')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '待调度', level: 3 })).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: '进行中', level: 3 })).not.toBeInTheDocument();
+    expect(screen.getByText(/^1 \/ \d+$/)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '待确认', level: 3 })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '待调度', level: 3 })).not.toBeInTheDocument();
 
     fireEvent.touchStart(board, {
       touches: [{ clientX: 220, clientY: 120 }],
@@ -145,8 +145,8 @@ describe('CollabPage mobile scroll', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText('2 / 6')).toBeInTheDocument();
-      expect(screen.getByRole('heading', { name: '进行中', level: 3 })).toBeInTheDocument();
+      expect(screen.getByText(/^2 \/ \d+$/)).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: '待调度', level: 3 })).toBeInTheDocument();
     });
   });
 });

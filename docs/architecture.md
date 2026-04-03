@@ -93,7 +93,7 @@
 - 解析：构建 DAG，校验环路，按拓扑序动态分层并分配执行 Agent。
 - 输出：可并行任务批次，任务写入看板队列。
 - 拆解策略：`FlowDecompositionService` 提示词需优先生成“可并行”的分支结构，并在节点描述中给出“可委派 subagent 并行执行”的建议，避免过度串行化。
-- 拆解策略：`FlowDecompositionService` 提示词需补充“路径可访问性”约束，要求节点交接文件优先使用指定临时路径，若路径受沙箱限制需提供可访问替代路径与回传说明。
+- 拆解策略：`FlowDecompositionService` 提示词需补充“路径可访问性”约束；节点交接文件优先使用指定临时路径，且可预览、可下载的产物路径统一限制在 `/tmp/linpo/**`。
 - 前端 `FlowEditorPanel` 必须支持节点/连接的本地编辑能力：`node create/update/delete` 与 `edge create/delete`，确认入板时提交最新画布状态。
 - 流程画布继续保留泳道列，用于承载不同 Agent 负责的节点；节点在所属泳道内编辑、拖拽与连线。
 - 节点以双击画布弹窗创建、双击节点弹窗编辑；节点上下左右提供连接点用于连线。
@@ -105,7 +105,7 @@
 - 流程规划改为“节点级 patch 流”而非“整图 JSON commit”：Linpo 维护独立的持久化 `planner session`，记录 `messages/current_nodes/revision/status`，并在每次有效增量后产出最新节点快照。
 - 节点级 patch 最小集合冻结为：`upsert_node`（创建/更新节点，包含完整 `id/title/description/depends_on/sensitive`）与 `delete_node`（按 `id` 删除节点）。节点依赖变更必须通过 `upsert_node.depends_on` 表达，不再定义独立 edge patch。
 - `FlowDecompositionService` 负责向 `claw3` 发起规划会话，但不再依赖 claw3 最终回整图 JSON 作为主链；主链改为 claw3 在会话中调用 Linpo planner HTTP 接口进行 `upsert_node/delete_node/complete/fail`。
-- Planner HTTP 接口必须携带一次性 `planner_token`；Linpo 在收到每次节点编辑请求后，先落持久化消息，再更新 draft snapshot/revision，并通过 SSE 推送 `planner_messages_updated/planner_nodes_patched/planner_snapshot_updated/planner_status_updated`。
+- Planner HTTP 接口必须携带 `planner_token`；Linpo 在收到每次节点编辑请求后，先落持久化消息，再更新 draft snapshot/revision，并通过 SSE 推送 `planner_messages_updated / planner_nodes_patched / planner_snapshot_updated / planner_session_updated`。
 - `complete` 接口负责对最终节点集执行完整校验：节点数、唯一 id、`depends_on` 引用合法、至少一个 `sensitive=true`。校验通过才将 planner session 置为 `completed`；否则写入失败消息并保持会话 `failed`。
 - `stop` 接口由前端触发，Linpo 需同时落会话状态、写入消息流，并通过 Provider `chat.pause` 中断 claw3 对应 session。
 - `FlowEditorPanel` 应用 patch 后立即重算派生边；若 SSE 重连、丢序或解析失败，则请求当前 draft snapshot 并整体替换本地 nodes，再继续接收后续 patch。
@@ -133,9 +133,10 @@
 - 事件入口：`POST /api/v1/boards/{board_id}/tasks/task-runs/{run_id}/events`。
 - 事件类型：`started / heartbeat / progress / need_approval / completed / failed`。
 - 幂等保障：事件携带 `idempotencyKey`，后端按 run 维度去重。
+- 完整性校验：新投放任务会下发一次性 `callbackToken`，执行端需以 `callbackToken` 作为 HMAC key，对 `runId/eventType/idempotencyKey/requestId/message/artifact/occurredAt` 的升序紧凑 JSON 计算 `HMAC-SHA256` 后回传 `callbackSignature`。
 - 调度推进：每次入队、每次终态事件（`completed/failed/need_approval`）后，只拉取一个可执行 `queued` 任务投放。
-- 调度提示词：执行端需优先写入任务指定 `temp_output_path`；若该路径不可访问，必须回退到可访问工作目录并在 `completed` 的 `artifact/message` 回传“实际路径 + 回退原因”。
-- 补偿副链：仅在 `running` 长时间无 heartbeat 时触发低频巡检，转 `failed(stale_timeout)` 后再推进下一任务。
+- 调度提示词：执行端需优先写入任务指定 `temp_output_path`；若该路径受沙箱限制不可写，不得静默回退到其他目录并宣告 `completed`，必须回调 `failed` 并写明不可访问路径与原因。
+- 补偿副链：仅在 `running` 长时间无 heartbeat 时触发补偿巡检，转 `failed(stale_timeout)` 后再推进下一任务；当前实现由任务读取链路触发该巡检（非独立后台定时任务）。
 
 ## 5. 统一审批边界
 
@@ -175,13 +176,12 @@
 - `GET /api/v1/boards/{board_id}/tasks`：返回当前登录用户在指定看板可见任务列表，作为看板主数据源。
 - `GET /sse/boards/{board_id}/tasks`：看板任务 SSE 实时事件通道（按当前登录用户隔离），推送 `snapshot_ready/tasks_changed/error` 事件；看板页与流程编辑页统一使用该通道同步任务与节点状态。
 - `POST /api/v1/boards/{board_id}/tasks`：创建任务并记录指派信息，创建成功后由应用层触发 OpenClaw `chat.send`。
-- `POST /api/v1/boards/{board_id}/tasks/flow/generate`：根据需求生成流程图节点/边草稿，不落看板任务；支持可选 `current_nodes/current_edges/planner_session_key` 以在已有流程上增量改图，后端固定以 `claw3` 作为 planner 目标。
-- `POST /api/v1/boards/{board_id}/tasks/flow/generate`：改为“启动或续接一次 planner 增量编辑会话”；后端先持久化用户消息、当前工作流快照与 planner session 状态，再把“历史消息 + 当前快照 + 本次需求 + planner HTTP 接口信息”发送给 `claw3`。响应至少返回 `planner_session_key` 与当前 draft snapshot，不再要求等待完整整图生成结束。
+- `POST /api/v1/boards/{board_id}/tasks/flow/generate`：启动或续接一次 planner 增量编辑会话，不直接落看板任务；支持可选 `current_nodes/current_edges/planner_session_key` 以在已有流程上增量改图。后端固定以 `claw3` 作为 planner 目标，先持久化用户消息、当前工作流快照与 planner session 状态，再把“历史消息 + 当前快照 + 本次需求 + planner HTTP 接口信息”发送给 `claw3`。响应至少返回 `planner_session_key` 与当前 draft snapshot，不再要求等待完整整图生成结束。
 - `GET /api/v1/boards/{board_id}/tasks/flow/planner-sse?sessionKey=...`：流程规划 SSE 通道；固定连接 `FlowDecompositionService` 的 `claw3` planner session，除 `snapshot_ready/planner_messages_updated/error` 外，还需推送图补丁事件与快照事件，供流程页在消息流外同步实时改图。
 - 图补丁事件最小集合冻结为 `planner_nodes_patched` 与 `planner_snapshot_updated`：
   - `planner_nodes_patched`：负载包含 `session_key/revision/operations[]`，其中操作仅允许 `upsert_node/delete_node`。
   - `planner_snapshot_updated`：负载包含 `session_key/revision/nodes[]`，前端用于重连首屏或重同步纠偏。
-- `GET /api/v1/boards/{board_id}/tasks/flow/planner-sse` 还需推送 `planner_status_updated`，至少包含 `session_key/status/revision/updated_at`，用于前端维持“遮罩/停止按钮/恢复编辑”状态。
+- `GET /api/v1/boards/{board_id}/tasks/flow/planner-sse` 还需推送 `planner_session_updated`，至少包含 `session_key/status/revision/updated_at`，用于前端维持“遮罩/停止按钮/恢复编辑”状态。
 - `POST /api/v1/boards/{board_id}/tasks/flow/planner-stop`：前端停止当前 planner 会话；后端需落持久化状态并尝试暂停 `claw3`。
 - `POST /api/v1/boards/{board_id}/tasks/flow/planner-sessions/{session_key}/nodes/upsert`：planner 内部接口，基于 token 单节点创建或更新。
 - `POST /api/v1/boards/{board_id}/tasks/flow/planner-sessions/{session_key}/nodes/delete`：planner 内部接口，基于 token 删除单节点。
@@ -194,15 +194,15 @@
 - `POST /api/v1/boards/{board_id}/tasks/requirements/{requirement_id}/stop`：中断流程（阻断运行中节点并阻断后续调度）；看板“删除流程”先调用该接口再执行整组删除。
 - `POST /api/v1/boards/{board_id}/tasks/requirements/{requirement_id}/continue`：继续流程（将被中断阻塞的节点恢复入队并推进调度）。
 - `POST /api/v1/boards/{board_id}/tasks/requirements/{requirement_id}/sync`：阻塞态流程画布回写（仅同步未执行节点到看板任务）。
-- `POST /api/v1/boards/{board_id}/tasks/task-runs/{run_id}/events`：执行端回调任务运行事件，驱动状态流转与下一任务调度。
+- `POST /api/v1/boards/{board_id}/tasks/task-runs/{run_id}/events`：执行端回调任务运行事件，驱动状态流转与下一任务调度；新任务默认要求 `callbackSignature` HMAC 校验。
 - `GET /api/v1/boards/{board_id}/tasks/{task_id}/output-preview`：按任务关联路径返回文件预览元数据（文本/JSON 预览内容、二进制占位、下载地址）。
 - `GET /api/v1/boards/{board_id}/tasks/{task_id}/output-file`：按任务关联路径返回文件流（支持 inline/attachment）。
 - `DELETE /api/v1/boards/{board_id}/tasks/{task_id}`：删除单个需求节点；若该节点被同需求下游节点依赖，后端移除对应依赖并重算可调度任务。
 - `DELETE /api/v1/boards/{board_id}/tasks/requirements/{requirement_id}`：删除整组需求节点（同 `requirement_id`）。
 - `GET/POST/PATCH/DELETE /instances*`：OpenClaw 实例配对管理契约，配对成功后前端写入 `linpo.currentInstanceId` 作为默认实例上下文。
-- `GET /instances/{instance_id}/files`：返回该实例下任务关联的可访问产出文件列表（含存在性与大小信息）。
-- `GET /instances/{instance_id}/files/preview`：按实例+任务上下文预览文件内容（文本/JSON/二进制占位）。
-- `GET /instances/{instance_id}/files/download`：按实例+任务上下文下载文件流。
+- `GET /instances/{instance_id}/files`：返回该实例下任务关联且位于 `/tmp/linpo/**` 的可访问产出文件列表（含存在性与大小信息）。
+- `GET /instances/{instance_id}/files/preview`：按实例+任务上下文预览位于 `/tmp/linpo/**` 的文件内容（文本/JSON/二进制占位）。
+- `GET /instances/{instance_id}/files/download`：按实例+任务上下文下载位于 `/tmp/linpo/**` 的文件流。
 - `GET /instances/{instance_id}/agent-docs`：转调 OpenClaw `agents.files.list`，返回该实例下可读 Agent 白名单文档清单。
 - `GET /instances/{instance_id}/agent-docs/preview`：转调 OpenClaw `agents.files.get`，返回指定 Agent 文档预览内容。
 - `GET /instances/{instance_id}/agent-docs/download`：下载指定 Agent 文档内容。
@@ -226,7 +226,7 @@
 - Agent 文档接口必须只暴露 OpenClaw 白名单文件名：`AGENTS.md`、`SOUL.md`、`TOOLS.md`、`IDENTITY.md`、`USER.md`、`HEARTBEAT.md`、`BOOTSTRAP.md`、`MEMORY.md`、`memory.md`；Linpo 不自行接受任意路径输入。
 - `flow.generate` 为流程页面分配专用 session：`planner:claw3`、`manager`、`execution` 前缀，用于流程拆解和任务调度链路。
 - 流程拆解逻辑不在前端执行，统一由后端 `FlowDecompositionService` 通过 `claw3`（OpenClaw 实例）发起规划会话；若前端传入 planner agent，后端仅接受 `claw3` 并按该目标发起请求，不得静默回退到其他 agent。
-- 流程规划消息流与图补丁共用独立 SSE 通道：前端在发送 `flow.generate` 前确定 `planner_session_key`，随后订阅 `/api/v1/boards/{board_id}/tasks/flow/planner-sse`；后端不再把 OpenClaw `chat.history` 作为唯一真源，而是以 Linpo 持久化 planner session 为真源，对外推送 `planner_messages_updated`、`planner_nodes_patched`、`planner_snapshot_updated` 与 `planner_status_updated`。
+- 流程规划消息流与图补丁共用独立 SSE 通道：前端在发送 `flow.generate` 前确定 `planner_session_key`，随后订阅 `/api/v1/boards/{board_id}/tasks/flow/planner-sse`；后端仅以 Linpo 持久化 planner session 为真源，找不到 session 时直接返回 `404`，不再从 OpenClaw `chat.history` 回填；对外推送 `planner_messages_updated`、`planner_nodes_patched`、`planner_snapshot_updated` 与 `planner_session_updated`。
 - 流程创建入口由 `FlowEditorPanel` 左侧流程侧栏中的新建弹窗承接；`FlowEditorPanel` 底部悬浮对话框用于后续增量改图（同样调用 `flow.generate`）。
 - 配对入口支持用户自有 OpenClaw（如 `claw2`）；Linpo 不要求用户先配置多页面，只需完成一次实例配对即可进入看板与流程主链。
 - 调度策略：每次入队后立即从 `queued` 取一个“依赖满足”的任务投放执行；任务完成后再推进下一项。未完成任务保持 `running`，敏感终态进入 `blocked_by_approval`。
@@ -256,8 +256,8 @@
 
 ### 8.2 任务事件回调配置
 
-- `LINPO_TASK_EVENT_CALLBACK_BASE_URL`：写入任务投放提示词的回调基地址（默认 `http://127.0.0.1:8000`）。
-- 未显式配置 `LINPO_TASK_EVENT_CALLBACK_BASE_URL` 时，后端会优先根据实例 endpoint 推导公网回调地址（host 不变，端口默认 `8000`），并附带 `127.0.0.1` 本地地址作为候选兜底。
+- `LINPO_TASK_EVENT_CALLBACK_BASE_URL`：写入任务投放提示词的回调基地址（建议显式配置）。
+- 未显式配置 `LINPO_TASK_EVENT_CALLBACK_BASE_URL` 时，后端会根据实例 endpoint 推导公网回调地址（host 不变，端口默认 `8000`）；若无法推导候选回调地址，任务投放直接失败。
 - `LINPO_TASK_EVENT_CALLBACK_PORT`：未显式配置回调基地址时，推导公网回调地址使用的端口（默认 `8000`）。
 - `LINPO_TASK_RUN_STALE_SECONDS`：`running` 无 heartbeat 的超时阈值（默认 `900` 秒，最小 `60` 秒）。
 
@@ -279,4 +279,4 @@
 - 旧页面能力如需保留，仅作为过渡代码，不作为产品契约。
 - 文档与实现不一致时先修文档或修实现，禁止长期漂移。
 
-架构边界若与 `docs/prd.md` 或 `docs/test-resources.md` 冲突，以 `docs/architecture.md` 为准。
+若文档冲突涉及产品边界、交互口径或成功标准，以 `docs/prd.md` 为准；若 `docs/prd.md` 未明示实现细节，则以 `docs/architecture.md` 为准；`docs/test-resources.md` 仅承载测试与联调资源，不单独覆盖前两者。

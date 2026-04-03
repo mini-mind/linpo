@@ -14,9 +14,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import session as db_session
-from app.db.models import Instance, Task, User
+from app.db.models import Instance, PairingReceipt, Task, User
 from app.main import app
 from app.services.crypto import decrypt_secret, encrypt_secret
+from app.services.instance_service import InstanceService, InstanceValidationFailedError
 from app.services.instance_validator import (
     InstanceValidationErrorCode,
     InstanceValidationRequest,
@@ -834,6 +835,45 @@ def test_agent_mount_request_returns_confirmation_url_and_writes_message(
     assert target["action"] == "mount"
 
 
+def test_agent_mount_request_stores_encrypted_gateway_token_in_receipt(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth_cookie = _register_and_login("alice")
+    del auth_cookie
+
+    monkeypatch.setattr(
+        "app.services.instance_validator.InstanceValidatorService.validate",
+        lambda self, validation_request: InstanceValidationResult(
+            ok=True,
+            status="active",
+            message=f"validated:{validation_request.endpoint}",
+        ),
+    )
+
+    request_status, _, request_payload = _request_json(
+        "POST",
+        "/instances/agent-mount/request",
+        {
+            "email": "alice@example.com",
+            "name": "alice-encrypted-receipt",
+            "type": "openclaw",
+            "endpoint": "http://127.0.0.1:28789",
+            "gatewayToken": "encrypted-receipt-token",
+        },
+    )
+    confirmation_url = _require_confirmation_url(request_status, request_payload)
+    token = _extract_receipt_token(confirmation_url)
+
+    with Session(db_session.get_engine(isolated_database_url)) as session:
+        receipt = session.execute(select(PairingReceipt).where(PairingReceipt.token == token)).scalar_one()
+        assert "gateway_token" not in receipt.payload
+        gateway_token_enc = str(receipt.payload.get("gateway_token_enc", "")).strip()
+        assert gateway_token_enc != ""
+        assert gateway_token_enc != "encrypted-receipt-token"
+        assert decrypt_secret(gateway_token_enc) == "encrypted-receipt-token"
+
+
 def test_agent_mount_request_hides_user_not_found(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -1228,6 +1268,64 @@ def test_agent_receipt_confirm_rejects_expired_or_duplicate_token(
     assert "expired" in str(expired_confirm_payload.get("detail", "")).lower()
 
 
+def test_agent_receipt_confirm_failure_keeps_receipt_retryable(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth_cookie = _register_and_login("alice")
+
+    monkeypatch.setattr(
+        "app.services.instance_validator.InstanceValidatorService.validate",
+        lambda self, validation_request: InstanceValidationResult(
+            ok=True,
+            status="active",
+            message=f"validated:{validation_request.endpoint}",
+        ),
+    )
+
+    request_status, _, request_payload = _request_json(
+        "POST",
+        "/instances/agent-mount/request",
+        {
+            "email": "alice@example.com",
+            "name": "alice-retryable-receipt",
+            "type": "openclaw",
+            "endpoint": "http://127.0.0.1:28789",
+            "gatewayToken": "retryable-token",
+        },
+    )
+    confirmation_url = _require_confirmation_url(request_status, request_payload)
+    token = _extract_receipt_token(confirmation_url)
+
+    original_create_instance = InstanceService.create_instance
+
+    def _fail_create_instance(self: InstanceService, *args: object, **kwargs: object) -> object:
+        del self, args, kwargs
+        raise InstanceValidationFailedError(
+            InstanceValidationResult(
+                ok=False,
+                status="failed",
+                message="confirm create failed",
+                code=InstanceValidationErrorCode.AUTH_FAILED,
+            )
+        )
+
+    monkeypatch.setattr(InstanceService, "create_instance", _fail_create_instance)
+
+    failed_confirm_status, failed_confirm_payload = _confirm_receipt(token, auth_cookie)
+    assert failed_confirm_status == 400
+    assert failed_confirm_payload["message"] == "confirm create failed"
+
+    with Session(db_session.get_engine(isolated_database_url)) as session:
+        receipt = session.execute(select(PairingReceipt).where(PairingReceipt.token == token)).scalar_one()
+        assert receipt.consumed_at is None
+
+    monkeypatch.setattr(InstanceService, "create_instance", original_create_instance)
+    success_confirm_status, success_confirm_payload = _confirm_receipt(token, auth_cookie)
+    assert success_confirm_status == 200
+    assert success_confirm_payload["mounted"] is True
+
+
 def test_validate_instance_rejects_unsafe_endpoint_before_probe(
     isolated_database_url: str,
     auth_cookie: str,
@@ -1387,7 +1485,7 @@ def test_public_readme_candidate_can_validate_and_create_with_backend_origin_ove
         "name": "claw1-public",
         "type": "openclaw",
         "endpoint": "http://175.178.213.10:18789",
-        "gatewayToken": "lhdWYU1MGLCWNwbHaQsIjlPkiSt5LKhEh9PjAtElrlE",
+        "gatewayToken": "example-gateway-token",
     }
 
     validate_status, _, validate_payload = _request_json(

@@ -13,6 +13,7 @@ const {
   mockListInstances,
   mockListKanbanTasks,
   mockCreateKanbanTask,
+  mockConfirmFlowToKanban,
   mockContinueFlowRequirement,
   mockDeleteKanbanTask,
   mockContinueKanbanTask,
@@ -27,6 +28,7 @@ const {
   mockListInstances: vi.fn(),
   mockListKanbanTasks: vi.fn(),
   mockCreateKanbanTask: vi.fn(),
+  mockConfirmFlowToKanban: vi.fn(),
   mockContinueFlowRequirement: vi.fn(),
   mockDeleteKanbanTask: vi.fn(),
   mockContinueKanbanTask: vi.fn(),
@@ -53,6 +55,7 @@ vi.mock('../api/client', async () => {
     getAggregateOverview: mockGetAggregateOverview,
     listKanbanTasks: mockListKanbanTasks,
     createKanbanTask: mockCreateKanbanTask,
+    confirmFlowToKanban: mockConfirmFlowToKanban,
     continueFlowRequirement: mockContinueFlowRequirement,
     deleteKanbanTask: mockDeleteKanbanTask,
     continueKanbanTask: mockContinueKanbanTask,
@@ -182,6 +185,17 @@ describe('CollabPage', () => {
     ]);
     mockListKanbanTasks.mockResolvedValue([]);
     mockCreateKanbanTask.mockResolvedValue(buildKanbanTask());
+    mockConfirmFlowToKanban.mockResolvedValue({
+      board_id: 'default',
+      planner_session_key: 'linpo:flow:default:planner:claw3:test',
+      manager_session_key: 'linpo:flow:default:manager',
+      execution_session_prefix: 'linpo:flow:default:exec',
+      nodes: [],
+      edges: [],
+      messages: [],
+      created_task_ids: ['task-created-1'],
+      dispatched_task_ids: ['task-created-1'],
+    });
     mockContinueFlowRequirement.mockResolvedValue({
       requirement_id: 'req-flow',
       resumed_task_ids: [],
@@ -924,6 +938,87 @@ describe('CollabPage', () => {
     await waitFor(() => {
       expect(mockContinueFlowRequirement).toHaveBeenCalledWith('req-flow-blocked', undefined, 'default');
     });
+    confirmSpy.mockRestore();
+  });
+
+  it('re-runs idle flow column by re-confirming current flow nodes', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mockGetAggregateOverview.mockResolvedValue(buildOverview({ agents: [buildAgent()] }));
+    mockListKanbanTasks
+      .mockResolvedValueOnce([
+        buildKanbanTask({
+          id: 'task-flow-idle-1',
+          title: '流程节点一',
+          status: 'completed',
+          extras: {
+            requirement_id: 'req-flow-idle',
+            requirement_title: '流程待重跑A',
+            flow_node: 'node_a',
+            flow_node_description: '节点一描述',
+            dependencies: 'none',
+            layer: 'L1',
+            sensitive: 'false',
+          },
+        }),
+        buildKanbanTask({
+          id: 'task-flow-idle-2',
+          title: '流程节点二',
+          status: 'failed',
+          extras: {
+            requirement_id: 'req-flow-idle',
+            requirement_title: '流程待重跑A',
+            flow_node: 'node_b',
+            flow_node_description: '节点二描述',
+            dependencies: 'node_a',
+            layer: 'L2',
+            sensitive: 'true',
+          },
+        }),
+      ])
+      .mockResolvedValueOnce([]);
+
+    renderPage();
+
+    await screen.findByText('流程节点一');
+    await userEvent.selectOptions(screen.getByLabelText('分列方式'), 'flow');
+    await userEvent.click(screen.getByRole('button', { name: '运行流程 流程待重跑A' }));
+
+    await waitFor(() => {
+      expect(mockConfirmFlowToKanban).toHaveBeenCalledTimes(1);
+    });
+    expect(mockConfirmFlowToKanban).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instance_id: 'instance-alpha',
+        requirement_id: 'req-flow-idle',
+        executor_agent_id: 'agent-alpha',
+        manager_agent_id: 'agent-alpha',
+        requirement_title: '流程待重跑A',
+        nodes: expect.arrayContaining([
+          expect.objectContaining({
+            id: 'node_a',
+            title: '流程节点一',
+            status: 'queued',
+            depends_on: [],
+          }),
+          expect.objectContaining({
+            id: 'node_b',
+            title: '流程节点二',
+            status: 'queued',
+            depends_on: ['node_a'],
+            sensitive: true,
+          }),
+        ]),
+        edges: expect.arrayContaining([
+          expect.objectContaining({
+            id: 'edge-node_a-node_b',
+            source: 'node_a',
+            target: 'node_b',
+          }),
+        ]),
+      }),
+      { instanceId: 'instance-alpha' },
+      'default'
+    );
     confirmSpy.mockRestore();
   });
 

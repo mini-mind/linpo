@@ -4,6 +4,8 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import asyncio
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -93,7 +95,11 @@ _FLOW_PLANNER_AGENT_ID = "claw3"
 _FLOW_PLANNER_SSE_POLL_INTERVAL_SECONDS = 0.6
 _FLOW_PLANNER_SSE_KEEPALIVE_SECONDS = 12.0
 _TASK_TERMINAL_STATUSES: set[TaskStatus] = {"completed", "failed", "blocked_by_approval"}
-
+_TASK_RUN_CALLBACK_ALLOWED_SKEW_SECONDS = 900
+_TASK_ITEM_SENSITIVE_EXTRA_KEYS = {
+    "dispatch_callback_token",
+    "dispatch_callback_urls",
+}
 
 def get_task_service() -> TaskService:
     return TaskService()
@@ -146,7 +152,11 @@ def _to_task_item(task: Task) -> TaskItem:
         agent_id=task.agent_id,
         agent_name=task.agent_name,
         artifacts=[item for item in task.artifacts if isinstance(item, str)],
-        extras={str(key): str(value) for key, value in extras.items()},
+        extras={
+            str(key): str(value)
+            for key, value in extras.items()
+            if str(key) not in _TASK_ITEM_SENSITIVE_EXTRA_KEYS
+        },
         instance_id=None if task.instance_id is None else str(task.instance_id),
         created_at=task.created_at.isoformat(),
         updated_at=task.updated_at.isoformat(),
@@ -441,7 +451,7 @@ def _event_callback_base_url() -> str:
     value = os.getenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", "").strip()
     if value:
         return value.rstrip("/")
-    return "http://127.0.0.1:8000"
+    return ""
 
 
 def _event_callback_public_port() -> int:
@@ -462,7 +472,7 @@ def _event_callback_base_url_candidates(
     execution_context: ProviderExecutionContext,
 ) -> list[str]:
     preferred = _event_callback_base_url()
-    if os.getenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", "").strip():
+    if preferred:
         return [preferred]
 
     candidates: list[str] = []
@@ -488,7 +498,6 @@ def _event_callback_base_url_candidates(
         if host and host not in {"127.0.0.1", "localhost", "::1"}:
             add_candidate(f"http://{host}:{_event_callback_public_port()}")
 
-    add_candidate(preferred)
     return candidates
 
 
@@ -540,6 +549,19 @@ def _parse_iso_datetime(value: str | None) -> datetime | None:
     return dt.astimezone(UTC)
 
 
+def _validate_callback_event_timestamp(value: str | None) -> datetime:
+    parsed = _parse_iso_datetime(value)
+    if parsed is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="occurredAt is required")
+    now = datetime.now(UTC)
+    if abs((now - parsed).total_seconds()) > _TASK_RUN_CALLBACK_ALLOWED_SKEW_SECONDS:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Callback event is outside the allowed time window",
+        )
+    return parsed
+
+
 def _event_keys_from_extras(extras: dict[str, str]) -> list[str]:
     raw = extras.get("dispatch_event_keys", "")
     return [item for item in raw.split(",") if item]
@@ -570,6 +592,78 @@ def _derive_event_key(
         (occurred_at or "").strip(),
     ]
     return "|".join(parts)
+
+
+def _task_callback_signature_payload(
+    *,
+    run_id: str,
+    event_type: str,
+    idempotency_key: str | None,
+    request_id: str | None,
+    message: str | None,
+    artifact: str | None,
+    occurred_at: str | None,
+) -> str:
+    return json.dumps(
+        {
+            "artifact": (artifact or "").strip(),
+            "eventType": event_type.strip(),
+            "idempotencyKey": (idempotency_key or "").strip(),
+            "message": (message or "").strip(),
+            "occurredAt": (occurred_at or "").strip(),
+            "requestId": (request_id or "").strip(),
+            "runId": run_id.strip(),
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _sign_task_callback_event(
+    *,
+    callback_token: str,
+    run_id: str,
+    event_type: str,
+    idempotency_key: str | None,
+    request_id: str | None,
+    message: str | None,
+    artifact: str | None,
+    occurred_at: str | None,
+) -> str:
+    payload = _task_callback_signature_payload(
+        run_id=run_id,
+        event_type=event_type,
+        idempotency_key=idempotency_key,
+        request_id=request_id,
+        message=message,
+        artifact=artifact,
+        occurred_at=occurred_at,
+    )
+    return hmac.new(callback_token.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _validate_task_callback_signature(
+    *,
+    run_id: str,
+    expected_callback_token: str,
+    payload: TaskRunEventRequest,
+) -> None:
+    provided_signature = (payload.callback_signature or "").strip()
+    if provided_signature == "":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing callback signature")
+    expected_signature = _sign_task_callback_event(
+        callback_token=expected_callback_token,
+        run_id=run_id,
+        event_type=payload.event_type,
+        idempotency_key=payload.idempotency_key,
+        request_id=payload.request_id,
+        message=payload.message,
+        artifact=payload.artifact,
+        occurred_at=payload.occurred_at,
+    )
+    if not hmac.compare_digest(expected_signature, provided_signature):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid callback signature")
 
 
 def _to_flow_drafts_from_canvas(
@@ -726,7 +820,12 @@ def _build_task_dispatch_prompt(
         f"主回调地址: {callback_url}\n"
         "回调地址候选(按顺序尝试，直到返回 accepted=true):\n"
         f"{fallback_urls}\n"
-        f"回调令牌: {callback_token}\n\n"
+        f"回调令牌: {callback_token}\n"
+        "回调签名规则(必须遵守):\n"
+        "- callbackSignature = HMAC-SHA256(key=callbackToken, message=canonical_json)\n"
+        '- canonical_json 使用 UTF-8 JSON 紧凑编码（separators=(",", ":")）、sort_keys=true、ensure_ascii=false\n'
+        '- canonical_json 字段固定为 {"artifact":"","eventType":"","idempotencyKey":"","message":"","occurredAt":"","requestId":"","runId":""}\n'
+        "- 缺失字段必须写空字符串；runId 使用本次运行ID；服务端会按完全相同规则验签\n\n"
         "节点数据流通约束(必须遵守):\n"
         "- 节点间交换数据统一使用临时文件，不共享内存上下文\n"
         "- 读取上游输入文件:\n"
@@ -739,14 +838,16 @@ def _build_task_dispatch_prompt(
         "- completed 事件请同时填写 artifact=最终输出文件绝对路径，便于看板产出预览\n\n"
         "回调格式(JSON): "
         '{"eventType":"started|progress|need_approval|completed|failed|heartbeat",'
-        '"callbackToken":"<token>","idempotencyKey":"<unique>","requestId":"<optional>",'
-        '"message":"<optional>","artifact":"<optional>","occurredAt":"<ISO8601 optional>"}\n'
+        '"callbackToken":"<token>","callbackSignature":"<hex_hmac_sha256>",'
+        '"idempotencyKey":"<unique>","requestId":"<optional>",'
+        '"message":"<optional>","artifact":"<optional>","occurredAt":"<required ISO8601>"}\n'
         "要求:\n"
         "1) 先回调 started，且必须确认响应 accepted=true 才继续执行\n"
         "2) 完成后必须回调 completed；若需要人工审批回调 need_approval；失败回调 failed\n"
-        "3) 同一事件重试时复用同一 idempotencyKey\n"
-        "4) 如果当前回调地址连接失败，立即切换下一候选地址重试\n"
-        "5) 如果任务较长，请定期 heartbeat"
+        "3) callbackSignature = hex(HMAC-SHA256(callbackToken, canonical_json))；字段集严格固定为 artifact/eventType/idempotencyKey/message/occurredAt/requestId/runId\n"
+        "4) 同一事件重试时复用同一 idempotencyKey 与 callbackSignature\n"
+        "5) 如果当前回调地址连接失败，立即切换下一候选地址重试\n"
+        "6) 如果任务较长，请定期 heartbeat"
     )
 
 
@@ -807,6 +908,17 @@ def _dispatch_next_queued_task(
     run_id = uuid4().hex
     callback_token = uuid4().hex
     callback_base_urls = _event_callback_base_url_candidates(execution_context=execution_context)
+    if not callback_base_urls:
+        extras["dispatch_status"] = "failed"
+        extras["dispatch_error"] = "callback base url unavailable; set LINPO_TASK_EVENT_CALLBACK_BASE_URL"
+        extras["finished_at"] = _iso_now()
+        task_service.update_task_status(
+            db_session,
+            task=candidate,
+            status="failed",
+            extras=extras,
+        )
+        return _DispatchResult(task_id=str(candidate.id), run_id=run_id)
     extras["dispatch_run_id"] = run_id
     extras["dispatch_callback_token"] = callback_token
     extras["dispatch_callback_urls"] = ",".join(callback_base_urls)
@@ -1205,10 +1317,8 @@ async def flow_planner_sse(
     db_session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
     flow_planner_session_service: FlowPlannerSessionService = Depends(get_flow_planner_session_service),
-    flow_decomposition_service: FlowDecompositionService = Depends(get_flow_decomposition_service),
-    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
 ) -> Response:
-    normalized_board_id = board_id.strip() or "default"
+    del board_id
     normalized_session_key = session_key.strip()
     if normalized_session_key == "":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="sessionKey is required")
@@ -1221,65 +1331,11 @@ async def flow_planner_sse(
     }
 
     db_session.expire_all()
-    try:
-        snapshot = flow_planner_session_service.get_snapshot_for_user(
-            db_session=db_session,
-            user_id=current_user.id,
-            session_key=normalized_session_key,
-        )
-    except HTTPException as exc:
-        if exc.status_code != status.HTTP_404_NOT_FOUND:
-            raise
-        history_payload = provider_application_service.chat_history(
-            data_source="openclaw",
-            execution_context=flow_decomposition_service.build_realtime_execution_context(),
-            session_key=normalized_session_key,
-            limit=200,
-        )
-        legacy_messages = _normalize_flow_chat_messages(history_payload.get("messages", []))
-        legacy_snapshot = flow_decomposition_service.snapshot_from_history_messages(
-            messages_raw=history_payload.get("messages", []),
-            planner_session_key=normalized_session_key,
-        )
-        seed_nodes = (
-            [
-                {
-                    "id": node.id,
-                    "title": node.title,
-                    "description": node.description,
-                    "depends_on": node.depends_on,
-                    "sensitive": node.sensitive,
-                }
-                for node in legacy_snapshot.nodes
-            ]
-            if legacy_snapshot is not None
-            else []
-        )
-        snapshot = flow_planner_session_service.ensure_session(
-            db_session,
-            user_id=current_user.id,
-            board_id=normalized_board_id,
-            planner_session_key=normalized_session_key,
-            planner_agent_id=_FLOW_PLANNER_AGENT_ID,
-            instance_id=None,
-            flow_name="未命名流程",
-            current_nodes=seed_nodes,
-        )
-        for message in legacy_messages:
-            flow_planner_session_service.append_message(
-                db_session=db_session,
-                session_key=normalized_session_key,
-                role=message.role,
-                kind="legacy_history",
-                content=message.content,
-                payload={},
-            )
-        db_session.commit()
-        snapshot = flow_planner_session_service.get_snapshot_for_user(
-            db_session=db_session,
-            user_id=current_user.id,
-            session_key=normalized_session_key,
-        )
+    snapshot = flow_planner_session_service.get_snapshot_for_user(
+        db_session=db_session,
+        user_id=current_user.id,
+        session_key=normalized_session_key,
+    )
 
     def build_snapshot_events(*, seq_start: int) -> list[str]:
         seq = seq_start
@@ -1883,6 +1939,15 @@ def task_run_event_callback(
     expected_token = str(extras.get("dispatch_callback_token", "")).strip()
     if expected_token == "" or payload.callback_token.strip() != expected_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid callback token")
+    try:
+        _validate_task_callback_signature(
+            run_id=normalized_run_id,
+            expected_callback_token=expected_token,
+            payload=payload,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    event_at = _validate_callback_event_timestamp(payload.occurred_at)
 
     event_key = _derive_event_key(
         run_id=normalized_run_id,
@@ -1910,7 +1975,6 @@ def task_run_event_callback(
             dispatched_task_ids=[],
         )
 
-    event_at = _parse_iso_datetime(payload.occurred_at) or datetime.now(UTC)
     event_at_iso = event_at.isoformat()
     extras["dispatch_last_event"] = payload.event_type
     extras["dispatch_last_event_at"] = event_at_iso

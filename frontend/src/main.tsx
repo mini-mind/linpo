@@ -67,7 +67,7 @@ function App(): JSX.Element {
                   <Route path="instance-files" element={<InstanceFilesPage />} />
                   <Route path="pairing" element={<PairingPage />} />
                   <Route path="profile" element={<ProfilePage />} />
-                  <Route path="*" element={<Navigate to="/kanban" replace />} />
+                  <Route path="*" element={<Navigate to="/summary" replace />} />
                 </Route>
               </Route>
               <Route path="*" element={<Navigate to="/login" replace />} />

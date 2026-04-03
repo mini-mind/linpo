@@ -124,3 +124,42 @@ def test_pairing_receipt_claim_rejects_email_mismatch(
             user_email="bob@example.com",
             allowed_actions={"mount", "unmount"},
         )
+
+
+def test_pairing_receipt_claim_rolls_back_to_unconsumed_when_transaction_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_database_url: str,
+) -> None:
+    monkeypatch.setenv("LINPO_PAIRING_RECEIPT_TTL_SECONDS", "1800")
+    now = datetime.now(UTC)
+    monkeypatch.setattr(receipt_module, "_utc_now", lambda: now)
+    service = PairingReceiptService()
+
+    with Session(db_session.get_engine(isolated_database_url)) as session:
+        created = service.create(
+            session,
+            user_id=UUID("10000000-0000-0000-0000-000000000001"),
+            target_email="alice@example.com",
+            action="mount",
+            payload={"instance_id": "demo"},
+        )
+        session.commit()
+
+    with Session(db_session.get_engine(isolated_database_url)) as session:
+        claimed = service.claim_for_confirmation(
+            session,
+            token=created.token,
+            user_email="alice@example.com",
+            allowed_actions={"mount", "unmount"},
+        )
+        assert claimed.consumed_at is not None
+        session.rollback()
+
+    with Session(db_session.get_engine(isolated_database_url)) as session:
+        claimed_again = service.claim_for_confirmation(
+            session,
+            token=created.token,
+            user_email="alice@example.com",
+            allowed_actions={"mount", "unmount"},
+        )
+        assert claimed_again.consumed_at is not None

@@ -667,7 +667,7 @@ describe('FlowPage', () => {
     });
   });
 
-  it('uses loading placeholder message while planning instead of synthetic system text', async () => {
+  it('keeps planner stream free of synthetic loading text while planning', async () => {
     let resolveGenerate: ((value: FlowGenerateResponse) => void) | null = null;
     mockGenerateFlowFromRequirement.mockImplementation(
       () =>
@@ -684,7 +684,8 @@ describe('FlowPage', () => {
     await userEvent.type(input, '请给出一个拆解计划');
     await userEvent.keyboard('{Enter}');
 
-    expect(await screen.findByText('规划中')).toBeInTheDocument();
+    expect(await screen.findByText('请给出一个拆解计划')).toBeInTheDocument();
+    expect(screen.queryByText('规划中')).not.toBeInTheDocument();
     expect(screen.queryByText('已发送规划请求，等待 claw3 逐节点编辑工作流。')).not.toBeInTheDocument();
 
     await waitFor(() => {
@@ -1669,6 +1670,50 @@ describe('FlowPage', () => {
     await userEvent.click(screen.getByTestId('flow-planner-input'));
     expect(await screen.findByText('这是流程A的消息')).toBeInTheDocument();
     expect(screen.queryByText('这是流程B的消息')).not.toBeInTheDocument();
+  });
+
+  it('does not render planning placeholder text while awaiting planner response', async () => {
+    const flowId = seedDraftFlow('draft-awaiting-message');
+    mockGenerateFlowFromRequirement.mockImplementation(() => new Promise<FlowGenerateResponse>(() => {}));
+
+    renderFlowPage(`/flow/edit/${flowId}`);
+    await waitForFlowCanvasReady();
+
+    const plannerInput = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
+    await userEvent.click(plannerInput);
+    await userEvent.type(plannerInput, '等待规划响应');
+    await userEvent.keyboard('{Enter}');
+
+    expect(await screen.findByText('等待规划响应')).toBeInTheDocument();
+    expect(screen.queryByText('规划中')).not.toBeInTheDocument();
+  });
+
+  it('persists planner messages in drafts and restores them after remount', async () => {
+    const flowId = seedDraftFlow('draft-persisted-messages', {
+      planner_session_key: 'linpo:flow:default:planner:claw3:persisted',
+    });
+
+    const view = renderFlowPage(`/flow/edit/${flowId}`);
+    await waitForFlowCanvasReady();
+
+    const plannerInput = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
+    await userEvent.click(plannerInput);
+    await userEvent.type(plannerInput, '这条消息需要跨刷新恢复');
+    await userEvent.keyboard('{Enter}');
+    expect(await screen.findByText('这条消息需要跨刷新恢复')).toBeInTheDocument();
+
+    await waitFor(() => {
+      const raw = window.localStorage.getItem('linpo_flow_drafts_v1');
+      expect(raw).not.toBeNull();
+      expect(raw).toContain('这条消息需要跨刷新恢复');
+    });
+
+    view.unmount();
+
+    renderFlowPage(`/flow/edit/${flowId}`);
+    await waitForFlowCanvasReady();
+    await userEvent.click(screen.getByTestId('flow-planner-input'));
+    expect(await screen.findByText('这条消息需要跨刷新恢复')).toBeInTheDocument();
   });
 
   it('expands planner message stream on focus and collapses on outside click in mobile', async () => {

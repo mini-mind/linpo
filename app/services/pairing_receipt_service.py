@@ -7,7 +7,7 @@ from secrets import token_urlsafe
 from typing import Iterable
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.db.models import PairingReceipt
@@ -125,6 +125,22 @@ class PairingReceiptService:
         if allowed_actions is not None and receipt.action not in set(allowed_actions):
             raise PairingReceiptNotFoundError
 
+        claim_result = db_session.execute(
+            update(PairingReceipt)
+            .where(
+                PairingReceipt.id == receipt.id,
+                PairingReceipt.consumed_at.is_(None),
+            )
+            .values(consumed_at=now)
+        )
+        if not claim_result.rowcount:
+            db_session.refresh(receipt)
+            if receipt.consumed_at is not None:
+                raise PairingReceiptConsumedError
+            refreshed_expires_at = _coerce_utc_datetime(receipt.expires_at)
+            if refreshed_expires_at <= now:
+                raise PairingReceiptExpiredError
+            raise PairingReceiptNotFoundError
         receipt.consumed_at = now
         db_session.flush()
         return receipt

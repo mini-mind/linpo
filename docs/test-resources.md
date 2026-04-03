@@ -60,11 +60,11 @@
 
 ## OpenClaw 联调实例资源
 
-| 名称 | 端口 | Token |
+| 名称 | 端口 | 令牌 |
 |---|---|---|
-| claw1 | `18789` | `lhdWYU1MGLCWNwbHaQsIjlPkiSt5LKhEh9PjAtElrlE` |
-| claw2 | `28789` | `ZUEg6oLmaH2DEuC3A3mJYe_l-q3yLOqVSLiLsAGfmJQ` |
-| claw3 | `38789` | `OuWJnOh9wo_8wLkIQv262NPc0tgnjo1G4yCMh9v-RAg` |
+| claw1 | `18789` | 通过本地安全配置注入，不在仓库明文记录 |
+| claw2 | `28789` | 通过本地安全配置注入，不在仓库明文记录 |
+| claw3 | `38789` | 通过本地安全配置注入，不在仓库明文记录 |
 
 ## 运行时前置条件（环境变量）
 
@@ -73,6 +73,7 @@
 | `LINPO_DATABASE_URL` | PostgreSQL 连接，用于用户与实例配置持久化 |
 | `LINPO_SECRET_ENCRYPTION_KEY` | Gateway Token 加密存储 |
 | `LINPO_CORS_ALLOW_ORIGINS` | 公网前端联调时的 CORS 白名单 |
+| `LINPO_SESSION_COOKIE_SECURE` | 会话 Cookie `Secure` 开关；不显式配置时，若 `LINPO_CORS_ALLOW_ORIGINS` 含非本地域名则自动启用 |
 | `VITE_API_BASE_URL` | 前端 API 地址（如 `http://175.178.213.10:8000`） |
 | `OPENCLAW_BASE_URL` | OpenClaw 网关地址（v0.7 默认指向 claw1） |
 | `OPENCLAW_GATEWAY_TOKEN` | OpenClaw 网关令牌 |
@@ -81,9 +82,11 @@
 | `FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN` | 流程拆解服务网关令牌 |
 | `FLOW_DECOMPOSITION_OPENCLAW_ORIGIN` | 流程拆解服务 Origin |
 | `FLOW_DECOMPOSITION_AGENT_ID` | 流程拆解服务使用的 agentId（默认 `main`） |
-| `LINPO_TASK_EVENT_CALLBACK_BASE_URL` | 任务事件回调地址基座；留空时按实例 endpoint host 自动推导公网 callback URL |
+| `LINPO_TASK_EVENT_CALLBACK_BASE_URL` | 任务事件回调地址基座；建议显式配置。留空时按实例 endpoint host 自动推导公网 callback URL，若无法推导则任务投放失败 |
 | `LINPO_TASK_EVENT_CALLBACK_PORT` | 自动推导 callback URL 时使用的端口（默认 `8000`） |
 | `LINPO_TASK_RUN_STALE_SECONDS` | `running` 任务无 heartbeat 的超时阈值（秒） |
+
+补充说明：任务事件回调当前采用 `callbackToken` + `occurredAt` 时间窗 + `callbackSignature(HMAC-SHA256)` 三层校验；签名 key 直接使用该次运行下发的 `callbackToken`。
 
 ## OpenClaw 参考
 

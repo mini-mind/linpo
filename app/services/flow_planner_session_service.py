@@ -483,6 +483,7 @@ class FlowPlannerSessionService:
                 session_key=normalized_session_key,
                 for_update=True,
             )
+            _ensure_session_is_mutable(planner_session)
             current_nodes = [_normalize_node_payload(item) for item in planner_session.current_nodes]
             previous_node = next((item for item in current_nodes if item["id"] == normalized_node["id"]), None)
             if previous_node == normalized_node:
@@ -542,6 +543,7 @@ class FlowPlannerSessionService:
             include_messages=False,
             db_session=db_session,
         )
+        _ensure_session_record_is_mutable(record)
         normalized_node = _normalize_node_payload(node)
         self.append_message(
             session_key=record.session_key,
@@ -580,6 +582,7 @@ class FlowPlannerSessionService:
                 session_key=normalized_session_key,
                 for_update=True,
             )
+            _ensure_session_is_mutable(planner_session)
             current_nodes = [_normalize_node_payload(item) for item in planner_session.current_nodes]
             next_nodes: list[PlannerNodePayload] = []
             removed = False
@@ -688,6 +691,7 @@ class FlowPlannerSessionService:
             include_messages=False,
             db_session=db_session,
         )
+        _ensure_session_record_is_mutable(record)
         normalized_node_id = _require_non_empty(node_id, field_name="node_id")
         self.append_message(
             session_key=record.session_key,
@@ -816,6 +820,7 @@ class FlowPlannerSessionService:
             include_messages=False,
             db_session=db_session,
         )
+        _ensure_session_record_is_mutable(record)
         self.append_message(
             session_key=record.session_key,
             role="assistant",
@@ -878,6 +883,7 @@ class FlowPlannerSessionService:
             include_messages=False,
             db_session=db_session,
         )
+        _ensure_session_record_is_mutable(record)
         self.append_message(
             session_key=record.session_key,
             role="assistant",
@@ -932,6 +938,7 @@ class FlowPlannerSessionService:
             include_messages=True,
             db_session=db_session,
         )
+        _ensure_session_record_is_mutable(record)
         stopped = self.stop_session(
             session_key=record.session_key,
             reason="已停止当前规划会话。",
@@ -965,6 +972,7 @@ class FlowPlannerSessionService:
                 session_key=normalized_session_key,
                 for_update=True,
             )
+            _ensure_session_is_mutable(planner_session)
             if normalized_content:
                 planner_message = FlowPlannerMessage(
                     session_key=planner_session.session_key,
@@ -1223,6 +1231,24 @@ def _normalize_session_key(session_key: str | None, *, board_id: str, planner_ag
 def _normalize_planner_token(planner_token: str | None) -> str:
     normalized = planner_token.strip() if isinstance(planner_token, str) else ""
     return normalized or token_urlsafe(24)
+
+
+def _ensure_session_is_mutable(planner_session: FlowPlannerSession) -> None:
+    status_value = str(planner_session.status).strip() or "planning"
+    if status_value != "planning":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"planner session is already {status_value}",
+        )
+
+
+def _ensure_session_record_is_mutable(record: FlowPlannerSessionRecord) -> None:
+    status_value = str(record.status).strip() or "planning"
+    if status_value != "planning":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"planner session is already {status_value}",
+        )
 
 
 def _normalize_flow_name(flow_name: str | None) -> str:

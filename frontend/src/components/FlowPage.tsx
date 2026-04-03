@@ -241,36 +241,13 @@ type FlowRouteState = {
   prefer_submitted_snapshot?: boolean;
 };
 
-const FLOW_PLANNING_PLACEHOLDER_CREATED_AT = "__flow_planning_placeholder__";
-const FLOW_PLANNING_PLACEHOLDER_MESSAGE: FlowChatMessageItem = {
-  role: "assistant",
-  content: "规划中",
-  created_at: FLOW_PLANNING_PLACEHOLDER_CREATED_AT,
-};
-
-function isFlowPlanningPlaceholderMessage(message: FlowChatMessageItem): boolean {
-  return message.created_at === FLOW_PLANNING_PLACEHOLDER_CREATED_AT;
-}
-
 function hasPendingPlannerReply(messages: FlowChatMessageItem[]): boolean {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
-    if (isFlowPlanningPlaceholderMessage(message)) {
-      continue;
-    }
     return message.role === 'user';
   }
   return false;
 }
-
-const flowPlanningPlaceholderTextStyle: React.CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  gap: "0.4rem",
-  fontSize: "0.84rem",
-  color: "#2563eb",
-  fontWeight: 600,
-};
 
 type NodeModalState = {
   open: boolean;
@@ -1194,6 +1171,7 @@ export function FlowPage(): JSX.Element {
       requirement: '',
       nodes: [],
       edges: [],
+      planner_messages: [],
       lanes: fallbackLanes.map((lane) => ({
         id: lane.id,
         name: lane.name,
@@ -1414,6 +1392,7 @@ export function FlowPage(): JSX.Element {
     const normalizedName = draft.name.trim() || '未命名流程';
     const normalizedNodes = normalizeFlowNodes(draft.nodes, draft.edges);
     const derivedEdges = deriveEdgesFromNodes(normalizedNodes);
+    const persistedPlannerMessages = draft.planner_messages ?? [];
     resetPlannerRuntimeState();
     setCurrentFlowId(draft.id);
     setFlowDisplayName(normalizedName);
@@ -1429,14 +1408,17 @@ export function FlowPage(): JSX.Element {
             execution_session_prefix: draft.execution_session_prefix ?? 'linpo:flow:default:exec',
             nodes: normalizedNodes,
             edges: derivedEdges,
-            messages: [],
+            messages: persistedPlannerMessages,
             created_task_ids: [],
           }
         : null;
     setLastResponse(restoredResponse);
     setPlannerSessionKey(restoredResponse?.planner_session_key ?? null);
+    if (restoredResponse?.planner_session_key) {
+      cachePlannerMessages(restoredResponse.planner_session_key, persistedPlannerMessages);
+    }
     const cachedMessages = getCachedPlannerMessages(restoredResponse?.planner_session_key);
-    setPlannerMessages(cachedMessages.length > 0 ? cachedMessages : (restoredResponse?.messages ?? []));
+    setPlannerMessages(cachedMessages.length > 0 ? cachedMessages : persistedPlannerMessages);
     setSelectedExecutorAgentId(draft.executor_agent_id?.trim() || '');
     const normalizedLanes = normalizeDraftLanes(draft.lanes);
     if (normalizedLanes.length > 0) {
@@ -1464,7 +1446,7 @@ export function FlowPage(): JSX.Element {
     setSelectedEdgeId(null);
     setConnectionDrag(null);
     skipNextDraftPersistRef.current = true;
-  }, [getCachedPlannerMessages, resetPlannerRuntimeState, uniqueAgents]);
+  }, [cachePlannerMessages, getCachedPlannerMessages, resetPlannerRuntimeState, uniqueAgents]);
 
   const applySnapshot = useCallback((snapshot: FlowSnapshot) => {
     const normalizedName = snapshot.requirementTitle.trim() || '未命名流程';
@@ -1703,6 +1685,7 @@ export function FlowPage(): JSX.Element {
       requirement: flowRequirement,
       nodes: flowNodes,
       edges: flowEdges,
+      planner_messages: plannerMessages.slice(-PLANNER_MESSAGE_CACHE_MAX_MESSAGES),
       lanes: lanesToPersist,
       node_lane_by_id: nodeLaneByIdToPersist,
       planner_session_key: plannerSessionKey,
@@ -1711,7 +1694,12 @@ export function FlowPage(): JSX.Element {
       created_at: existingDraft?.created_at ?? new Date().toISOString(),
       updated_at: existingDraft?.updated_at ?? new Date().toISOString(),
     };
-    if (existingDraft && areFlowDraftRecordsEquivalent(existingDraft, nextDraftRecord)) {
+    const existingPlannerMessages = existingDraft?.planner_messages ?? [];
+    if (
+      existingDraft
+      && areFlowDraftRecordsEquivalent(existingDraft, nextDraftRecord)
+      && areFlowChatMessagesEqual(existingPlannerMessages, nextDraftRecord.planner_messages ?? [])
+    ) {
       return;
     }
 
@@ -1729,6 +1717,7 @@ export function FlowPage(): JSX.Element {
     lastResponse?.execution_session_prefix,
     nodeLaneById,
     plannerSessionKey,
+    plannerMessages,
     selectedExecutorAgentId,
   ]);
 
@@ -1781,16 +1770,6 @@ export function FlowPage(): JSX.Element {
     || isPlannerAwaitingSession(plannerSessionStatus, isPlannerStopping)
     || isPlannerAwaitingByPendingMessage;
   const isPlannerOverlayDismissible = !isPlannerOverlayCloseBlocked;
-  const plannerMessagesForDisplay = useMemo(() => {
-    if (!isPlannerAwaiting) {
-      return plannerMessages;
-    }
-    const lastMessage = plannerMessages[plannerMessages.length - 1];
-    if (lastMessage && isFlowPlanningPlaceholderMessage(lastMessage)) {
-      return plannerMessages;
-    }
-    return [...plannerMessages, FLOW_PLANNING_PLACEHOLDER_MESSAGE];
-  }, [isPlannerAwaiting, plannerMessages]);
   const canEdit = hasSelectedFlow && !isPlannerAutoMode && !isPlanning && !isFlowActioning && flowRuntimeState !== 'running';
   const canPromptPlanner = hasSelectedFlow && !isFlowActioning && flowRuntimeState !== 'running';
   const canConfirm =
@@ -3068,6 +3047,7 @@ export function FlowPage(): JSX.Element {
             requirement: flowRequirement,
             nodes: flowNodes,
             edges: flowEdges,
+            planner_messages: plannerMessages.slice(-PLANNER_MESSAGE_CACHE_MAX_MESSAGES),
             lanes: normalizedLanes.map((lane) => ({
               id: lane.id,
               name: lane.name,
@@ -3103,6 +3083,7 @@ export function FlowPage(): JSX.Element {
     nodeLaneById,
     normalizedLanes,
     plannerSessionKey,
+    plannerMessages,
     refreshFlowTasks,
     selectedExecutorAgentId,
   ]);
@@ -3523,30 +3504,21 @@ export function FlowPage(): JSX.Element {
               data-testid="flow-planner-messages"
               tabIndex={0}
             >
-              {plannerMessagesForDisplay.length > 0
+              {plannerMessages.length > 0
                 ? (
-                plannerMessagesForDisplay.map((message, index) => (
+                plannerMessages.map((message, index) => (
                   <article
                     key={`${message.created_at}-${message.role}-${index}`}
                     style={message.role === 'user' ? plannerMessageUserCardStyle : plannerMessageAssistantCardStyle}
                   >
                     <span style={plannerMessageRoleStyle}>
-                      {isFlowPlanningPlaceholderMessage(message)
-                        ? '状态'
-                        : message.role === 'user'
-                          ? '用户'
-                          : message.role === 'system'
-                            ? '系统'
-                            : '规划 Agent'}
+                      {message.role === 'user'
+                        ? '用户'
+                        : message.role === 'system'
+                          ? '系统'
+                          : '规划 Agent'}
                     </span>
-                    {isFlowPlanningPlaceholderMessage(message) ? (
-                      <span style={flowPlanningPlaceholderTextStyle}>
-                        <span aria-hidden="true">⏳</span>
-                        规划中
-                      </span>
-                    ) : (
-                      <MarkdownMessage text={message.content} style={plannerMessageTextStyle} />
-                    )}
+                    <MarkdownMessage text={message.content} style={plannerMessageTextStyle} />
                   </article>
                 ))
                 )

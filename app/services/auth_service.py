@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from secrets import token_urlsafe
 from typing import Literal, cast
+from urllib.parse import urlparse
 from uuid import UUID
 
 import bcrypt
@@ -30,7 +31,24 @@ def _utc_now() -> datetime:
 
 
 def _cookie_secure() -> bool:
-    return os.getenv("LINPO_SESSION_COOKIE_SECURE", "false").lower() in {"1", "true", "yes", "on"}
+    configured = os.getenv("LINPO_SESSION_COOKIE_SECURE")
+    if isinstance(configured, str) and configured.strip() != "":
+        return configured.lower() in {"1", "true", "yes", "on"}
+    return _has_non_local_cors_origin()
+
+
+def _has_non_local_cors_origin() -> bool:
+    raw = os.getenv("LINPO_CORS_ALLOW_ORIGINS", "")
+    origins = [item.strip() for item in raw.split(",") if item.strip()]
+    for origin in origins:
+        parsed = urlparse(origin)
+        hostname = (parsed.hostname or "").strip().lower()
+        if hostname == "":
+            continue
+        if hostname in {"localhost", "127.0.0.1", "::1"}:
+            continue
+        return True
+    return False
 
 
 def _cookie_samesite() -> CookieSameSite:
