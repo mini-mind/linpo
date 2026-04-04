@@ -1,5 +1,4 @@
 import json
-import base64
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from http.cookies import SimpleCookie
@@ -72,11 +71,6 @@ def _register_and_login(username: str, password: str = "secret-123") -> str:
     )
     assert login_status == 200
     return _cookie_header_from_set_cookie(login_headers["set-cookie"])
-
-
-def _encode_pair_code(payload: dict[str, object]) -> str:
-    raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    return f"LP1.{base64.urlsafe_b64encode(raw).decode('utf-8').rstrip('=')}"
 
 
 def _extract_receipt_token(confirmation_url: str) -> str:
@@ -714,106 +708,114 @@ def test_validate_instance_accepts_gateway_token_alias_success_path(
     assert payload["message"] == "连接成功"
 
 
-def test_validate_instance_by_pair_code_success(
+def test_pairing_session_create_attach_and_poll_bound(
     isolated_database_url: str,
     auth_cookie: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     del isolated_database_url
-
-    def fake_validate(
-        _self: object,
-        validation_request: InstanceValidationRequest,
-    ) -> InstanceValidationResult:
-        assert validation_request.name == "claw2"
-        assert validation_request.endpoint == "http://127.0.0.1:28789"
-        assert validation_request.gateway_token == "pair-token"
-        return InstanceValidationResult(
-            ok=True,
-            status="ok",
-            message="连接成功",
-            code=None,
-        )
 
     monkeypatch.setattr(
         "app.services.instance_validator.InstanceValidatorService.validate",
-        fake_validate,
-    )
-    pair_code = _encode_pair_code(
-        {
-            "endpoint": "http://127.0.0.1:28789",
-            "gatewayToken": "pair-token",
-        }
-    )
-
-    status_code, _, payload = _request_json(
-        "POST",
-        "/instances/pair-code/validate",
-        {
-            "name": "claw2",
-            "type": "openclaw",
-            "pairCode": pair_code,
-        },
-        auth_cookie,
-    )
-    assert status_code == 200
-    assert payload["ok"] is True
-    assert payload["status"] == "ok"
-
-
-def test_create_instance_by_pair_code_then_list(
-    isolated_database_url: str,
-    auth_cookie: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    del isolated_database_url
-
-    def fake_validate(
-        _self: object,
-        validation_request: InstanceValidationRequest,
-    ) -> InstanceValidationResult:
-        assert validation_request.name == "claw2-by-code"
-        assert validation_request.gateway_token == "pair-token-2"
-        return InstanceValidationResult(
+        lambda self, validation_request: InstanceValidationResult(
             ok=True,
             status="active",
-            message="validated",
-            code=None,
-        )
-
-    monkeypatch.setattr(
-        "app.services.instance_validator.InstanceValidatorService.validate",
-        fake_validate,
-    )
-    pair_code = _encode_pair_code(
-        {
-            "endpoint": "http://127.0.0.1:28789",
-            "gatewayToken": "pair-token-2",
-        }
+            message=f"validated:{validation_request.endpoint}",
+        ),
     )
 
     create_status, _, create_payload = _request_json(
         "POST",
-        "/instances/pair-code",
+        "/instances/pairing-sessions",
         {
-            "name": "claw2-by-code",
-            "type": "openclaw",
-            "pairCode": pair_code,
+            "name": "claw2-via-session",
+            "expSeconds": 600,
         },
         auth_cookie,
     )
     assert create_status == 201
-    assert create_payload["name"] == "claw2-by-code"
+    session_id = cast(str, create_payload["sessionId"])
+    assert session_id != ""
+    assert cast(str, create_payload["shortCode"]) != ""
+    assert cast(str, create_payload["pairingUrl"]).startswith("linpo://pair?code=")
+    assert create_payload["status"] == "pending"
+
+    attach_status, _, attach_payload = _request_json(
+        "POST",
+        f"/instances/pairing-sessions/{session_id}/attach",
+        {
+            "endpoint": "http://127.0.0.1:28789",
+            "gatewayToken": "session-token-1",
+            "name": "claw2-via-session",
+        },
+    )
+    assert attach_status == 200
+    assert attach_payload["status"] == "bound"
+    instance_payload = cast(dict[str, Any], attach_payload["instance"])
+    assert cast(str, instance_payload.get("id", "")) != ""
+
+    poll_status, _, poll_payload = request(
+        "GET",
+        f"/instances/pairing-sessions/{session_id}",
+        headers={"cookie": auth_cookie},
+    )
+    assert poll_status == 200
+    poll_data = cast(dict[str, Any], json.loads(poll_payload.decode("utf-8")))
+    assert poll_data["status"] == "bound"
+    instance = cast(dict[str, Any], poll_data["instance"])
+    assert instance["name"] == "claw2-via-session"
+    assert instance["endpoint"] == "http://127.0.0.1:28789"
 
     list_status, _, list_body = request("GET", "/instances", headers={"cookie": auth_cookie})
     assert list_status == 200
     items = cast(list[dict[str, Any]], json.loads(list_body.decode("utf-8")))
-    created = next(item for item in items if item["id"] == create_payload["id"])
-    assert created["name"] == "claw2-by-code"
-    assert created["status"] == "active"
-    assert "gatewayToken" not in created
-    assert "gateway_token" not in created
+    assert any(item["name"] == "claw2-via-session" for item in items)
 
+
+def test_pairing_session_attach_by_short_code_binds_instance(
+    isolated_database_url: str,
+    auth_cookie: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+
+    monkeypatch.setattr(
+        "app.services.instance_validator.InstanceValidatorService.validate",
+        lambda self, validation_request: InstanceValidationResult(
+            ok=True,
+            status="active",
+            message=f"validated:{validation_request.endpoint}",
+        ),
+    )
+
+    create_status, _, create_payload = _request_json(
+        "POST",
+        "/instances/pairing-sessions",
+        {
+            "name": "claw1-by-short-code",
+            "expSeconds": 600,
+        },
+        auth_cookie,
+    )
+    assert create_status == 201
+    short_code = cast(str, create_payload["shortCode"])
+    assert short_code != ""
+
+    attach_status, _, attach_payload = _request_json(
+        "POST",
+        "/instances/pairing-sessions/attach-by-code",
+        {
+            "shortCode": short_code,
+            "endpoint": "http://127.0.0.1:18789",
+            "gatewayToken": "short-code-token-1",
+            "name": "claw1-by-short-code",
+        },
+    )
+    assert attach_status == 200
+    assert attach_payload["status"] == "bound"
+    instance = cast(dict[str, Any], attach_payload["instance"])
+    assert instance["name"] == "claw1-by-short-code"
+    assert instance["endpoint"] == "http://127.0.0.1:18789"
 
 def test_agent_mount_request_returns_confirmation_url_and_writes_message(
     isolated_database_url: str,

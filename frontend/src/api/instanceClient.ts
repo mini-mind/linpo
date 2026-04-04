@@ -9,7 +9,9 @@ import type {
   InstanceFileItem,
   InstanceFileListResponse,
   InstanceItem,
-  InstancePairCodeRequest,
+  PairingSession,
+  PairingSessionCreateRequest,
+  PairingSessionBoundInstance,
   InstanceWriteRequest,
   InstancePatchRequest,
   InstanceValidationResponse,
@@ -65,6 +67,34 @@ function normalizeInstanceAgentDocItem(payload: unknown): InstanceAgentDocItem {
   };
 }
 
+function normalizePairingSessionBoundInstance(payload: unknown): PairingSessionBoundInstance | null {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+  const record = payload as Record<string, unknown>;
+  return {
+    id: String(record.id ?? ''),
+    name: String(record.name ?? ''),
+    endpoint: String(record.endpoint ?? ''),
+    status: String(record.status ?? ''),
+  };
+}
+
+function normalizePairingSession(payload: unknown): PairingSession {
+  const record = (payload && typeof payload === 'object') ? (payload as Record<string, unknown>) : {};
+  const instance = normalizePairingSessionBoundInstance(record.instance);
+  return {
+    sessionId: String(record.sessionId ?? record.session_id ?? ''),
+    name: String(record.name ?? ''),
+    shortCode: String(record.shortCode ?? record.short_code ?? ''),
+    pairingUrl: String(record.pairingUrl ?? record.pairing_url ?? ''),
+    status: String(record.status ?? ''),
+    expiresAt: (record.expiresAt as string | null | undefined) ?? (record.expires_at as string | null | undefined) ?? null,
+    instanceId: (record.instanceId as string | null | undefined) ?? (record.instance_id as string | null | undefined) ?? null,
+    instance,
+  };
+}
+
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
@@ -96,27 +126,23 @@ export async function createInstance(payload: InstanceWriteRequest): Promise<Ins
   return normalizeInstanceItem(created);
 }
 
-export async function createInstanceByPairCode(payload: InstancePairCodeRequest): Promise<InstanceItem> {
-  const created = await fetchApi<unknown>('/api/v1/instances/pair-code', {
+export async function createPairingSession(payload: PairingSessionCreateRequest): Promise<PairingSession> {
+  const created = await fetchApi<unknown>('/api/v1/instances/pairing-sessions', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
-  return normalizeInstanceItem(created);
+  return normalizePairingSession(created);
+}
+
+export async function getPairingSession(sessionId: string): Promise<PairingSession> {
+  const detail = await fetchApi<unknown>(`/api/v1/instances/pairing-sessions/${encodeURIComponent(sessionId)}`);
+  return normalizePairingSession(detail);
 }
 
 export async function validateInstance(
   payload: InstanceWriteRequest
 ): Promise<InstanceValidationResponse> {
   return fetchApi<InstanceValidationResponse>('/api/v1/instances/validate', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-}
-
-export async function validateInstanceByPairCode(
-  payload: InstancePairCodeRequest
-): Promise<InstanceValidationResponse> {
-  return fetchApi<InstanceValidationResponse>('/api/v1/instances/pair-code/validate', {
     method: 'POST',
     body: JSON.stringify(payload),
   });

@@ -18,9 +18,6 @@ const LandingPage = lazy(() =>
 const LoginPage = lazy(() =>
   import('./components/LoginPage').then((module) => ({ default: module.LoginPage }))
 );
-const PairingTutorialPage = lazy(() =>
-  import('./components/PairingTutorialPage').then((module) => ({ default: module.PairingTutorialPage }))
-);
 const PairingReceiptConfirmPage = lazy(() =>
   import('./components/PairingReceiptConfirmPage').then((module) => ({
     default: module.PairingReceiptConfirmPage,
@@ -46,7 +43,6 @@ function App(): JSX.Element {
           <Suspense fallback={<RouteFallback />}>
             <Routes>
               <Route path="/landing" element={<LandingPage />} />
-              <Route path="/pairing/tutorial" element={<PairingTutorialPage />} />
               <Route element={<PublicRoute />}>
                 <Route path="/login" element={<LoginPage />} />
               </Route>

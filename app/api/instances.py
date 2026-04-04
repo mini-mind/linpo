@@ -30,11 +30,15 @@ from app.api.schemas import (
     InstanceFileItem,
     InstanceFileListResponse,
     InstanceItem,
-    InstancePairCodeRequest,
     InstancePatchRequest,
     InstanceValidationErrorResponse,
     InstanceValidationResponse,
     InstanceWriteRequest,
+    PairingSessionAttachRequest,
+    PairingSessionAttachByCodeRequest,
+    PairingSessionCreateRequest,
+    PairingSessionInstanceItem,
+    PairingSessionResponse,
     TaskOutputPreviewResponse,
     TaskStatus,
     UserMessageItem,
@@ -69,9 +73,11 @@ from app.services.pairing_receipt_service import (
     PairingReceiptNotFoundError,
 )
 from app.services.instance_validator import InstanceValidationErrorCode
-from app.services.instance_pairing_code import (
-    InstancePairingCodeError,
-    decode_instance_pairing_code,
+from app.services.pairing_session_service import (
+    PairingSessionExpiredError,
+    PairingSessionNotFoundError,
+    PairingSessionService,
+    PairingSessionSnapshot,
 )
 
 router = APIRouter(prefix="/instances", tags=["instances"])
@@ -95,6 +101,10 @@ def get_message_center_service() -> MessageCenterService:
 
 def get_task_service() -> TaskService:
     return TaskService()
+
+
+def get_pairing_session_service() -> PairingSessionService:
+    return PairingSessionService()
 
 
 def get_provider_application_service(request: Request) -> ProviderApplicationService:
@@ -165,13 +175,24 @@ def _message_to_item(message: UserMessage) -> UserMessageItem:
     )
 
 
-def _pair_code_to_create_input(payload: InstancePairCodeRequest) -> InstanceCreateInput:
-    credentials = decode_instance_pairing_code(payload.pair_code)
-    return InstanceCreateInput(
-        name=payload.name,
-        type=payload.type,
-        endpoint=credentials.endpoint,
-        gateway_token=credentials.gateway_token,
+def _pairing_session_to_response(snapshot: PairingSessionSnapshot) -> PairingSessionResponse:
+    instance = None
+    if snapshot.instance is not None:
+        instance = PairingSessionInstanceItem(
+            id=str(snapshot.instance.id),
+            name=snapshot.instance.name,
+            endpoint=snapshot.instance.endpoint,
+            status=snapshot.instance.status,
+        )
+    return PairingSessionResponse(
+        session_id=str(snapshot.session_id),
+        short_code=snapshot.short_code,
+        pairing_url=snapshot.pairing_url,
+        status=snapshot.status,
+        name=snapshot.name,
+        expires_at=snapshot.expires_at.isoformat(),
+        last_error=snapshot.last_error,
+        instance=instance,
     )
 
 
@@ -814,74 +835,69 @@ def validate_instance(
 
 
 @router.post(
-    "/pair-code/validate",
-    response_model=InstanceValidationResponse,
-    responses={400: {"model": InstanceValidationErrorResponse}},
+    "/pairing-sessions",
+    response_model=PairingSessionResponse,
+    status_code=status.HTTP_201_CREATED,
 )
-def validate_instance_by_pair_code(
-    payload: InstancePairCodeRequest,
+def create_pairing_session(
+    payload: PairingSessionCreateRequest,
     current_user: User = Depends(get_current_user),
     db_session: Session = Depends(get_session),
-    instance_service: InstanceService = Depends(get_instance_service),
-) -> InstanceValidationResponse | JSONResponse:
-    try:
-        create_input = _pair_code_to_create_input(payload)
-    except InstancePairingCodeError as exc:
-        return _validation_error_response(
-            ok=False,
-            status_text="failed",
-            message=str(exc),
-            code=InstanceValidationErrorCode.PROTOCOL_FAILED.value,
-        )
-
-    result = instance_service.validate_instance(
+    pairing_session_service: PairingSessionService = Depends(get_pairing_session_service),
+) -> PairingSessionResponse:
+    created = pairing_session_service.create(
         db_session,
         user_id=current_user.id,
-        payload=create_input,
+        name=payload.name,
+        exp_seconds=payload.exp_seconds,
     )
-    if not result.ok:
-        return _validation_error_response(
-            ok=result.ok,
-            status_text=result.status,
-            message=result.message,
-            code=None if result.code is None else result.code.value,
+    return _pairing_session_to_response(created)
+
+
+@router.get(
+    "/pairing-sessions/{session_id}",
+    response_model=PairingSessionResponse,
+)
+def get_pairing_session(
+    session_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db_session: Session = Depends(get_session),
+    pairing_session_service: PairingSessionService = Depends(get_pairing_session_service),
+) -> PairingSessionResponse:
+    try:
+        pairing_session = pairing_session_service.get_for_user(
+            db_session,
+            user_id=current_user.id,
+            session_id=session_id,
         )
-    return InstanceValidationResponse(
-        ok=result.ok,
-        status=result.status,
-        message=result.message,
-        code=None if result.code is None else result.code.value,
-    )
+    except PairingSessionNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="pairing session not found") from exc
+    return _pairing_session_to_response(pairing_session)
 
 
 @router.post(
-    "/pair-code",
-    response_model=InstanceItem,
-    status_code=status.HTTP_201_CREATED,
+    "/pairing-sessions/{session_id}/attach",
+    response_model=PairingSessionResponse,
     responses={400: {"model": InstanceValidationErrorResponse}},
 )
-def create_instance_by_pair_code(
-    payload: InstancePairCodeRequest,
-    current_user: User = Depends(get_current_user),
+def attach_pairing_session(
+    session_id: UUID,
+    payload: PairingSessionAttachRequest,
     db_session: Session = Depends(get_session),
-    instance_service: InstanceService = Depends(get_instance_service),
-) -> InstanceItem | JSONResponse:
+    pairing_session_service: PairingSessionService = Depends(get_pairing_session_service),
+) -> PairingSessionResponse | JSONResponse:
     try:
-        create_input = _pair_code_to_create_input(payload)
-    except InstancePairingCodeError as exc:
-        return _validation_error_response(
-            ok=False,
-            status_text="failed",
-            message=str(exc),
-            code=InstanceValidationErrorCode.PROTOCOL_FAILED.value,
-        )
-
-    try:
-        instance = instance_service.create_instance(
+        paired = pairing_session_service.attach(
             db_session,
-            user_id=current_user.id,
-            payload=create_input,
+            session_id=session_id,
+            endpoint=payload.endpoint,
+            gateway_token=payload.gateway_token,
+            name=payload.name,
         )
+    except PairingSessionNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="pairing session not found") from exc
+    except PairingSessionExpiredError as exc:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="pairing session expired") from exc
     except InstanceValidationFailedError as exc:
         return _validation_error_response(
             ok=exc.result.ok,
@@ -889,7 +905,40 @@ def create_instance_by_pair_code(
             message=exc.result.message,
             code=None if exc.result.code is None else exc.result.code.value,
         )
-    return _instance_to_item(instance)
+
+    return _pairing_session_to_response(paired)
+
+
+@router.post(
+    "/pairing-sessions/attach-by-code",
+    response_model=PairingSessionResponse,
+    responses={400: {"model": InstanceValidationErrorResponse}},
+)
+def attach_pairing_session_by_code(
+    payload: PairingSessionAttachByCodeRequest,
+    db_session: Session = Depends(get_session),
+    pairing_session_service: PairingSessionService = Depends(get_pairing_session_service),
+) -> PairingSessionResponse | JSONResponse:
+    try:
+        paired = pairing_session_service.attach_by_short_code(
+            db_session,
+            short_code=payload.short_code,
+            endpoint=payload.endpoint,
+            gateway_token=payload.gateway_token,
+            name=payload.name,
+        )
+    except PairingSessionNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="pairing session not found") from exc
+    except PairingSessionExpiredError as exc:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="pairing session expired") from exc
+    except InstanceValidationFailedError as exc:
+        return _validation_error_response(
+            ok=exc.result.ok,
+            status_text=exc.result.status,
+            message=exc.result.message,
+            code=None if exc.result.code is None else exc.result.code.value,
+        )
+    return _pairing_session_to_response(paired)
 
 
 @router.patch(

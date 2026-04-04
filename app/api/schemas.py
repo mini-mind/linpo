@@ -164,10 +164,40 @@ class InstanceWriteRequest(_CommonCamelRequestModel):
     gateway_token: str
 
 
-class InstancePairCodeRequest(_CommonCamelRequestModel):
+class PairingSessionCreateRequest(_CommonCamelRequestModel):
+    name: str = "claw2"
+    exp_seconds: int | None = Field(default=600, ge=60, le=3600)
+
+
+class PairingSessionAttachRequest(_CommonCamelRequestModel):
+    endpoint: str
+    gateway_token: str
+    name: str | None = None
+
+
+class PairingSessionAttachByCodeRequest(_CommonCamelRequestModel):
+    short_code: str
+    endpoint: str
+    gateway_token: str
+    name: str | None = None
+
+
+class PairingSessionInstanceItem(_CommonCamelResponseModel):
+    id: str
     name: str
-    type: str
-    pair_code: str
+    endpoint: str
+    status: str
+
+
+class PairingSessionResponse(_CommonCamelResponseModel):
+    session_id: str
+    short_code: str
+    pairing_url: str
+    status: str
+    name: str
+    expires_at: str
+    last_error: str | None = None
+    instance: PairingSessionInstanceItem | None = None
 
 
 class InstancePatchRequest(_CommonCamelRequestModel):

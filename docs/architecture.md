@@ -69,13 +69,8 @@
 - `AccountMenu`：下拉菜单提供 `账户/实例/消息/退出` 菜单动作；`账户`打开 `UserProfileModal`（左侧 `基本信息/修改密码/会员` 侧边栏 + 右侧展示区）。
 - `UserProfileModal`：`基本信息`页提供“头像更换按钮 + 用户名编辑按钮”；`修改密码`页提供密码更新表单；`会员`页展示充值渠道占位。
 - `InstanceListModal`：由账户下拉菜单“实例”触发，展示已配对实例列表、实例信息与拓扑（`实例 -> Agent -> Session`）；当用户进入`/kanban`且无实例时自动弹出。
-- `InstanceListModal`：添加实例页支持`配对码`、`Token`、`教程链接配对`三种方式；默认打开`配对码`标签页，`Token`作为第二标签页，`教程链接配对`作为第三标签页。
-- `PairingTutorialPage`：配对教程页，承接“仅通过 OpenClaw 对话拿到 endpoint/token”的接入步骤说明与跳转入口。
-- `PairingTutorialPage`：公开路由（匿名可访问），用于“未登录/未配对阶段”的最短接入说明，避免教程访问死锁。
-- `PairingTutorialPage`：提供可复制的纯文本模板（`mount/unmount`），模板内嵌 API 路径与 JSON 参数规范，供用户直接转发给 OpenClaw 执行。
-- `PairingTutorialPage`：页面内容来自仓库内 Markdown 静态文件，不再维护独立的样式化说明卡片。
-- OpenClaw 读取入口使用静态文件路径 `/pairing/tutorial.md`，返回纯 Markdown 文本；`/pairing/tutorial` 仅作为人类用户导航提示页。
-- 兼容路径：`/pairing/tutorial` 进入后立即执行前端重定向到 `/pairing/tutorial.md`，避免路由漏写后缀导致读取错误格式。
+- `InstanceListModal`：添加实例页支持`配对会话`、`Token`两种方式；默认打开`配对会话`标签页，`Token`作为第二标签页。
+- `InstanceListModal`：配对会话页由 Linpo 创建短时会话，展示 `short_code + pairing_url` 并轮询状态；OpenClaw 侧 attach 成功后自动落库实例并切换到实例详情。
 - 两个主工作页（`KanbanShell/FlowEditorPanel`）曾共用贴顶扁平工具栏样式 token；当前仅 `KanbanShell` 继续保留顶栏，`FlowEditorPanel` 改为画布内悬浮动作。
 - `SummaryPage` 维持受限宽页面壳：`page gutter + content max-width` 共用一组 token，避免统计页在超宽屏过度拉伸。
 - `InstanceFilesPage` 不再复用 `SummaryPage` 的桌面壳宽约束；桌面端以贴边侧栏 + 自适应主内容区为主，移动端再退化为单列。
@@ -212,7 +207,11 @@
 - `GET /api/v1/instances/{instance_id}/agent-docs/download`：下载指定 Agent 文档内容。
 - `GET /api/v1/summary/topology`：实例列表详情态用于构建关系树（实例节点、Agent 节点、Session 节点），前端按选中实例筛选并渲染。
 - `GET /api/v1/summary/overview`：摘要页与看板页的聚合入口，返回实例诊断、事件流、总 token 与按实例分组的 token 曲线样本。
-- `POST /api/v1/instances/pair-code/validate`、`POST /api/v1/instances/pair-code`：配对码校验与配对创建契约，后端负责将配对码解析为 `endpoint/gateway_token` 再复用实例校验与落库流程。
+- `POST /api/v1/instances/pairing-sessions`：登录用户创建配对会话，返回 `session_id + short_code + pairing_url + expires_at`。
+- `pairing_url` 统一返回协议短链 `linpo://pair?code=...`，用于复制转发给 OpenClaw；前端不再提供扫码页面入口。
+- `GET /api/v1/instances/pairing-sessions/{session_id}`：登录用户查询配对会话状态（`pending/attached/bound/expired/failed`）与已绑定实例摘要。
+- `POST /api/v1/instances/pairing-sessions/{session_id}/attach`：免登录 attach 入口，OpenClaw 侧提交 `endpoint + gatewayToken (+instanceName)` 绑定到会话；后端完成校验并落库实例，状态推进为 `bound`。
+- `POST /api/v1/instances/pairing-sessions/attach-by-code`：免登录短码 attach 入口，OpenClaw 侧仅持有 `short_code` 时也可提交 `endpoint + gatewayToken (+instanceName)` 完成绑定，避免用户暴露 `session_id`。
 - `POST /api/v1/auth/register`：注册请求需包含 `username + email + password`，邮箱全局唯一。
 - `POST /api/v1/auth/login`：登录请求支持 `identifier(用户名或邮箱) + password`。
 - `PATCH /api/v1/auth/profile`：登录态下更新用户头像（`avatar_url`，`data:image/*;base64`）。

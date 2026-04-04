@@ -1,22 +1,21 @@
 import '@testing-library/jest-dom';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { Buffer } from 'node:buffer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockListInstances = vi.fn();
 const mockCreateInstance = vi.fn();
-const mockCreateInstanceByPairCode = vi.fn();
+const mockCreatePairingSession = vi.fn();
+const mockGetPairingSession = vi.fn();
 const mockValidateInstance = vi.fn();
-const mockValidateInstanceByPairCode = vi.fn();
 const mockGetAggregateTopology = vi.fn();
 const mockAddToast = vi.fn();
 
 vi.mock('../api/instanceClient', () => ({
   listInstances: (...args: unknown[]) => mockListInstances(...args),
   createInstance: (...args: unknown[]) => mockCreateInstance(...args),
-  createInstanceByPairCode: (...args: unknown[]) => mockCreateInstanceByPairCode(...args),
+  createPairingSession: (...args: unknown[]) => mockCreatePairingSession(...args),
+  getPairingSession: (...args: unknown[]) => mockGetPairingSession(...args),
   validateInstance: (...args: unknown[]) => mockValidateInstance(...args),
-  validateInstanceByPairCode: (...args: unknown[]) => mockValidateInstanceByPairCode(...args),
 }));
 
 vi.mock('../api/client', () => ({
@@ -34,11 +33,6 @@ vi.mock('../hooks/useToast', () => ({
 }));
 
 import { InstanceListModal } from './InstanceListModal';
-
-function encodePairCode(payload: Record<string, string>): string {
-  const raw = JSON.stringify(payload);
-  return `LP1.${Buffer.from(raw, 'utf-8').toString('base64url')}`;
-}
 
 describe('InstanceListModal', () => {
   beforeEach(() => {
@@ -89,43 +83,108 @@ describe('InstanceListModal', () => {
       last_check_at: null,
       created_at: '2026-04-03T00:00:00Z',
     });
-    mockCreateInstanceByPairCode.mockResolvedValue({
-      id: 'inst-pair-1',
-      name: 'claw1',
-      type: 'openclaw',
-      endpoint: 'http://127.0.0.1:18789',
-      status: 'ok',
-      last_check_at: null,
-      created_at: '2026-04-03T00:00:00Z',
-    });
     mockValidateInstance.mockResolvedValue({ ok: true, status: 'ok', message: '连接成功' });
-    mockValidateInstanceByPairCode.mockResolvedValue({ ok: true, status: 'ok', message: '配对码可用' });
+    mockCreatePairingSession.mockResolvedValue({
+      sessionId: 'session-1',
+      name: 'claw2',
+      shortCode: 'ABCD-1234',
+      pairingUrl: 'linpo://pair?code=ABCD-1234',
+      status: 'pending',
+      expiresAt: '2026-04-04T02:00:00Z',
+      instanceId: null,
+      instance: null,
+    });
+    mockGetPairingSession
+      .mockResolvedValueOnce({
+        sessionId: 'session-1',
+        name: 'claw2',
+        shortCode: 'ABCD-1234',
+        pairingUrl: 'linpo://pair?code=ABCD-1234',
+        status: 'pending',
+        expiresAt: '2026-04-04T02:00:00Z',
+        instanceId: null,
+        instance: null,
+      })
+      .mockResolvedValueOnce({
+        sessionId: 'session-1',
+        name: 'claw2',
+        shortCode: 'ABCD-1234',
+        pairingUrl: 'linpo://pair?code=ABCD-1234',
+        status: 'bound',
+        expiresAt: '2026-04-04T02:00:00Z',
+        instanceId: 'inst-2',
+        instance: {
+          id: 'inst-2',
+          name: 'claw2',
+          type: 'openclaw',
+          endpoint: 'http://127.0.0.1:28789',
+          status: 'ok',
+          last_check_at: null,
+          created_at: '2026-04-03T00:00:00Z',
+        },
+      })
+      .mockResolvedValue({
+        sessionId: 'session-1',
+        name: 'claw2',
+        shortCode: 'ABCD-1234',
+        pairingUrl: 'linpo://pair?code=ABCD-1234',
+        status: 'bound',
+        expiresAt: '2026-04-04T02:00:00Z',
+        instanceId: 'inst-2',
+        instance: {
+          id: 'inst-2',
+          name: 'claw2',
+          type: 'openclaw',
+          endpoint: 'http://127.0.0.1:28789',
+          status: 'ok',
+          last_check_at: null,
+          created_at: '2026-04-03T00:00:00Z',
+        },
+      });
   });
 
-  it('creates claw1 instance from pair-code tab by default', async () => {
+  it('creates pairing session by default and switches to bound instance automatically', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
     render(<InstanceListModal open onClose={() => undefined} />);
 
     await screen.findByRole('dialog', { name: '实例列表' });
     fireEvent.click(screen.getByRole('button', { name: '添加实例' }));
 
-    expect(screen.getByRole('tab', { name: '配对码' })).toHaveAttribute('aria-selected', 'true');
-    const pairCode = encodePairCode({
-      endpoint: 'http://127.0.0.1:18789',
-      gatewayToken: 'token-claw1',
-    });
-    fireEvent.change(screen.getByLabelText('实例名称'), { target: { value: 'claw1' } });
-    fireEvent.change(screen.getByLabelText('配对码'), { target: { value: pairCode } });
-    fireEvent.click(screen.getByRole('button', { name: '创建实例' }));
+    expect(screen.getByRole('tab', { name: '配对会话' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByLabelText('OpenClaw Endpoint')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Gateway Token')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('实例名称'), { target: { value: 'claw2' } });
+    fireEvent.click(screen.getByRole('button', { name: '创建配对会话' }));
 
     await waitFor(() => {
-      expect(mockCreateInstanceByPairCode).toHaveBeenCalledWith({
-        name: 'claw1',
-        type: 'openclaw',
-        pairCode,
+      expect(mockCreatePairingSession).toHaveBeenCalledWith({
+        name: 'claw2',
+        expSeconds: 600,
       });
     });
     await waitFor(() => {
-      expect(mockAddToast).toHaveBeenCalledWith('创建成功：claw1', 'success');
+      expect(screen.getByLabelText('给 OpenClaw 的一键指令')).toBeInTheDocument();
+    });
+    expect((screen.getByLabelText('给 OpenClaw 的一键指令') as HTMLTextAreaElement).value).toContain(
+      '/api/v1/instances/pairing-sessions/attach-by-code'
+    );
+    expect((screen.getByLabelText('给 OpenClaw 的一键指令') as HTMLTextAreaElement).value).toContain(
+      '"shortCode": "ABCD-1234"'
+    );
+    fireEvent.click(screen.getByRole('button', { name: '复制一键指令' }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith(expect.stringContaining('"shortCode": "ABCD-1234"'));
+    });
+    await waitFor(() => {
+      expect(mockGetPairingSession).toHaveBeenCalledWith('session-1');
+    });
+    await waitFor(() => {
+      expect(screen.getAllByText('claw2').length).toBeGreaterThan(0);
+      expect(mockAddToast).toHaveBeenCalledWith('配对成功，已切换到新实例', 'success');
     });
   });
 
@@ -154,24 +213,4 @@ describe('InstanceListModal', () => {
     });
   });
 
-  it('shows tutorial-link tab and supports copying tutorial url', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, 'clipboard', {
-      value: { writeText },
-      configurable: true,
-    });
-
-    render(<InstanceListModal open onClose={() => undefined} />);
-
-    await screen.findByRole('dialog', { name: '实例列表' });
-    fireEvent.click(screen.getByRole('button', { name: '添加实例' }));
-    fireEvent.click(screen.getByRole('tab', { name: '教程链接配对' }));
-
-    expect(screen.getByLabelText('教程链接')).toHaveValue('http://localhost:3000/pairing/tutorial.md');
-    fireEvent.click(screen.getByRole('button', { name: '复制链接' }));
-
-    await waitFor(() => {
-      expect(writeText).toHaveBeenCalledWith('http://localhost:3000/pairing/tutorial.md');
-    });
-  });
 });

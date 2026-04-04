@@ -3,13 +3,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { getAggregateTopology } from '../api/client';
 import {
+  createPairingSession,
   createInstance,
-  createInstanceByPairCode,
+  getPairingSession,
   listInstances,
   validateInstance,
-  validateInstanceByPairCode,
 } from '../api/instanceClient';
-import type { AggregateTopologyResponse, InstanceItem } from '../api/types';
+import type { AggregateTopologyResponse, InstanceItem, PairingSession } from '../api/types';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
 
@@ -34,7 +34,27 @@ type InstanceModalTab =
   | { kind: 'create' }
   | { kind: 'instance'; instanceId: string };
 
-type CreateMode = 'pair_code' | 'token' | 'tutorial_link';
+type CreateMode = 'pairing_session' | 'token';
+
+function formatBeijingTime(isoText: string | null | undefined): string {
+  if (!isoText) {
+    return '';
+  }
+  const value = new Date(isoText);
+  if (Number.isNaN(value.getTime())) {
+    return isoText;
+  }
+  return `${new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(value)}（北京时间 UTC+8）`;
+}
 
 export function InstanceListModal({ open, onClose }: InstanceListModalProps): JSX.Element | null {
   const isMobile = useIsMobile(960);
@@ -46,30 +66,65 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
   const [topology, setTopology] = useState<AggregateTopologyResponse | null>(null);
   const [selectedTab, setSelectedTab] = useState<InstanceModalTab>({ kind: 'create' });
   const [errorText, setErrorText] = useState<string | null>(null);
-  const [createMode, setCreateMode] = useState<CreateMode>('pair_code');
+  const [createMode, setCreateMode] = useState<CreateMode>('pairing_session');
   const [createName, setCreateName] = useState('claw2');
   const [createEndpoint, setCreateEndpoint] = useState('');
   const [createToken, setCreateToken] = useState('');
-  const [pairCode, setPairCode] = useState('');
   const [createHintText, setCreateHintText] = useState('');
   const [tokenValidationText, setTokenValidationText] = useState('');
-  const [pairCodeValidationText, setPairCodeValidationText] = useState('');
-  const tutorialLink = useMemo(() => `${window.location.origin}/pairing/tutorial.md`, []);
-
-  const handleCopyTutorialLink = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(tutorialLink);
-      addToast('教程链接已复制', 'success');
-    } catch {
-      addToast('复制失败，请手动复制链接', 'error');
+  const [pairingSession, setPairingSession] = useState<PairingSession | null>(null);
+  const openClawAttachInstruction = useMemo(() => {
+    if (!pairingSession?.shortCode) {
+      return '';
     }
-  }, [addToast, tutorialLink]);
+    return [
+      '请调用以下 Linpo API 完成一键绑定：',
+      `POST ${window.location.origin}/api/v1/instances/pairing-sessions/attach-by-code`,
+      'Content-Type: application/json',
+      '',
+      JSON.stringify(
+        {
+          shortCode: pairingSession.shortCode,
+          name: createName.trim() || 'claw2',
+          endpoint: '<OpenClaw endpoint>',
+          gatewayToken: '<OpenClaw gateway token>',
+        },
+        null,
+        2
+      ),
+    ].join('\n');
+  }, [createName, pairingSession?.shortCode]);
 
   const clearCreateState = useCallback(() => {
     setCreateHintText('');
     setTokenValidationText('');
-    setPairCodeValidationText('');
+    setPairingSession(null);
   }, []);
+
+  const handleCreatePairingSession = useCallback(async () => {
+    if (!createName.trim()) {
+      setCreateHintText('请填写实例名');
+      addToast('请填写实例名', 'warning');
+      return;
+    }
+    setIsCreating(true);
+    clearCreateState();
+    try {
+      const created = await createPairingSession({
+        name: createName.trim(),
+        expSeconds: 600,
+      });
+      setPairingSession(created);
+      setCreateHintText('配对会话已创建，请在 OpenClaw 侧完成 attach');
+      addToast('配对会话已创建', 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '创建配对会话失败';
+      setCreateHintText(message);
+      addToast(message, 'error');
+    } finally {
+      setIsCreating(false);
+    }
+  }, [addToast, clearCreateState, createName]);
 
   const selectedInstance = useMemo(
     () => (selectedTab.kind === 'instance' ? instances.find((item) => item.id === selectedTab.instanceId) ?? null : null),
@@ -107,7 +162,7 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
       .sort((a, b) => a.agentName.localeCompare(b.agentName));
   }, [selectedInstance, topology]);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (): Promise<InstanceItem[]> => {
     setIsLoading(true);
     setErrorText(null);
     try {
@@ -123,8 +178,10 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
         }
         return instanceList[0] ? { kind: 'instance', instanceId: instanceList[0].id } : { kind: 'create' };
       });
+      return instanceList;
     } catch (error) {
       setErrorText(error instanceof Error ? error.message : '读取实例数据失败');
+      return [];
     } finally {
       setIsLoading(false);
     }
@@ -159,34 +216,6 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
     }
   }, [addToast, clearCreateState, createEndpoint, createName, createToken, loadData]);
 
-  const handleCreateByPairCode = useCallback(async () => {
-    if (!createName.trim() || !pairCode.trim()) {
-      setCreateHintText('请填写实例名和配对码');
-      addToast('请填写实例名和配对码', 'warning');
-      return;
-    }
-    setIsCreating(true);
-    clearCreateState();
-    try {
-      const created = await createInstanceByPairCode({
-        name: createName.trim(),
-        type: 'openclaw',
-        pairCode: pairCode.trim(),
-      });
-      setPairCode('');
-      setCreateHintText(`创建成功：${created.name}`);
-      addToast(`创建成功：${created.name}`, 'success');
-      await loadData();
-      setSelectedTab({ kind: 'instance', instanceId: created.id });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '配对码创建失败';
-      setCreateHintText(message);
-      addToast(message, 'error');
-    } finally {
-      setIsCreating(false);
-    }
-  }, [addToast, clearCreateState, createName, loadData, pairCode]);
-
   const handleValidateByToken = useCallback(async () => {
     if (!createName.trim() || !createEndpoint.trim() || !createToken.trim()) {
       setTokenValidationText('请填写实例名、endpoint 和 token');
@@ -214,38 +243,60 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
     }
   }, [addToast, createEndpoint, createName, createToken]);
 
-  const handleValidateByPairCode = useCallback(async () => {
-    if (!createName.trim() || !pairCode.trim()) {
-      setPairCodeValidationText('请填写实例名和配对码');
-      addToast('请填写实例名和配对码', 'warning');
-      return;
-    }
-    setIsValidating(true);
-    setPairCodeValidationText('');
-    try {
-      const result = await validateInstanceByPairCode({
-        name: createName.trim(),
-        type: 'openclaw',
-        pairCode: pairCode.trim(),
-      });
-      const message = result.message || '配对码校验通过';
-      setPairCodeValidationText(message);
-      addToast(message, 'success');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '配对码校验失败';
-      setPairCodeValidationText(message);
-      addToast(message, 'error');
-    } finally {
-      setIsValidating(false);
-    }
-  }, [addToast, createName, pairCode]);
-
   useEffect(() => {
     if (!open) {
       return;
     }
     void loadData();
   }, [loadData, open]);
+
+  useEffect(() => {
+    if (!open || createMode !== 'pairing_session' || !pairingSession?.sessionId) {
+      return;
+    }
+    if (!['pending', 'attached'].includes(pairingSession.status)) {
+      return;
+    }
+
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const latest = await getPairingSession(pairingSession.sessionId);
+        if (cancelled) {
+          return;
+        }
+        setPairingSession(latest);
+        if (latest.status === 'bound') {
+          const refreshed = await loadData();
+          if (cancelled) {
+            return;
+          }
+          const targetInstanceId = latest.instanceId ?? latest.instance?.id ?? null;
+          if (targetInstanceId && refreshed.some((item) => item.id === targetInstanceId)) {
+            setSelectedTab({ kind: 'instance', instanceId: targetInstanceId });
+          }
+          setCreateHintText('配对成功，实例已自动绑定');
+          addToast('配对成功，已切换到新实例', 'success');
+        } else if (latest.status === 'expired' || latest.status === 'failed') {
+          setCreateHintText(`配对会话已${latest.status === 'expired' ? '过期' : '失败'}，请重新创建`);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setCreateHintText(error instanceof Error ? error.message : '轮询配对会话失败');
+        }
+      }
+    };
+
+    void poll();
+    const timer = window.setInterval(() => {
+      void poll();
+    }, 2000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [addToast, createMode, loadData, open, pairingSession]);
 
   useEffect(() => {
     if (!open) {
@@ -326,15 +377,15 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
                   <div style={createTabRowStyle} role="tablist" aria-label="添加方式">
                     <button
                       type="button"
-                      style={getCreateTabButtonStyle(createMode === 'pair_code')}
+                      style={getCreateTabButtonStyle(createMode === 'pairing_session')}
                       role="tab"
-                      aria-selected={createMode === 'pair_code'}
+                      aria-selected={createMode === 'pairing_session'}
                       onClick={() => {
-                        setCreateMode('pair_code');
+                        setCreateMode('pairing_session');
                         clearCreateState();
                       }}
                     >
-                      配对码
+                      配对会话
                     </button>
                     <button
                       type="button"
@@ -348,18 +399,6 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
                     >
                       Token
                     </button>
-                    <button
-                      type="button"
-                      style={getCreateTabButtonStyle(createMode === 'tutorial_link')}
-                      role="tab"
-                      aria-selected={createMode === 'tutorial_link'}
-                      onClick={() => {
-                        setCreateMode('tutorial_link');
-                        clearCreateState();
-                      }}
-                    >
-                      教程链接配对
-                    </button>
                   </div>
                   <label style={fieldLabelStyle}>
                     实例名称
@@ -368,42 +407,60 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
                       onChange={(event) => setCreateName(event.target.value)}
                       placeholder="例如 claw2"
                       style={inputStyle}
-                      disabled={isCreating || isValidating || createMode === 'tutorial_link'}
+                      disabled={isCreating || isValidating}
                     />
                   </label>
-                  {createMode === 'pair_code' ? (
+                  {createMode === 'pairing_session' ? (
                     <>
-                      <label style={fieldLabelStyle}>
-                        配对码
-                        <input
-                          value={pairCode}
-                          onChange={(event) => setPairCode(event.target.value)}
-                          placeholder="粘贴配对码，支持 LP1.*** 或 linpo://pair?code=***"
-                          style={inputStyle}
-                          disabled={isCreating || isValidating}
-                        />
-                      </label>
-                      {pairCodeValidationText ? <p style={hintStyle}>{pairCodeValidationText}</p> : null}
-                      <div style={createActionRowStyle}>
-                        <button
-                          type="button"
-                          style={ghostButtonStyle}
-                          onClick={() => void handleValidateByPairCode()}
-                          disabled={isCreating || isValidating}
-                        >
-                          {isValidating ? '校验中...' : '校验配对码'}
-                        </button>
-                        <button
-                          type="button"
-                          style={createButtonStyle}
-                          onClick={() => void handleCreateByPairCode()}
-                          disabled={isCreating || isValidating}
-                        >
-                          {isCreating ? '创建中...' : '创建实例'}
-                        </button>
-                      </div>
+                      {pairingSession ? (
+                        <>
+                          <label style={fieldLabelStyle}>
+                            给 OpenClaw 的一键指令
+                            <textarea value={openClawAttachInstruction} readOnly style={instructionTextareaStyle} />
+                          </label>
+                          <p style={hintStyle}>状态：{pairingSession.status}</p>
+                          {pairingSession.expiresAt ? (
+                            <p style={hintStyle}>过期时间：{formatBeijingTime(pairingSession.expiresAt)}</p>
+                          ) : null}
+                          <div style={createActionRowStyle}>
+                            <button
+                              type="button"
+                              style={ghostButtonStyle}
+                              onClick={async () => {
+                                try {
+                                  await navigator.clipboard.writeText(openClawAttachInstruction);
+                                  addToast('一键指令已复制', 'success');
+                                } catch {
+                                  addToast('复制失败，请手动复制', 'error');
+                                }
+                              }}
+                            >
+                              复制一键指令
+                            </button>
+                            <button
+                              type="button"
+                              style={createButtonStyle}
+                              onClick={() => void handleCreatePairingSession()}
+                              disabled={isCreating || isValidating}
+                            >
+                              {isCreating ? '创建中...' : '重新创建会话'}
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <div style={createActionRowStyle}>
+                          <button
+                            type="button"
+                            style={createButtonStyle}
+                            onClick={() => void handleCreatePairingSession()}
+                            disabled={isCreating || isValidating}
+                          >
+                            {isCreating ? '创建中...' : '创建配对会话'}
+                          </button>
+                        </div>
+                      )}
                     </>
-                  ) : createMode === 'token' ? (
+                  ) : (
                     <>
                       <label style={fieldLabelStyle}>
                         OpenClaw Endpoint
@@ -445,29 +502,14 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
                         </button>
                       </div>
                     </>
-                  ) : (
-                    <>
-                      <label style={fieldLabelStyle}>
-                        教程链接
-                        <input value={tutorialLink} readOnly style={inputStyle} />
-                      </label>
-                      <div style={createActionRowStyle}>
-                        <button type="button" style={ghostButtonStyle} onClick={() => void handleCopyTutorialLink()}>
-                          复制链接
-                        </button>
-                        <a href={tutorialLink} target="_blank" rel="noreferrer noopener" style={tutorialLinkButtonStyle}>
-                          打开教程页
-                        </a>
-                      </div>
-                    </>
                   )}
                   {createHintText ? <p style={hintStyle}>{createHintText}</p> : null}
                 </section>
                 <section style={treeWrapStyle} aria-label="添加实例教程">
                   <p style={treeTitleStyle}>教程</p>
-                  <p style={hintStyle}>1. 优先使用配对码：从 OpenClaw 复制配对码后先校验再创建。</p>
-                  <p style={hintStyle}>2. 无配对码时可改用 Token：填写 endpoint 与 gateway token，先测试连接再创建。</p>
-                  <p style={hintStyle}>3. 仅能与 OpenClaw 对话时，可复制教程链接直接发送给 OpenClaw 自助接入。</p>
+                  <p style={hintStyle}>1. 默认使用「配对会话」：创建会话后复制“一键指令”给 OpenClaw 执行 attach。</p>
+                  <p style={hintStyle}>2. Linpo 会自动轮询会话状态，变为 bound 后自动刷新实例并切换到新实例。</p>
+                  <p style={hintStyle}>3. 若会话方式不可用，可切换到 Token 方式直接创建实例。</p>
                 </section>
               </>
             ) : selectedInstance ? (
@@ -658,6 +700,14 @@ const inputStyle: React.CSSProperties = {
   fontSize: '0.74rem',
 };
 
+const instructionTextareaStyle: React.CSSProperties = {
+  ...inputStyle,
+  minHeight: '8.4rem',
+  resize: 'vertical',
+  lineHeight: 1.45,
+  fontFamily: '"JetBrains Mono", "Fira Code", "Menlo", monospace',
+};
+
 const createButtonStyle: React.CSSProperties = {
   border: '1px solid rgba(14, 116, 144, 0.42)',
   borderRadius: '0.42rem',
@@ -684,13 +734,6 @@ const ghostButtonStyle: React.CSSProperties = {
   fontSize: '0.76rem',
   padding: '0.36rem 0.56rem',
   cursor: 'pointer',
-};
-
-const tutorialLinkButtonStyle: React.CSSProperties = {
-  ...ghostButtonStyle,
-  textDecoration: 'none',
-  display: 'inline-flex',
-  alignItems: 'center',
 };
 
 const closeButtonStyle: React.CSSProperties = {

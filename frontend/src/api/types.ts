@@ -20,10 +20,29 @@ export interface InstanceWriteRequest {
   gatewayToken: string;
 }
 
-export interface InstancePairCodeRequest {
+export type PairingSessionStatus = 'pending' | 'attached' | 'bound' | 'expired' | 'failed';
+
+export interface PairingSessionCreateRequest {
   name: string;
-  type: string;
-  pairCode: string;
+  expSeconds?: number;
+}
+
+export interface PairingSessionBoundInstance {
+  id: string;
+  name: string;
+  endpoint: string;
+  status: string;
+}
+
+export interface PairingSession {
+  sessionId: string;
+  name: string;
+  shortCode: string;
+  pairingUrl: string;
+  status: PairingSessionStatus | string;
+  expiresAt: string | null;
+  instanceId: string | null;
+  instance: PairingSessionBoundInstance | null;
 }
 
 export interface InstancePatchRequest {
