@@ -11,12 +11,14 @@ type AccountMenuProps = {
   compact?: boolean;
   menuPlacement?: 'above' | 'below';
   triggerVariant?: 'username' | 'icon';
+  openInstanceListSignal?: number;
 };
 
 export function AccountMenu({
   compact = false,
   menuPlacement = 'above',
   triggerVariant = 'username',
+  openInstanceListSignal = 0,
 }: AccountMenuProps = {}): JSX.Element | null {
   const { user, logout } = useAuth();
   const { addToast } = useToast();
@@ -29,6 +31,7 @@ export function AccountMenu({
   const messageButtonRef = useRef<HTMLButtonElement>(null);
   const instanceButtonRef = useRef<HTMLButtonElement>(null);
   const triggerButtonRef = useRef<HTMLButtonElement>(null);
+  const handledAutoOpenSignalRef = useRef(0);
 
   const refreshUnreadCount = useCallback(async () => {
     try {
@@ -159,6 +162,18 @@ export function AccountMenu({
     }
     void refreshUnreadCount();
   }, [refreshUnreadCount, user]);
+
+  useEffect(() => {
+    if (openInstanceListSignal <= 0) {
+      return;
+    }
+    if (openInstanceListSignal === handledAutoOpenSignalRef.current) {
+      return;
+    }
+    handledAutoOpenSignalRef.current = openInstanceListSignal;
+    closeMenu();
+    setIsInstanceListOpen(true);
+  }, [closeMenu, openInstanceListSignal]);
 
   // Don't render if not authenticated
   if (!user) {

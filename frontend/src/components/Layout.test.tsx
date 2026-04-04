@@ -1,8 +1,10 @@
 import '@testing-library/jest-dom';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mockListInstances = vi.fn(async () => [{ id: 'inst-1' }]);
 
 vi.mock('../hooks/useToast', () => ({
   useToast: () => ({
@@ -11,8 +13,14 @@ vi.mock('../hooks/useToast', () => ({
   }),
 }));
 
+vi.mock('../api/instanceClient', () => ({
+  listInstances: (...args: unknown[]) => mockListInstances(...args),
+}));
+
 vi.mock('./AccountMenu', () => ({
-  AccountMenu: () => <div data-testid="account-menu" />,
+  AccountMenu: ({ openInstanceListSignal }: { openInstanceListSignal?: number }) => (
+    <div data-testid="account-menu" data-open-instance-signal={String(openInstanceListSignal ?? 0)} />
+  ),
 }));
 
 import { Layout } from './Layout';
@@ -35,6 +43,8 @@ function renderLayout(initialPath = '/kanban') {
 describe('Layout', () => {
   beforeEach(() => {
     window.localStorage.clear();
+    mockListInstances.mockReset();
+    mockListInstances.mockResolvedValue([{ id: 'inst-1' }]);
   });
 
   it('renders toolbar and main shell', () => {
@@ -103,5 +113,13 @@ describe('Layout', () => {
     expect(nav).toHaveStyle({ touchAction: 'pan-x' });
 
     window.innerWidth = originalWidth;
+  });
+
+  it('triggers auto-open instance modal when entering kanban without instances', async () => {
+    mockListInstances.mockResolvedValueOnce([]);
+    renderLayout('/kanban');
+    await waitFor(() => {
+      expect(screen.getByTestId('account-menu')).toHaveAttribute('data-open-instance-signal', '1');
+    });
   });
 });

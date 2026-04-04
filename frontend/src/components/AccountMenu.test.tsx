@@ -36,10 +36,10 @@ vi.mock('./UserProfileModal', () => ({
 
 import { AccountMenu } from './AccountMenu';
 
-function renderMenu(): void {
+function renderMenu(openInstanceListSignal?: number): void {
   render(
     <MemoryRouter>
-      <AccountMenu triggerVariant="icon" />
+      <AccountMenu triggerVariant="icon" openInstanceListSignal={openInstanceListSignal} />
     </MemoryRouter>
   );
 }
@@ -106,6 +106,11 @@ describe('AccountMenu avatar trigger text', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('menuitem', { name: '实例' }));
     });
+    expect(screen.getByText('实例列表弹窗')).toBeInTheDocument();
+  });
+
+  it('opens instance list modal when auto-open signal arrives', async () => {
+    renderMenu(1);
     expect(screen.getByText('实例列表弹窗')).toBeInTheDocument();
   });
 

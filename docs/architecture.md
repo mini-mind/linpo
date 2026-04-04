@@ -68,7 +68,8 @@
 - `MessageCenterModal`：通过 portal 挂载到 `document.body`，避免受局部层级与滚动容器影响导致不可见。
 - `AccountMenu`：下拉菜单提供 `账户/实例/消息/退出` 菜单动作；`账户`打开 `UserProfileModal`（左侧 `基本信息/修改密码/会员` 侧边栏 + 右侧展示区）。
 - `UserProfileModal`：`基本信息`页提供“头像更换按钮 + 用户名编辑按钮”；`修改密码`页提供密码更新表单；`会员`页展示充值渠道占位。
-- `InstanceListModal`：由账户下拉菜单“实例”触发，展示已配对实例列表、实例信息与拓扑（`实例 -> Agent -> Session`）。
+- `InstanceListModal`：由账户下拉菜单“实例”触发，展示已配对实例列表、实例信息与拓扑（`实例 -> Agent -> Session`）；当用户进入`/kanban`且无实例时自动弹出。
+- `InstanceListModal`：添加实例页支持`配对码`与`Token`两种方式；默认打开`配对码`标签页，`Token`作为第二标签页。
 - `ProfilePage`：`/profile` 作为兼容入口保留，不再作为用户主导航路径。
 - `PairingTutorialPage`：配对教程页，承接“仅通过 OpenClaw 对话拿到 endpoint/token”的接入步骤说明与跳转入口。
 - `PairingTutorialPage`：公开路由（匿名可访问），用于“未登录/未配对阶段”的最短接入说明，避免教程访问死锁。

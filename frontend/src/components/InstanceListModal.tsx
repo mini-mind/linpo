@@ -2,7 +2,7 @@ import type React from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { getAggregateTopology } from '../api/client';
-import { createInstance, listInstances } from '../api/instanceClient';
+import { createInstance, createInstanceByPairCode, listInstances } from '../api/instanceClient';
 import type { AggregateTopologyResponse, InstanceItem } from '../api/types';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
@@ -28,6 +28,8 @@ type InstanceModalTab =
   | { kind: 'create' }
   | { kind: 'instance'; instanceId: string };
 
+type CreateMode = 'pair_code' | 'token';
+
 export function InstanceListModal({ open, onClose }: InstanceListModalProps): JSX.Element | null {
   const isMobile = useIsMobile(960);
   const { addToast } = useToast();
@@ -37,9 +39,11 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
   const [topology, setTopology] = useState<AggregateTopologyResponse | null>(null);
   const [selectedTab, setSelectedTab] = useState<InstanceModalTab>({ kind: 'create' });
   const [errorText, setErrorText] = useState<string | null>(null);
+  const [createMode, setCreateMode] = useState<CreateMode>('pair_code');
   const [createName, setCreateName] = useState('claw2');
   const [createEndpoint, setCreateEndpoint] = useState('');
   const [createToken, setCreateToken] = useState('');
+  const [pairCode, setPairCode] = useState('');
   const [createHintText, setCreateHintText] = useState('');
 
   const selectedInstance = useMemo(
@@ -101,7 +105,7 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
     }
   }, []);
 
-  const handleCreateInstance = useCallback(async () => {
+  const handleCreateByToken = useCallback(async () => {
     if (!createName.trim() || !createEndpoint.trim() || !createToken.trim()) {
       setCreateHintText('请填写实例名、endpoint 和 token');
       addToast('请填写实例名、endpoint 和 token', 'warning');
@@ -129,6 +133,34 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
       setIsCreating(false);
     }
   }, [addToast, createEndpoint, createName, createToken, loadData]);
+
+  const handleCreateByPairCode = useCallback(async () => {
+    if (!createName.trim() || !pairCode.trim()) {
+      setCreateHintText('请填写实例名和配对码');
+      addToast('请填写实例名和配对码', 'warning');
+      return;
+    }
+    setIsCreating(true);
+    setCreateHintText('');
+    try {
+      const created = await createInstanceByPairCode({
+        name: createName.trim(),
+        type: 'openclaw',
+        pairCode: pairCode.trim(),
+      });
+      setPairCode('');
+      setCreateHintText(`创建成功：${created.name}`);
+      addToast(`创建成功：${created.name}`, 'success');
+      await loadData();
+      setSelectedTab({ kind: 'instance', instanceId: created.id });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '配对码创建失败';
+      setCreateHintText(message);
+      addToast(message, 'error');
+    } finally {
+      setIsCreating(false);
+    }
+  }, [addToast, createName, loadData, pairCode]);
 
   useEffect(() => {
     if (!open) {
@@ -213,6 +245,32 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
               <>
                 <h4 style={detailTitleStyle}>添加实例</h4>
                 <section style={createCardStyle} aria-label="添加实例表单">
+                  <div style={createTabRowStyle} role="tablist" aria-label="添加方式">
+                    <button
+                      type="button"
+                      style={getCreateTabButtonStyle(createMode === 'pair_code')}
+                      role="tab"
+                      aria-selected={createMode === 'pair_code'}
+                      onClick={() => {
+                        setCreateMode('pair_code');
+                        setCreateHintText('');
+                      }}
+                    >
+                      配对码
+                    </button>
+                    <button
+                      type="button"
+                      style={getCreateTabButtonStyle(createMode === 'token')}
+                      role="tab"
+                      aria-selected={createMode === 'token'}
+                      onClick={() => {
+                        setCreateMode('token');
+                        setCreateHintText('');
+                      }}
+                    >
+                      Token
+                    </button>
+                  </div>
                   <label style={fieldLabelStyle}>
                     实例名称
                     <input
@@ -222,29 +280,43 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
                       style={inputStyle}
                     />
                   </label>
-                  <label style={fieldLabelStyle}>
-                    OpenClaw Endpoint
-                    <input
-                      value={createEndpoint}
-                      onChange={(event) => setCreateEndpoint(event.target.value)}
-                      placeholder="http://127.0.0.1:28789"
-                      style={inputStyle}
-                    />
-                  </label>
-                  <label style={fieldLabelStyle}>
-                    Gateway Token
-                    <input
-                      value={createToken}
-                      onChange={(event) => setCreateToken(event.target.value)}
-                      placeholder="从 OpenClaw 对话复制 token"
-                      style={inputStyle}
-                    />
-                  </label>
+                  {createMode === 'pair_code' ? (
+                    <label style={fieldLabelStyle}>
+                      配对码
+                      <input
+                        value={pairCode}
+                        onChange={(event) => setPairCode(event.target.value)}
+                        placeholder="粘贴配对码，支持 LP1.*** 或 linpo://pair?code=***"
+                        style={inputStyle}
+                      />
+                    </label>
+                  ) : (
+                    <>
+                      <label style={fieldLabelStyle}>
+                        OpenClaw Endpoint
+                        <input
+                          value={createEndpoint}
+                          onChange={(event) => setCreateEndpoint(event.target.value)}
+                          placeholder="http://127.0.0.1:28789"
+                          style={inputStyle}
+                        />
+                      </label>
+                      <label style={fieldLabelStyle}>
+                        Gateway Token
+                        <input
+                          value={createToken}
+                          onChange={(event) => setCreateToken(event.target.value)}
+                          placeholder="从 OpenClaw 对话复制 token"
+                          style={inputStyle}
+                        />
+                      </label>
+                    </>
+                  )}
                   {createHintText ? <p style={hintStyle}>{createHintText}</p> : null}
                   <button
                     type="button"
                     style={createButtonStyle}
-                    onClick={() => void handleCreateInstance()}
+                    onClick={() => void (createMode === 'pair_code' ? handleCreateByPairCode() : handleCreateByToken())}
                     disabled={isCreating}
                   >
                     {isCreating ? '创建中...' : '创建实例'}
@@ -252,8 +324,8 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
                 </section>
                 <section style={treeWrapStyle} aria-label="添加实例教程">
                   <p style={treeTitleStyle}>教程</p>
-                  <p style={hintStyle}>1. 在 OpenClaw 对话中获取 endpoint 与 gateway token。</p>
-                  <p style={hintStyle}>2. 在本页填写实例信息并创建。</p>
+                  <p style={hintStyle}>1. 优先使用配对码：从 OpenClaw 复制配对码后直接粘贴创建。</p>
+                  <p style={hintStyle}>2. 若无配对码可切换到 Token 标签，填写 endpoint 与 gateway token。</p>
                   <p style={hintStyle}>3. 创建成功后可切换为当前实例并查看拓扑。</p>
                 </section>
               </>
@@ -405,6 +477,26 @@ const createCardStyle: React.CSSProperties = {
   flexDirection: 'column',
   gap: '0.42rem',
 };
+
+const createTabRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '0.32rem',
+  marginBottom: '0.14rem',
+};
+
+function getCreateTabButtonStyle(active: boolean): React.CSSProperties {
+  return {
+    border: active ? '1px solid rgba(15, 118, 110, 0.55)' : '1px solid rgba(148, 163, 184, 0.42)',
+    borderRadius: '0.42rem',
+    background: active ? 'rgba(236, 253, 245, 0.88)' : 'rgba(248, 250, 252, 0.94)',
+    color: active ? '#0f766e' : '#334155',
+    fontSize: '0.73rem',
+    fontWeight: active ? 700 : 600,
+    padding: '0.3rem 0.54rem',
+    cursor: 'pointer',
+  };
+}
 
 const fieldLabelStyle: React.CSSProperties = {
   display: 'flex',
