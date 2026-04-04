@@ -15,9 +15,19 @@ import type { FlowDraftLaneRecord, FlowDraftRecord } from './flowDraftStore';
 export type FlowLane = {
   id: string;
   name: string;
+  instanceId: string | null;
   agentId: string | null;
   createdAt: string;
 };
+
+function buildLaneAgentScopeKey(instanceId: string | null | undefined, agentId: string | null | undefined): string {
+  const normalizedAgentId = String(agentId ?? '').trim();
+  if (normalizedAgentId === '') {
+    return '';
+  }
+  const normalizedInstanceId = String(instanceId ?? '').trim();
+  return `${normalizedInstanceId}::${normalizedAgentId}`;
+}
 
 export type FlowSnapshot = {
   requirementId: string;
@@ -38,6 +48,7 @@ export type NodeDraft = {
   dependsOn: string[];
   sensitive: boolean;
   status: TaskStatus;
+  instanceId?: string | null;
   agentId: string | null;
 };
 
@@ -280,6 +291,7 @@ export function normalizeDraftLanes(lanes: FlowDraftLaneRecord[]): FlowLane[] {
     .map((lane) => ({
       id: lane.id.trim(),
       name: lane.name.trim() || '未命名泳道',
+      instanceId: lane.instance_id ? lane.instance_id.trim() || null : null,
       agentId: lane.agent_id ? lane.agent_id.trim() || null : null,
       createdAt: lane.created_at,
     }))
@@ -293,10 +305,16 @@ export function buildNodeLaneByIdFromDraft(
   fallbackAgentId: string | null
 ): Record<string, string> {
   const laneIdSet = new Set(lanes.map((lane) => lane.id));
+  const laneByAgentScope = new Map<string, string>();
   const laneByAgentId = new Map<string, string>();
   for (const lane of lanes) {
-    if (lane.agentId) {
-      laneByAgentId.set(lane.agentId, lane.id);
+    const agentScopeKey = buildLaneAgentScopeKey(lane.instanceId, lane.agentId);
+    if (agentScopeKey) {
+      laneByAgentScope.set(agentScopeKey, lane.id);
+    }
+    const normalizedAgentId = lane.agentId?.trim() ?? '';
+    if (normalizedAgentId !== '' && !laneByAgentId.has(normalizedAgentId)) {
+      laneByAgentId.set(normalizedAgentId, lane.id);
     }
   }
   const fallbackLaneId = lanes[0]?.id ?? '';
@@ -308,6 +326,12 @@ export function buildNodeLaneByIdFromDraft(
       continue;
     }
     const nodeAgentId = String(node.agent_id ?? '').trim();
+    const nodeInstanceId = String(node.instance_id ?? '').trim();
+    const scopedKey = buildLaneAgentScopeKey(nodeInstanceId, nodeAgentId);
+    if (scopedKey && laneByAgentScope.has(scopedKey)) {
+      result[node.id] = laneByAgentScope.get(scopedKey) as string;
+      continue;
+    }
     if (nodeAgentId && laneByAgentId.has(nodeAgentId)) {
       result[node.id] = laneByAgentId.get(nodeAgentId) as string;
       continue;
@@ -347,6 +371,7 @@ export function buildInitialLanesFromAgent(
         {
           id: `lane_${normalizedAgentId}`,
           name: normalizedAgentId,
+          instanceId: null,
           agentId: normalizedAgentId,
           createdAt: new Date().toISOString(),
         },
@@ -356,26 +381,26 @@ export function buildInitialLanesFromAgent(
       {
         id: 'lane_unassigned',
         name: '未委派泳道',
+        instanceId: null,
         agentId: null,
         createdAt: new Date().toISOString(),
       },
     ];
   }
 
-  const seenAgentIds = new Set<string>();
+  const seenAgentKeys = new Set<string>();
   const laneAgents: AggregateOverviewAgentItem[] = [];
 
-  const pushAgentById = (targetId: string) => {
-    const normalizedTargetId = targetId.trim();
-    if (!normalizedTargetId || seenAgentIds.has(normalizedTargetId)) {
+  const pushAgent = (agent: AggregateOverviewAgentItem | null | undefined) => {
+    if (!agent) {
       return;
     }
-    const matched = normalizedAgents.find((agent) => agent.agent_id === normalizedTargetId);
-    if (!matched) {
+    const key = buildLaneAgentScopeKey(agent.instance_id, agent.agent_id);
+    if (!key || seenAgentKeys.has(key)) {
       return;
     }
-    seenAgentIds.add(normalizedTargetId);
-    laneAgents.push(matched);
+    seenAgentKeys.add(key);
+    laneAgents.push(agent);
   };
 
   const mainAgent = normalizedAgents.find((agent) => {
@@ -384,21 +409,22 @@ export function buildInitialLanesFromAgent(
     return normalizedAgentId === 'main' || normalizedAgentName === 'main';
   });
   if (mainAgent) {
-    pushAgentById(mainAgent.agent_id);
+    pushAgent(mainAgent);
   }
 
   const normalizedPreferredAgentId = resolveExecutorAgentId(agentId, normalizedAgents, []);
   if (normalizedPreferredAgentId) {
-    pushAgentById(normalizedPreferredAgentId);
+    pushAgent(normalizedAgents.find((agent) => agent.agent_id === normalizedPreferredAgentId));
   }
 
   for (const agent of normalizedAgents) {
-    pushAgentById(agent.agent_id);
+    pushAgent(agent);
   }
 
   return laneAgents.map((agent) => ({
-    id: `lane_${agent.agent_id}`,
+    id: `lane_${agent.instance_id}_${agent.agent_id}`,
     name: agent.agent_name.trim() || agent.agent_id,
+    instanceId: agent.instance_id,
     agentId: agent.agent_id,
     createdAt: new Date().toISOString(),
   }));
@@ -423,14 +449,16 @@ export function buildLanesAndNodeLaneMapFromNodes(
   const nodeLaneById: Record<string, string> = {};
   for (const node of nodes) {
     const agentId = String(node.agent_id ?? '').trim() || fallbackAgentId || '';
-    const agentKey = agentId || 'unassigned';
+    const instanceId = String(node.instance_id ?? '').trim();
+    const agentKey = buildLaneAgentScopeKey(instanceId, agentId) || 'unassigned';
     let laneId = laneIdByAgent.get(agentKey);
     if (!laneId) {
-      laneId = agentKey === 'unassigned' ? 'lane_unassigned' : `lane_${agentKey}`;
+      laneId = agentKey === 'unassigned' ? 'lane_unassigned' : `lane_${agentKey.replace(/[^0-9A-Za-z_-]/g, '_')}`;
       laneIdByAgent.set(agentKey, laneId);
       lanes.push({
         id: laneId,
         name: agentId ? nameByAgentId.get(agentId) ?? agentId : '未委派泳道',
+        instanceId: instanceId || null,
         agentId: agentId || null,
         createdAt: new Date().toISOString(),
       });

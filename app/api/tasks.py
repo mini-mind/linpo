@@ -832,6 +832,8 @@ def _build_canvas_nodes(
     layers: list[list[str]],
     agent_id: str | None,
     agent_id_by_node: dict[str, str] | None = None,
+    instance_id: str | None = None,
+    instance_id_by_node: dict[str, str] | None = None,
     status_by_node_id: dict[str, TaskStatus],
 ) -> list[FlowCanvasNode]:
     node_by_id = {node.id: node for node in nodes}
@@ -846,6 +848,11 @@ def _build_canvas_nodes(
                     resolved_agent_id = candidate_agent_id
             if resolved_agent_id is None:
                 resolved_agent_id = agent_id
+            resolved_instance_id = instance_id
+            if isinstance(instance_id_by_node, dict):
+                candidate_instance_id = str(instance_id_by_node.get(node.id, "")).strip()
+                if candidate_instance_id != "":
+                    resolved_instance_id = candidate_instance_id
             canvas_nodes.append(
                 FlowCanvasNode(
                     id=node.id,
@@ -858,6 +865,7 @@ def _build_canvas_nodes(
                     sensitive=node.sensitive,
                     status=status_by_node_id.get(node.id, "queued"),
                     agent_id=resolved_agent_id,
+                    instance_id=resolved_instance_id,
                 )
             )
     return canvas_nodes
@@ -1855,7 +1863,7 @@ def confirm_flow(
     normalized_board_id = board_id.strip() or "default"
 
     try:
-        instance_uuid = UUID(payload.instance_id)
+        default_instance_uuid = UUID(payload.instance_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid instance_id") from exc
 
@@ -1863,16 +1871,37 @@ def confirm_flow(
     if not executor_agent_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="executor_agent_id is required")
 
-    try:
-        instance_context = instance_service.get_openclaw_context(
-            db_session,
-            user_id=current_user.id,
-            instance_id=instance_uuid,
-        )
-    except InstanceNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found") from exc
+    requested_instance_by_node_id: dict[str, UUID] = {}
+    requested_instance_ids: set[UUID] = {default_instance_uuid}
+    for canvas_node in payload.nodes:
+        candidate_instance_id = (canvas_node.instance_id or "").strip()
+        if candidate_instance_id == "":
+            continue
+        try:
+            node_instance_uuid = UUID(candidate_instance_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid node instance_id for node {canvas_node.id}",
+            ) from exc
+        requested_instance_by_node_id[canvas_node.id] = node_instance_uuid
+        requested_instance_ids.add(node_instance_uuid)
 
-    execution_context = provider_application_service.build_execution_context(instance_context)
+    execution_context_by_instance_id: dict[UUID, ProviderExecutionContext] = {}
+    for instance_id in requested_instance_ids:
+        try:
+            instance_context = instance_service.get_openclaw_context(
+                db_session,
+                user_id=current_user.id,
+                instance_id=instance_id,
+            )
+        except InstanceNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found") from exc
+        execution_context_by_instance_id[instance_id] = provider_application_service.build_execution_context(
+            instance_context
+        )
+
+    default_execution_context = execution_context_by_instance_id[default_instance_uuid]
     manager_agent_id = _normalize_agent_id(payload.manager_agent_id, executor_agent_id)
     planner_session_key = (
         payload.planner_session_key.strip()
@@ -1908,14 +1937,13 @@ def confirm_flow(
         else f"需求 {flow_id[:8]}"
     )
 
-    # 单流程即单实例：同一 requirement_id 再次运行前先清理旧任务，避免实例堆叠。
+    # 同一 requirement_id 再次运行前先清理旧任务，避免跨实例重复堆叠。
     existing_requirement_tasks = [
         task
         for task in task_service.list_tasks(
             db_session,
             user_id=current_user.id,
             board_id=normalized_board_id,
-            instance_id=instance_uuid,
         )
         if _task_requirement_id(task) == flow_id
     ]
@@ -1926,16 +1954,19 @@ def confirm_flow(
         )
 
     created_task_ids: list[str] = []
+    created_instance_ids: set[UUID] = set()
     for layer_index, layer_node_ids in enumerate(layers):
         for node_id in layer_node_ids:
             node = node_by_id[node_id]
             assigned_agent_id = node_agent_id_by_id.get(node.id, executor_agent_id)
-            execution_session_key = f"{execution_session_prefix}:{assigned_agent_id}:{node.id}"
+            assigned_instance_uuid = requested_instance_by_node_id.get(node.id, default_instance_uuid)
+            assigned_instance_id = str(assigned_instance_uuid)
+            execution_session_key = f"{execution_session_prefix}:{assigned_instance_id}:{assigned_agent_id}:{node.id}"
             task = task_service.create_task(
                 db_session,
                 payload=TaskCreateInput(
                     user_id=current_user.id,
-                    instance_id=instance_uuid,
+                    instance_id=assigned_instance_uuid,
                     title=node.title,
                     summary=node.description.strip() or f"来自流程拆解节点 {node.id}",
                     status="queued",
@@ -1954,7 +1985,7 @@ def confirm_flow(
                         "requirement": requirement_title,
                         "flow_id": flow_id,
                         "board_id": normalized_board_id,
-                        "instance_id": payload.instance_id,
+                        "instance_id": assigned_instance_id,
                         "flow_node": node.id,
                         "flow_node_description": node.description.strip(),
                         "layer": f"L{layer_index + 1}",
@@ -1970,11 +2001,12 @@ def confirm_flow(
                 ),
             )
             created_task_ids.append(str(task.id))
+            created_instance_ids.add(assigned_instance_uuid)
 
     try:
         provider_application_service.send_chat_message(
             data_source="openclaw",
-            execution_context=execution_context,
+            execution_context=default_execution_context,
             agent_id=manager_agent_id,
             message=f"流程已确认并入队。board={normalized_board_id} flow_id={flow_id}",
             session_key=manager_session_key,
@@ -1982,15 +2014,19 @@ def confirm_flow(
     except HTTPException:
         pass
 
-    dispatched_task_ids = _dispatch_queue(
-        task_service=task_service,
-        db_session=db_session,
-        provider_application_service=provider_application_service,
-        execution_context=execution_context,
-        user_id=current_user.id,
-        board_id=normalized_board_id,
-        instance_id=instance_uuid,
-    )
+    dispatched_task_ids: list[str] = []
+    for instance_id in sorted(created_instance_ids, key=lambda value: str(value)):
+        dispatched_task_ids.extend(
+            _dispatch_queue_for_instance(
+                user_id=current_user.id,
+                board_id=normalized_board_id,
+                instance_id=instance_id,
+                task_service=task_service,
+                db_session=db_session,
+                provider_application_service=provider_application_service,
+                instance_service=instance_service,
+            )
+        )
 
     board_tasks = _sorted_board_tasks(
         task_service,
@@ -2000,6 +2036,7 @@ def confirm_flow(
     )
     status_by_node_id: dict[str, TaskStatus] = {}
     agent_id_by_node: dict[str, str] = {}
+    instance_id_by_node: dict[str, str] = {}
     for task in board_tasks:
         extras = task.extras if isinstance(task.extras, dict) else {}
         if str(extras.get("flow_id", "")) != flow_id:
@@ -2009,12 +2046,16 @@ def confirm_flow(
             status_by_node_id[flow_node] = _normalize_task_status(task.status)
             if isinstance(task.agent_id, str) and task.agent_id.strip() != "":
                 agent_id_by_node[flow_node] = task.agent_id.strip()
+            if task.instance_id is not None:
+                instance_id_by_node[flow_node] = str(task.instance_id)
 
     canvas_nodes = _build_canvas_nodes(
         nodes=drafts,
         layers=layers,
         agent_id=executor_agent_id,
         agent_id_by_node=agent_id_by_node,
+        instance_id=payload.instance_id,
+        instance_id_by_node=instance_id_by_node,
         status_by_node_id=status_by_node_id,
     )
     canvas_edges = _build_canvas_edges(drafts)
@@ -2639,6 +2680,17 @@ def sync_requirement(
         dependencies = deps_by_target.get(node_id, [])
         node_title = node.title.strip() or node_id
         node_description = (node.description or "").strip()
+        resolved_instance_uuid = default_instance_id
+        candidate_instance_id = (node.instance_id or "").strip()
+        if candidate_instance_id != "":
+            try:
+                resolved_instance_uuid = UUID(candidate_instance_id)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid node instance_id for node {node_id}",
+                ) from exc
+        resolved_instance_id = str(resolved_instance_uuid) if resolved_instance_uuid is not None else ""
         assigned_agent_id = (node.agent_id or "").strip() or default_agent_id
         assigned_agent_name = f"Agent {assigned_agent_id}" if assigned_agent_id else "待分配"
         base_status: TaskStatus = "blocked_by_approval" if blocked_mode else "queued"
@@ -2657,8 +2709,7 @@ def sync_requirement(
             extras["requirement"] = requirement_title
             extras["flow_id"] = normalized_requirement_id
             extras["board_id"] = normalized_board_id
-            if default_instance_id is not None:
-                extras["instance_id"] = str(default_instance_id)
+            extras["instance_id"] = resolved_instance_id
             extras["flow_node"] = node_id
             extras["flow_node_description"] = node_description
             extras["layer"] = f"L{max(1, node.layer)}"
@@ -2671,7 +2722,7 @@ def sync_requirement(
             if manager_session_key:
                 extras["manager_session_key"] = manager_session_key
             if assigned_agent_id:
-                extras["execution_session_key"] = f"{execution_session_prefix}:{assigned_agent_id}:{node_id}"
+                extras["execution_session_key"] = f"{execution_session_prefix}:{resolved_instance_id}:{assigned_agent_id}:{node_id}"
             if blocked_mode and _is_flow_interrupted_blocked_task(existing_task):
                 extras["dispatch_status"] = "interrupted"
                 extras["dispatch_error"] = "interrupted_by_flow"
@@ -2679,6 +2730,7 @@ def sync_requirement(
                 extras["dispatch_status"] = base_dispatch_status
             existing_task.title = node_title
             existing_task.summary = node_description or f"来自流程拆解节点 {node_id}"
+            existing_task.instance_id = resolved_instance_uuid
             existing_task.agent_id = assigned_agent_id
             existing_task.agent_name = assigned_agent_name
             task_service.update_task_status(
@@ -2694,7 +2746,7 @@ def sync_requirement(
             db_session,
             payload=TaskCreateInput(
                 user_id=current_user.id,
-                instance_id=default_instance_id,
+                instance_id=resolved_instance_uuid,
                 title=node_title,
                 summary=node_description or f"来自流程拆解节点 {node_id}",
                 status=base_status,
@@ -2713,7 +2765,7 @@ def sync_requirement(
                     "requirement": requirement_title,
                     "flow_id": normalized_requirement_id,
                     "board_id": normalized_board_id,
-                    "instance_id": str(default_instance_id) if default_instance_id is not None else "",
+                    "instance_id": resolved_instance_id,
                     "flow_node": node_id,
                     "flow_node_description": node_description,
                     "layer": f"L{max(1, node.layer)}",
@@ -2723,7 +2775,10 @@ def sync_requirement(
                     "sensitive": "true" if node.sensitive else "false",
                     "planner_session_key": planner_session_key,
                     "manager_session_key": manager_session_key,
-                    "execution_session_key": f"{execution_session_prefix}:{assigned_agent_id}:{node_id}" if assigned_agent_id else "",
+                    "execution_session_key": (
+                        f"{execution_session_prefix}:{resolved_instance_id}:{assigned_agent_id}:{node_id}"
+                        if assigned_agent_id else ""
+                    ),
                     "dispatch_status": base_dispatch_status,
                     "dispatch_error": "interrupted_by_flow" if blocked_mode else "",
                 },

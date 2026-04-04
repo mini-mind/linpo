@@ -155,6 +155,7 @@ function encodeNode(node: FlowCanvasNode): UnknownRecord {
     sensitive: node.sensitive,
     status: node.status,
     agentId: node.agent_id,
+    instanceId: node.instance_id ?? null,
   };
 }
 
@@ -178,6 +179,7 @@ function encodeLane(lane: FlowDraftLaneItem): UnknownRecord {
   return {
     id: lane.id,
     name: lane.name,
+    instanceId: lane.instance_id ?? null,
     agentId: lane.agent_id,
     createdAt: lane.created_at,
   };
@@ -243,6 +245,7 @@ function decodeNodeValue(value: unknown): FlowCanvasNode | null {
     sensitive,
     status: normalizeTaskStatus(record.status),
     agent_id: readNullableString(record, 'agent_id', 'agentId'),
+    instance_id: readNullableString(record, 'instance_id', 'instanceId'),
   };
 }
 
@@ -295,6 +298,7 @@ function decodeLaneValue(value: unknown): FlowDraftLaneItem | null {
   return {
     id,
     name,
+    instance_id: readNullableString(record, 'instance_id', 'instanceId'),
     agent_id: readNullableString(record, 'agent_id', 'agentId'),
     created_at: createdAt,
   };

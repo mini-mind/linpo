@@ -343,6 +343,7 @@ type LaneModalState = {
   mode: 'create' | 'edit';
   laneId: string | null;
   name: string;
+  instanceId: string;
   agentId: string;
 };
 
@@ -352,8 +353,25 @@ type DragState = {
   startY: number;
   nodeIds: string[];
   originByNodeId: Record<string, { globalX: number; y: number; laneId: string }>;
-  laneLayouts: Array<{ laneId: string; left: number; width: number; agentId: string | null }>;
+  laneLayouts: Array<{ laneId: string; left: number; width: number; instanceId: string | null; agentId: string | null }>;
 };
+
+function buildAgentScopeKey(instanceId: string | null | undefined, agentId: string | null | undefined): string {
+  const normalizedAgentId = String(agentId ?? '').trim();
+  if (normalizedAgentId === '') {
+    return '';
+  }
+  const normalizedInstanceId = String(instanceId ?? '').trim();
+  return `${normalizedInstanceId}::${normalizedAgentId}`;
+}
+
+function splitAgentScopeKey(value: string): { instanceId: string; agentId: string } {
+  const [rawInstanceId = '', rawAgentId = ''] = value.split('::', 2);
+  return {
+    instanceId: rawInstanceId.trim(),
+    agentId: rawAgentId.trim(),
+  };
+}
 
 type ConnectorHandle = {
   nodeId: string;
@@ -572,6 +590,7 @@ export function FlowPage(): JSX.Element {
     mode: 'create',
     laneId: null,
     name: '',
+    instanceId: '',
     agentId: '',
   });
 
@@ -617,21 +636,18 @@ export function FlowPage(): JSX.Element {
   const isNewFlowRoute = resolvedFlowId === '' || resolvedFlowId === 'new';
 
   const uniqueAgents = useMemo(() => {
-    const map = new Map<string, AggregateOverviewAgentItem>();
-    for (const agent of overview?.agents ?? []) {
-      const id = agent.agent_id.trim();
-      if (!id || map.has(id)) {
-        continue;
-      }
-      map.set(id, agent);
-    }
-    return Array.from(map.values());
+    return (overview?.agents ?? []).filter((agent) => agent.agent_id.trim() !== '');
   }, [overview?.agents]);
 
-  const agentNameById = useMemo(() => {
+  const agentLabelByScope = useMemo(() => {
     const map = new Map<string, string>();
     for (const agent of uniqueAgents) {
-      map.set(agent.agent_id, agent.agent_name.trim() || agent.agent_id);
+      const key = buildAgentScopeKey(agent.instance_id, agent.agent_id);
+      if (!key || map.has(key)) {
+        continue;
+      }
+      const normalizedAgentName = agent.agent_name.trim() || agent.agent_id;
+      map.set(key, `${agent.instance_id} / ${normalizedAgentName}`);
     }
     return map;
   }, [uniqueAgents]);
@@ -1574,6 +1590,7 @@ export function FlowPage(): JSX.Element {
       lanes: fallbackLanes.map((lane) => ({
         id: lane.id,
         name: lane.name,
+        instance_id: lane.instanceId,
         agent_id: lane.agentId,
         created_at: lane.createdAt,
       })),
@@ -2142,6 +2159,7 @@ export function FlowPage(): JSX.Element {
       : lanes.map((lane) => ({
           id: lane.id,
           name: lane.name,
+          instance_id: lane.instanceId,
           agent_id: lane.agentId,
           created_at: lane.createdAt,
         }));
@@ -2343,6 +2361,7 @@ export function FlowPage(): JSX.Element {
         lane: {
           id: 'lane_unassigned',
           name: '未委派泳道',
+          instanceId: null,
           agentId: null,
           createdAt: new Date().toISOString(),
         },
@@ -2496,12 +2515,14 @@ export function FlowPage(): JSX.Element {
   }, [addToast, openNodeEditModal, selectedSingleNodeId]);
 
   const openLaneCreateModal = useCallback(() => {
+    const preferredAgent = uniqueAgents.find((agent) => agent.agent_id === selectedExecutorAgentId.trim()) ?? uniqueAgents[0];
     setLaneModal({
       open: true,
       mode: 'create',
       laneId: null,
       name: '',
-      agentId: selectedExecutorAgentId.trim() || uniqueAgents[0]?.agent_id || '',
+      instanceId: preferredAgent?.instance_id ?? '',
+      agentId: preferredAgent?.agent_id ?? '',
     });
   }, [selectedExecutorAgentId, uniqueAgents]);
 
@@ -2515,6 +2536,7 @@ export function FlowPage(): JSX.Element {
       mode: 'edit',
       laneId: lane.id,
       name: lane.name,
+      instanceId: lane.instanceId ?? '',
       agentId: lane.agentId ?? '',
     });
   }, [laneById]);
@@ -2584,6 +2606,7 @@ export function FlowPage(): JSX.Element {
           layer: 1,
           sensitive: nodeModal.sensitive,
           status: 'queued',
+          instance_id: lane?.instanceId ?? null,
           agent_id: lane?.agentId ?? (selectedExecutorAgentId.trim() || null),
         },
       ]);
@@ -2620,6 +2643,7 @@ export function FlowPage(): JSX.Element {
   const handleSaveLaneModal = useCallback(() => {
     const laneName = laneModal.name.trim() || '未命名泳道';
     const agentId = laneModal.agentId.trim() || null;
+    const instanceId = agentId ? (laneModal.instanceId.trim() || null) : null;
     if (laneModal.mode === 'create') {
       const laneId = `lane_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
       setLanes((current) => [
@@ -2627,6 +2651,7 @@ export function FlowPage(): JSX.Element {
         {
           id: laneId,
           name: laneName,
+          instanceId,
           agentId,
           createdAt: new Date().toISOString(),
         },
@@ -2646,6 +2671,7 @@ export function FlowPage(): JSX.Element {
           ? {
               ...lane,
               name: laneName,
+              instanceId,
               agentId,
             }
           : lane
@@ -2659,6 +2685,7 @@ export function FlowPage(): JSX.Element {
         }
         return {
           ...node,
+          instance_id: instanceId ?? node.instance_id,
           agent_id: agentId ?? node.agent_id,
         };
       })
@@ -2816,6 +2843,7 @@ export function FlowPage(): JSX.Element {
       laneId: layout.lane.id,
       left: layout.left,
       width: layout.width,
+      instanceId: layout.lane.instanceId,
       agentId: layout.lane.agentId,
     }));
     const originByNodeId: Record<string, { globalX: number; y: number; laneId: string }> = {};
@@ -2881,6 +2909,7 @@ export function FlowPage(): JSX.Element {
             ...node,
             x: Math.max(NODE_DEFAULT_MARGIN, nextGlobalX - nextLaneLeft),
             y: Math.max(NODE_DEFAULT_MARGIN, origin.y + deltaY),
+            instance_id: nextLane ? nextLane.instanceId : node.instance_id,
             agent_id: nextLane ? nextLane.agentId : node.agent_id,
           };
         })
@@ -3526,6 +3555,7 @@ export function FlowPage(): JSX.Element {
             lanes: normalizedLanes.map((lane) => ({
               id: lane.id,
               name: lane.name,
+              instance_id: lane.instanceId,
               agent_id: lane.agentId,
               created_at: lane.createdAt,
             })),
@@ -3733,7 +3763,14 @@ export function FlowPage(): JSX.Element {
             disabled={!canEdit}
           >
             <span style={laneHeaderNameStyle}>{layout.lane.name}</span>
-            <span style={laneHeaderAgentStyle}>{layout.lane.agentId ? (agentNameById.get(layout.lane.agentId) ?? layout.lane.agentId) : '未委派 Agent'}</span>
+            <span style={laneHeaderAgentStyle}>
+              {layout.lane.agentId
+                ? (
+                  agentLabelByScope.get(buildAgentScopeKey(layout.lane.instanceId, layout.lane.agentId))
+                  ?? `${layout.lane.instanceId || '-'} / ${layout.lane.agentId}`
+                )
+                : '未委派 Agent'}
+            </span>
           </button>
         ))}
         {!isMobile ? <p style={laneHeaderHintStyle}>双击顶部空白可新增泳道</p> : null}
@@ -4285,16 +4322,31 @@ export function FlowPage(): JSX.Element {
               />
             </label>
             <label style={formFieldStyle}>
-              <span style={formLabelStyle}>委派 Agent</span>
+              <span style={formLabelStyle}>委派实例 / Agent</span>
               <select
-                value={laneModal.agentId}
-                onChange={(event) => setLaneModal((current) => ({ ...current, agentId: event.target.value }))}
+                value={buildAgentScopeKey(laneModal.instanceId, laneModal.agentId)}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  if (nextValue === '') {
+                    setLaneModal((current) => ({ ...current, instanceId: '', agentId: '' }));
+                    return;
+                  }
+                  const parsed = splitAgentScopeKey(nextValue);
+                  setLaneModal((current) => ({
+                    ...current,
+                    instanceId: parsed.instanceId,
+                    agentId: parsed.agentId,
+                  }));
+                }}
                 style={formInputStyle}
               >
                 <option value="">未委派</option>
                 {uniqueAgents.map((agent) => (
-                  <option key={agent.agent_id} value={agent.agent_id}>
-                    {agent.agent_name || agent.agent_id} ({agent.agent_id})
+                  <option
+                    key={buildAgentScopeKey(agent.instance_id, agent.agent_id)}
+                    value={buildAgentScopeKey(agent.instance_id, agent.agent_id)}
+                  >
+                    {agent.instance_id} / {agent.agent_name || agent.agent_id} ({agent.agent_id})
                   </option>
                 ))}
               </select>

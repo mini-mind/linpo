@@ -517,6 +517,7 @@ class FlowCanvasNode(_TasksFlowResponseModel):
     sensitive: bool
     status: TaskStatus
     agent_id: str | None
+    instance_id: str | None = None
 
     @field_validator("depends_on", mode="before")
     @classmethod
@@ -547,6 +548,7 @@ class FlowCanvasEdge(_TasksFlowResponseModel):
 class FlowDraftLaneItem(_TasksFlowResponseModel):
     id: str
     name: str
+    instance_id: str | None = None
     agent_id: str | None = None
     created_at: str
 

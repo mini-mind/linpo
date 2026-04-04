@@ -67,6 +67,7 @@ export function buildFlowSnapshotFromTasks(
       dependsOn: parseDependencies(task.extras.dependencies),
       sensitive: String(task.extras.sensitive ?? '').toLowerCase() === 'true',
       status: normalizeTaskStatus(task.status),
+      instanceId: task.instance_id,
       agentId: task.agent_id,
     };
   });
@@ -79,10 +80,12 @@ export function buildFlowSnapshotFromTasks(
   const layerMap = resolveNodeLayers(normalizedDrafts);
   const groupedByAgent = new Map<string, NodeDraft[]>();
   for (const draft of normalizedDrafts) {
-    const agentKey = (draft.agentId || '').trim() || 'unassigned';
-    const list = groupedByAgent.get(agentKey) ?? [];
+    const instanceKey = (draft.instanceId || '').trim();
+    const agentKey = (draft.agentId || '').trim();
+    const scopedAgentKey = agentKey ? `${instanceKey}::${agentKey}` : 'unassigned';
+    const list = groupedByAgent.get(scopedAgentKey) ?? [];
     list.push(draft);
-    groupedByAgent.set(agentKey, list);
+    groupedByAgent.set(scopedAgentKey, list);
   }
 
   const nameByAgentId = new Map<string, string>();
@@ -95,11 +98,13 @@ export function buildFlowSnapshotFromTasks(
   const nodes: FlowCanvasNode[] = [];
 
   const sortedLaneEntries = Array.from(groupedByAgent.entries()).sort((left, right) => left[0].localeCompare(right[0], 'zh-CN'));
-  for (const [agentKey, laneNodes] of sortedLaneEntries) {
-    const laneId = agentKey === 'unassigned' ? 'lane_unassigned' : `lane_${agentKey}`;
+  for (const [agentScopeKey, laneNodes] of sortedLaneEntries) {
+    const [instanceId = '', agentKey = ''] = agentScopeKey.split('::', 2);
+    const laneId = agentScopeKey === 'unassigned' ? 'lane_unassigned' : `lane_${agentScopeKey.replace(/[^0-9A-Za-z_-]/g, '_')}`;
     lanes.push({
       id: laneId,
       name: agentKey === 'unassigned' ? '未委派泳道' : nameByAgentId.get(agentKey) ?? agentKey,
+      instanceId: instanceId || null,
       agentId: agentKey === 'unassigned' ? null : agentKey,
       createdAt: effectiveTasks[0]?.created_at ?? new Date().toISOString(),
     });
@@ -124,6 +129,7 @@ export function buildFlowSnapshotFromTasks(
         layer,
         sensitive: draft.sensitive,
         status: draft.status,
+        instance_id: draft.instanceId ?? null,
         agent_id: draft.agentId,
       });
     }
@@ -227,6 +233,7 @@ export function normalizeFlowNodes(
         y: Number.isFinite(node.y) ? node.y : NODE_DEFAULT_MARGIN,
         layer: Number.isFinite(node.layer) && node.layer > 0 ? node.layer : 1,
         status: normalizeTaskStatus(String(node.status ?? 'queued')),
+        instance_id: node.instance_id ? String(node.instance_id).trim() || null : null,
         agent_id: node.agent_id ? String(node.agent_id).trim() || null : null,
       };
     })
@@ -351,6 +358,7 @@ export function reconcilePlannerCanvasState(
       dependsOn: draft.dependsOn.filter((dependency) => dependency !== draft.id && draftIdSet.has(dependency)),
       sensitive: draft.sensitive,
       status: previousNode?.status ?? 'queued',
+      instanceId: previousNode?.instance_id ?? lane?.instanceId ?? null,
       agentId: previousNode?.agent_id ?? lane?.agentId ?? fallbackAgentId,
     };
   });
@@ -393,6 +401,7 @@ export function reconcilePlannerCanvasState(
         layer,
         sensitive: draft.sensitive,
         status: previousNode?.status ?? 'queued',
+        instance_id: lane.instanceId ?? previousNode?.instance_id ?? null,
         agent_id: lane.agentId ?? previousNode?.agent_id ?? fallbackAgentId,
       });
     }
@@ -481,7 +490,8 @@ export function prepareNodesForSubmission(
   return nodes.map((node) => {
     const layer = (depth.get(node.id) ?? 0) + 1;
     const laneId = resolveNodeLaneId(node.id, nodeLaneById, lanes);
-    const laneAgent = laneById.get(laneId)?.agentId ?? null;
+    const lane = laneById.get(laneId);
+    const laneAgent = lane?.agentId ?? null;
     const levelOffset = layerOffsetByLevel.get(layer) ?? 0;
     layerOffsetByLevel.set(layer, levelOffset + 1);
     const assignedAgent =
@@ -494,6 +504,7 @@ export function prepareNodesForSubmission(
         new Set(node.depends_on.filter((dependency) => dependency !== node.id && nodeIdSet.has(dependency)))
       ),
       layer,
+      instance_id: lane?.instanceId ?? node.instance_id ?? null,
       agent_id: assignedAgent,
     };
   });

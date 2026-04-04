@@ -48,8 +48,8 @@ export function toCanvasPoint(
 
 export function findLaneLayoutForCenterX(
   centerX: number,
-  laneLayouts: Array<{ laneId: string; left: number; width: number; agentId: string | null }>
-): { laneId: string; left: number; width: number; agentId: string | null } | null {
+  laneLayouts: Array<{ laneId: string; left: number; width: number; instanceId: string | null; agentId: string | null }>
+): { laneId: string; left: number; width: number; instanceId: string | null; agentId: string | null } | null {
   if (laneLayouts.length === 0) {
     return null;
   }

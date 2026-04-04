@@ -1226,7 +1226,7 @@ export default function CollabPage(): JSX.Element {
                       </article>
                       <article style={taskMetaFieldItemStyle}>
                         <p style={taskMetaFieldLabelStyle}>Agent</p>
-                        <p style={taskMetaFieldValueStyle}>{selectedTask.agentName || '待分配'}</p>
+                        <p style={taskMetaFieldValueStyle}>{formatTaskAgentLabel(selectedTask)}</p>
                       </article>
                       <article style={taskMetaFieldItemStyle}>
                         <p style={taskMetaFieldLabelStyle}>Agent ID</p>
@@ -1571,7 +1571,7 @@ export default function CollabPage(): JSX.Element {
                           </div>
                           <h4 style={taskTitleStyle}>{task.title}</h4>
                           <p style={taskSummaryStyle}>{task.summary}</p>
-                          <p style={taskMetaStyle}>Agent：{task.agentName}</p>
+                          <p style={taskMetaStyle}>Agent：{formatTaskAgentLabel(task)}</p>
                           {task.artifacts.length > 0 ? (
                             <p style={taskArtifactStyle}>{task.artifacts[0]}</p>
                           ) : null}
@@ -1625,6 +1625,15 @@ function toBoardTaskFromKanbanTask(task: KanbanTaskItem): BoardTask {
     artifacts: task.artifacts,
     extras: task.extras,
   };
+}
+
+function formatTaskAgentLabel(task: BoardTask): string {
+  const agentName = task.agentName?.trim() || task.agentId?.trim() || '待分配';
+  const instanceId = task.instanceId?.trim() ?? '';
+  if (!instanceId) {
+    return agentName;
+  }
+  return `${instanceId} / ${agentName}`;
 }
 
 function normalizeTaskStatus(status: string): TaskStatus {

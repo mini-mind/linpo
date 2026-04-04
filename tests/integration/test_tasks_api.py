@@ -1444,6 +1444,91 @@ def test_flow_confirm_enqueues_tasks_then_dispatches_from_queue(
     assert any(item["status"] in {"running", "completed", "blocked_by_approval"} for item in list_payload)
 
 
+def test_flow_confirm_supports_node_level_instance_assignment(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("flow-confirm-multi-instance-user")
+    instance_a = _create_instance(
+        auth_cookie,
+        name="claw-flow-a",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-a",
+    )
+    instance_b = _create_instance(
+        auth_cookie,
+        name="claw-flow-b",
+        endpoint="http://175.178.213.11:18789",
+        gateway_token="token-flow-b",
+    )
+
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
+        lambda self, **kwargs: {
+            "request_id": f"req-{kwargs['agent_id']}",
+            "agent_id": kwargs["agent_id"],
+            "status": "accepted",
+        },
+    )
+
+    status_code, _, payload = _request_json(
+        "POST",
+        DEFAULT_FLOW_CONFIRM_PATH,
+        {
+            "instance_id": instance_a["id"],
+            "executor_agent_id": "agent-a",
+            "manager_agent_id": "agent-manager",
+            "planner_session_key": "linpo:flow:default:planner:claw3:multi-instance",
+            "execution_session_prefix": "linpo:flow:default:exec",
+            "nodes": [
+                {
+                    "id": "node_a",
+                    "title": "节点A",
+                    "x": 100,
+                    "y": 100,
+                    "layer": 1,
+                    "sensitive": False,
+                    "status": "queued",
+                    "instance_id": instance_a["id"],
+                    "agent_id": "agent-a",
+                },
+                {
+                    "id": "node_b",
+                    "title": "节点B",
+                    "depends_on": ["node_a"],
+                    "x": 380,
+                    "y": 100,
+                    "layer": 2,
+                    "sensitive": False,
+                    "status": "queued",
+                    "instance_id": instance_b["id"],
+                    "agent_id": "agent-b",
+                },
+            ],
+            "edges": [],
+        },
+        auth_cookie,
+    )
+    assert status_code == 200
+    assert len(payload["createdTaskIds"]) == 2
+    assert payload["nodes"][0]["instanceId"] == instance_a["id"]
+    assert payload["nodes"][1]["instanceId"] == instance_b["id"]
+
+    list_status, _, list_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
+    assert list_status == 200
+    list_payload = cast(list[dict[str, Any]], json.loads(list_body.decode("utf-8")))
+    flow_tasks = [item for item in list_payload if item["extras"].get("planner_session_key") == "linpo:flow:default:planner:claw3:multi-instance"]
+    assert len(flow_tasks) == 2
+    node_a_task = next(item for item in flow_tasks if item["extras"].get("flow_node") == "node_a")
+    node_b_task = next(item for item in flow_tasks if item["extras"].get("flow_node") == "node_b")
+    assert node_a_task["instanceId"] == instance_a["id"]
+    assert node_b_task["instanceId"] == instance_b["id"]
+    assert node_a_task["agentId"] == "agent-a"
+    assert node_b_task["agentId"] == "agent-b"
+
+
 def test_flow_confirm_uses_node_depends_on_as_dependency_source(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,

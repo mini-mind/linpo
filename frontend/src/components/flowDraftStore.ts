@@ -5,6 +5,7 @@ const FLOW_DRAFTS_STORAGE_KEY = 'linpo_flow_drafts_v1';
 export type FlowDraftLaneRecord = {
   id: string;
   name: string;
+  instance_id: string | null;
   agent_id: string | null;
   created_at: string;
 };
@@ -95,6 +96,7 @@ function normalizeDraft(raw: unknown): FlowDraftRecord | null {
             return {
               id: laneId,
               name: String(laneItem.name ?? '').trim() || laneId,
+              instance_id: laneItem.instance_id ? String(laneItem.instance_id).trim() || null : null,
               agent_id: laneItem.agent_id ? String(laneItem.agent_id).trim() || null : null,
               created_at: String(laneItem.created_at ?? '').trim() || createdAt,
             } satisfies FlowDraftLaneRecord;

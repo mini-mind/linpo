@@ -28,8 +28,9 @@ import type {
 	KanbanTaskCreateRequest,
 	KanbanTaskItem,
 	SessionDeleteResponse,
-	SessionHistoryResponse,
-	SessionPauseRequest,
+		SessionHistoryResponse,
+		SessionListItem,
+		SessionPauseRequest,
 	SessionPauseResponse,
 	SessionPatchRequest,
 	SessionPatchResponse,
@@ -177,11 +178,15 @@ function normalizeChatSendResponse(payload: unknown): ChatSendResponse {
   };
 }
 
-function normalizeSessionListItem(payload: unknown) {
+function normalizeSessionListItem(payload: unknown): SessionListItem {
   const record = (payload && typeof payload === 'object') ? (payload as Record<string, unknown>) : {};
+  const rawKind = String(record.kind ?? '').trim().toLowerCase();
+  const kind: SessionListItem['kind'] = (
+    rawKind === 'direct' || rawKind === 'group' || rawKind === 'global'
+  ) ? rawKind : 'unknown';
   return {
     key: String(record.key ?? ''),
-    kind: String(record.kind ?? ''),
+    kind,
     label: typeof record.label === 'string' ? record.label : null,
     derived_title: typeof record.derived_title === 'string'
       ? record.derived_title

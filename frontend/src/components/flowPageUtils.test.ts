@@ -102,8 +102,8 @@ describe('flowPageUtils', () => {
         'node-b': 'lane-agent-2',
       },
       [
-        { id: 'lane-agent-1', name: 'Agent 1', agentId: 'agent-1', createdAt: '2026-04-02T00:00:00Z' },
-        { id: 'lane-agent-2', name: 'Agent 2', agentId: 'agent-2', createdAt: '2026-04-02T00:00:00Z' },
+        { id: 'lane-agent-1', name: 'Agent 1', instanceId: null, agentId: 'agent-1', createdAt: '2026-04-02T00:00:00Z' },
+        { id: 'lane-agent-2', name: 'Agent 2', instanceId: null, agentId: 'agent-2', createdAt: '2026-04-02T00:00:00Z' },
       ],
       ['agent-1', 'agent-2'],
       'agent-1'
@@ -128,7 +128,7 @@ describe('flowPageUtils', () => {
           'node-a': 'lane-agent-1',
           'node-b': 'lane-agent-1',
         },
-        [{ id: 'lane-agent-1', name: 'Agent 1', agentId: 'agent-1', createdAt: '2026-04-02T00:00:00Z' }],
+        [{ id: 'lane-agent-1', name: 'Agent 1', instanceId: null, agentId: 'agent-1', createdAt: '2026-04-02T00:00:00Z' }],
         ['agent-1'],
         'agent-1'
       )
@@ -150,7 +150,7 @@ describe('flowPageUtils', () => {
           drilldown_path: '/session/agent-alpha',
         },
       ],
-      [{ id: 'lane_agent_alpha', name: 'Alpha', agentId: 'agent-alpha', createdAt: '2026-04-02T00:00:00Z' }]
+      [{ id: 'lane_agent_alpha', name: 'Alpha', instanceId: null, agentId: 'agent-alpha', createdAt: '2026-04-02T00:00:00Z' }]
     );
     expect(resolved).toBe('');
   });

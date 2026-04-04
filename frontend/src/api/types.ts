@@ -371,6 +371,7 @@ export interface FlowCanvasNode {
   sensitive: boolean;
   status: TaskStatus;
   agent_id: string | null;
+  instance_id?: string | null;
 }
 
 export interface FlowPlannerNodeDraft {
@@ -402,6 +403,7 @@ export interface FlowCanvasEdge {
 export interface FlowDraftLaneItem {
   id: string;
   name: string;
+  instance_id: string | null;
   agent_id: string | null;
   created_at: string;
 }
