@@ -17,7 +17,7 @@ import { useToast } from '../hooks/useToast';
 
 type ViewMode = 'profile' | 'instances';
 type ModalType = 'none' | 'password' | 'avatar' | 'upgrade' | 'mount';
-type MountTab = 'token' | 'pair_code' | 'tutorial_link';
+type MountTab = 'token' | 'pair_code' | 'openclaw_auto' | 'tutorial_link';
 
 interface TopologySessionItem {
   sessionKey: string;
@@ -78,6 +78,7 @@ export function ProfilePage(): JSX.Element {
 
   const avatarText = useMemo(() => getAvatarText(user?.username), [user?.username]);
   const tutorialLink = useMemo(() => `${window.location.origin}/pairing/tutorial.md`, []);
+  const openClawAutoPrompt = useMemo(() => buildOpenClawAutoPrompt(tutorialLink), [tutorialLink]);
 
   const sortedInstances = useMemo(
     () =>
@@ -398,6 +399,15 @@ export function ProfilePage(): JSX.Element {
       addToast('复制失败，请手动复制链接', 'error');
     }
   }, [addToast, tutorialLink]);
+
+  const handleCopyOpenClawAutoPrompt = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(openClawAutoPrompt);
+      addToast('自动接入指令已复制', 'success');
+    } catch {
+      addToast('复制失败，请手动复制指令', 'error');
+    }
+  }, [addToast, openClawAutoPrompt]);
 
   const toggleExpanded = useCallback((instanceId: string) => {
     setExpandedInstances((prev) => ({
@@ -731,6 +741,16 @@ export function ProfilePage(): JSX.Element {
                   <button
                     type="button"
                     role="tab"
+                    aria-selected={mountTab === 'openclaw_auto'}
+                    style={{ ...tabButtonStyle, ...(mountTab === 'openclaw_auto' ? tabButtonActiveStyle : null) }}
+                    onClick={() => setMountTab('openclaw_auto')}
+                    disabled={isSubmitting || isValidating}
+                  >
+                    OpenClaw 自动接入
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
                     aria-selected={mountTab === 'tutorial_link'}
                     style={{ ...tabButtonStyle, ...(mountTab === 'tutorial_link' ? tabButtonActiveStyle : null) }}
                     onClick={() => setMountTab('tutorial_link')}
@@ -853,6 +873,34 @@ export function ProfilePage(): JSX.Element {
                   </div>
                 ) : null}
 
+                {mountTab === 'openclaw_auto' ? (
+                  <div style={pairingLayoutStyle}>
+                    <div style={tabFormPanelStyle}>
+                      <label style={inputLabelStyle}>
+                        自动接入指令
+                        <textarea value={openClawAutoPrompt} readOnly style={textareaStyle} rows={8} />
+                      </label>
+                      <div style={buttonRowStyle}>
+                        <button
+                          type="button"
+                          style={secondaryButtonStyle}
+                          onClick={() => void handleCopyOpenClawAutoPrompt()}
+                        >
+                          复制指令
+                        </button>
+                        <a href={tutorialLink} target="_blank" rel="noreferrer noopener" style={linkButtonStyle}>
+                          打开教程页
+                        </a>
+                      </div>
+                    </div>
+                    <div style={guidePanelStyle}>
+                      <h4 style={guideTitleStyle}>OpenClaw 自动接入说明</h4>
+                      <p style={guideTextStyle}>将左侧整段指令直接发送给 OpenClaw，让它自动执行教程中的接入流程。</p>
+                      <p style={guideTextStyle}>OpenClaw 会返回 confirmation_url；你登录 Linpo 后点击确认即可完成挂载。</p>
+                    </div>
+                  </div>
+                ) : null}
+
                 {mountTab === 'tutorial_link' ? (
                   <div style={pairingLayoutStyle}>
                     <div style={tabFormPanelStyle}>
@@ -898,6 +946,19 @@ function getAvatarText(username: string | null | undefined): string {
     return normalized.charAt(0);
   }
   return normalized.slice(0, 2).toUpperCase();
+}
+
+function buildOpenClawAutoPrompt(tutorialLink: string): string {
+  return [
+    '请直接自动执行 OpenClaw 到 Linpo 的接入流程，不要只回复说明。',
+    '严格按这个教程页面操作并推进到可确认状态：',
+    tutorialLink,
+    '',
+    '执行要求：',
+    '1) 按教程向 Linpo 发起 request，拿到 confirmation_url。',
+    '2) 把 confirmation_url 原样返回给我，不要改写。',
+    '3) 如果缺少参数或失败，直接给出下一步可执行命令与错误信息。',
+  ].join('\n');
 }
 
 function getModalTitle(modal: ModalType): string {

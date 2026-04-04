@@ -226,4 +226,19 @@ describe('PairingPage', () => {
     });
     expect(window.localStorage.getItem('linpo.currentInstanceId')).toBe('inst-created-by-code');
   });
+
+  it('shows OpenClaw auto-mount tab with copyable prompt', async () => {
+    mockListInstances.mockResolvedValueOnce([]);
+    renderPage();
+    await screen.findByRole('button', { name: '新建配对' });
+    await userEvent.click(screen.getByRole('button', { name: '新建配对' }));
+    await userEvent.click(screen.getByRole('tab', { name: 'OpenClaw 自动接入' }));
+
+    const promptInput = screen.getByLabelText('自动接入指令');
+    expect(promptInput).toBeInTheDocument();
+    const promptText = (promptInput as HTMLTextAreaElement).value;
+    expect(promptText).toContain('/pairing/tutorial.md');
+    expect(promptText).toContain('confirmation_url');
+    expect(screen.getByRole('button', { name: '复制指令' })).toBeInTheDocument();
+  });
 });

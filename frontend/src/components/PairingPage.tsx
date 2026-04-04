@@ -14,7 +14,7 @@ import { useCurrentInstanceId } from '../hooks/useCurrentInstance';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
 
-type CreateTab = 'token' | 'pair_code' | 'tutorial_link';
+type CreateTab = 'token' | 'pair_code' | 'openclaw_auto' | 'tutorial_link';
 type PanelState =
   | { kind: 'new' }
   | { kind: 'instance'; instanceId: string };
@@ -59,6 +59,7 @@ export function PairingPage(): JSX.Element {
   const [pairCode, setPairCode] = useState('');
   const [pairCodeValidationText, setPairCodeValidationText] = useState('');
   const tutorialLink = useMemo(() => `${window.location.origin}/pairing/tutorial.md`, []);
+  const openClawAutoPrompt = useMemo(() => buildOpenClawAutoPrompt(tutorialLink), [tutorialLink]);
 
   const sortedInstances = useMemo(
     () =>
@@ -294,6 +295,15 @@ export function PairingPage(): JSX.Element {
     }
   }, [addToast, tutorialLink]);
 
+  const handleCopyOpenClawAutoPrompt = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(openClawAutoPrompt);
+      addToast('自动接入指令已复制', 'success');
+    } catch {
+      addToast('复制失败，请手动复制指令', 'error');
+    }
+  }, [addToast, openClawAutoPrompt]);
+
   return (
     <section style={pageStyle} aria-label="instances-page">
       <header style={toolbarStyle} role="toolbar" aria-label="实例工具栏">
@@ -372,6 +382,18 @@ export function PairingPage(): JSX.Element {
                   onClick={() => setCreateTab('pair_code')}
                 >
                   配对码配对
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={createTab === 'openclaw_auto'}
+                  style={{
+                    ...tabButtonStyle,
+                    ...(createTab === 'openclaw_auto' ? tabButtonActiveStyle : null),
+                  }}
+                  onClick={() => setCreateTab('openclaw_auto')}
+                >
+                  OpenClaw 自动接入
                 </button>
                 <button
                   type="button"
@@ -494,6 +516,33 @@ export function PairingPage(): JSX.Element {
                     <h3 style={guideTitleStyle}>配对码说明</h3>
                     <p style={guideTextStyle}>适用于只拿到短码的场景；后端会解析配对码并复用实例校验/创建流程。</p>
                     <p style={guideTextStyle}>推荐通过 OpenClaw 对话请求“生成配对码”，然后粘贴到左侧表单。</p>
+                  </div>
+                </div>
+              ) : createTab === 'openclaw_auto' ? (
+                <div style={resolvedTabBodyLayoutStyle}>
+                  <div style={tabFormPanelStyle}>
+                    <label style={fieldStyle}>
+                      <span style={labelStyle}>自动接入指令</span>
+                      <textarea value={openClawAutoPrompt} readOnly style={textareaStyle} rows={8} />
+                    </label>
+                    <div style={actionRowStyle}>
+                      <button type="button" style={ghostButtonStyle} onClick={() => void handleCopyOpenClawAutoPrompt()}>
+                        复制指令
+                      </button>
+                      <a
+                        href={tutorialLink}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        style={linkButtonStyle}
+                      >
+                        打开教程页
+                      </a>
+                    </div>
+                  </div>
+                  <div style={tabGuidePanelStyle}>
+                    <h3 style={guideTitleStyle}>OpenClaw 自动接入说明</h3>
+                    <p style={guideTextStyle}>将左侧整段指令直接发送给 OpenClaw，让它自动执行教程中的接入流程。</p>
+                    <p style={guideTextStyle}>OpenClaw 会按教程完成 request 并返回确认地址；你登录 Linpo 后点击确认即可完成挂载。</p>
                   </div>
                 </div>
               ) : (
@@ -641,6 +690,19 @@ export function PairingPage(): JSX.Element {
       </div>
     </section>
   );
+}
+
+function buildOpenClawAutoPrompt(tutorialLink: string): string {
+  return [
+    '请直接自动执行 OpenClaw 到 Linpo 的接入流程，不要只回复说明。',
+    '严格按这个教程页面操作并推进到可确认状态：',
+    tutorialLink,
+    '',
+    '执行要求：',
+    '1) 按教程向 Linpo 发起 request，拿到 confirmation_url。',
+    '2) 把 confirmation_url 原样返回给我，不要改写。',
+    '3) 如果缺少参数或失败，直接给出下一步可执行命令与错误信息。',
+  ].join('\n');
 }
 
 const pageStyle: React.CSSProperties = {
