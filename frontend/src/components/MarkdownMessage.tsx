@@ -61,7 +61,7 @@ const preStyle: React.CSSProperties = {
 };
 
 const codeStyle: React.CSSProperties = {
-	fontFamily: 'ui-monospace, SFMono-Regular, "SFMono-Regular", Consolas, monospace',
+	fontFamily: 'ui-monospace, SFMono-Regular, "SFMono-Regular", Consolas, "Noto Sans Mono CJK SC", "PingFang SC", "Microsoft YaHei", monospace',
 	fontSize: "0.85em",
 };
 

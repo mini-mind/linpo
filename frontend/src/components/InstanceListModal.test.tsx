@@ -170,14 +170,14 @@ describe('InstanceListModal', () => {
       expect(screen.getByLabelText('给 OpenClaw 的一键指令')).toBeInTheDocument();
     });
     expect((screen.getByLabelText('给 OpenClaw 的一键指令') as HTMLTextAreaElement).value).toContain(
-      '/api/v1/instances/pairing-sessions/attach-by-code'
+      '/docs/openclaw-pairing-session-guide.md'
     );
     expect((screen.getByLabelText('给 OpenClaw 的一键指令') as HTMLTextAreaElement).value).toContain(
-      '"shortCode": "ABCD-1234"'
+      'shortCode=ABCD-1234'
     );
     fireEvent.click(screen.getByRole('button', { name: '复制一键指令' }));
     await waitFor(() => {
-      expect(writeText).toHaveBeenCalledWith(expect.stringContaining('"shortCode": "ABCD-1234"'));
+      expect(writeText).toHaveBeenCalledWith(expect.stringContaining('/docs/openclaw-pairing-session-guide.md'));
     });
     await waitFor(() => {
       expect(mockGetPairingSession).toHaveBeenCalledWith('session-1');
@@ -191,6 +191,16 @@ describe('InstanceListModal', () => {
   it('falls back to execCommand copy when clipboard API is unavailable', async () => {
     const writeText = vi.fn().mockRejectedValue(new Error('clipboard blocked'));
     const execCommandMock = vi.fn().mockReturnValue(true);
+    mockGetPairingSession.mockResolvedValue({
+      sessionId: 'session-1',
+      name: 'claw2',
+      shortCode: 'ABCD-1234',
+      pairingUrl: 'linpo://pair?code=ABCD-1234',
+      status: 'pending',
+      expiresAt: '2026-04-04T02:00:00Z',
+      instanceId: null,
+      instance: null,
+    });
     Object.defineProperty(document, 'execCommand', {
       value: execCommandMock,
       configurable: true,

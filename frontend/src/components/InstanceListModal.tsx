@@ -104,21 +104,20 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
     if (!pairingSession?.shortCode) {
       return '';
     }
+    const pairingGuideUrl = `${window.location.origin}/docs/openclaw-pairing-session-guide.md`;
     return [
-      '请调用以下 Linpo API 完成一键绑定：',
-      `POST ${window.location.origin}/api/v1/instances/pairing-sessions/attach-by-code`,
-      'Content-Type: application/json',
+      '请先完整读取以下文档，并严格按教程完成挂载：',
+      pairingGuideUrl,
       '',
-      JSON.stringify(
-        {
-          shortCode: pairingSession.shortCode,
-          name: createName.trim() || 'claw2',
-          endpoint: '<OpenClaw endpoint>',
-          gatewayToken: '<OpenClaw gateway token>',
-        },
-        null,
-        2
-      ),
+      '执行目标参数：',
+      `shortCode=${pairingSession.shortCode}`,
+      `name=${createName.trim() || 'claw2'}`,
+      `attachApi=${window.location.origin}/api/v1/instances/pairing-sessions/attach-by-code`,
+      '',
+      '要求：',
+      '1) 先按教程读取 endpoint 与 gatewayToken；',
+      '2) 再调用 attachApi 完成 attach-by-code；',
+      '3) 只返回最终 JSON 结果，不要追加解释文本。',
     ].join('\n');
   }, [createName, pairingSession?.shortCode]);
 
@@ -534,7 +533,7 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
                 </section>
                 <section style={treeWrapStyle} aria-label="添加实例教程">
                   <p style={treeTitleStyle}>教程</p>
-                  <p style={hintStyle}>1. 默认使用「配对会话」：创建会话后复制“一键指令”给 OpenClaw 执行 attach。</p>
+                  <p style={hintStyle}>1. 默认使用「配对会话」：创建会话后复制“一键指令”，让 OpenClaw 先读取教程文档再执行挂载。</p>
                   <p style={hintStyle}>2. Linpo 会自动轮询会话状态，变为 bound 后自动刷新实例并切换到新实例。</p>
                   <p style={hintStyle}>3. 若会话方式不可用，可切换到 Token 方式直接创建实例。</p>
                 </section>
@@ -732,7 +731,7 @@ const instructionTextareaStyle: React.CSSProperties = {
   minHeight: '8.4rem',
   resize: 'vertical',
   lineHeight: 1.45,
-  fontFamily: '"JetBrains Mono", "Fira Code", "Menlo", monospace',
+  fontFamily: '"JetBrains Mono", "Fira Code", "Menlo", "Noto Sans Mono CJK SC", "PingFang SC", "Microsoft YaHei", monospace',
 };
 
 const createButtonStyle: React.CSSProperties = {

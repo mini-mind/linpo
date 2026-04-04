@@ -2,7 +2,21 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: 'markdown-utf8-content-type',
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          const requestPath = (req.url || '').split('?')[0];
+          if (requestPath.endsWith('.md')) {
+            res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+          }
+          next();
+        });
+      },
+    },
+  ],
   build: {
     rollupOptions: {
       output: {
