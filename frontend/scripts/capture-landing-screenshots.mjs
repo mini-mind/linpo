@@ -283,24 +283,97 @@ async function waitForReady(page, routePath) {
 
 async function run() {
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+  const context = await browser.newContext({
+    viewport: { width: 1512, height: 982 },
+    isMobile: false,
+    hasTouch: false,
+    deviceScaleFactor: 1,
+  });
   await context.addInitScript(() => {
     window.localStorage.setItem('linpo.currentInstanceId', 'instance-alpha');
+    window.localStorage.setItem(
+      'linpo_flow_drafts_v1',
+      JSON.stringify([
+        {
+          id: 'landing-flow-packed',
+          name: '订单履约流程',
+          requirement: '生成一个含并行分支的履约流程',
+          nodes: [
+            {
+              id: 'node_plan_1',
+              title: '需求拆解',
+              description: '识别订单、库存、风控三个维度',
+              depends_on: [],
+              x: 120,
+              y: 120,
+              layer: 1,
+              sensitive: false,
+              status: 'completed',
+              agent_id: 'agent-alpha',
+            },
+            {
+              id: 'node_plan_2',
+              title: '库存校验',
+              description: '检查可售库存并锁定',
+              depends_on: ['node_plan_1'],
+              x: 430,
+              y: 80,
+              layer: 2,
+              sensitive: false,
+              status: 'running',
+              agent_id: 'agent-alpha',
+            },
+            {
+              id: 'node_plan_3',
+              title: '风控审核',
+              description: '命中规则时进入人工审批',
+              depends_on: ['node_plan_1'],
+              x: 430,
+              y: 260,
+              layer: 2,
+              sensitive: true,
+              status: 'blocked_by_approval',
+              agent_id: 'agent-beta',
+            },
+            {
+              id: 'node_plan_4',
+              title: '发货执行',
+              description: '生成运单并同步物流系统',
+              depends_on: ['node_plan_2', 'node_plan_3'],
+              x: 760,
+              y: 170,
+              layer: 3,
+              sensitive: false,
+              status: 'queued',
+              agent_id: 'agent-beta',
+            },
+          ],
+          edges: [],
+          lanes: [],
+          node_lane_by_id: {},
+          planner_session_key: null,
+          execution_session_prefix: null,
+          executor_agent_id: null,
+          created_at: '2026-04-04T01:00:00Z',
+          updated_at: '2026-04-04T01:20:00Z',
+        },
+      ])
+    );
   });
   await mockApis(context);
   const page = await context.newPage();
 
   await waitForReady(page, '/kanban');
-  await page.screenshot({ path: 'public/assets/landing/kanban-main.png', fullPage: true });
+  await page.screenshot({ path: 'public/assets/landing/kanban-main.png', fullPage: false });
 
-  await waitForReady(page, '/flow/edit/new');
-  await page.screenshot({ path: 'public/assets/landing/flow-main.png', fullPage: true });
+  await waitForReady(page, '/flow/edit/landing-flow-packed');
+  await page.screenshot({ path: 'public/assets/landing/flow-main.png', fullPage: false });
 
   await waitForReady(page, '/summary');
-  await page.screenshot({ path: 'public/assets/landing/summary-main.png', fullPage: true });
+  await page.screenshot({ path: 'public/assets/landing/summary-main.png', fullPage: false });
 
   await waitForReady(page, '/instance-files');
-  await page.screenshot({ path: 'public/assets/landing/files-main.png', fullPage: true });
+  await page.screenshot({ path: 'public/assets/landing/files-main.png', fullPage: false });
 
   await context.close();
   await browser.close();
@@ -310,4 +383,3 @@ run().catch((error) => {
   console.error(error);
   process.exit(1);
 });
-
