@@ -6,6 +6,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mockListInstances = vi.fn();
 const mockCreateInstance = vi.fn();
 const mockCreateInstanceByPairCode = vi.fn();
+const mockValidateInstance = vi.fn();
+const mockValidateInstanceByPairCode = vi.fn();
 const mockGetAggregateTopology = vi.fn();
 const mockAddToast = vi.fn();
 
@@ -13,6 +15,8 @@ vi.mock('../api/instanceClient', () => ({
   listInstances: (...args: unknown[]) => mockListInstances(...args),
   createInstance: (...args: unknown[]) => mockCreateInstance(...args),
   createInstanceByPairCode: (...args: unknown[]) => mockCreateInstanceByPairCode(...args),
+  validateInstance: (...args: unknown[]) => mockValidateInstance(...args),
+  validateInstanceByPairCode: (...args: unknown[]) => mockValidateInstanceByPairCode(...args),
 }));
 
 vi.mock('../api/client', () => ({
@@ -94,6 +98,8 @@ describe('InstanceListModal', () => {
       last_check_at: null,
       created_at: '2026-04-03T00:00:00Z',
     });
+    mockValidateInstance.mockResolvedValue({ ok: true, status: 'ok', message: '连接成功' });
+    mockValidateInstanceByPairCode.mockResolvedValue({ ok: true, status: 'ok', message: '配对码可用' });
   });
 
   it('creates claw1 instance from pair-code tab by default', async () => {
@@ -145,6 +151,27 @@ describe('InstanceListModal', () => {
     });
     await waitFor(() => {
       expect(mockAddToast).toHaveBeenCalledWith('创建成功：claw2', 'success');
+    });
+  });
+
+  it('shows tutorial-link tab and supports copying tutorial url', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+
+    render(<InstanceListModal open onClose={() => undefined} />);
+
+    await screen.findByRole('dialog', { name: '实例列表' });
+    fireEvent.click(screen.getByRole('button', { name: '添加实例' }));
+    fireEvent.click(screen.getByRole('tab', { name: '教程链接配对' }));
+
+    expect(screen.getByLabelText('教程链接')).toHaveValue('http://localhost:3000/pairing/tutorial.md');
+    fireEvent.click(screen.getByRole('button', { name: '复制链接' }));
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith('http://localhost:3000/pairing/tutorial.md');
     });
   });
 });

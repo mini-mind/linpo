@@ -2,7 +2,13 @@ import type React from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { getAggregateTopology } from '../api/client';
-import { createInstance, createInstanceByPairCode, listInstances } from '../api/instanceClient';
+import {
+  createInstance,
+  createInstanceByPairCode,
+  listInstances,
+  validateInstance,
+  validateInstanceByPairCode,
+} from '../api/instanceClient';
 import type { AggregateTopologyResponse, InstanceItem } from '../api/types';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
@@ -28,13 +34,14 @@ type InstanceModalTab =
   | { kind: 'create' }
   | { kind: 'instance'; instanceId: string };
 
-type CreateMode = 'pair_code' | 'token';
+type CreateMode = 'pair_code' | 'token' | 'tutorial_link';
 
 export function InstanceListModal({ open, onClose }: InstanceListModalProps): JSX.Element | null {
   const isMobile = useIsMobile(960);
   const { addToast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [isValidating, setIsValidating] = useState(false);
   const [instances, setInstances] = useState<InstanceItem[]>([]);
   const [topology, setTopology] = useState<AggregateTopologyResponse | null>(null);
   const [selectedTab, setSelectedTab] = useState<InstanceModalTab>({ kind: 'create' });
@@ -45,6 +52,24 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
   const [createToken, setCreateToken] = useState('');
   const [pairCode, setPairCode] = useState('');
   const [createHintText, setCreateHintText] = useState('');
+  const [tokenValidationText, setTokenValidationText] = useState('');
+  const [pairCodeValidationText, setPairCodeValidationText] = useState('');
+  const tutorialLink = useMemo(() => `${window.location.origin}/pairing/tutorial.md`, []);
+
+  const handleCopyTutorialLink = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(tutorialLink);
+      addToast('教程链接已复制', 'success');
+    } catch {
+      addToast('复制失败，请手动复制链接', 'error');
+    }
+  }, [addToast, tutorialLink]);
+
+  const clearCreateState = useCallback(() => {
+    setCreateHintText('');
+    setTokenValidationText('');
+    setPairCodeValidationText('');
+  }, []);
 
   const selectedInstance = useMemo(
     () => (selectedTab.kind === 'instance' ? instances.find((item) => item.id === selectedTab.instanceId) ?? null : null),
@@ -112,7 +137,7 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
       return;
     }
     setIsCreating(true);
-    setCreateHintText('');
+    clearCreateState();
     try {
       const created = await createInstance({
         name: createName.trim(),
@@ -132,7 +157,7 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
     } finally {
       setIsCreating(false);
     }
-  }, [addToast, createEndpoint, createName, createToken, loadData]);
+  }, [addToast, clearCreateState, createEndpoint, createName, createToken, loadData]);
 
   const handleCreateByPairCode = useCallback(async () => {
     if (!createName.trim() || !pairCode.trim()) {
@@ -141,7 +166,7 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
       return;
     }
     setIsCreating(true);
-    setCreateHintText('');
+    clearCreateState();
     try {
       const created = await createInstanceByPairCode({
         name: createName.trim(),
@@ -160,7 +185,60 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
     } finally {
       setIsCreating(false);
     }
-  }, [addToast, createName, loadData, pairCode]);
+  }, [addToast, clearCreateState, createName, loadData, pairCode]);
+
+  const handleValidateByToken = useCallback(async () => {
+    if (!createName.trim() || !createEndpoint.trim() || !createToken.trim()) {
+      setTokenValidationText('请填写实例名、endpoint 和 token');
+      addToast('请填写实例名、endpoint 和 token', 'warning');
+      return;
+    }
+    setIsValidating(true);
+    setTokenValidationText('');
+    try {
+      const result = await validateInstance({
+        name: createName.trim(),
+        type: 'openclaw',
+        endpoint: createEndpoint.trim(),
+        gatewayToken: createToken.trim(),
+      });
+      const message = result.message || '连接测试通过';
+      setTokenValidationText(message);
+      addToast(message, 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '连接测试失败';
+      setTokenValidationText(message);
+      addToast(message, 'error');
+    } finally {
+      setIsValidating(false);
+    }
+  }, [addToast, createEndpoint, createName, createToken]);
+
+  const handleValidateByPairCode = useCallback(async () => {
+    if (!createName.trim() || !pairCode.trim()) {
+      setPairCodeValidationText('请填写实例名和配对码');
+      addToast('请填写实例名和配对码', 'warning');
+      return;
+    }
+    setIsValidating(true);
+    setPairCodeValidationText('');
+    try {
+      const result = await validateInstanceByPairCode({
+        name: createName.trim(),
+        type: 'openclaw',
+        pairCode: pairCode.trim(),
+      });
+      const message = result.message || '配对码校验通过';
+      setPairCodeValidationText(message);
+      addToast(message, 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '配对码校验失败';
+      setPairCodeValidationText(message);
+      addToast(message, 'error');
+    } finally {
+      setIsValidating(false);
+    }
+  }, [addToast, createName, pairCode]);
 
   useEffect(() => {
     if (!open) {
@@ -253,7 +331,7 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
                       aria-selected={createMode === 'pair_code'}
                       onClick={() => {
                         setCreateMode('pair_code');
-                        setCreateHintText('');
+                        clearCreateState();
                       }}
                     >
                       配对码
@@ -265,10 +343,22 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
                       aria-selected={createMode === 'token'}
                       onClick={() => {
                         setCreateMode('token');
-                        setCreateHintText('');
+                        clearCreateState();
                       }}
                     >
                       Token
+                    </button>
+                    <button
+                      type="button"
+                      style={getCreateTabButtonStyle(createMode === 'tutorial_link')}
+                      role="tab"
+                      aria-selected={createMode === 'tutorial_link'}
+                      onClick={() => {
+                        setCreateMode('tutorial_link');
+                        clearCreateState();
+                      }}
+                    >
+                      教程链接配对
                     </button>
                   </div>
                   <label style={fieldLabelStyle}>
@@ -278,19 +368,42 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
                       onChange={(event) => setCreateName(event.target.value)}
                       placeholder="例如 claw2"
                       style={inputStyle}
+                      disabled={isCreating || isValidating || createMode === 'tutorial_link'}
                     />
                   </label>
                   {createMode === 'pair_code' ? (
-                    <label style={fieldLabelStyle}>
-                      配对码
-                      <input
-                        value={pairCode}
-                        onChange={(event) => setPairCode(event.target.value)}
-                        placeholder="粘贴配对码，支持 LP1.*** 或 linpo://pair?code=***"
-                        style={inputStyle}
-                      />
-                    </label>
-                  ) : (
+                    <>
+                      <label style={fieldLabelStyle}>
+                        配对码
+                        <input
+                          value={pairCode}
+                          onChange={(event) => setPairCode(event.target.value)}
+                          placeholder="粘贴配对码，支持 LP1.*** 或 linpo://pair?code=***"
+                          style={inputStyle}
+                          disabled={isCreating || isValidating}
+                        />
+                      </label>
+                      {pairCodeValidationText ? <p style={hintStyle}>{pairCodeValidationText}</p> : null}
+                      <div style={createActionRowStyle}>
+                        <button
+                          type="button"
+                          style={ghostButtonStyle}
+                          onClick={() => void handleValidateByPairCode()}
+                          disabled={isCreating || isValidating}
+                        >
+                          {isValidating ? '校验中...' : '校验配对码'}
+                        </button>
+                        <button
+                          type="button"
+                          style={createButtonStyle}
+                          onClick={() => void handleCreateByPairCode()}
+                          disabled={isCreating || isValidating}
+                        >
+                          {isCreating ? '创建中...' : '创建实例'}
+                        </button>
+                      </div>
+                    </>
+                  ) : createMode === 'token' ? (
                     <>
                       <label style={fieldLabelStyle}>
                         OpenClaw Endpoint
@@ -299,6 +412,7 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
                           onChange={(event) => setCreateEndpoint(event.target.value)}
                           placeholder="http://127.0.0.1:28789"
                           style={inputStyle}
+                          disabled={isCreating || isValidating}
                         />
                       </label>
                       <label style={fieldLabelStyle}>
@@ -308,25 +422,52 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
                           onChange={(event) => setCreateToken(event.target.value)}
                           placeholder="从 OpenClaw 对话复制 token"
                           style={inputStyle}
+                          disabled={isCreating || isValidating}
                         />
                       </label>
+                      {tokenValidationText ? <p style={hintStyle}>{tokenValidationText}</p> : null}
+                      <div style={createActionRowStyle}>
+                        <button
+                          type="button"
+                          style={ghostButtonStyle}
+                          onClick={() => void handleValidateByToken()}
+                          disabled={isCreating || isValidating}
+                        >
+                          {isValidating ? '测试中...' : '测试连接'}
+                        </button>
+                        <button
+                          type="button"
+                          style={createButtonStyle}
+                          onClick={() => void handleCreateByToken()}
+                          disabled={isCreating || isValidating}
+                        >
+                          {isCreating ? '创建中...' : '创建实例'}
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <label style={fieldLabelStyle}>
+                        教程链接
+                        <input value={tutorialLink} readOnly style={inputStyle} />
+                      </label>
+                      <div style={createActionRowStyle}>
+                        <button type="button" style={ghostButtonStyle} onClick={() => void handleCopyTutorialLink()}>
+                          复制链接
+                        </button>
+                        <a href={tutorialLink} target="_blank" rel="noreferrer noopener" style={tutorialLinkButtonStyle}>
+                          打开教程页
+                        </a>
+                      </div>
                     </>
                   )}
                   {createHintText ? <p style={hintStyle}>{createHintText}</p> : null}
-                  <button
-                    type="button"
-                    style={createButtonStyle}
-                    onClick={() => void (createMode === 'pair_code' ? handleCreateByPairCode() : handleCreateByToken())}
-                    disabled={isCreating}
-                  >
-                    {isCreating ? '创建中...' : '创建实例'}
-                  </button>
                 </section>
                 <section style={treeWrapStyle} aria-label="添加实例教程">
                   <p style={treeTitleStyle}>教程</p>
-                  <p style={hintStyle}>1. 优先使用配对码：从 OpenClaw 复制配对码后直接粘贴创建。</p>
-                  <p style={hintStyle}>2. 若无配对码可切换到 Token 标签，填写 endpoint 与 gateway token。</p>
-                  <p style={hintStyle}>3. 创建成功后可切换为当前实例并查看拓扑。</p>
+                  <p style={hintStyle}>1. 优先使用配对码：从 OpenClaw 复制配对码后先校验再创建。</p>
+                  <p style={hintStyle}>2. 无配对码时可改用 Token：填写 endpoint 与 gateway token，先测试连接再创建。</p>
+                  <p style={hintStyle}>3. 仅能与 OpenClaw 对话时，可复制教程链接直接发送给 OpenClaw 自助接入。</p>
                 </section>
               </>
             ) : selectedInstance ? (
@@ -528,6 +669,13 @@ const createButtonStyle: React.CSSProperties = {
   cursor: 'pointer',
 };
 
+const createActionRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '0.42rem',
+  flexWrap: 'wrap',
+};
+
 const ghostButtonStyle: React.CSSProperties = {
   border: '1px solid rgba(148, 163, 184, 0.45)',
   borderRadius: '0.45rem',
@@ -536,6 +684,13 @@ const ghostButtonStyle: React.CSSProperties = {
   fontSize: '0.76rem',
   padding: '0.36rem 0.56rem',
   cursor: 'pointer',
+};
+
+const tutorialLinkButtonStyle: React.CSSProperties = {
+  ...ghostButtonStyle,
+  textDecoration: 'none',
+  display: 'inline-flex',
+  alignItems: 'center',
 };
 
 const closeButtonStyle: React.CSSProperties = {

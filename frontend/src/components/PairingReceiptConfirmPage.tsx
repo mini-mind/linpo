@@ -53,13 +53,13 @@ export function PairingReceiptConfirmPage(): JSX.Element {
       <article style={cardStyle}>
         <h1 style={titleStyle}>配对回执确认</h1>
         {state === 'processing' ? <p style={textStyle}>正在确认，请稍候...</p> : null}
-        {state === 'success' ? <p style={successTextStyle}>已确认成功。你可以返回实例页面继续管理配对。</p> : null}
+        {state === 'success' ? <p style={successTextStyle}>已确认成功。你可以返回工作区继续操作。</p> : null}
         {state === 'error' ? <p style={errorTextStyle}>确认失败：{errorMessage || '未知错误'}</p> : null}
 
         <div style={actionsStyle}>
           {state === 'success' ? (
-            <button type="button" style={primaryButtonStyle} onClick={() => navigate('/pairing')}>
-              前往实例页
+            <button type="button" style={primaryButtonStyle} onClick={() => navigate('/kanban')}>
+              前往看板
             </button>
           ) : null}
           {state === 'error' ? (
@@ -67,8 +67,8 @@ export function PairingReceiptConfirmPage(): JSX.Element {
               <button type="button" style={ghostButtonStyle} onClick={() => void runConfirm()}>
                 重试确认
               </button>
-              <button type="button" style={primaryButtonStyle} onClick={() => navigate('/pairing')}>
-                返回实例页
+              <button type="button" style={primaryButtonStyle} onClick={() => navigate('/kanban')}>
+                返回看板
               </button>
             </>
           ) : null}

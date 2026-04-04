@@ -36,12 +36,6 @@ const FlowPage = lazy(() =>
 const InstanceFilesPage = lazy(() =>
   import('./components/InstanceFilesPage').then((module) => ({ default: module.InstanceFilesPage }))
 );
-const PairingPage = lazy(() =>
-  import('./components/PairingPage').then((module) => ({ default: module.PairingPage }))
-);
-const ProfilePage = lazy(() =>
-  import('./components/ProfilePage').then((module) => ({ default: module.ProfilePage }))
-);
 
 function App(): JSX.Element {
   return (
@@ -65,8 +59,6 @@ function App(): JSX.Element {
                   <Route path="flow" element={<Navigate to="/flow/edit/new" replace />} />
                   <Route path="flow/edit/:flowId" element={<FlowPage />} />
                   <Route path="instance-files" element={<InstanceFilesPage />} />
-                  <Route path="pairing" element={<PairingPage />} />
-                  <Route path="profile" element={<ProfilePage />} />
                   <Route path="*" element={<Navigate to="/summary" replace />} />
                 </Route>
               </Route>
