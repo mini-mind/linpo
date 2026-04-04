@@ -204,7 +204,7 @@ export const flowSidebarDesktopStyle: React.CSSProperties = {
 export const flowSidebarDrawerOverlayStyle: React.CSSProperties = {
   position: 'fixed',
   inset: 0,
-  zIndex: 85,
+  zIndex: 75,
   background: 'rgba(15, 23, 42, 0.3)',
   display: 'flex',
   justifyContent: 'flex-start',

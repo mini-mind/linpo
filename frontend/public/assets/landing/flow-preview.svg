@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1600" y2="1000" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F0F9FF"/>
+      <stop offset="1" stop-color="#F5FAF8"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#0F172A" flood-opacity="0.1"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="1000" rx="28" fill="url(#bg)"/>
+  <rect x="34" y="28" width="1532" height="944" rx="24" fill="#FFFFFF" stroke="#DCE6F2"/>
+
+  <rect x="34" y="28" width="1532" height="72" rx="24" fill="#F8FAFC"/>
+  <rect x="64" y="50" width="166" height="26" rx="13" fill="#14B8A6"/>
+  <text x="84" y="67" fill="#FFFFFF" font-size="13" font-weight="700" font-family="PingFang SC, Microsoft YaHei, sans-serif">流程编辑器</text>
+  <rect x="258" y="54" width="122" height="18" rx="9" fill="#DBEAFE"/>
+  <rect x="396" y="54" width="112" height="18" rx="9" fill="#E2E8F0"/>
+  <rect x="1336" y="48" width="168" height="30" rx="15" fill="#DCFCE7"/>
+
+  <rect x="34" y="100" width="250" height="872" fill="#F8FAFC"/>
+  <text x="60" y="138" fill="#334155" font-size="13" font-weight="700" font-family="PingFang SC, Microsoft YaHei, sans-serif">节点模板</text>
+  <rect x="56" y="154" width="206" height="56" rx="12" fill="#FFFFFF" stroke="#DEE7F1"/>
+  <rect x="70" y="173" width="94" height="10" rx="5" fill="#A7F3D0"/>
+  <rect x="70" y="190" width="158" height="8" rx="4" fill="#D1DDF0"/>
+  <rect x="56" y="222" width="206" height="56" rx="12" fill="#FFFFFF" stroke="#DEE7F1"/>
+  <rect x="70" y="241" width="104" height="10" rx="5" fill="#BFDBFE"/>
+  <rect x="70" y="258" width="144" height="8" rx="4" fill="#D1DDF0"/>
+
+  <rect x="310" y="126" width="1226" height="816" rx="20" fill="#F8FAFC" stroke="#DEE7F1"/>
+
+  <g stroke="#94A3B8" stroke-width="2">
+    <line x1="420" y1="258" x2="730" y2="258"/>
+    <line x1="852" y1="258" x2="1148" y2="258"/>
+    <line x1="730" y1="314" x2="730" y2="468"/>
+    <line x1="852" y1="314" x2="852" y2="468"/>
+    <line x1="730" y1="468" x2="852" y2="468"/>
+    <line x1="852" y1="468" x2="1148" y2="468"/>
+  </g>
+
+  <g filter="url(#soft)">
+    <rect x="350" y="216" width="220" height="92" rx="14" fill="#FFFFFF" stroke="#CFE0F2"/>
+    <text x="372" y="252" fill="#0F172A" font-size="18" font-weight="700" font-family="PingFang SC, Microsoft YaHei, sans-serif">需求拆解</text>
+    <rect x="372" y="268" width="152" height="8" rx="4" fill="#D1DDF0"/>
+    <rect x="372" y="282" width="126" height="8" rx="4" fill="#D1DDF0"/>
+
+    <rect x="640" y="216" width="300" height="92" rx="14" fill="#FFFFFF" stroke="#CFE0F2"/>
+    <text x="662" y="252" fill="#0F172A" font-size="18" font-weight="700" font-family="PingFang SC, Microsoft YaHei, sans-serif">库存校验 / 风控审核</text>
+    <rect x="662" y="268" width="218" height="8" rx="4" fill="#D1DDF0"/>
+    <rect x="662" y="282" width="176" height="8" rx="4" fill="#D1DDF0"/>
+
+    <rect x="1058" y="216" width="220" height="92" rx="14" fill="#FFFFFF" stroke="#CFE0F2"/>
+    <text x="1080" y="252" fill="#0F172A" font-size="18" font-weight="700" font-family="PingFang SC, Microsoft YaHei, sans-serif">发货执行</text>
+    <rect x="1080" y="268" width="146" height="8" rx="4" fill="#D1DDF0"/>
+    <rect x="1080" y="282" width="126" height="8" rx="4" fill="#D1DDF0"/>
+
+    <rect x="640" y="426" width="300" height="92" rx="14" fill="#FFFFFF" stroke="#CFE0F2"/>
+    <text x="662" y="462" fill="#0F172A" font-size="18" font-weight="700" font-family="PingFang SC, Microsoft YaHei, sans-serif">人工审批分支</text>
+    <rect x="662" y="478" width="194" height="8" rx="4" fill="#D1DDF0"/>
+    <rect x="662" y="492" width="164" height="8" rx="4" fill="#D1DDF0"/>
+  </g>
+
+  <rect x="350" y="566" width="928" height="310" rx="16" fill="#FFFFFF" stroke="#D8E4F2"/>
+  <text x="378" y="602" fill="#334155" font-size="14" font-weight="700" font-family="PingFang SC, Microsoft YaHei, sans-serif">流程日志</text>
+  <rect x="378" y="622" width="870" height="68" rx="12" fill="#F8FAFC" stroke="#E2E8F0"/>
+  <rect x="398" y="646" width="172" height="10" rx="5" fill="#C7D7EE"/>
+  <rect x="398" y="664" width="430" height="8" rx="4" fill="#D7E2F1"/>
+  <rect x="378" y="706" width="870" height="68" rx="12" fill="#F8FAFC" stroke="#E2E8F0"/>
+  <rect x="398" y="730" width="154" height="10" rx="5" fill="#C7D7EE"/>
+  <rect x="398" y="748" width="468" height="8" rx="4" fill="#D7E2F1"/>
+
+  <circle cx="580" cy="258" r="6" fill="#14B8A6"/>
+  <circle cx="940" cy="258" r="6" fill="#3B82F6"/>
+  <circle cx="940" cy="468" r="6" fill="#64748B"/>
+</svg>

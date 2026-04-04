@@ -915,7 +915,7 @@ const buttonMobileStyle: React.CSSProperties = {
 
 const mobileFabButtonStyle: React.CSSProperties = {
   position: 'fixed',
-  zIndex: 980,
+  zIndex: 70,
   border: '1px solid rgba(14, 116, 144, 0.42)',
   borderRadius: '999px',
   background: 'linear-gradient(120deg, #0f766e 0%, #0284c7 100%)',
@@ -930,7 +930,7 @@ const mobileFabButtonStyle: React.CSSProperties = {
 const mobileSidebarDrawerOverlayStyle: React.CSSProperties = {
   position: 'fixed',
   inset: 0,
-  zIndex: 990,
+  zIndex: 75,
   background: 'rgba(15, 23, 42, 0.28)',
   display: 'flex',
   alignItems: 'stretch',

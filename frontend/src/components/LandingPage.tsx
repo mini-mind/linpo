@@ -1,4 +1,5 @@
 import type React from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useIsMobile } from '../hooks/useIsMobile';
 
@@ -10,14 +11,17 @@ type StageItem = {
 
 const featureItems = [
   {
+    icon: '⚙',
     title: '流程编排',
     description: '把自然语言需求拆成可执行节点，明确依赖关系与责任归属。',
   },
   {
+    icon: '▶',
     title: '执行推进',
     description: '看板实时反映任务状态，关键动作和阻塞点持续回流可见。',
   },
   {
+    icon: '⌁',
     title: '交付沉淀',
     description: '任务产出与 Agent 文档集中在实例文件页，便于复盘与复用。',
   },
@@ -46,12 +50,31 @@ const stageItems: StageItem[] = [
   },
 ];
 
+const heroBannerSlides = [
+  { src: '/assets/landing/kanban-preview.svg', label: '看板总览' },
+  { src: '/assets/landing/flow-preview.svg', label: '流程编排' },
+  { src: '/assets/landing/summary-preview.svg', label: '摘要洞察' },
+  { src: '/assets/landing/files-preview.svg', label: '文件协作' },
+];
+
 export function LandingPage(): JSX.Element {
   const isMobile = useIsMobile(960);
+  const [bannerIndex, setBannerIndex] = useState(0);
   const resolvedFeaturesStyle = {
     ...featuresStyle,
     ...(isMobile ? featuresMobileStyle : null),
   };
+  const resolvedHeroImageFrameStyle = {
+    ...heroImageFrameStyle,
+    ...(isMobile ? heroImageFrameMobileStyle : null),
+  };
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setBannerIndex((current) => (current + 1) % heroBannerSlides.length);
+    }, 2800);
+    return () => window.clearInterval(timer);
+  }, []);
 
   return (
     <section style={pageStyle} aria-label="landing-page">
@@ -71,25 +94,68 @@ export function LandingPage(): JSX.Element {
           </div>
         </header>
 
-        <section style={{ ...heroStyle, ...(isMobile ? heroMobileStyle : null) }}>
-          <div style={heroContentStyle}>
-            <p style={heroKickerStyle}>OpenClaw 协作编排层</p>
-            <h1 style={heroTitleStyle}>把复杂协作发布成一条可执行路径</h1>
-            <p style={heroDescStyle}>需求、执行、审批在同一画布闭环。</p>
-            <Link to="/kanban" style={heroActionStyle}>
-              立即体验
-            </Link>
-          </div>
-          <div style={heroImageFrameStyle}>
-            <img src="/assets/landing/kanban-main.png" alt="灵盘看板 PC 截图" style={heroImageStyle} loading="eager" />
+        <section style={heroBandStyle}>
+          <div style={{ ...heroBandInnerStyle, ...(isMobile ? heroBandInnerMobileStyle : null) }}>
+            <div style={heroContentStyle}>
+              <p style={heroKickerStyle}>OpenClaw 协作编排层</p>
+              <h1 style={heroTitleStyle}>复杂协作一条路径执行到底</h1>
+              <p style={heroDescStyle}>需求、执行、审批在同一画布闭环。</p>
+              <Link to="/kanban" style={heroActionStyle}>
+                立即体验
+              </Link>
+            </div>
+            <div style={resolvedHeroImageFrameStyle}>
+              <img
+                src={heroBannerSlides[bannerIndex]?.src ?? heroBannerSlides[0].src}
+                alt={heroBannerSlides[bannerIndex]?.label ?? '产品预览'}
+                style={heroImageStyle}
+                loading="eager"
+              />
+              <div style={heroBannerMetaStyle}>
+                <span style={heroBannerTagStyle}>{heroBannerSlides[bannerIndex]?.label ?? '产品预览'}</span>
+                <div style={heroBannerDotsStyle}>
+                  {heroBannerSlides.map((slide, index) => (
+                    <span
+                      key={slide.src}
+                      style={{
+                        ...heroBannerDotStyle,
+                        ...(index === bannerIndex ? heroBannerDotActiveStyle : null),
+                      }}
+                      aria-hidden
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
         </section>
 
         <section style={resolvedFeaturesStyle}>
-          {featureItems.map((feature) => (
-            <article key={feature.title} style={featureCardStyle}>
-              <p style={featureTitleStyle}>{feature.title}</p>
-              <p style={featureDescStyle}>{feature.description}</p>
+          {featureItems.map((feature, index) => (
+            <article
+              key={feature.title}
+              style={{
+                ...featureRowStyle,
+                ...(!isMobile
+                  ? {
+                      marginLeft: `${index * 64}px`,
+                      maxWidth: `${780 - (featureItems.length - 1 - index) * 36}px`,
+                    }
+                  : null),
+              }}
+            >
+              <span style={featureOrderStyle} aria-hidden>
+                {index + 1}
+              </span>
+              <div style={featureCardStyle}>
+                <p style={featureTitleStyle}>
+                  <span style={featureIconStyle} aria-hidden>
+                    {feature.icon}
+                  </span>
+                  {feature.title}
+                </p>
+                <p style={featureDescStyle}>{feature.description}</p>
+              </div>
             </article>
           ))}
         </section>
@@ -107,7 +173,6 @@ export function LandingPage(): JSX.Element {
                 }}
               >
                 <div style={stepContentStyle}>
-                  <p style={stepLabelStyle}>步骤 {index + 1}</p>
                   <h2 style={stepTitleStyle}>{stage.title}</h2>
                   <p style={stepDescStyle}>{stage.description}</p>
                 </div>
@@ -243,15 +308,26 @@ const ghostButtonStyle: React.CSSProperties = {
   background: 'rgba(255, 255, 255, 0.8)',
 };
 
-const heroStyle: React.CSSProperties = {
+const heroBandStyle: React.CSSProperties = {
+  width: '100vw',
+  marginLeft: 'calc(50% - 50vw)',
+  marginTop: '0.7rem',
+  padding: '1.2rem 1rem 1.35rem',
+  background: 'linear-gradient(180deg, rgba(236, 253, 245, 0.72) 0%, rgba(239, 246, 255, 0.7) 100%)',
+  borderTop: '1px solid rgba(148, 163, 184, 0.2)',
+  borderBottom: '1px solid rgba(148, 163, 184, 0.2)',
+};
+
+const heroBandInnerStyle: React.CSSProperties = {
+  maxWidth: '1200px',
+  margin: '0 auto',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
-  gap: '2.5rem',
-  marginTop: '0.8rem',
+  gap: '3.2rem',
 };
 
-const heroMobileStyle: React.CSSProperties = {
+const heroBandInnerMobileStyle: React.CSSProperties = {
   flexDirection: 'column',
   gap: '1.25rem',
 };
@@ -259,48 +335,57 @@ const heroMobileStyle: React.CSSProperties = {
 const heroContentStyle: React.CSSProperties = {
   flex: '1 1 52%',
   maxWidth: '620px',
+  paddingTop: '0.6rem',
 };
 
 const heroKickerStyle: React.CSSProperties = {
   margin: 0,
-  fontSize: '0.78rem',
+  fontSize: '0.7rem',
   letterSpacing: '0.06em',
   fontWeight: 700,
   color: '#0f766e',
 };
 
 const heroTitleStyle: React.CSSProperties = {
-  margin: '0.8rem 0 0',
-  fontSize: 'clamp(2.8rem, 6.6vw, 5.2rem)',
-  lineHeight: 0.96,
+  margin: '1rem 0 0',
+  fontSize: 'clamp(2.2rem, 4.8vw, 3.9rem)',
+  lineHeight: 1.04,
   letterSpacing: '-0.03em',
   color: '#0f172a',
-  maxWidth: '10.5ch',
+  maxWidth: '12ch',
 };
 
 const heroDescStyle: React.CSSProperties = {
-  margin: '1rem 0 0',
-  fontSize: '1.18rem',
-  lineHeight: 1.65,
-  color: '#334155',
+  margin: '1.1rem 0 0',
+  fontSize: '0.92rem',
+  lineHeight: 1.55,
+  color: '#475569',
   maxWidth: '24ch',
 };
 
 const heroActionStyle: React.CSSProperties = {
   ...solidButtonStyle,
-  marginTop: '1.35rem',
-  minHeight: '2.45rem',
-  padding: '0.52rem 1rem',
+  marginTop: '1.45rem',
+  minHeight: '2.15rem',
+  padding: '0.42rem 0.82rem',
+  fontSize: '0.76rem',
 };
 
 const heroImageFrameStyle: React.CSSProperties = {
-  flex: '1 1 48%',
+  flex: '1 1 54%',
   borderRadius: '1.25rem',
   overflow: 'hidden',
   border: '1px solid rgba(148, 163, 184, 0.22)',
   boxShadow: '0 26px 56px -36px rgba(15, 23, 42, 0.5)',
   background: 'rgba(255, 255, 255, 0.7)',
-  minHeight: '320px',
+  minHeight: '460px',
+  position: 'relative',
+};
+
+const heroImageFrameMobileStyle: React.CSSProperties = {
+  width: '100%',
+  minHeight: '240px',
+  maxHeight: '280px',
 };
 
 const heroImageStyle: React.CSSProperties = {
@@ -310,29 +395,115 @@ const heroImageStyle: React.CSSProperties = {
   display: 'block',
 };
 
+const heroBannerMetaStyle: React.CSSProperties = {
+  position: 'absolute',
+  left: '0.85rem',
+  right: '0.85rem',
+  bottom: '0.85rem',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '0.65rem',
+};
+
+const heroBannerTagStyle: React.CSSProperties = {
+  borderRadius: '999px',
+  background: 'rgba(15, 23, 42, 0.55)',
+  color: '#f8fafc',
+  fontSize: '0.74rem',
+  fontWeight: 700,
+  letterSpacing: '0.05em',
+  padding: '0.24rem 0.6rem',
+};
+
+const heroBannerDotsStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '0.25rem',
+  padding: '0.24rem 0.35rem',
+  borderRadius: '999px',
+  background: 'rgba(15, 23, 42, 0.5)',
+};
+
+const heroBannerDotStyle: React.CSSProperties = {
+  width: '0.4rem',
+  height: '0.4rem',
+  borderRadius: '999px',
+  background: 'rgba(203, 213, 225, 0.7)',
+};
+
+const heroBannerDotActiveStyle: React.CSSProperties = {
+  width: '0.85rem',
+  background: '#2dd4bf',
+};
+
 const featuresStyle: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-  gap: '1rem',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.9rem',
+  alignItems: 'flex-start',
 };
 
 const featuresMobileStyle: React.CSSProperties = {
-  gridTemplateColumns: '1fr',
+  gap: '0.7rem',
+};
+
+const featureRowStyle: React.CSSProperties = {
+  width: '100%',
+  display: 'flex',
+  alignItems: 'stretch',
+  gap: '0.6rem',
 };
 
 const featureCardStyle: React.CSSProperties = {
+  width: '100%',
   borderRadius: '1rem',
-  border: '1px solid rgba(148, 163, 184, 0.24)',
-  background: 'rgba(255, 255, 255, 0.78)',
+  borderTop: '1px solid rgba(148, 163, 184, 0.24)',
+  borderBottom: '1px solid rgba(148, 163, 184, 0.24)',
+  borderLeft: '1px solid rgba(148, 163, 184, 0.24)',
+  borderRight: '1px solid rgba(148, 163, 184, 0.06)',
+  background: 'linear-gradient(90deg, rgba(255, 255, 255, 0.92) 0%, rgba(255, 255, 255, 0.84) 46%, rgba(255, 255, 255, 0) 100%)',
   boxShadow: '0 12px 28px -22px rgba(15, 23, 42, 0.35)',
-  padding: '1rem',
+  padding: '0.88rem 1rem',
 };
 
 const featureTitleStyle: React.CSSProperties = {
   margin: 0,
+  display: 'flex',
+  alignItems: 'center',
+  gap: '0.42rem',
   fontSize: '1.26rem',
   fontWeight: 700,
   color: '#0f172a',
+};
+
+const featureIconStyle: React.CSSProperties = {
+  width: '1.4rem',
+  height: '1.4rem',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  color: '#0b3a53',
+  fontSize: '1.18rem',
+  fontWeight: 700,
+  lineHeight: 1,
+};
+
+const featureOrderStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  minWidth: '3rem',
+  padding: '0 0.35rem',
+  borderRadius: '0.9rem',
+  border: '1px solid rgba(148, 163, 184, 0.24)',
+  background: 'linear-gradient(180deg, rgba(236, 253, 245, 0.72) 0%, rgba(219, 234, 254, 0.7) 100%)',
+  fontSize: '2.1rem',
+  fontWeight: 800,
+  fontStyle: 'italic',
+  letterSpacing: '0.01em',
+  color: '#0b3a53',
+  textShadow: '0 1px 0 #ffffff, 0 6px 16px rgba(15, 23, 42, 0.12)',
 };
 
 const featureDescStyle: React.CSSProperties = {
@@ -356,7 +527,6 @@ const stepRowStyle: React.CSSProperties = {
   borderRadius: '1.1rem',
   padding: '1rem',
   background: 'linear-gradient(135deg, rgba(240, 253, 250, 0.78) 0%, rgba(239, 246, 255, 0.82) 100%)',
-  border: '1px solid rgba(148, 163, 184, 0.2)',
   boxShadow: '0 16px 34px -30px rgba(15, 23, 42, 0.38)',
 };
 
@@ -375,17 +545,8 @@ const stepContentStyle: React.CSSProperties = {
   padding: '0.35rem 0.25rem',
 };
 
-const stepLabelStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: '0.74rem',
-  fontWeight: 700,
-  letterSpacing: '0.06em',
-  color: '#0f766e',
-  textTransform: 'uppercase',
-};
-
 const stepTitleStyle: React.CSSProperties = {
-  margin: '0.5rem 0 0',
+  margin: '0.1rem 0 0',
   fontSize: 'clamp(2rem, 3.8vw, 3.1rem)',
   lineHeight: 1,
   color: '#0f172a',
