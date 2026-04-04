@@ -56,6 +56,33 @@ function formatBeijingTime(isoText: string | null | undefined): string {
   }).format(value)}（北京时间 UTC+8）`;
 }
 
+async function copyTextWithFallback(text: string): Promise<boolean> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Continue with legacy fallback.
+    }
+  }
+
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', 'true');
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const copied = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
 export function InstanceListModal({ open, onClose }: InstanceListModalProps): JSX.Element | null {
   const isMobile = useIsMobile(960);
   const { addToast } = useToast();
@@ -427,10 +454,10 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
                               type="button"
                               style={ghostButtonStyle}
                               onClick={async () => {
-                                try {
-                                  await navigator.clipboard.writeText(openClawAttachInstruction);
+                                const copied = await copyTextWithFallback(openClawAttachInstruction);
+                                if (copied) {
                                   addToast('一键指令已复制', 'success');
-                                } catch {
+                                } else {
                                   addToast('复制失败，请手动复制', 'error');
                                 }
                               }}

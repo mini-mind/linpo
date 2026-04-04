@@ -188,6 +188,40 @@ describe('InstanceListModal', () => {
     });
   });
 
+  it('falls back to execCommand copy when clipboard API is unavailable', async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error('clipboard blocked'));
+    const execCommandMock = vi.fn().mockReturnValue(true);
+    Object.defineProperty(document, 'execCommand', {
+      value: execCommandMock,
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+
+    render(<InstanceListModal open onClose={() => undefined} />);
+
+    await screen.findByRole('dialog', { name: '实例列表' });
+    fireEvent.click(screen.getByRole('button', { name: '添加实例' }));
+    fireEvent.change(screen.getByLabelText('实例名称'), { target: { value: 'claw2' } });
+    fireEvent.click(screen.getByRole('button', { name: '创建配对会话' }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('给 OpenClaw 的一键指令')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '复制一键指令' }));
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalled();
+      expect(execCommandMock).toHaveBeenCalledWith('copy');
+      expect(mockAddToast).toHaveBeenCalledWith('一键指令已复制', 'success');
+    });
+    expect(mockAddToast).not.toHaveBeenCalledWith('复制失败，请手动复制', 'error');
+  });
+
   it('creates claw2 instance from token tab', async () => {
     render(<InstanceListModal open onClose={() => undefined} />);
 
