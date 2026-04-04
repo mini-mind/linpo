@@ -14,7 +14,7 @@ vi.mock('../hooks/useToast', () => ({
 }));
 
 vi.mock('../api/instanceClient', () => ({
-  listInstances: (...args: unknown[]) => mockListInstances(...args),
+  listInstances: () => mockListInstances(),
 }));
 
 vi.mock('./AccountMenu', () => ({

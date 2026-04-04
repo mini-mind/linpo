@@ -10,6 +10,7 @@ type ImageSlotProps = {
   ratio: string;
   minHeight: number;
   icon?: IconName;
+  imageSrc?: string;
 };
 
 export function LandingPage(): JSX.Element {
@@ -59,7 +60,7 @@ export function LandingPage(): JSX.Element {
           </div>
 
           <div style={heroVisualStyle}>
-            <ImageSlot title="主视觉占位" note="建议比例 16:10" ratio="16 / 10" minHeight={isMobile ? 220 : 420} />
+            <ImageSlot title="主视觉" note="实时看板场景" ratio="16 / 10" minHeight={isMobile ? 220 : 420} imageSrc="/assets/landing/kanban-main.png" />
           </div>
         </section>
 
@@ -69,7 +70,7 @@ export function LandingPage(): JSX.Element {
             <p style={sectionSubtitleStyle}>以真实截图尺寸预留，后续替换不偏版。</p>
           </div>
 
-          <ImageSlot title="看板全景" note="建议比例 16:10（桌面主截图）" ratio="16 / 10" minHeight={isMobile ? 220 : 500} icon="kanban" />
+          <ImageSlot title="看板全景" note="真实页面截图" ratio="16 / 10" minHeight={isMobile ? 220 : 500} icon="kanban" imageSrc="/assets/landing/kanban-main.png" />
         </section>
 
         <section style={sectionStyle}>
@@ -88,8 +89,8 @@ export function LandingPage(): JSX.Element {
           </div>
 
           <div style={dualVisualStyle}>
-            <ImageSlot title="流程页" note="建议比例 4:3" ratio="4 / 3" minHeight={isMobile ? 220 : 380} icon="flow" />
-            <ImageSlot title="产出页" note="建议比例 4:3" ratio="4 / 3" minHeight={isMobile ? 220 : 380} icon="artifact" />
+            <ImageSlot title="流程页" note="流程编辑视图" ratio="4 / 3" minHeight={isMobile ? 220 : 380} icon="flow" imageSrc="/assets/landing/flow-main.png" />
+            <ImageSlot title="产出页" note="文件与产物视图" ratio="4 / 3" minHeight={isMobile ? 220 : 380} icon="artifact" imageSrc="/assets/landing/files-main.png" />
           </div>
         </section>
 
@@ -99,9 +100,9 @@ export function LandingPage(): JSX.Element {
             <p style={sectionSubtitleStyle}>用于审批、事件流、文件预览等营销图。</p>
           </div>
           <div style={tripleVisualStyle}>
-            <ImageSlot title="审批" note="建议比例 3:4" ratio="3 / 4" minHeight={isMobile ? 220 : 360} icon="approval" />
-            <ImageSlot title="事件流" note="建议比例 3:4" ratio="3 / 4" minHeight={isMobile ? 220 : 360} icon="event" />
-            <ImageSlot title="文件预览" note="建议比例 3:4" ratio="3 / 4" minHeight={isMobile ? 220 : 360} icon="artifact" />
+            <ImageSlot title="审批" note="摘要审批视图" ratio="3 / 4" minHeight={isMobile ? 220 : 360} icon="approval" imageSrc="/assets/landing/summary-main.png" />
+            <ImageSlot title="事件流" note="摘要事件流" ratio="3 / 4" minHeight={isMobile ? 220 : 360} icon="event" imageSrc="/assets/landing/summary-main.png" />
+            <ImageSlot title="文件预览" note="实例文件页" ratio="3 / 4" minHeight={isMobile ? 220 : 360} icon="artifact" imageSrc="/assets/landing/files-main.png" />
           </div>
         </section>
 
@@ -125,7 +126,7 @@ function StepDot({ text }: { text: string }): JSX.Element {
   );
 }
 
-function ImageSlot({ title, note, ratio, minHeight, icon = 'image' }: ImageSlotProps): JSX.Element {
+function ImageSlot({ title, note, ratio, minHeight, icon = 'image', imageSrc }: ImageSlotProps): JSX.Element {
   return (
     <article
       style={{
@@ -135,10 +136,21 @@ function ImageSlot({ title, note, ratio, minHeight, icon = 'image' }: ImageSlotP
       }}
       aria-label={`${title}-placeholder`}
     >
-      <SvgIcon name={icon} size={26} color="#0369a1" />
-      <p style={slotTagStyle}>Image Placeholder</p>
-      <p style={slotTitleStyle}>{title}</p>
-      <p style={slotNoteStyle}>{note}</p>
+      {imageSrc ? (
+        <>
+          <img src={imageSrc} alt={title} style={slotImageStyle} loading="lazy" />
+          <div style={slotOverlayStyle} />
+          <p style={slotTitleStyle}>{title}</p>
+          <p style={slotNoteStyle}>{note}</p>
+        </>
+      ) : (
+        <>
+          <SvgIcon name={icon} size={26} color="#0369a1" />
+          <p style={slotTagStyle}>Image Placeholder</p>
+          <p style={slotTitleStyle}>{title}</p>
+          <p style={slotNoteStyle}>{note}</p>
+        </>
+      )}
     </article>
   );
 }
@@ -470,6 +482,7 @@ const tripleVisualStyle: React.CSSProperties = {
 };
 
 const imageSlotStyle: React.CSSProperties = {
+  position: 'relative',
   borderRadius: '1rem',
   border: '1px dashed rgba(14, 116, 144, 0.35)',
   background: 'linear-gradient(155deg, rgba(224, 242, 254, 0.5) 0%, rgba(240, 253, 250, 0.45) 100%)',
@@ -480,6 +493,23 @@ const imageSlotStyle: React.CSSProperties = {
   textAlign: 'center',
   padding: '1rem',
   gap: '0.34rem',
+  overflow: 'hidden',
+};
+
+const slotImageStyle: React.CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  width: '100%',
+  height: '100%',
+  objectFit: 'cover',
+  objectPosition: 'top center',
+};
+
+const slotOverlayStyle: React.CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  background: 'linear-gradient(180deg, rgba(2, 6, 23, 0.05) 0%, rgba(2, 6, 23, 0.3) 100%)',
+  pointerEvents: 'none',
 };
 
 const slotTagStyle: React.CSSProperties = {
@@ -490,16 +520,22 @@ const slotTagStyle: React.CSSProperties = {
 };
 
 const slotTitleStyle: React.CSSProperties = {
+  position: 'relative',
+  zIndex: 1,
   margin: '0.15rem 0 0',
   fontSize: '0.96rem',
   fontWeight: 700,
-  color: '#0f172a',
+  color: '#f8fafc',
+  textShadow: '0 1px 4px rgba(2, 6, 23, 0.6)',
 };
 
 const slotNoteStyle: React.CSSProperties = {
+  position: 'relative',
+  zIndex: 1,
   margin: '0.2rem 0 0',
   fontSize: '0.8rem',
-  color: '#475569',
+  color: '#e2e8f0',
+  textShadow: '0 1px 4px rgba(2, 6, 23, 0.5)',
 };
 
 const footerStyle: React.CSSProperties = {
