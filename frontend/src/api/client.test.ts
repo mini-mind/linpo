@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  ApiError,
   createKanbanTask,
   deleteSession,
   getAggregateOverview,
@@ -14,6 +15,8 @@ import {
   resetSession,
   stopFlowPlannerSession,
 } from './client';
+import { listInstances } from './instanceClient';
+import { listUserMessages } from './messageClient';
 
 const fetchMock = vi.fn();
 
@@ -143,6 +146,53 @@ describe('business API client instance context', () => {
         code: 'not_found',
         request_id: 'req-404',
       }),
+    });
+  });
+
+  it('instance client throws ApiError and preserves envelope on 5xx errors', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 502,
+      statusText: 'Bad Gateway',
+      json: async () => ({
+        error: {
+          code: 'source_error',
+          message: 'Upstream service unavailable',
+          request_id: 'req-502',
+          recoverable: true,
+          next_step: '稍后重试',
+        },
+      }),
+    });
+
+    const error = await listInstances().catch((err) => err);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({
+      status: 502,
+      message: 'Upstream service unavailable',
+      envelope: expect.objectContaining({
+        code: 'source_error',
+        request_id: 'req-502',
+      }),
+    });
+  });
+
+  it('message client throws ApiError and preserves message on 4xx errors', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      json: async () => ({
+        message: 'Login required',
+      }),
+    });
+
+    const error = await listUserMessages().catch((err) => err);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({
+      status: 401,
+      message: 'Login required',
+      envelope: null,
     });
   });
 

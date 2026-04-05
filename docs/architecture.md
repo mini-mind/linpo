@@ -170,7 +170,10 @@
 
 - 对外文档 canonical 路径统一采用 `/api/v1/**`；历史无前缀路径保留为兼容别名（不作为文档主入口）。
 - `GET /api/v1/boards/{board_id}/tasks`：返回当前登录用户在指定看板可见任务列表，作为看板主数据源。
-- `GET /api/v1/sse/boards/{board_id}/tasks`：看板任务 SSE 实时事件通道（按当前登录用户隔离），推送 `snapshot_ready/tasks_changed/error` 事件；看板页与流程编辑页统一使用该通道同步任务与节点状态。
+- `GET /api/v1/sse/boards/{board_id}/tasks`：看板任务 SSE 实时事件通道（按当前登录用户隔离），推送 `snapshot_ready/tasks_changed/error` 事件；看板页与流程编辑页统一使用该通道同步任务与节点状态。支持可选查询参数 `instanceId`（UUID）：
+  - 未传 `instanceId`：保持现有行为，返回当前用户在该 board 的全部任务事件。
+  - 传入合法且归属当前用户的 `instanceId`：`snapshot_ready` 仍按原契约返回，`tasks_changed` 仅返回该实例相关事件。
+  - `instanceId` 非法 UUID 返回 `422`；`instanceId` 不属于当前登录用户返回 `404`。
 - `POST /api/v1/boards/{board_id}/tasks`：创建任务并记录指派信息，创建成功后由应用层触发 OpenClaw `chat.send`。
 - `POST /api/v1/boards/{board_id}/tasks/flow/generate`：启动或续接一次 planner 增量编辑会话，不直接落看板任务；支持可选 `current_nodes/current_edges/planner_session_key` 以在已有流程上增量改图。后端固定以 `claw3` 作为 planner 目标，先持久化用户消息、当前工作流快照与 planner session 状态，再把“历史消息 + 当前快照 + 本次需求 + planner HTTP 接口信息”发送给 `claw3`。响应至少返回 `planner_session_key` 与当前 draft snapshot，不再要求等待完整整图生成结束。
 - `GET /api/v1/boards/{board_id}/tasks/flow/planner-sse?sessionKey=...`：流程规划 SSE 通道；固定连接 `FlowDecompositionService` 的 `claw3` planner session，除 `snapshot_ready/planner_messages_updated/error` 外，还需推送图补丁事件与快照事件，供流程页在消息流外同步实时改图。

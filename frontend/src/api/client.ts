@@ -153,16 +153,29 @@ function isErrorEnvelopePayload(payload: unknown): payload is ErrorResponse {
   );
 }
 
-async function buildApiError(response: Response): Promise<ApiError> {
+function resolveApiErrorMessage(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  const record = payload as { detail?: unknown; message?: unknown };
+  if (typeof record.detail === 'string' && record.detail.trim().length > 0) {
+    return record.detail.trim();
+  }
+  if (typeof record.message === 'string' && record.message.trim().length > 0) {
+    return record.message.trim();
+  }
+  return null;
+}
+
+export async function buildApiError(response: Response): Promise<ApiError> {
   const payload = await response.json().catch(() => null);
   if (isErrorEnvelopePayload(payload)) {
     return new ApiError(response.status, payload.error.message, payload.error);
   }
-  if (payload && typeof payload === 'object') {
-    const detail = (payload as { detail?: unknown }).detail;
-    if (typeof detail === 'string' && detail.trim().length > 0) {
-      return new ApiError(response.status, detail.trim(), null);
-    }
+  const message = resolveApiErrorMessage(payload);
+  if (message) {
+    return new ApiError(response.status, message, null);
   }
 
   return new ApiError(response.status, `API error: ${response.status} ${response.statusText}`);

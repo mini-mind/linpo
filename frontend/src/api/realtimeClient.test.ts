@@ -334,6 +334,41 @@ describe('board realtime sse client', () => {
     expect(sourceFactory).toHaveBeenCalledWith('http://linpo.test:8000/api/v1/sse/boards/default/tasks');
   });
 
+  it('appends instanceId query when board realtime instance is provided', () => {
+    const fakeSource = new FakeEventSource();
+    const sourceFactory = vi.fn(() => fakeSource);
+
+    const client = createBoardTasksSseClient({
+      baseUrl: 'http://linpo.test:8000',
+      boardId: 'default',
+      instanceId: 'instance-alpha',
+      onMessage: vi.fn(),
+      createEventSource: sourceFactory,
+    });
+
+    client.connect();
+    expect(sourceFactory).toHaveBeenCalledWith(
+      'http://linpo.test:8000/api/v1/sse/boards/default/tasks?instanceId=instance-alpha'
+    );
+  });
+
+  it('keeps board task sse url unchanged when instanceId is omitted', () => {
+    window.localStorage.setItem('linpo.currentInstanceId', 'instance-from-storage');
+    const fakeSource = new FakeEventSource();
+    const sourceFactory = vi.fn(() => fakeSource);
+
+    const client = createBoardTasksSseClient({
+      baseUrl: 'http://linpo.test:8000',
+      boardId: 'default',
+      onMessage: vi.fn(),
+      createEventSource: sourceFactory,
+    });
+
+    client.connect();
+    expect(sourceFactory).toHaveBeenCalledWith('http://linpo.test:8000/api/v1/sse/boards/default/tasks');
+    window.localStorage.removeItem('linpo.currentInstanceId');
+  });
+
   it('parses tasks_changed messages from sse stream', () => {
     const fakeSource = new FakeEventSource();
     const onMessage = vi.fn();

@@ -489,6 +489,75 @@ def test_board_tasks_sse_returns_snapshot_payload(
     assert '"channel": "board:default:tasks"' in text
 
 
+def test_board_tasks_sse_snapshot_only_accepts_instance_id(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("sse-board-instance-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw-sse-instance",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-sse-instance",
+    )
+
+    status_code, headers, body = request(
+        "GET",
+        f"/sse/boards/default/tasks?snapshotOnly=1&instanceId={instance['id']}",
+        headers={"cookie": auth_cookie},
+    )
+    assert status_code == 200
+    assert headers["content-type"].startswith("text/event-stream")
+    text = body.decode("utf-8")
+    assert '"type": "snapshot_ready"' in text
+    assert '"channel": "board:default:tasks"' in text
+
+
+def test_board_tasks_sse_rejects_invalid_instance_id_query(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("sse-board-invalid-instance-user")
+
+    status_code, _, body = request(
+        "GET",
+        "/sse/boards/default/tasks?snapshotOnly=1&instanceId=not-a-uuid",
+        headers={"cookie": auth_cookie},
+    )
+    assert status_code == 422
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload["detail"] == "Invalid instanceId"
+
+
+def test_board_tasks_sse_rejects_foreign_instance_id_query(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+    owner_cookie = _register_and_login("sse-owner-user")
+    owner_instance = _create_instance(
+        owner_cookie,
+        name="claw-owner-instance",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-owner-instance",
+    )
+    viewer_cookie = _register_and_login("sse-viewer-user")
+
+    status_code, _, body = request(
+        "GET",
+        f"/sse/boards/default/tasks?snapshotOnly=1&instanceId={owner_instance['id']}",
+        headers={"cookie": viewer_cookie},
+    )
+    assert status_code == 404
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload["detail"] == "Instance not found"
+
+
 def test_create_task_keeps_task_when_dispatch_fails(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,

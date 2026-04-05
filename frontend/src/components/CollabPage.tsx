@@ -225,6 +225,7 @@ export default function CollabPage(): JSX.Element {
       }
       const client = createBoardTasksSseClient({
         boardId: KANBAN_BOARD_REALTIME_ID,
+        instanceId: currentInstanceId,
         onMessage: (message) => {
           if (cancelled) {
             return;

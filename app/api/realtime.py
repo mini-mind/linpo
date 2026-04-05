@@ -188,10 +188,15 @@ async def board_tasks_sse(
     request: Request,
     board_id: str,
     snapshot_only: bool = Query(default=False, alias="snapshotOnly"),
+    instance_id: str | None = Query(default=None, alias="instanceId"),
 ) -> Response:
     normalized_board_id = board_id.strip() or "default"
     channel = f"board:{normalized_board_id}:tasks"
     current_user = _resolve_http_realtime_user(request)
+    resolved_instance_id = _resolve_sse_instance_id(
+        current_user=current_user,
+        instance_id=instance_id,
+    )
     hub = get_board_task_realtime_hub()
 
     base_headers = {
@@ -224,6 +229,7 @@ async def board_tasks_sse(
     )
 
     async def event_stream() -> AsyncIterator[str]:
+        known_task_instances: dict[str, UUID | None] = {}
         try:
             yield _to_sse_data(
                 {
@@ -244,6 +250,12 @@ async def board_tasks_sse(
                     event = await asyncio.to_thread(subscriber_queue.get, True, 20.0)
                 except Empty:
                     yield ": keep-alive\n\n"
+                    continue
+                if resolved_instance_id is not None and not _is_board_task_event_visible_for_instance(
+                    cast(dict[str, Any], event),
+                    instance_id=resolved_instance_id,
+                    known_task_instances=known_task_instances,
+                ):
                     continue
                 yield _to_sse_data(event)
         finally:
@@ -463,6 +475,100 @@ def _error_detail(exc: Exception) -> str:
             return detail
         return json.dumps(detail)
     return str(exc)
+
+
+def _resolve_sse_instance_id(*, current_user: User, instance_id: str | None) -> UUID | None:
+    if instance_id is None:
+        return None
+
+    try:
+        parsed_instance_id = UUID(instance_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid instanceId") from exc
+
+    with Session(get_engine(get_database_url())) as db_session:
+        instance_service = InstanceService()
+        try:
+            instance_service.get_openclaw_context(
+                db_session,
+                user_id=current_user.id,
+                instance_id=parsed_instance_id,
+            )
+        except InstanceNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Instance not found") from exc
+
+    return parsed_instance_id
+
+
+def _is_board_task_event_visible_for_instance(
+    event: dict[str, Any],
+    *,
+    instance_id: UUID,
+    known_task_instances: dict[str, UUID | None],
+) -> bool:
+    if event.get("type") != "tasks_changed":
+        return True
+
+    payload = event.get("payload")
+    if not isinstance(payload, dict):
+        return False
+
+    action = payload.get("action")
+    if action == "upsert":
+        task_payload = payload.get("task")
+        if not isinstance(task_payload, dict):
+            return False
+        task_id = _extract_task_id(task_payload)
+        task_instance_id = _extract_task_instance_id(task_payload)
+        if task_id is not None:
+            known_task_instances[task_id] = task_instance_id
+        return task_instance_id == instance_id
+
+    if action == "delete":
+        task_id = _extract_task_id(payload)
+        if task_id is None:
+            return False
+        task_instance_id = _extract_task_instance_id(payload)
+        if task_instance_id is None:
+            task_instance_id = known_task_instances.pop(task_id, None)
+        else:
+            known_task_instances.pop(task_id, None)
+        if task_instance_id is None:
+            return False
+        return task_instance_id == instance_id
+
+    return False
+
+
+def _extract_task_id(payload: dict[str, Any]) -> str | None:
+    raw_task_id = payload.get("id")
+    if not isinstance(raw_task_id, str):
+        raw_task_id = payload.get("task_id")
+    if not isinstance(raw_task_id, str):
+        raw_task_id = payload.get("taskId")
+    if not isinstance(raw_task_id, str):
+        return None
+    task_id = raw_task_id.strip()
+    return task_id or None
+
+
+def _extract_task_instance_id(payload: dict[str, Any]) -> UUID | None:
+    raw_instance_id = payload.get("instance_id")
+    if raw_instance_id is None:
+        raw_instance_id = payload.get("instanceId")
+    if raw_instance_id is None:
+        return None
+    if isinstance(raw_instance_id, UUID):
+        return raw_instance_id
+    if not isinstance(raw_instance_id, str):
+        return None
+    candidate = raw_instance_id.strip()
+    if candidate == "":
+        return None
+    try:
+        return UUID(candidate)
+    except ValueError:
+        return None
 
 
 def _to_sse_data(payload: dict[str, Any]) -> str:

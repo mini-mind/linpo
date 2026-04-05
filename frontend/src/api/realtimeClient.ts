@@ -90,6 +90,7 @@ export interface EventSourceLike {
 export interface BoardRealtimeSseClientOptions {
   baseUrl?: string;
   boardId: string;
+  instanceId?: string | null;
   onMessage: (message: BoardRealtimeMessage) => void;
   onParseError?: (raw: string, error: Error) => void;
   onDisconnected?: () => void;
@@ -216,11 +217,20 @@ function toWebSocketUrl(
   return url.toString();
 }
 
-function toBoardTasksSseUrl(apiBaseUrl: string, boardId: string): string {
+function toBoardTasksSseUrl(
+  apiBaseUrl: string,
+  boardId: string,
+  instanceId?: string | null
+): string {
   const normalizedBoardId = boardId.trim() || 'default';
   const encodedBoardId = encodeURIComponent(normalizedBoardId);
   const path = `${BOARD_TASKS_SSE_PREFIX}${encodedBoardId}/tasks`;
-  return new URL(path, apiBaseUrl).toString();
+  const url = new URL(path, apiBaseUrl);
+  const normalizedInstanceId = typeof instanceId === 'string' ? instanceId.trim() : '';
+  if (normalizedInstanceId) {
+    url.searchParams.set('instanceId', normalizedInstanceId);
+  }
+  return url.toString();
 }
 
 function toFlowPlannerSseUrl(apiBaseUrl: string, boardId: string, sessionKey: string): string {
@@ -622,7 +632,9 @@ export function createBoardTasksSseClient(
       return;
     }
     manuallyClosed = false;
-    const nextSource = createEventSource(toBoardTasksSseUrl(apiBaseUrl, options.boardId));
+    const nextSource = createEventSource(
+      toBoardTasksSseUrl(apiBaseUrl, options.boardId, options.instanceId)
+    );
     source = nextSource;
 
     nextSource.addEventListener('message', (event) => {

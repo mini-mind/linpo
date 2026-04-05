@@ -181,6 +181,7 @@ class TaskService:
             user_id=user_id,
             board_id=board_id,
             task_id=task_id,
+            instance_id=None if task.instance_id is None else str(task.instance_id),
         )
 
     def _publish_task_upserted(self, task: Task) -> None:
@@ -199,12 +200,14 @@ class TaskService:
         user_id: UUID,
         board_id: str,
         task_id: str,
+        instance_id: str | None = None,
     ) -> None:
         try:
             get_board_task_realtime_hub().publish_task_deleted(
                 user_id=user_id,
                 board_id=board_id,
                 task_id=task_id,
+                instance_id=instance_id,
             )
         except Exception:
             return

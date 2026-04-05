@@ -48,7 +48,7 @@ def test_board_task_realtime_hub_delivers_events_to_subscribers() -> None:
 @dataclass
 class _FakeRealtimeHub:
     upserts: list[tuple[UUID, str, dict[str, object]]] = field(default_factory=list)
-    deletes: list[tuple[UUID, str, str]] = field(default_factory=list)
+    deletes: list[tuple[UUID, str, str, str | None]] = field(default_factory=list)
 
     def publish_task_upserted(
         self,
@@ -65,8 +65,9 @@ class _FakeRealtimeHub:
         user_id: UUID,
         board_id: str,
         task_id: str,
+        instance_id: str | None = None,
     ) -> None:
-        self.deletes.append((user_id, board_id, task_id))
+        self.deletes.append((user_id, board_id, task_id, instance_id))
 
 
 def test_task_service_emits_realtime_events(monkeypatch) -> None:
@@ -119,4 +120,4 @@ def test_task_service_emits_realtime_events(monkeypatch) -> None:
 
         service.delete_task(db_session, task=task)
         assert len(fake_hub.deletes) == 1
-        assert fake_hub.deletes[0] == (user.id, "default", str(task.id))
+        assert fake_hub.deletes[0] == (user.id, "default", str(task.id), None)

@@ -1,5 +1,6 @@
 import type { UserMessageItem, UserMessageListResponse, UserMessageReadResponse } from './types';
 import { API_BASE_URL } from './apiBaseUrl';
+import { buildApiError } from './client';
 
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -12,8 +13,7 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.detail || data.message || `请求失败: ${response.status}`);
+    throw await buildApiError(response);
   }
 
   return response.json() as Promise<T>;

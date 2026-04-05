@@ -76,14 +76,18 @@ class BoardTaskRealtimeHub:
         user_id: UUID,
         board_id: str,
         task_id: str,
+        instance_id: str | None = None,
     ) -> None:
+        payload: dict[str, Any] = {
+            "action": "delete",
+            "task_id": task_id,
+        }
+        if instance_id is not None and instance_id.strip() != "":
+            payload["instance_id"] = instance_id
         self._publish(
             user_id=user_id,
             board_id=board_id,
-            payload={
-                "action": "delete",
-                "task_id": task_id,
-            },
+            payload=payload,
         )
 
     def _publish(
