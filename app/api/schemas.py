@@ -367,6 +367,10 @@ class ErrorResponse(BaseModel):
     error: ErrorEnvelope
 
 
+class DetailResponse(BaseModel):
+    detail: str
+
+
 class AggregateInstanceDiagnostic(BaseModel):
     instance_id: str
     instance_name: str

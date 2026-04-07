@@ -61,7 +61,14 @@ def _map_topology_response(
     return AggregateTopologyResponse.model_validate(asdict(response))
 
 
-@router.get("/overview", response_model=AggregateOverviewResponse)
+@router.get(
+    "/overview",
+    response_model=AggregateOverviewResponse,
+    responses={
+        401: {"model": ErrorResponse},
+        500: {"model": ErrorResponse},
+    },
+)
 def get_overview(
     request: Request,
     db_session: Session = Depends(get_session),
@@ -84,7 +91,14 @@ def get_overview(
     )
 
 
-@router.get("/topology", response_model=AggregateTopologyResponse)
+@router.get(
+    "/topology",
+    response_model=AggregateTopologyResponse,
+    responses={
+        401: {"model": ErrorResponse},
+        500: {"model": ErrorResponse},
+    },
+)
 def get_topology(
     request: Request,
     db_session: Session = Depends(get_session),

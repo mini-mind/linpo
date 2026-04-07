@@ -5,6 +5,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request, Response
+from fastapi.openapi.utils import get_openapi
 
 
 def _load_local_env_file() -> None:
@@ -48,6 +49,7 @@ from app.api.auth import router as auth_router
 from app.api.instances import router as instances_router
 from app.api.ops import router as ops_router
 from app.api.realtime import router as realtime_router
+from app.api.schemas import DetailResponse
 from app.api.tasks_flow_planner import router as tasks_flow_planner_router
 from app.api.tasks_flow_task import router as tasks_flow_task_router
 from app.api.tasks_flow_draft import router as tasks_flow_draft_router
@@ -142,6 +144,38 @@ app.state.aggregate_service = AggregateService(
 )
 
 
+def _custom_openapi() -> dict[str, object]:
+    if app.openapi_schema is not None:
+        return app.openapi_schema
+
+    schema = get_openapi(
+        title=app.title,
+        version="0.1.0",
+        description="Linpo API for OSS private deployment.",
+        routes=app.routes,
+        tags=_OPENAPI_TAGS,
+    )
+    components = schema.setdefault("components", {})
+    security_schemes = components.setdefault("securitySchemes", {})
+    security_schemes["SessionCookieAuth"] = {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "linpo_session",
+        "description": "Session cookie authentication for browser clients.",
+    }
+    security_schemes["BearerAuth"] = {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Optional bearer token auth for API clients/proxies.",
+    }
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _custom_openapi
+
+
 def _get_cors_allow_headers(request: Request) -> str:
     requested_headers = request.headers.get("access-control-request-headers")
     if requested_headers:
@@ -203,6 +237,10 @@ app.include_router(tasks_flow_draft_router)
 app.include_router(tasks_runtime_router)
 
 
-@app.get("/api/v1/health", tags=["system"])
+@app.get(
+    "/api/v1/health",
+    tags=["system"],
+    responses={500: {"model": DetailResponse}},
+)
 def health() -> dict[str, str]:
     return {"status": "ok"}

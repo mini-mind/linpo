@@ -646,8 +646,9 @@ def test_login_requires_identifier(isolated_database_url: str) -> None:
         {"password": "secret-123"},
     )
 
-    assert status_code == 400
-    assert payload == {"detail": "identifier is required"}
+    assert status_code == 422
+    assert payload["detail"][0]["type"] == "missing"
+    assert payload["detail"][0]["loc"] == ["body", "identifier"]
 
 
 def test_login_rejects_username_alias_field(isolated_database_url: str) -> None:
@@ -664,8 +665,9 @@ def test_login_rejects_username_alias_field(isolated_database_url: str) -> None:
         {"username": "alice", "password": "secret-123"},
     )
 
-    assert status_code == 400
-    assert payload == {"detail": "identifier is required"}
+    assert status_code == 422
+    assert payload["detail"][0]["type"] == "missing"
+    assert payload["detail"][0]["loc"] == ["body", "identifier"]
 
 
 def test_profile_patch_updates_avatar_and_me_reflects_change(isolated_database_url: str) -> None:

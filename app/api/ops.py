@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.schemas import (
+    DetailResponse,
     OpsCheckItem,
     OpsDiagnosticsResponse,
     OpsDiagnosticsSummary,
@@ -31,7 +32,14 @@ def get_current_user(
     return user
 
 
-@router.get("/setup", response_model=OpsSetupResponse)
+@router.get(
+    "/setup",
+    response_model=OpsSetupResponse,
+    responses={
+        401: {"model": DetailResponse},
+        500: {"model": DetailResponse},
+    },
+)
 def get_setup(
     current_user: User = Depends(get_current_user),
     db_session: Session = Depends(get_session),
@@ -52,7 +60,14 @@ def get_setup(
     )
 
 
-@router.get("/diagnostics", response_model=OpsDiagnosticsResponse)
+@router.get(
+    "/diagnostics",
+    response_model=OpsDiagnosticsResponse,
+    responses={
+        401: {"model": DetailResponse},
+        500: {"model": DetailResponse},
+    },
+)
 def get_diagnostics(
     current_user: User = Depends(get_current_user),
     db_session: Session = Depends(get_session),

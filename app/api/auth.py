@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db.session import get_session
+from app.api.schemas import DetailResponse
 from app.services.auth_service import (
     DuplicateEmailError,
     DuplicateUsernameError,
@@ -32,7 +33,7 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    identifier: str | None = None
+    identifier: str
     password: str
 
 
@@ -98,7 +99,10 @@ def login(
     return _user_payload(user.id, user.username, user.email, user.avatar_data_url)
 
 
-@router.post("/logout")
+@router.post(
+    "/logout",
+    responses={500: {"model": DetailResponse}},
+)
 def logout(
     request: Request,
     response: Response,
@@ -111,7 +115,13 @@ def logout(
     return {"ok": True}
 
 
-@router.get("/me")
+@router.get(
+    "/me",
+    responses={
+        401: {"model": DetailResponse},
+        500: {"model": DetailResponse},
+    },
+)
 def get_current_user(
     request: Request,
     db_session: Session = Depends(get_session),

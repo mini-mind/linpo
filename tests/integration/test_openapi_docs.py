@@ -37,3 +37,51 @@ def test_openapi_paths_are_versioned_and_grouped_by_domain() -> None:
         ]["tags"]
         == ["flow-internal"]
     )
+
+
+def test_openapi_exposes_auth_security_schemes() -> None:
+    payload = cast(dict[str, Any], load_openapi_payload())
+    components = cast(dict[str, Any], payload["components"])
+    security_schemes = cast(dict[str, Any], components["securitySchemes"])
+
+    assert "SessionCookieAuth" in security_schemes
+    assert security_schemes["SessionCookieAuth"]["type"] == "apiKey"
+    assert security_schemes["SessionCookieAuth"]["in"] == "cookie"
+    assert security_schemes["SessionCookieAuth"]["name"] == "linpo_session"
+
+    assert "BearerAuth" in security_schemes
+    assert security_schemes["BearerAuth"]["type"] == "http"
+    assert security_schemes["BearerAuth"]["scheme"] == "bearer"
+
+
+def test_openapi_login_request_requires_identifier() -> None:
+    payload = cast(dict[str, Any], load_openapi_payload())
+    schemas = cast(dict[str, Any], cast(dict[str, Any], payload["components"])["schemas"])
+    login_schema = cast(dict[str, Any], schemas["LoginRequest"])
+    required = cast(list[str], login_schema["required"])
+
+    assert "identifier" in required
+    assert "password" in required
+
+
+def test_openapi_core_endpoints_declare_non_2xx_responses() -> None:
+    payload = cast(dict[str, Any], load_openapi_payload())
+    paths = cast(dict[str, Any], payload["paths"])
+    required_non_2xx: list[tuple[str, str]] = [
+        ("/api/v1/health", "get"),
+        ("/api/v1/summary/overview", "get"),
+        ("/api/v1/summary/topology", "get"),
+        ("/api/v1/auth/logout", "post"),
+        ("/api/v1/auth/me", "get"),
+        ("/api/v1/instances", "get"),
+        ("/api/v1/instances/messages", "get"),
+        ("/api/v1/ops/setup", "get"),
+        ("/api/v1/ops/diagnostics", "get"),
+    ]
+
+    for path, method in required_non_2xx:
+        operation = cast(dict[str, Any], cast(dict[str, Any], paths[path])[method])
+        response_codes = cast(dict[str, Any], operation["responses"]).keys()
+        assert any(not str(code).startswith("2") for code in response_codes), (
+            f"{method.upper()} {path} must declare at least one non-2xx response"
+        )

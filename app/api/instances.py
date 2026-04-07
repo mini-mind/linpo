@@ -33,6 +33,7 @@ from app.api.schemas import (
     InstanceValidationErrorResponse,
     InstanceValidationResponse,
     InstanceWriteRequest,
+    DetailResponse,
     PairingSessionAttachRequest,
     PairingSessionAttachByCodeRequest,
     PairingSessionCreateRequest,
@@ -320,7 +321,14 @@ def _get_owned_instance_task(
     return task
 
 
-@router.get("", response_model=list[InstanceItem])
+@router.get(
+    "",
+    response_model=list[InstanceItem],
+    responses={
+        401: {"model": DetailResponse},
+        500: {"model": DetailResponse},
+    },
+)
 def list_instances(
     current_user: User = Depends(get_current_user),
     db_session: Session = Depends(get_session),
@@ -752,7 +760,14 @@ def confirm_agent_receipt(
     )
 
 
-@router.get("/messages", response_model=list[UserMessageItem])
+@router.get(
+    "/messages",
+    response_model=list[UserMessageItem],
+    responses={
+        401: {"model": DetailResponse},
+        500: {"model": DetailResponse},
+    },
+)
 def list_messages(
     current_user: User = Depends(get_current_user),
     db_session: Session = Depends(get_session),
