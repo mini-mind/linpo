@@ -155,6 +155,59 @@ def test_generate_flow_does_not_commit_db_session_directly() -> None:
     )
 
 
+def test_tasks_api_does_not_directly_use_db_session_primitives() -> None:
+    tasks_api_path = Path(__file__).resolve().parent.parent / "app" / "api" / "tasks.py"
+    source = tasks_api_path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(tasks_api_path))
+
+    forbidden_attrs = {"add", "delete", "execute", "commit", "flush"}
+    violations: list[str] = []
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "db_session"
+            and func.attr in forbidden_attrs
+        ):
+            violations.append(f"{func.value.id}.{func.attr}")
+
+    assert violations == [], (
+        "app/api/tasks.py must not directly call db_session primitives; "
+        f"found: {violations}"
+    )
+
+
+def test_api_layer_does_not_directly_use_db_session_primitives() -> None:
+    api_dir = Path(__file__).resolve().parent.parent / "app" / "api"
+    py_files = sorted(path for path in api_dir.glob("*.py") if path.name != "__init__.py")
+    forbidden_attrs = {"add", "delete", "execute", "commit", "flush"}
+    violations: list[str] = []
+
+    for path in py_files:
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if (
+                isinstance(func, ast.Attribute)
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "db_session"
+                and func.attr in forbidden_attrs
+            ):
+                violations.append(f"{path.name}:{func.value.id}.{func.attr}")
+
+    assert violations == [], (
+        "app/api layer must not directly call db_session primitives; "
+        f"found: {violations}"
+    )
+
+
 def test_services_layer_does_not_import_api_layer() -> None:
     services_dir = Path(__file__).resolve().parent.parent / "app" / "services"
     py_files = sorted(path for path in services_dir.rglob("*.py") if path.name != "__init__.py")
