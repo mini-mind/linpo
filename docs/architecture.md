@@ -282,7 +282,7 @@ flowchart LR
 
 约束补充：
 
-- `app/api/tasks.py` 仅保留占位，不再承载路由与业务逻辑。
+- `app/api/tasks.py` 已删除；任务路由仅允许存在于 `tasks_flow_planner/tasks_flow_task/tasks_flow_draft/tasks_runtime`。
 - `tasks_*` 路由模块之间不互相导入，公共逻辑只允许下沉到 `tasks_common` 或 service 层。
 - API 层不直接执行 `Session.add/delete/execute/commit/flush/rollback/merge`。
 
@@ -360,22 +360,23 @@ flowchart LR
   - `app/adapters/openclaw_adapter.py` 仅抛 adapter/domain 错误类型。
   - API/Application 统一完成 `ProviderAdapterError -> HTTP` 的边界映射。
 - 任务链路：
-  - `app/api/tasks.py` 逐步拆分：`TaskDispatchService`、`TaskRunCallbackService`、`FlowRequirementService`。
+  - `tasks` 路由已物理拆分为 `tasks_flow_planner/tasks_flow_task/tasks_flow_draft/tasks_runtime`。
   - 路由层仅保留请求/响应组装与调用编排入口。
 
 ### 11.3.1 任务模块关系图（当前/目标）
 
-当前（高耦合）：
-
-`main.py -> app/api/tasks.py (flow planner + flow task + runtime callback + task crud + requirement lifecycle)`
-`tasks.py -> app/services/* + app/db/models + app/api/schemas`
-
-目标（解耦后）：
+当前（已完成拆分）：
 
 `main.py -> app/api/tasks_flow_planner.py`
 `main.py -> app/api/tasks_flow_task.py`
+`main.py -> app/api/tasks_flow_draft.py`
 `main.py -> app/api/tasks_runtime.py`
 `tasks_* routers -> app/api/tasks_dependencies.py -> app/services/*`
+
+下一步（继续解耦）：
+
+`tasks_flow_task.py -> flow_canvas_service（布局/边构建下沉）`
+`tasks_runtime.py -> task_callback_resolver_service（回调地址推导下沉）`
 
 约束：
 
@@ -386,7 +387,7 @@ flowchart LR
 ### 11.4 分阶段推进
 
 - Phase 1（立即执行）：修复跨层反向依赖、adapter 框架耦合、测试红线（全绿基线）。
-- Phase 2（短期）：抽离任务调度/回调编排服务，缩减 `tasks.py` 职责密度。
+- Phase 2（短期）：继续抽离任务调度/回调编排细节，缩减 `tasks_*` router 单文件复杂度。
 - Phase 3（中期）：拆分超大服务（`observer_data`、`flow_planner_session_service`）为 repository/rules/publisher/mapper。
 
 ### 11.5 验收标准

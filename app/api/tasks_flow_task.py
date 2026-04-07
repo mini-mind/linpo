@@ -35,6 +35,11 @@ from app.api.tasks_common import build_canvas_edges, normalize_task_status, task
 from app.db.models import Task, User
 from app.db.session import get_session
 from app.services.instance_service import InstanceNotFoundError, InstanceService
+from app.services.flow_canvas_service import (
+    FlowCanvasCycleError,
+    build_layout as build_flow_canvas_layout,
+    resolve_layers as resolve_flow_canvas_layers,
+)
 from app.services.provider_application_service import ProviderApplicationService, ProviderExecutionContext
 from app.services.task_dispatch_service import TaskDispatchService
 from app.services.task_service import TaskCreateInput, TaskService
@@ -88,44 +93,6 @@ def _is_flow_editable_task(task: Task) -> bool:
     return _is_flow_interrupted_blocked_task(task) or status in {"queued", "running"}
 
 
-def _resolve_layers(nodes: list[_FlowNodeDraft]) -> list[list[str]]:
-    node_ids = {node.id for node in nodes}
-    indegree: dict[str, int] = {node.id: 0 for node in nodes}
-    graph: dict[str, list[str]] = {node.id: [] for node in nodes}
-    level: dict[str, int] = {node.id: 0 for node in nodes}
-
-    for node in nodes:
-        for dep in node.depends_on:
-            if dep not in node_ids or dep == node.id:
-                continue
-            indegree[node.id] += 1
-            graph[dep].append(node.id)
-
-    queue = [node.id for node in nodes if indegree[node.id] == 0]
-    ordered: list[str] = []
-
-    while queue:
-        current = queue.pop(0)
-        ordered.append(current)
-        current_level = level.get(current, 0)
-        for nxt in graph.get(current, []):
-            level[nxt] = max(level.get(nxt, 0), current_level + 1)
-            indegree[nxt] = indegree[nxt] - 1
-            if indegree[nxt] == 0:
-                queue.append(nxt)
-
-    if len(ordered) != len(nodes):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Flow DAG has cycles")
-
-    layers: list[list[str]] = []
-    for node_id in ordered:
-        lv = level.get(node_id, 0)
-        while len(layers) <= lv:
-            layers.append([])
-        layers[lv].append(node_id)
-    return layers
-
-
 def _to_flow_drafts_from_canvas(
     *,
     nodes: list[FlowCanvasNode],
@@ -165,13 +132,11 @@ def _build_canvas_nodes(
     instance_id_by_node: dict[str, str] | None = None,
     status_by_node_id: dict[str, TaskStatus] | None = None,
 ) -> list[FlowCanvasNode]:
-    layer_index = {node_id: idx for idx, layer in enumerate(layers) for node_id in layer}
-    slot_index = {node_id: slot for layer in layers for slot, node_id in enumerate(layer)}
+    layout_by_node = build_flow_canvas_layout(layers=layers)
 
     canvas_nodes: list[FlowCanvasNode] = []
     for node in nodes:
-        layer = layer_index.get(node.id, 0)
-        slot = slot_index.get(node.id, 0)
+        layout = layout_by_node.get(node.id)
         resolved_agent_id = (
             agent_id_by_node.get(node.id, "").strip()
             if isinstance(agent_id_by_node, dict)
@@ -197,9 +162,9 @@ def _build_canvas_nodes(
                 title=node.title,
                 description=node.description,
                 depends_on=node.depends_on,
-                x=float(layer * 360 + 120),
-                y=float(slot * 180 + 120),
-                layer=layer + 1,
+                x=(layout.x if layout is not None else 120.0),
+                y=(layout.y if layout is not None else 120.0),
+                layer=(layout.layer if layout is not None else 1),
                 sensitive=node.sensitive,
                 status=resolved_status,
                 agent_id=resolved_agent_id,
@@ -378,7 +343,13 @@ def confirm_flow(
     manager_session_key = f"linpo:flow:{normalized_board_id}:manager"
 
     drafts = _to_flow_drafts_from_canvas(nodes=payload.nodes, edges=payload.edges)
-    layers = _resolve_layers(drafts)
+    try:
+        layers = resolve_flow_canvas_layers(
+            node_ids=[node.id for node in drafts],
+            depends_on_by_node={node.id: node.depends_on for node in drafts},
+        )
+    except FlowCanvasCycleError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     node_by_id = {node.id: node for node in drafts}
     node_agent_id_by_id: dict[str, str] = {}
     for canvas_node in payload.nodes:

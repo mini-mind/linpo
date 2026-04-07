@@ -334,6 +334,105 @@
    - 共享逻辑单点维护；
    - 任务运行与回调安全链路回归全绿。
 
+#### 阶段 13（删除 tasks 旧占位模块）
+
+目标：彻底移除 `app/api/tasks.py` 占位文件，避免误用旧路径。
+
+1. 调查：
+   - 确认运行时与测试代码无 `app.api.tasks` 导入依赖；
+   - 识别架构约束测试中对 `tasks.py` 存在性的假设。
+2. 设计：
+   - 文档与测试约束改为“禁止依赖旧模块 + 允许模块不存在”；
+   - 不新增任何兼容别名模块。
+3. 实现：
+   - 删除 `app/api/tasks.py`；
+   - 同步 `tests/test_architecture_constraints.py` 与文档口径。
+4. 测试：
+   - `tests/test_architecture_constraints.py`
+   - `tests/integration/test_tasks_api.py`
+5. 验收：
+   - 仓库中不再存在 `app/api/tasks.py`；
+   - tasks 主链路回归全绿。
+
+#### 阶段 14（runtime 回调地址解析下沉）
+
+目标：把 `tasks_runtime` 内的回调地址推导规则下沉到 service，进一步压薄 API 层。
+
+1. 调查：
+   - 锁定 `_event_callback_base_url/_event_callback_public_port/_event_callback_base_url_candidates` 调用链。
+2. 设计：
+   - 新增 `app/services/task_callback_base_url_service.py` 承载环境变量读取与候选地址推导。
+   - `tasks_runtime` 仅注入并调用 service 函数，不再保留同名实现。
+3. 实现：
+   - 迁移上述函数到 service 并替换调用；
+   - 同步调整集成测试 monkeypatch 目标路径。
+4. 测试：
+   - `tests/integration/test_tasks_api.py`
+   - `tests/integration/test_task_callback_security.py`
+   - `tests/test_architecture_constraints.py`
+5. 验收：
+   - `tasks_runtime` 不再内嵌回调地址解析细节；
+   - 任务投放与回调安全链路回归全绿。
+
+#### 阶段 15（flow_task 画布布局下沉）
+
+目标：将 `tasks_flow_task` 中 DAG 分层与画布坐标计算下沉到 service，进一步压薄 API 层。
+
+1. 调查：
+   - 锁定 `_resolve_layers` 与 `_build_canvas_nodes` 的调用链和错误语义（含 cycle 报错）。
+2. 设计：
+   - 新增 `app/services/flow_canvas_service.py`，承载分层与布局计算纯逻辑；
+   - API 层保留 HTTP 错误映射，不在路由文件内保留拓扑算法实现。
+3. 实现：
+   - `tasks_flow_task` 改为调用 `flow_canvas_service`；
+   - 保持 cycle 场景返回 `400` 与既有错误文案不变。
+4. 测试：
+   - 新增 service 单元测试覆盖分层与 cycle 失败场景；
+   - 回归 `tests/integration/test_tasks_api.py` 与 `tests/test_architecture_constraints.py`。
+5. 验收：
+   - `tasks_flow_task` 不再内嵌 DAG 分层算法；
+   - 关键流程确认与看板链路回归全绿。
+
+#### 阶段 16（planner 分层算法并轨）
+
+目标：消除 `tasks_flow_planner` 与 `flow_canvas_service` 的分层算法分叉，实现单点维护。
+
+1. 调查：
+   - 明确 planner 当前 cycle 语义为“追加 unresolved 层，不抛 400”；
+   - 明确 flow_task 当前 cycle 语义为“抛错并返回 400”。
+2. 设计：
+   - 在 `flow_canvas_service.resolve_layers` 增加 cycle 策略参数（`raise/append_unresolved`）；
+   - planner 与 flow_task 仅通过参数差异复用同一实现。
+3. 实现：
+   - 删除 `tasks_flow_planner._resolve_layers` 本地实现；
+   - `tasks_flow_planner` 改为调用 service（`append_unresolved`）。
+4. 测试：
+   - 扩展 `tests/test_flow_canvas_service.py` 覆盖 `append_unresolved`；
+   - 回归 `tests/integration/test_tasks_api.py` 与架构约束测试。
+5. 验收：
+   - 分层算法单点维护；
+   - planner 与 flow_task 既有行为保持不变。
+
+#### 阶段 17（dispatch 回调地址解析并轨）
+
+目标：消除 `TaskDispatchService` 与 `task_callback_base_url_service` 的回调地址解析重复实现。
+
+1. 调查：
+   - 锁定 `TaskDispatchService` 内 `_event_callback_base_url/_event_callback_public_port/_event_callback_base_url_candidates`。
+2. 设计：
+   - 保留 `callback_base_url_candidates_resolver` 注入扩展点；
+   - 未注入时统一调用 `task_callback_base_url_service.event_callback_base_url_candidates`。
+3. 实现：
+   - 删除 dispatch service 内部重复 env/url 解析逻辑；
+   - 不改任务投放提示词和失败语义。
+4. 测试：
+   - `tests/test_task_dispatch_service.py`
+   - `tests/integration/test_tasks_api.py`
+   - `tests/integration/test_task_callback_security.py`
+5. 验收：
+   - 回调候选地址规则单点维护；
+   - dispatch 与 callback 安全链路回归全绿。
+
 ## 6. 验收标准
 
 1. 新用户按文档可在 30 分钟内完成部署与首个实例接入。

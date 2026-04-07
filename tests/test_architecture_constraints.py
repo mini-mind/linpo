@@ -117,23 +117,9 @@ def test_tasks_flow_planner_module_does_not_import_tasks_module() -> None:
     )
 
 
-def test_tasks_api_does_not_define_local_dispatch_orchestration_functions() -> None:
+def test_tasks_legacy_module_is_removed() -> None:
     tasks_api_path = Path(__file__).resolve().parent.parent / "app" / "api" / "tasks.py"
-    source = tasks_api_path.read_text(encoding="utf-8")
-    tree = ast.parse(source, filename=str(tasks_api_path))
-
-    forbidden_function_names: list[str] = []
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            function_name = node.name
-            if function_name.startswith("_dispatch_queue") or function_name == "_dispatch_next_queued_task":
-                forbidden_function_names.append(function_name)
-
-    assert forbidden_function_names == [], (
-        "app/api/tasks.py must not define local dispatch orchestration helpers "
-        "(_dispatch_queue* or _dispatch_next_queued_task); "
-        f"found: {forbidden_function_names}"
-    )
+    assert not tasks_api_path.exists(), "app/api/tasks.py must be removed after router split"
 
 
 def test_realtime_api_does_not_directly_use_db_session_primitives() -> None:
@@ -245,87 +231,6 @@ def test_services_layer_does_not_import_api_layer() -> None:
     )
 
 
-def test_tasks_api_does_not_declare_flow_planner_routes() -> None:
-    tasks_api_path = Path(__file__).resolve().parent.parent / "app" / "api" / "tasks.py"
-    source = tasks_api_path.read_text(encoding="utf-8")
-    tree = ast.parse(source, filename=str(tasks_api_path))
-
-    forbidden_fragments = ("/flow/planner", "/flow/generate")
-    violations: list[str] = []
-
-    for node in tree.body:
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for decorator in node.decorator_list:
-            if not isinstance(decorator, ast.Call):
-                continue
-            if not isinstance(decorator.func, ast.Attribute):
-                continue
-            if not isinstance(decorator.func.value, ast.Name) or decorator.func.value.id != "router":
-                continue
-
-            route_path: str | None = None
-            if decorator.args and isinstance(decorator.args[0], ast.Constant) and isinstance(decorator.args[0].value, str):
-                route_path = decorator.args[0].value
-            if route_path is None:
-                for keyword in decorator.keywords:
-                    if keyword.arg != "path":
-                        continue
-                    if isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str):
-                        route_path = keyword.value.value
-                        break
-
-            if route_path is None:
-                continue
-            if any(fragment in route_path for fragment in forbidden_fragments):
-                violations.append(f"{node.name}:{route_path}")
-
-    assert violations == [], (
-        "app/api/tasks.py must not declare flow planner endpoints "
-        "(/flow/planner* or /flow/generate); move them to app/api/tasks_flow_planner.py. "
-        f"found: {violations}"
-    )
-
-
-def test_tasks_api_does_not_declare_flow_task_routes() -> None:
-    tasks_api_path = Path(__file__).resolve().parent.parent / "app" / "api" / "tasks.py"
-    source = tasks_api_path.read_text(encoding="utf-8")
-    tree = ast.parse(source, filename=str(tasks_api_path))
-
-    forbidden_fragments = ("/flow/confirm", "/requirements/")
-    violations: list[str] = []
-
-    for node in tree.body:
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for decorator in node.decorator_list:
-            if not isinstance(decorator, ast.Call):
-                continue
-            if not isinstance(decorator.func, ast.Attribute):
-                continue
-            if not isinstance(decorator.func.value, ast.Name) or decorator.func.value.id != "router":
-                continue
-
-            route_path: str | None = None
-            if decorator.args and isinstance(decorator.args[0], ast.Constant) and isinstance(decorator.args[0].value, str):
-                route_path = decorator.args[0].value
-            if route_path is None:
-                for keyword in decorator.keywords:
-                    if keyword.arg != "path":
-                        continue
-                    if isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str):
-                        route_path = keyword.value.value
-                        break
-            if route_path is None:
-                continue
-            if any(fragment in route_path for fragment in forbidden_fragments):
-                violations.append(f"{node.name}:{route_path}")
-
-    assert violations == [], (
-        "app/api/tasks.py must not declare flow task endpoints "
-        "(/flow/confirm or /requirements/*); move them to app/api/tasks_flow_task.py. "
-        f"found: {violations}"
-    )
 
 
 def test_tasks_flow_task_module_does_not_import_tasks_module() -> None:
@@ -354,48 +259,6 @@ def test_tasks_flow_task_module_does_not_import_tasks_module() -> None:
     assert forbidden_imports == [], (
         "app/api/tasks_flow_task.py must not import app.api.tasks; "
         f"found forbidden imports: {forbidden_imports}"
-    )
-
-
-def test_tasks_api_does_not_declare_flow_draft_routes() -> None:
-    tasks_api_path = Path(__file__).resolve().parent.parent / "app" / "api" / "tasks.py"
-    source = tasks_api_path.read_text(encoding="utf-8")
-    tree = ast.parse(source, filename=str(tasks_api_path))
-
-    forbidden_fragments = ("/flow/drafts",)
-    violations: list[str] = []
-
-    for node in tree.body:
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for decorator in node.decorator_list:
-            if not isinstance(decorator, ast.Call):
-                continue
-            if not isinstance(decorator.func, ast.Attribute):
-                continue
-            if not isinstance(decorator.func.value, ast.Name) or decorator.func.value.id != "router":
-                continue
-
-            route_path: str | None = None
-            if decorator.args and isinstance(decorator.args[0], ast.Constant) and isinstance(decorator.args[0].value, str):
-                route_path = decorator.args[0].value
-            if route_path is None:
-                for keyword in decorator.keywords:
-                    if keyword.arg != "path":
-                        continue
-                    if isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str):
-                        route_path = keyword.value.value
-                        break
-
-            if route_path is None:
-                continue
-            if any(fragment in route_path for fragment in forbidden_fragments):
-                violations.append(f"{node.name}:{route_path}")
-
-    assert violations == [], (
-        "app/api/tasks.py must not declare flow draft endpoints "
-        "(/flow/drafts*); move them to app/api/tasks_flow_draft.py. "
-        f"found: {violations}"
     )
 
 
@@ -428,55 +291,6 @@ def test_tasks_flow_draft_module_does_not_import_tasks_module() -> None:
     )
 
 
-def test_tasks_api_does_not_declare_runtime_routes() -> None:
-    tasks_api_path = Path(__file__).resolve().parent.parent / "app" / "api" / "tasks.py"
-    source = tasks_api_path.read_text(encoding="utf-8")
-    tree = ast.parse(source, filename=str(tasks_api_path))
-
-    forbidden_runtime_routes = {
-        ("get", ""),
-        ("post", ""),
-        ("post", "/{task_id}/interrupt"),
-        ("post", "/{task_id}/continue"),
-        ("post", "/task-runs/{run_id}/events"),
-        ("get", "/{task_id}/output-preview"),
-        ("get", "/{task_id}/output-file"),
-        ("delete", "/{task_id}"),
-    }
-    violations: list[str] = []
-
-    for node in tree.body:
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for decorator in node.decorator_list:
-            if not isinstance(decorator, ast.Call):
-                continue
-            if not isinstance(decorator.func, ast.Attribute):
-                continue
-            if not isinstance(decorator.func.value, ast.Name) or decorator.func.value.id != "router":
-                continue
-
-            method = decorator.func.attr
-            route_path: str | None = None
-            if decorator.args and isinstance(decorator.args[0], ast.Constant) and isinstance(decorator.args[0].value, str):
-                route_path = decorator.args[0].value
-            if route_path is None:
-                for keyword in decorator.keywords:
-                    if keyword.arg != "path":
-                        continue
-                    if isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str):
-                        route_path = keyword.value.value
-                        break
-            if route_path is None:
-                continue
-            if (method, route_path) in forbidden_runtime_routes:
-                violations.append(f"{node.name}:{method}:{route_path}")
-
-    assert violations == [], (
-        "app/api/tasks.py must not declare runtime task endpoints; "
-        "move them to app/api/tasks_runtime.py. "
-        f"found: {violations}"
-    )
 
 
 def test_tasks_runtime_module_does_not_import_tasks_module() -> None:

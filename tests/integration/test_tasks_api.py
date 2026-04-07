@@ -2691,7 +2691,7 @@ def test_task_dispatch_fails_when_callback_candidate_list_is_empty(
     )
 
     monkeypatch.setattr(
-        "app.api.tasks_runtime._event_callback_base_url_candidates",
+        "app.services.task_callback_base_url_service.event_callback_base_url_candidates",
         lambda **kwargs: [],
     )
     send_invoked = {"value": False}

@@ -47,6 +47,7 @@ from app.api.tasks_common import build_canvas_edges
 from app.db.models import User
 from app.db.session import get_session
 from app.services.flow_decomposition_service import FlowDecompositionService
+from app.services.flow_canvas_service import resolve_layers as resolve_flow_canvas_layers
 from app.services.flow_planner_session_service import (
     FlowPlannerSessionService,
     get_flow_planner_session_service,
@@ -80,40 +81,6 @@ def _normalize_depends_on(value: object) -> list[str]:
         if normalized:
             output.append(normalized)
     return output
-
-
-def _resolve_layers(nodes: list[_FlowNodeDraft]) -> list[list[str]]:
-    node_ids = {node.id for node in nodes}
-    dependency_map: dict[str, set[str]] = {
-        node.id: {dependency for dependency in node.depends_on if dependency in node_ids}
-        for node in nodes
-    }
-    reverse_map: dict[str, set[str]] = {node.id: set() for node in nodes}
-    for node_id, dependencies in dependency_map.items():
-        for dependency in dependencies:
-            reverse_map[dependency].add(node_id)
-
-    available = sorted([node.id for node in nodes if len(dependency_map[node.id]) == 0])
-    processed: set[str] = set()
-    layers: list[list[str]] = []
-
-    while available:
-        layer = available
-        layers.append(layer)
-        next_available_set: set[str] = set()
-        for node_id in layer:
-            processed.add(node_id)
-            for dependent in reverse_map[node_id]:
-                remaining_dependencies = dependency_map[dependent] - processed
-                if len(remaining_dependencies) == 0:
-                    next_available_set.add(dependent)
-        available = sorted(next_available_set)
-
-    if len(processed) != len(nodes):
-        unresolved = sorted(node_ids - processed)
-        layers.append(unresolved)
-
-    return layers
 
 
 def _resolve_flow_planner_agent_id(raw: str | None) -> str:
@@ -279,7 +246,11 @@ def _build_canvas_nodes(
     *,
     agent_id: str | None,
 ) -> list[FlowCanvasNode]:
-    layers = _resolve_layers(nodes)
+    layers = resolve_flow_canvas_layers(
+        node_ids=[node.id for node in nodes],
+        depends_on_by_node={node.id: node.depends_on for node in nodes},
+        on_cycle="append_unresolved",
+    )
     layer_index_map: dict[str, int] = {}
     for idx, layer in enumerate(layers):
         for node_id in layer:
