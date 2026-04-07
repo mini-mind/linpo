@@ -1,5 +1,5 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AgentWorkspace } from "./AgentWorkspace";
 
@@ -48,6 +48,7 @@ vi.mock("react-router-dom", () => ({
 describe("AgentWorkspace markdown rendering", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.spyOn(console, "info").mockImplementation(() => {});
 		mockGetAgentDetail.mockResolvedValue({
 			id: "main",
 			name: "Main Agent",
@@ -91,6 +92,10 @@ describe("AgentWorkspace markdown rendering", () => {
 				},
 			],
 		});
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
 	});
 
 	it("renders markdown emphasis but does not inject raw HTML", async () => {

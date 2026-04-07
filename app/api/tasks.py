@@ -15,17 +15,14 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, s
 from fastapi.responses import FileResponse
 from fastapi.responses import Response
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.task_output_helpers import (
     build_task_output_preview as build_task_output_preview_helper,
     guess_output_mime_type as guess_output_mime_type_helper,
-    parse_task_dependencies as parse_task_dependencies_helper,
-    pick_existing_task_output_path as pick_existing_task_output_path_helper,
+    parse_task_dependencies,
     resolve_task_output_path as resolve_task_output_path_helper,
-    task_temp_input_paths as task_temp_input_paths_helper,
-    task_temp_output_path as task_temp_output_path_helper,
 )
 from app.api.flow_planner_helpers import (
     _build_planner_node_operations,
@@ -79,6 +76,10 @@ from app.db.models import FlowDraft, Task, User
 from app.db.session import get_session
 from app.services.auth_service import get_authenticated_user
 from app.services.flow_decomposition_service import FlowDecompositionService
+from app.services.flow_draft_service import (
+    FlowDraftService,
+    get_flow_draft_service,
+)
 from app.services.flow_planner_session_service import (
     FlowPlannerSessionService,
     get_flow_planner_session_service,
@@ -132,10 +133,6 @@ def get_flow_decomposition_service() -> FlowDecompositionService:
     return FlowDecompositionService()
 
 
-def get_task_dispatch_service() -> TaskDispatchService:
-    return TaskDispatchService()
-
-
 def get_current_user(
     request: Request,
     db_session: Session = Depends(get_session),
@@ -180,20 +177,6 @@ def _to_task_item(task: Task) -> TaskItem:
         created_at=task.created_at.isoformat(),
         updated_at=task.updated_at.isoformat(),
     )
-
-
-def _parse_or_now_iso_datetime(raw: str | None) -> datetime:
-    value = (raw or "").strip()
-    if value:
-        normalized = value.replace("Z", "+00:00")
-        try:
-            parsed = datetime.fromisoformat(normalized)
-            if parsed.tzinfo is None:
-                return parsed.replace(tzinfo=UTC)
-            return parsed.astimezone(UTC)
-        except ValueError:
-            pass
-    return datetime.now(UTC)
 
 
 def _normalize_flow_draft_nodes(
@@ -280,12 +263,6 @@ class _FlowNodeDraft:
     description: str
     depends_on: list[str]
     sensitive: bool
-
-
-@dataclass(frozen=True)
-class _DispatchResult:
-    task_id: str
-    run_id: str | None
 
 
 def _resolve_layers(nodes: list[_FlowNodeDraft]) -> list[list[str]]:
@@ -483,18 +460,6 @@ def _camelize_payload_keys(value: object) -> object:
     if isinstance(value, list):
         return [_camelize_payload_keys(item) for item in value]
     return value
-
-
-def _parse_dependencies(raw: str | None) -> list[str]:
-    return parse_task_dependencies_helper(raw)
-
-
-def _task_temp_output_path(task: Task) -> str:
-    return task_temp_output_path_helper(task)
-
-
-def _task_temp_input_paths(task: Task) -> list[str]:
-    return task_temp_input_paths_helper(task)
 
 
 def _is_sensitive_task(task: Task) -> bool:
@@ -888,226 +853,17 @@ def _sorted_board_tasks(
     return sorted(tasks, key=lambda item: (item.created_at, item.id))
 
 
-def _is_runnable_queued_task(task: Task, tasks_by_flow_node: dict[tuple[str, str], Task]) -> bool:
-    if task.status != "queued":
-        return False
-
-    extras = task.extras if isinstance(task.extras, dict) else {}
-    flow_id = str(extras.get("flow_id", "")).strip()
-    dependencies = _parse_dependencies(cast(str | None, extras.get("dependencies")))
-    if len(dependencies) == 0:
-        return True
-
-    if flow_id == "":
-        return False
-
-    for dep_node in dependencies:
-        dep_task = tasks_by_flow_node.get((flow_id, dep_node))
-        if dep_task is None:
-            return False
-        if dep_task.status != "completed":
-            return False
-    return True
-
-
-def _claim_task_for_dispatch(*, db_session: Session, task_id: UUID) -> bool:
-    claim_result = db_session.execute(
-        update(Task)
-        .where(Task.id == task_id, Task.status == "queued")
-        .values(
-            status="running",
-            updated_at=datetime.now(UTC),
-        )
-    )
-    db_session.commit()
-    return bool(claim_result.rowcount and claim_result.rowcount > 0)
-
-
-def _build_task_dispatch_prompt(
-    *,
-    board_id: str,
-    task: Task,
-    run_id: str,
-    callback_token: str,
-    callback_base_urls: list[str],
-) -> str:
-    callback_paths = [
-        f"{base_url}/api/v1/boards/{board_id}/tasks/task-runs/{run_id}/events"
-        for base_url in callback_base_urls
-    ]
-    callback_url = callback_paths[0]
-    fallback_urls = "\n".join(
-        [f"{index + 1}) {path}" for index, path in enumerate(callback_paths)]
-    )
-    input_paths = _task_temp_input_paths(task)
-    output_path = _task_temp_output_path(task)
-    input_lines = "\n".join([f"- {item}" for item in input_paths]) if input_paths else "- (无上游输入文件)"
-    return (
-        "你正在执行看板任务，请按事件契约回调 Linpo。\n"
-        f"任务标题: {task.title}\n"
-        f"任务ID: {task.id}\n"
-        f"运行ID: {run_id}\n"
-        f"主回调地址: {callback_url}\n"
-        "回调地址候选(按顺序尝试，直到返回 accepted=true):\n"
-        f"{fallback_urls}\n"
-        f"回调令牌: {callback_token}\n"
-        "回调签名规则(必须遵守):\n"
-        "- callbackSignature = HMAC-SHA256(key=callbackToken, message=canonical_json)\n"
-        '- canonical_json 使用 UTF-8 JSON 紧凑编码（separators=(",", ":")）、sort_keys=true、ensure_ascii=false\n'
-        '- canonical_json 字段固定为 {"artifact":"","eventType":"","idempotencyKey":"","message":"","occurredAt":"","requestId":"","runId":""}\n'
-        "- 缺失字段必须写空字符串；runId 使用本次运行ID；服务端会按完全相同规则验签\n\n"
-        "节点数据流通约束(必须遵守):\n"
-        "- 节点间交换数据统一使用临时文件，不共享内存上下文\n"
-        "- 读取上游输入文件:\n"
-        f"{input_lines}\n"
-        f"- 当前节点输出文件: {output_path}\n"
-        "- 如任务成功，请在 completed 事件 message 中附带输出文件路径\n"
-        "- 若默认输入/输出路径受沙箱限制无法直接访问，可先在可访问工作目录做中间处理\n"
-        f"- 但 completed 前必须把最终结果落地到“当前节点输出文件: {output_path}”\n"
-        "- 若无法落地到指定输出路径，不得回调 completed，必须回调 failed 并写明不可访问路径与原因\n"
-        "- completed 事件请同时填写 artifact=最终输出文件绝对路径，便于看板产出预览\n\n"
-        "回调格式(JSON): "
-        '{"eventType":"started|progress|need_approval|completed|failed|heartbeat",'
-        '"callbackToken":"<token>","callbackSignature":"<hex_hmac_sha256>",'
-        '"idempotencyKey":"<unique>","requestId":"<optional>",'
-        '"message":"<optional>","artifact":"<optional>","occurredAt":"<required ISO8601>"}\n'
-        "要求:\n"
-        "1) 先回调 started，且必须确认响应 accepted=true 才继续执行\n"
-        "2) 完成后必须回调 completed；若需要人工审批回调 need_approval；失败回调 failed\n"
-        "3) callbackSignature = hex(HMAC-SHA256(callbackToken, canonical_json))；字段集严格固定为 artifact/eventType/idempotencyKey/message/occurredAt/requestId/runId\n"
-        "4) 同一事件重试时复用同一 idempotencyKey 与 callbackSignature\n"
-        "5) 如果当前回调地址连接失败，立即切换下一候选地址重试\n"
-        "6) 如果任务较长，请定期 heartbeat"
-    )
-
-
-def _dispatch_next_queued_task(
+def _build_task_dispatch_service(
     *,
     task_service: TaskService,
-    db_session: Session,
     provider_application_service: ProviderApplicationService,
-    execution_context: ProviderExecutionContext,
-    user_id: UUID,
-    board_id: str,
-    instance_id: UUID | None = None,
-) -> _DispatchResult | None:
-    dispatch_service = TaskDispatchService(
+    instance_service: InstanceService,
+) -> TaskDispatchService:
+    return TaskDispatchService(
         task_service=task_service,
         provider_application_service=provider_application_service,
+        instance_service=instance_service,
         callback_base_url_candidates_resolver=_event_callback_base_url_candidates,
-    )
-    result = dispatch_service.dispatch_next_queued_task(
-        db_session,
-        user_id=user_id,
-        board_id=board_id,
-        execution_context=execution_context,
-        instance_id=instance_id,
-    )
-    if result is None:
-        return None
-    return _DispatchResult(task_id=result.task_id, run_id=result.run_id)
-
-
-def _reconcile_stale_running_tasks(
-    *,
-    task_service: TaskService,
-    db_session: Session,
-    user_id: UUID,
-    board_id: str,
-    instance_id: UUID | None = None,
-) -> bool:
-    dispatch_service = TaskDispatchService(task_service=task_service)
-    result = dispatch_service.reconcile_stale_running_tasks(
-        db_session,
-        user_id=user_id,
-        board_id=board_id,
-        instance_id=instance_id,
-    )
-    return result.changed
-
-
-def _dispatch_queue(
-    *,
-    task_service: TaskService,
-    db_session: Session,
-    provider_application_service: ProviderApplicationService,
-    execution_context: ProviderExecutionContext,
-    user_id: UUID,
-    board_id: str,
-    instance_id: UUID | None = None,
-) -> list[str]:
-    result = _dispatch_next_queued_task(
-        task_service=task_service,
-        db_session=db_session,
-        provider_application_service=provider_application_service,
-        execution_context=execution_context,
-        user_id=user_id,
-        board_id=board_id,
-        instance_id=instance_id,
-    )
-    if result is None:
-        return []
-    return [result.task_id]
-
-
-def _dispatch_queue_for_task_owner(
-    *,
-    task: Task,
-    board_id: str,
-    task_service: TaskService,
-    db_session: Session,
-    provider_application_service: ProviderApplicationService,
-    instance_service: InstanceService,
-) -> list[str]:
-    if task.instance_id is None:
-        return []
-    try:
-        instance_context = instance_service.get_openclaw_context(
-            db_session,
-            user_id=task.user_id,
-            instance_id=task.instance_id,
-        )
-    except InstanceNotFoundError:
-        return []
-    execution_context = provider_application_service.build_execution_context(instance_context)
-    return _dispatch_queue(
-        task_service=task_service,
-        db_session=db_session,
-        provider_application_service=provider_application_service,
-        execution_context=execution_context,
-        user_id=task.user_id,
-        board_id=board_id,
-        instance_id=task.instance_id,
-    )
-
-
-def _dispatch_queue_for_instance(
-    *,
-    user_id: UUID,
-    board_id: str,
-    instance_id: UUID,
-    task_service: TaskService,
-    db_session: Session,
-    provider_application_service: ProviderApplicationService,
-    instance_service: InstanceService,
-) -> list[str]:
-    try:
-        instance_context = instance_service.get_openclaw_context(
-            db_session,
-            user_id=user_id,
-            instance_id=instance_id,
-        )
-    except InstanceNotFoundError:
-        return []
-    execution_context = provider_application_service.build_execution_context(instance_context)
-    return _dispatch_queue(
-        task_service=task_service,
-        db_session=db_session,
-        provider_application_service=provider_application_service,
-        execution_context=execution_context,
-        user_id=user_id,
-        board_id=board_id,
-        instance_id=instance_id,
     )
 
 
@@ -1133,7 +889,7 @@ def _remove_dependency_from_requirement_tasks(
         if _task_requirement_id(task) != requirement_id:
             continue
         extras = dict(task.extras if isinstance(task.extras, dict) else {})
-        dependencies = _parse_dependencies(cast(str | None, extras.get("dependencies")))
+        dependencies = parse_task_dependencies(cast(str | None, extras.get("dependencies")))
         if deleted_node_id not in dependencies:
             continue
         next_dependencies = [item for item in dependencies if item != deleted_node_id]
@@ -1159,16 +915,13 @@ def list_flow_drafts(
     board_id: str,
     db_session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
+    flow_draft_service: FlowDraftService = Depends(get_flow_draft_service),
 ) -> list[FlowDraftItem]:
-    normalized_board_id = board_id.strip() or "default"
-    records = db_session.execute(
-        select(FlowDraft)
-        .where(
-            FlowDraft.user_id == current_user.id,
-            FlowDraft.board_id == normalized_board_id,
-        )
-        .order_by(FlowDraft.updated_at.desc(), FlowDraft.created_at.desc())
-    ).scalars().all()
+    records = flow_draft_service.list_flow_drafts(
+        db_session,
+        user_id=current_user.id,
+        board_id=board_id,
+    )
     return [_to_flow_draft_item(record) for record in records]
 
 
@@ -1178,57 +931,18 @@ def upsert_flow_draft(
     payload: FlowDraftUpsertRequest,
     db_session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
+    flow_draft_service: FlowDraftService = Depends(get_flow_draft_service),
 ) -> FlowDraftItem:
-    normalized_board_id = board_id.strip() or "default"
     normalized_flow_id = payload.id.strip()
     if normalized_flow_id == "":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="flow draft id is required")
 
-    existing = db_session.execute(
-        select(FlowDraft).where(
-            FlowDraft.user_id == current_user.id,
-            FlowDraft.board_id == normalized_board_id,
-            FlowDraft.flow_id == normalized_flow_id,
-        )
-    ).scalar_one_or_none()
-    now = datetime.now(UTC)
-    created_at = existing.created_at if existing is not None else _parse_or_now_iso_datetime(payload.created_at)
-    normalized_nodes = _normalize_flow_draft_nodes(nodes=payload.nodes, edges=payload.edges)
-    normalized_edges = payload.edges
-    normalized_messages = payload.planner_messages
-    normalized_lanes = [lane for lane in payload.lanes if lane.id.strip() != ""]
-    lane_ids = {lane.id for lane in normalized_lanes}
-    node_ids = {node.id for node in normalized_nodes}
-    normalized_node_lane_by_id = {
-        node_id: lane_id
-        for node_id, lane_id in payload.node_lane_by_id.items()
-        if node_id in node_ids and lane_id in lane_ids
-    }
-
-    record = existing or FlowDraft(
+    record = flow_draft_service.upsert_flow_draft(
+        db_session,
         user_id=current_user.id,
-        board_id=normalized_board_id,
-        flow_id=normalized_flow_id,
-        created_at=created_at,
+        board_id=board_id,
+        payload=payload,
     )
-    record.name = payload.name.strip() or "未命名流程"
-    record.requirement = payload.requirement
-    record.nodes = [node.model_dump(mode="json") for node in normalized_nodes]
-    record.edges = [edge.model_dump(mode="json") for edge in normalized_edges]
-    record.planner_messages = [item.model_dump(mode="json") for item in normalized_messages]
-    record.lanes = [lane.model_dump(mode="json") for lane in normalized_lanes]
-    record.node_lane_by_id = normalized_node_lane_by_id
-    planner_session_key = (payload.planner_session_key or "").strip()
-    execution_session_prefix = (payload.execution_session_prefix or "").strip()
-    executor_agent_id = (payload.executor_agent_id or "").strip()
-    record.planner_session_key = planner_session_key or None
-    record.execution_session_prefix = execution_session_prefix or None
-    record.executor_agent_id = executor_agent_id or None
-    record.updated_at = now
-    if existing is None:
-        db_session.add(record)
-    db_session.commit()
-    db_session.refresh(record)
     return _to_flow_draft_item(record)
 
 
@@ -1238,23 +952,18 @@ def delete_flow_draft(
     flow_id: str,
     db_session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
+    flow_draft_service: FlowDraftService = Depends(get_flow_draft_service),
 ) -> FlowDraftDeleteResponse:
-    normalized_board_id = board_id.strip() or "default"
     normalized_flow_id = flow_id.strip()
     if normalized_flow_id == "":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="flow draft id is required")
-    existing = db_session.execute(
-        select(FlowDraft).where(
-            FlowDraft.user_id == current_user.id,
-            FlowDraft.board_id == normalized_board_id,
-            FlowDraft.flow_id == normalized_flow_id,
-        )
-    ).scalar_one_or_none()
-    if existing is None:
-        return FlowDraftDeleteResponse(deleted=False, flow_id=normalized_flow_id)
-    db_session.delete(existing)
-    db_session.commit()
-    return FlowDraftDeleteResponse(deleted=True, flow_id=normalized_flow_id)
+    deleted = flow_draft_service.delete_flow_draft(
+        db_session,
+        user_id=current_user.id,
+        board_id=board_id,
+        flow_id=normalized_flow_id,
+    )
+    return FlowDraftDeleteResponse(deleted=deleted, flow_id=normalized_flow_id)
 
 
 @router.post("/flow/generate", response_model=FlowGenerateResponse, tags=["flow"])
@@ -1307,7 +1016,6 @@ def generate_flow(
             "current_node_count": len(normalized_current_nodes),
         },
     )
-    db_session.commit()
 
     try:
         dispatch = flow_decomposition_service.dispatch_planner(
@@ -1357,7 +1065,6 @@ def generate_flow(
                 "current_node_count": len(normalized_current_nodes),
             },
         )
-        db_session.commit()
     manager_session_key = f"linpo:flow:{normalized_board_id}:manager"
     execution_session_prefix = f"linpo:flow:{normalized_board_id}:exec"
     latest_snapshot = flow_planner_session_service.get_snapshot_for_user(
@@ -1731,7 +1438,6 @@ def stop_flow_planner(
         user_id=current_user.id,
         session_key=payload.planner_session_key,
     )
-    db_session.commit()
     try:
         provider_application_service.pause_agent(
             data_source="openclaw",
@@ -1765,7 +1471,6 @@ def planner_upsert_single_node(
         planner_token=planner_token,
         node=payload.node.model_dump(mode="json"),
     )
-    db_session.commit()
     return FlowPlannerSessionItem(
         session_key=snapshot.session_key,
         status=cast(Any, snapshot.status),
@@ -1790,7 +1495,6 @@ def planner_delete_single_node(
         planner_token=planner_token,
         node_id=payload.node_id,
     )
-    db_session.commit()
     return FlowPlannerSessionItem(
         session_key=snapshot.session_key,
         status=cast(Any, snapshot.status),
@@ -1816,7 +1520,6 @@ def planner_complete_session(
         nodes=[item.model_dump(mode="json") for item in payload.nodes],
         summary=payload.summary,
     )
-    db_session.commit()
     return FlowPlannerSessionItem(
         session_key=snapshot.session_key,
         status=cast(Any, snapshot.status),
@@ -1841,7 +1544,6 @@ def planner_fail_session(
         planner_token=planner_token,
         reason=payload.reason,
     )
-    db_session.commit()
     return FlowPlannerSessionItem(
         session_key=snapshot.session_key,
         status=cast(Any, snapshot.status),
@@ -2014,17 +1716,19 @@ def confirm_flow(
     except HTTPException:
         pass
 
+    dispatch_service = _build_task_dispatch_service(
+        task_service=task_service,
+        provider_application_service=provider_application_service,
+        instance_service=instance_service,
+    )
     dispatched_task_ids: list[str] = []
     for instance_id in sorted(created_instance_ids, key=lambda value: str(value)):
         dispatched_task_ids.extend(
-            _dispatch_queue_for_instance(
+            dispatch_service.dispatch_queue_for_instance(
+                db_session,
                 user_id=current_user.id,
                 board_id=normalized_board_id,
                 instance_id=instance_id,
-                task_service=task_service,
-                db_session=db_session,
-                provider_application_service=provider_application_service,
-                instance_service=instance_service,
             )
         )
 
@@ -2190,13 +1894,15 @@ def task_run_event_callback(
     )
 
     if payload.event_type in {"completed", "failed", "need_approval"}:
-        dispatched_task_ids = _dispatch_queue_for_task_owner(
-            task=task,
-            board_id=normalized_board_id,
+        dispatch_service = _build_task_dispatch_service(
             task_service=task_service,
-            db_session=db_session,
             provider_application_service=provider_application_service,
             instance_service=instance_service,
+        )
+        dispatched_task_ids = dispatch_service.dispatch_queue_for_task_owner(
+            db_session,
+            task=task,
+            board_id=normalized_board_id,
         )
 
     return TaskRunEventResponse(
@@ -2227,17 +1933,19 @@ def list_tasks(
                 instance_id=instance_id,
             )
             execution_context = provider_application_service.build_execution_context(instance_context)
-            if _reconcile_stale_running_tasks(
+            dispatch_service = _build_task_dispatch_service(
                 task_service=task_service,
-                db_session=db_session,
+                provider_application_service=provider_application_service,
+                instance_service=instance_service,
+            )
+            if dispatch_service.reconcile_stale_running_tasks(
+                db_session,
                 user_id=current_user.id,
                 board_id=normalized_board_id,
                 instance_id=instance_id,
-            ):
-                _dispatch_queue(
-                    task_service=task_service,
-                    db_session=db_session,
-                    provider_application_service=provider_application_service,
+            ).changed:
+                dispatch_service.dispatch_queue_once(
+                    db_session,
                     execution_context=execution_context,
                     user_id=current_user.id,
                     board_id=normalized_board_id,
@@ -2273,13 +1981,10 @@ def preview_task_output(
     )
     output_path = resolve_task_output_path_helper(task, path)
     if not output_path.exists() or not output_path.is_file():
-        fallback = pick_existing_task_output_path_helper(task, path)
-        if fallback is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Output file not found on Linpo host. The file may still exist inside the agent instance.",
-            )
-        output_path = fallback
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Output file not found on Linpo host. The file may still exist inside the agent instance.",
+        )
     normalized_board_id = board_id.strip() or "default"
     preview = build_task_output_preview_helper(
         board_id=normalized_board_id,
@@ -2308,13 +2013,10 @@ def download_task_output_file(
     )
     output_path = resolve_task_output_path_helper(task, path)
     if not output_path.exists() or not output_path.is_file():
-        fallback = pick_existing_task_output_path_helper(task, path)
-        if fallback is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Output file not found on Linpo host. The file may still exist inside the agent instance.",
-            )
-        output_path = fallback
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Output file not found on Linpo host. The file may still exist inside the agent instance.",
+        )
 
     media_type = guess_output_mime_type_helper(output_path)
     if download:
@@ -2355,15 +2057,17 @@ def _delete_requirement_tasks_impl(
             task=task,
         )
 
+    dispatch_service = _build_task_dispatch_service(
+        task_service=task_service,
+        provider_application_service=provider_application_service,
+        instance_service=instance_service,
+    )
     for instance_id in instance_ids:
-        _dispatch_queue_for_instance(
+        dispatch_service.dispatch_queue_for_instance(
+            db_session,
             user_id=current_user.id,
             board_id=normalized_board_id,
             instance_id=instance_id,
-            task_service=task_service,
-            db_session=db_session,
-            provider_application_service=provider_application_service,
-            instance_service=instance_service,
         )
 
     return TaskDeleteResponse(
@@ -2522,15 +2226,17 @@ def stop_requirement(
         )
 
     normalized_board_id = board_id.strip() or "default"
+    dispatch_service = _build_task_dispatch_service(
+        task_service=task_service,
+        provider_application_service=provider_application_service,
+        instance_service=instance_service,
+    )
     for instance_id in instance_ids:
-        _dispatch_queue_for_instance(
+        dispatch_service.dispatch_queue_for_instance(
+            db_session,
             user_id=current_user.id,
             board_id=normalized_board_id,
             instance_id=instance_id,
-            task_service=task_service,
-            db_session=db_session,
-            provider_application_service=provider_application_service,
-            instance_service=instance_service,
         )
 
     return FlowRequirementStopResponse(
@@ -2586,16 +2292,18 @@ def continue_requirement(
 
     dispatched_task_ids: list[str] = []
     normalized_board_id = board_id.strip() or "default"
+    dispatch_service = _build_task_dispatch_service(
+        task_service=task_service,
+        provider_application_service=provider_application_service,
+        instance_service=instance_service,
+    )
     for instance_id in instance_ids:
         dispatched_task_ids.extend(
-            _dispatch_queue_for_instance(
+            dispatch_service.dispatch_queue_for_instance(
+                db_session,
                 user_id=current_user.id,
                 board_id=normalized_board_id,
                 instance_id=instance_id,
-                task_service=task_service,
-                db_session=db_session,
-                provider_application_service=provider_application_service,
-                instance_service=instance_service,
             )
         )
 
@@ -2887,13 +2595,15 @@ def interrupt_task(
         extras=extras,
     )
 
-    dispatched_task_ids = _dispatch_queue_for_task_owner(
-        task=task,
-        board_id=normalized_board_id,
+    dispatch_service = _build_task_dispatch_service(
         task_service=task_service,
-        db_session=db_session,
         provider_application_service=provider_application_service,
         instance_service=instance_service,
+    )
+    dispatched_task_ids = dispatch_service.dispatch_queue_for_task_owner(
+        db_session,
+        task=task,
+        board_id=normalized_board_id,
     )
 
     return TaskInterruptResponse(
@@ -2974,13 +2684,15 @@ def continue_task(
         )
         response_message = "已确认继续，任务标记为完成并推进后续节点"
 
-    dispatched_task_ids = _dispatch_queue_for_task_owner(
-        task=task,
-        board_id=normalized_board_id,
+    dispatch_service = _build_task_dispatch_service(
         task_service=task_service,
-        db_session=db_session,
         provider_application_service=provider_application_service,
         instance_service=instance_service,
+    )
+    dispatched_task_ids = dispatch_service.dispatch_queue_for_task_owner(
+        db_session,
+        task=task,
+        board_id=normalized_board_id,
     )
     refreshed_task = task_service.get_task(
         db_session,
@@ -3042,14 +2754,16 @@ def _delete_task_impl(
     )
 
     if instance_id is not None:
-        _dispatch_queue_for_instance(
+        dispatch_service = _build_task_dispatch_service(
+            task_service=task_service,
+            provider_application_service=provider_application_service,
+            instance_service=instance_service,
+        )
+        dispatch_service.dispatch_queue_for_instance(
+            db_session,
             user_id=current_user.id,
             board_id=normalized_board_id,
             instance_id=instance_id,
-            task_service=task_service,
-            db_session=db_session,
-            provider_application_service=provider_application_service,
-            instance_service=instance_service,
         )
 
     return TaskDeleteResponse(
@@ -3082,48 +2796,6 @@ def delete_requirement_tasks(
 
 @router.delete("/{task_id}", response_model=TaskDeleteResponse, tags=["tasks"])
 def delete_task(
-    board_id: str,
-    task_id: UUID,
-    current_user: User = Depends(get_current_user),
-    db_session: Session = Depends(get_session),
-    task_service: TaskService = Depends(get_task_service),
-    instance_service: InstanceService = Depends(get_instance_service),
-    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
-) -> TaskDeleteResponse:
-    return _delete_task_impl(
-        board_id=board_id,
-        task_id=task_id,
-        current_user=current_user,
-        db_session=db_session,
-        task_service=task_service,
-        instance_service=instance_service,
-        provider_application_service=provider_application_service,
-    )
-
-
-@router.post("/requirements/{requirement_id}/delete", response_model=TaskDeleteResponse, tags=["flow"])
-def delete_requirement_tasks_post(
-    board_id: str,
-    requirement_id: str,
-    current_user: User = Depends(get_current_user),
-    db_session: Session = Depends(get_session),
-    task_service: TaskService = Depends(get_task_service),
-    instance_service: InstanceService = Depends(get_instance_service),
-    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
-) -> TaskDeleteResponse:
-    return _delete_requirement_tasks_impl(
-        board_id=board_id,
-        requirement_id=requirement_id,
-        current_user=current_user,
-        db_session=db_session,
-        task_service=task_service,
-        instance_service=instance_service,
-        provider_application_service=provider_application_service,
-    )
-
-
-@router.post("/{task_id}/delete", response_model=TaskDeleteResponse, tags=["tasks"])
-def delete_task_post(
     board_id: str,
     task_id: UUID,
     current_user: User = Depends(get_current_user),
@@ -3197,10 +2869,13 @@ def create_task(
         ),
     )
 
-    _dispatch_queue(
+    dispatch_service = _build_task_dispatch_service(
         task_service=task_service,
-        db_session=db_session,
         provider_application_service=provider_application_service,
+        instance_service=instance_service,
+    )
+    dispatch_service.dispatch_queue_once(
+        db_session,
         execution_context=provider_application_service.build_execution_context(instance_context),
         user_id=current_user.id,
         board_id=normalized_board_id,

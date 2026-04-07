@@ -78,7 +78,7 @@ class FlowDraft(Base):
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
-    board_id: Mapped[str] = mapped_column(String(64), default="default", index=True)
+    board_id: Mapped[str] = mapped_column(String(64), index=True)
     flow_id: Mapped[str] = mapped_column(String(128), index=True)
     name: Mapped[str] = mapped_column(String(256), default="未命名流程")
     requirement: Mapped[str] = mapped_column(Text, default="")
@@ -157,9 +157,9 @@ class FlowPlannerSession(Base):
 
     session_key: Mapped[str] = mapped_column(String(256), primary_key=True)
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
-    board_id: Mapped[str] = mapped_column(String(64), default="default", index=True)
+    board_id: Mapped[str] = mapped_column(String(64), index=True)
     instance_id: Mapped[UUID | None] = mapped_column(ForeignKey("instances.id"), index=True, nullable=True)
-    planner_agent_id: Mapped[str] = mapped_column(String(128), default="claw3")
+    planner_agent_id: Mapped[str] = mapped_column(String(128))
     planner_token: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     flow_name: Mapped[str] = mapped_column(String(256), default="未命名流程")
     status: Mapped[str] = mapped_column(String(32), default="planning", index=True)

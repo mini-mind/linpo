@@ -143,7 +143,7 @@ def _realtime_source_with_capacity(
 
 def test_websocket_subscribe_to_agents_list_returns_snapshot_ready() -> None:
     messages = websocket(
-        "/ws/observer",
+        "/api/v1/ws/observer",
         messages=[{"type": "subscribe", "channel": "agents:list"}],
     )
 
@@ -185,7 +185,7 @@ def test_websocket_replays_buffered_messages_from_last_seq(monkeypatch: Any) -> 
     _install_provider_application_service(monkeypatch, source=source)
 
     messages = websocket(
-        "/ws/observer",
+        "/api/v1/ws/observer",
         messages=[
             {
                 "type": "subscribe",
@@ -249,7 +249,7 @@ def test_websocket_returns_resync_required_when_last_seq_falls_outside_buffer(
     _install_provider_application_service(monkeypatch, source=source)
 
     messages = websocket(
-        "/ws/observer",
+        "/api/v1/ws/observer",
         messages=[
             {
                 "type": "subscribe",
@@ -273,7 +273,7 @@ def test_websocket_returns_resync_required_when_last_seq_falls_outside_buffer(
 
 def test_websocket_returns_error_for_unknown_detail_channel() -> None:
     messages = websocket(
-        "/ws/observer",
+        "/api/v1/ws/observer",
         messages=[
             {
                 "type": "subscribe",
@@ -301,7 +301,7 @@ def test_websocket_pushes_agent_summary_update_after_subscription(
     _install_provider_application_service(monkeypatch, source=source)
 
     messages = websocket(
-        "/ws/observer",
+        "/api/v1/ws/observer",
         messages=[{"type": "subscribe", "channel": observer_data.agents_list_channel()}],
         idle_hooks=[
             lambda: source.apply_event(
@@ -347,7 +347,7 @@ def test_websocket_pushes_topology_update_after_subscription(monkeypatch: Any) -
     _install_provider_application_service(monkeypatch, source=source)
 
     messages = websocket(
-        "/ws/observer",
+        "/api/v1/ws/observer",
         messages=[
             {
                 "type": "subscribe",
@@ -486,7 +486,7 @@ def test_websocket_supports_openclaw_agents_list_realtime(monkeypatch: Any) -> N
     )
 
     messages = websocket(
-        "/ws/observer?data_source=openclaw",
+        "/api/v1/ws/observer?data_source=openclaw",
         messages=[{"type": "subscribe", "channel": observer_data.agents_list_channel()}],
         idle_hooks=[lambda: None, lambda: None],
     )
@@ -566,7 +566,7 @@ def test_websocket_supports_openclaw_agents_list_with_event_loop_safe_client(mon
     )
 
     messages = websocket(
-        "/ws/observer?data_source=openclaw",
+        "/api/v1/ws/observer?data_source=openclaw",
         messages=[{"type": "subscribe", "channel": observer_data.agents_list_channel()}],
         idle_hooks=[lambda: None, lambda: None],
     )
@@ -625,7 +625,7 @@ def test_websocket_reports_openclaw_realtime_upstream_failure(monkeypatch: Any) 
     )
 
     messages = websocket(
-        "/ws/observer?data_source=openclaw",
+        "/api/v1/ws/observer?data_source=openclaw",
         messages=[{"type": "subscribe", "channel": observer_data.agents_list_channel()}],
         idle_hooks=[lambda: None, lambda: None],
     )
@@ -745,7 +745,7 @@ def test_websocket_supports_openclaw_detail_realtime(monkeypatch: Any) -> None:
     )
 
     messages = websocket(
-        "/ws/observer?data_source=openclaw",
+        "/api/v1/ws/observer?data_source=openclaw",
         messages=[
             {
                 "type": "subscribe",
@@ -894,7 +894,7 @@ def test_websocket_supports_openclaw_session_messages_channel(monkeypatch: Any) 
     )
 
     messages = websocket(
-        "/ws/observer?data_source=openclaw",
+        "/api/v1/ws/observer?data_source=openclaw",
         messages=[
             {
                 "type": "subscribe",
@@ -980,7 +980,7 @@ def test_websocket_exposes_control_request_status_on_existing_detail_channel(
     _install_provider_application_service(monkeypatch, source=source)
 
     messages = websocket(
-        "/ws/observer?data_source=openclaw",
+        "/api/v1/ws/observer?data_source=openclaw",
         messages=[
             {
                 "type": "subscribe",
@@ -1041,7 +1041,7 @@ def test_websocket_openclaw_detail_channel_still_errors_for_unknown_agent(
     _install_provider_application_service(monkeypatch, source=source)
 
     messages = websocket(
-        "/ws/observer?data_source=openclaw",
+        "/api/v1/ws/observer?data_source=openclaw",
         messages=[
             {
                 "type": "subscribe",
@@ -1069,7 +1069,7 @@ def test_websocket_returns_resync_required_when_last_seq_exceeds_current_server_
     _install_provider_application_service(monkeypatch, source=source)
 
     messages = websocket(
-        "/ws/observer",
+        "/api/v1/ws/observer",
         messages=[
             {
                 "type": "subscribe",
@@ -1112,7 +1112,7 @@ def test_websocket_returns_error_when_data_source_raises_http_exception(
     )
 
     messages = websocket(
-        "/ws/observer",
+        "/api/v1/ws/observer",
         messages=[{"type": "subscribe", "channel": observer_data.agents_list_channel()}],
     )
 

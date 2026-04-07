@@ -9,6 +9,13 @@ import app.services.flow_decomposition_service as flow_decomposition_service
 from app.services.flow_decomposition_service import FlowDecompositionService
 
 
+@pytest.fixture(autouse=True)
+def _set_required_flow_decomposition_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FLOW_DECOMPOSITION_OPENCLAW_BASE_URL", "ws://test-openclaw:38789")
+    monkeypatch.setenv("FLOW_DECOMPOSITION_OPENCLAW_ORIGIN", "http://test-openclaw:38789")
+    monkeypatch.setenv("FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN", "test-token")
+
+
 def test_decompose_returns_nodes_from_claw3_history_payload() -> None:
     class FakeProviderApplicationService:
         def __init__(self) -> None:
@@ -359,3 +366,39 @@ def test_snapshot_from_history_messages_returns_latest_valid_snapshot() -> None:
     assert snapshot.planner_session_key == "linpo:flow:default:planner:claw3:test"
     assert [node.id for node in snapshot.nodes] == ["n1", "n2"]
     assert snapshot.nodes[1].depends_on == ["n1"]
+
+
+@pytest.mark.parametrize(
+    "missing_env",
+    [
+        "FLOW_DECOMPOSITION_OPENCLAW_BASE_URL",
+        "FLOW_DECOMPOSITION_OPENCLAW_ORIGIN",
+        "FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN",
+    ],
+)
+def test_build_execution_context_fails_when_required_env_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    missing_env: str,
+) -> None:
+    monkeypatch.delenv(missing_env, raising=False)
+    service = FlowDecompositionService(provider_application_service=cast(Any, object()))
+
+    with pytest.raises(HTTPException) as exc_info:
+        service.build_realtime_execution_context()
+
+    assert exc_info.value.status_code == 503
+    assert missing_env in str(exc_info.value.detail)
+
+
+def test_build_execution_context_succeeds_with_required_envs() -> None:
+    service = FlowDecompositionService(provider_application_service=cast(Any, object()))
+
+    context = service.build_realtime_execution_context()
+
+    assert context.adapter is not None
+    assert context.cache_key == (
+        "flow-decomposer-claw3",
+        "ws://test-openclaw:38789",
+        "http://test-openclaw:38789",
+        "claw3",
+    )

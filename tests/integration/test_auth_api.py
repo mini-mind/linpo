@@ -137,7 +137,7 @@ def test_auth_me_route_can_boot_with_explicit_db_bootstrap(
 
     app.state.bootstrap_database()
 
-    status_code, _, body = request("GET", "/auth/me")
+    status_code, _, body = request("GET", "/api/v1/auth/me")
 
     assert status_code == 401
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
@@ -204,7 +204,7 @@ def test_cors_preflight_allows_patch_for_auth_profile(
 
     status_code, headers, _ = request(
         "OPTIONS",
-        "/auth/profile",
+        "/api/v1/auth/profile",
         headers={
             "origin": "http://127.0.0.1:5173",
             "access-control-request-method": "PATCH",
@@ -226,7 +226,7 @@ def test_cors_preflight_allows_same_host_origin_even_if_not_in_static_allow_list
 
     status_code, headers, _ = request(
         "OPTIONS",
-        "/auth/me",
+        "/api/v1/auth/me",
         headers={
             "origin": "http://175.178.213.10:5173",
             "host": "175.178.213.10:8000",
@@ -297,16 +297,19 @@ def test_create_session_writes_httponly_cookie() -> None:
     assert "Max-Age=0" in cleared_cookie
 
 
-def test_stored_session_survives_auth_service_reload(isolated_database_url: str) -> None:
+def test_stored_session_survives_auth_service_reload(
+    isolated_database_url: str,
+    db_handle: Session,
+) -> None:
     del isolated_database_url
 
     from app.services import auth_service
 
     session_state = auth_service.create_session(uuid4(), now=datetime.now(timezone.utc) - timedelta(days=1))
-    auth_service.store_session(session_state)
+    auth_service.store_session(db_handle, session_state)
 
     reloaded_auth_service = _reload_auth_service_bindings()
-    loaded_session = reloaded_auth_service.load_session(session_state.session_id)
+    loaded_session = reloaded_auth_service.load_session(db_handle, session_state.session_id)
 
     assert loaded_session is not None
     assert loaded_session.session_id == session_state.session_id
@@ -326,9 +329,9 @@ def test_expired_session_is_removed_when_loaded(db_handle: Session) -> None:
         user.id,
         now=datetime(2026, 3, 1, tzinfo=timezone.utc) - timedelta(days=8),
     )
-    auth_service.store_session(expired_session)
+    auth_service.store_session(db_handle, expired_session)
 
-    loaded_session = auth_service.load_session(expired_session.session_id)
+    loaded_session = auth_service.load_session(db_handle, expired_session.session_id)
 
     assert loaded_session is None
     assert db_handle.get(AuthSession, expired_session.session_id) is None
@@ -395,7 +398,7 @@ def test_register_returns_minimal_user_payload(isolated_database_url: str) -> No
 
     status_code, _, payload = _request_json(
         "POST",
-        "/auth/register",
+        "/api/v1/auth/register",
         {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
     )
 
@@ -412,7 +415,7 @@ def test_register_requires_email_field(isolated_database_url: str) -> None:
 
     status_code, _, payload = _request_json(
         "POST",
-        "/auth/register",
+        "/api/v1/auth/register",
         {"username": "alice", "password": "secret-123"},
     )
 
@@ -425,7 +428,7 @@ def test_register_sets_session_cookie_and_me_returns_current_user(isolated_datab
 
     register_status, register_headers, register_payload = _request_json(
         "POST",
-        "/auth/register",
+        "/api/v1/auth/register",
         {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
         extra_headers={"Origin": "http://127.0.0.1:5173"},
     )
@@ -439,7 +442,7 @@ def test_register_sets_session_cookie_and_me_returns_current_user(isolated_datab
 
     me_status, _, me_body = request(
         "GET",
-        "/auth/me",
+        "/api/v1/auth/me",
         headers={"cookie": _cookie_header_from_set_cookie(register_headers["set-cookie"])},
     )
 
@@ -451,13 +454,13 @@ def test_register_rejects_duplicate_username(isolated_database_url: str) -> None
     del isolated_database_url
     _request_json(
         "POST",
-        "/auth/register",
+        "/api/v1/auth/register",
         {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
     )
 
     status_code, _, payload = _request_json(
         "POST",
-        "/auth/register",
+        "/api/v1/auth/register",
         {"username": "alice", "email": "alice2@example.com", "password": "secret-123"},
     )
 
@@ -468,7 +471,7 @@ def test_register_rejects_duplicate_username(isolated_database_url: str) -> None
 def test_auth_login_preflight_allows_credentials_for_allowed_origin() -> None:
     status_code, headers, _ = request(
         "OPTIONS",
-        "/auth/login",
+        "/api/v1/auth/login",
         headers={
             "Origin": "http://127.0.0.1:5173",
             "Access-Control-Request-Method": "POST",
@@ -484,7 +487,7 @@ def test_auth_login_preflight_allows_credentials_for_allowed_origin() -> None:
 def test_auth_register_preflight_echoes_requested_content_type_header() -> None:
     status_code, headers, _ = request(
         "OPTIONS",
-        "/auth/register",
+        "/api/v1/auth/register",
         headers={
             "Origin": "http://127.0.0.1:5173",
             "Access-Control-Request-Method": "POST",
@@ -501,7 +504,7 @@ def test_auth_register_preflight_echoes_requested_content_type_header() -> None:
 def test_auth_me_preflight_echoes_requested_content_type_header() -> None:
     status_code, headers, _ = request(
         "OPTIONS",
-        "/auth/me",
+        "/api/v1/auth/me",
         headers={
             "Origin": "http://127.0.0.1:5173",
             "Access-Control-Request-Method": "GET",
@@ -519,13 +522,13 @@ def test_login_sets_session_cookie_and_me_returns_current_user(isolated_database
     del isolated_database_url
     _request_json(
         "POST",
-        "/auth/register",
+        "/api/v1/auth/register",
         {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
     )
 
     login_status, login_headers, login_payload = _request_json(
         "POST",
-        "/auth/login",
+        "/api/v1/auth/login",
         {"identifier": "alice@example.com", "password": "secret-123"},
         extra_headers={"Origin": "http://127.0.0.1:5173"},
     )
@@ -542,7 +545,7 @@ def test_login_sets_session_cookie_and_me_returns_current_user(isolated_database
 
     me_status, _, me_body = request(
         "GET",
-        "/auth/me",
+        "/api/v1/auth/me",
         headers={"cookie": _cookie_header_from_set_cookie(login_headers["set-cookie"])},
     )
 
@@ -555,7 +558,7 @@ def test_login_session_survives_auth_service_reload_for_me_route(isolated_databa
 
     login_status, login_headers, login_payload = _request_json(
         "POST",
-        "/auth/register",
+        "/api/v1/auth/register",
         {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
     )
     assert login_status == 201
@@ -564,7 +567,7 @@ def test_login_session_survives_auth_service_reload_for_me_route(isolated_databa
 
     me_status, _, me_body = request(
         "GET",
-        "/auth/me",
+        "/api/v1/auth/me",
         headers={"cookie": _cookie_header_from_set_cookie(login_headers["set-cookie"])},
     )
 
@@ -576,13 +579,13 @@ def test_login_rejects_bad_password(isolated_database_url: str) -> None:
     del isolated_database_url
     _request_json(
         "POST",
-        "/auth/register",
+        "/api/v1/auth/register",
         {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
     )
 
     status_code, _, payload = _request_json(
         "POST",
-        "/auth/login",
+        "/api/v1/auth/login",
         {"identifier": "alice", "password": "wrong-password"},
     )
 
@@ -594,7 +597,7 @@ def test_profile_patch_updates_avatar_and_me_reflects_change(isolated_database_u
     del isolated_database_url
     _, register_headers, _ = _request_json(
         "POST",
-        "/auth/register",
+        "/api/v1/auth/register",
         {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
     )
     cookie_header = _cookie_header_from_set_cookie(register_headers["set-cookie"])
@@ -605,7 +608,7 @@ def test_profile_patch_updates_avatar_and_me_reflects_change(isolated_database_u
 
     status_code, _, payload = _request_json(
         "PATCH",
-        "/auth/profile",
+        "/api/v1/auth/profile",
         {"avatar_url": avatar_data_url},
         cookie_header=cookie_header,
     )
@@ -615,7 +618,7 @@ def test_profile_patch_updates_avatar_and_me_reflects_change(isolated_database_u
     assert payload["username"] == "alice"
     assert payload["email"] == "alice@example.com"
 
-    me_status, _, me_body = request("GET", "/auth/me", headers={"cookie": cookie_header})
+    me_status, _, me_body = request("GET", "/api/v1/auth/me", headers={"cookie": cookie_header})
     assert me_status == 200
     me_payload = cast(dict[str, Any], json.loads(me_body.decode("utf-8")))
     assert me_payload["avatar_url"] == avatar_data_url
@@ -625,14 +628,14 @@ def test_profile_patch_rejects_invalid_avatar(isolated_database_url: str) -> Non
     del isolated_database_url
     _, register_headers, _ = _request_json(
         "POST",
-        "/auth/register",
+        "/api/v1/auth/register",
         {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
     )
     cookie_header = _cookie_header_from_set_cookie(register_headers["set-cookie"])
 
     status_code, _, payload = _request_json(
         "PATCH",
-        "/auth/profile",
+        "/api/v1/auth/profile",
         {"avatar_url": "https://example.com/avatar.png"},
         cookie_header=cookie_header,
     )
@@ -645,7 +648,7 @@ def test_profile_patch_requires_authentication(isolated_database_url: str) -> No
     del isolated_database_url
     status_code, _, payload = _request_json(
         "PATCH",
-        "/auth/profile",
+        "/api/v1/auth/profile",
         {"avatar_url": None},
     )
     assert status_code == 401
@@ -656,14 +659,14 @@ def test_profile_patch_updates_username(isolated_database_url: str) -> None:
     del isolated_database_url
     _, register_headers, _ = _request_json(
         "POST",
-        "/auth/register",
+        "/api/v1/auth/register",
         {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
     )
     cookie_header = _cookie_header_from_set_cookie(register_headers["set-cookie"])
 
     status_code, _, payload = _request_json(
         "PATCH",
-        "/auth/profile",
+        "/api/v1/auth/profile",
         {"username": "alice_new"},
         cookie_header=cookie_header,
     )
@@ -672,7 +675,7 @@ def test_profile_patch_updates_username(isolated_database_url: str) -> None:
 
     old_login_status, _, old_login_payload = _request_json(
         "POST",
-        "/auth/login",
+        "/api/v1/auth/login",
         {"identifier": "alice", "password": "secret-123"},
     )
     assert old_login_status == 401
@@ -680,7 +683,7 @@ def test_profile_patch_updates_username(isolated_database_url: str) -> None:
 
     new_login_status, _, new_login_payload = _request_json(
         "POST",
-        "/auth/login",
+        "/api/v1/auth/login",
         {"identifier": "alice_new", "password": "secret-123"},
     )
     assert new_login_status == 200
@@ -691,19 +694,19 @@ def test_profile_patch_rejects_duplicate_username(isolated_database_url: str) ->
     del isolated_database_url
     _, first_headers, _ = _request_json(
         "POST",
-        "/auth/register",
+        "/api/v1/auth/register",
         {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
     )
     _request_json(
         "POST",
-        "/auth/register",
+        "/api/v1/auth/register",
         {"username": "bob", "email": "bob@example.com", "password": "secret-123"},
     )
     first_cookie = _cookie_header_from_set_cookie(first_headers["set-cookie"])
 
     status_code, _, payload = _request_json(
         "PATCH",
-        "/auth/profile",
+        "/api/v1/auth/profile",
         {"username": "bob"},
         cookie_header=first_cookie,
     )
@@ -715,14 +718,14 @@ def test_password_update_changes_login_credentials(isolated_database_url: str) -
     del isolated_database_url
     _, register_headers, _ = _request_json(
         "POST",
-        "/auth/register",
+        "/api/v1/auth/register",
         {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
     )
     cookie_header = _cookie_header_from_set_cookie(register_headers["set-cookie"])
 
     status_code, _, payload = _request_json(
         "POST",
-        "/auth/password",
+        "/api/v1/auth/password",
         {"current_password": "secret-123", "new_password": "new-secret-456"},
         cookie_header=cookie_header,
     )
@@ -731,7 +734,7 @@ def test_password_update_changes_login_credentials(isolated_database_url: str) -
 
     old_login_status, _, old_login_payload = _request_json(
         "POST",
-        "/auth/login",
+        "/api/v1/auth/login",
         {"identifier": "alice", "password": "secret-123"},
     )
     assert old_login_status == 401
@@ -739,7 +742,7 @@ def test_password_update_changes_login_credentials(isolated_database_url: str) -
 
     new_login_status, _, new_login_payload = _request_json(
         "POST",
-        "/auth/login",
+        "/api/v1/auth/login",
         {"identifier": "alice@example.com", "password": "new-secret-456"},
     )
     assert new_login_status == 200
@@ -750,14 +753,14 @@ def test_password_update_rejects_wrong_current_password(isolated_database_url: s
     del isolated_database_url
     _, register_headers, _ = _request_json(
         "POST",
-        "/auth/register",
+        "/api/v1/auth/register",
         {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
     )
     cookie_header = _cookie_header_from_set_cookie(register_headers["set-cookie"])
 
     status_code, _, payload = _request_json(
         "POST",
-        "/auth/password",
+        "/api/v1/auth/password",
         {"current_password": "wrong-123", "new_password": "new-secret-456"},
         cookie_header=cookie_header,
     )
@@ -769,7 +772,7 @@ def test_password_update_requires_authentication(isolated_database_url: str) -> 
     del isolated_database_url
     status_code, _, payload = _request_json(
         "POST",
-        "/auth/password",
+        "/api/v1/auth/password",
         {"current_password": "secret-123", "new_password": "new-secret-456"},
     )
     assert status_code == 401
@@ -780,19 +783,19 @@ def test_logout_clears_session_and_me_requires_authentication(isolated_database_
     del isolated_database_url
     _request_json(
         "POST",
-        "/auth/register",
+        "/api/v1/auth/register",
         {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
     )
     _, login_headers, _ = _request_json(
         "POST",
-        "/auth/login",
+        "/api/v1/auth/login",
         {"identifier": "alice", "password": "secret-123"},
     )
     cookie_header = _cookie_header_from_set_cookie(login_headers["set-cookie"])
 
     logout_status, logout_headers, logout_body = request(
         "POST",
-        "/auth/logout",
+        "/api/v1/auth/logout",
         headers={"cookie": cookie_header},
     )
 
@@ -803,7 +806,7 @@ def test_logout_clears_session_and_me_requires_authentication(isolated_database_
 
     me_status, _, me_body = request(
         "GET",
-        "/auth/me",
+        "/api/v1/auth/me",
         headers={"cookie": cookie_header},
     )
 

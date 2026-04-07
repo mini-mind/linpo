@@ -34,6 +34,10 @@ vi.mock('../hooks/useToast', () => ({
 
 import { InstanceListModal } from './InstanceListModal';
 
+async function waitForInstanceListReady(): Promise<void> {
+  await screen.findByRole('button', { name: /^claw1/ });
+}
+
 describe('InstanceListModal', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -152,6 +156,7 @@ describe('InstanceListModal', () => {
     render(<InstanceListModal open onClose={() => undefined} />);
 
     await screen.findByRole('dialog', { name: '实例列表' });
+    await waitForInstanceListReady();
     fireEvent.click(screen.getByRole('button', { name: '添加实例' }));
 
     expect(screen.getByRole('tab', { name: '配对会话' })).toHaveAttribute('aria-selected', 'true');
@@ -214,6 +219,7 @@ describe('InstanceListModal', () => {
     render(<InstanceListModal open onClose={() => undefined} />);
 
     await screen.findByRole('dialog', { name: '实例列表' });
+    await waitForInstanceListReady();
     fireEvent.click(screen.getByRole('button', { name: '添加实例' }));
     fireEvent.change(screen.getByLabelText('实例名称'), { target: { value: 'claw2' } });
     fireEvent.click(screen.getByRole('button', { name: '创建配对会话' }));
@@ -236,6 +242,7 @@ describe('InstanceListModal', () => {
     render(<InstanceListModal open onClose={() => undefined} />);
 
     await screen.findByRole('dialog', { name: '实例列表' });
+    await waitForInstanceListReady();
     fireEvent.click(screen.getByRole('button', { name: '添加实例' }));
     fireEvent.click(screen.getByRole('tab', { name: 'Token' }));
 

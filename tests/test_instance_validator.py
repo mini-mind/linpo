@@ -213,6 +213,7 @@ def test_validate_masks_unexpected_probe_error_message() -> None:
 def test_openclaw_probe_maps_handshake_rejection_to_auth_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("OPENCLAW_ORIGIN", raising=False)
     class FakeWs:
         def __init__(self) -> None:
             self._incoming = [
@@ -297,6 +298,7 @@ def test_openclaw_probe_maps_origin_rejection_to_protocol_failed(
 def test_openclaw_probe_retries_loopback_origin_when_public_origin_is_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("OPENCLAW_ORIGIN", raising=False)
     class FakeWs:
         def __init__(self, *, origin: str) -> None:
             self._origin = origin

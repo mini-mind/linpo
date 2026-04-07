@@ -46,6 +46,7 @@ from app.api.aggregate import router as aggregate_router
 from app.api.agents import router as agents_router
 from app.api.auth import router as auth_router
 from app.api.instances import router as instances_router
+from app.api.ops import router as ops_router
 from app.api.realtime import router as realtime_router
 from app.api.tasks import router as tasks_router
 from app.db.session import init_db
@@ -191,17 +192,9 @@ async def add_http_cors_headers(
     return response
 
 
-# Legacy (non-versioned) routes remain available for backward compatibility,
-# but are hidden from OpenAPI to keep `/docs` canonical under `/api/v1/*`.
-for router in (aggregate_router, agents_router, auth_router, instances_router, realtime_router):
-    app.include_router(router, include_in_schema=False)
+for router in (aggregate_router, agents_router, auth_router, instances_router, ops_router, realtime_router):
     app.include_router(router, prefix=_API_V1_PREFIX)
 app.include_router(tasks_router)
-
-
-@app.get("/health", tags=["system"], include_in_schema=False)
-def health_legacy() -> dict[str, str]:
-    return {"status": "ok"}
 
 
 @app.get("/api/v1/health", tags=["system"])

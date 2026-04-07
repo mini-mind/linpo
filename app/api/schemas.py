@@ -258,6 +258,31 @@ class InstanceFileItem(_CommonCamelResponseModel):
     updated_at: str
 
 
+class OpsCheckItem(_CommonCamelResponseModel):
+    key: str
+    status: str
+    message: str
+    next_step: str
+
+
+class OpsSetupResponse(_CommonCamelResponseModel):
+    checks: list[OpsCheckItem]
+    ready: bool
+
+
+class OpsDiagnosticsSummary(_CommonCamelResponseModel):
+    ready: bool
+    checks_failed_count: int
+    instances_total: int
+    instances_active: int
+
+
+class OpsDiagnosticsResponse(_CommonCamelResponseModel):
+    summary: OpsDiagnosticsSummary
+    checks: list[OpsCheckItem]
+    copy_text: str
+
+
 class InstanceFileListResponse(_CommonCamelResponseModel):
     items: list[InstanceFileItem]
     total: int

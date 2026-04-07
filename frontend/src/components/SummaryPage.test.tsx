@@ -11,6 +11,7 @@ import type {
   ObserverRealtimeMessage,
 } from '../api/types';
 import { ToastProvider } from '../hooks/useToast';
+import { WORKSPACE_CONTENT_MAX_WIDTH_PX } from './workspaceLayout';
 import { SummaryPage } from './SummaryPage';
 
 const {
@@ -417,7 +418,11 @@ describe('SummaryPage', () => {
     await userEvent.click(continueButton);
 
     await waitFor(() => {
-      expect(mockContinueKanbanTask).toHaveBeenCalledWith('task-alpha', { instanceId: 'instance-alpha' });
+      expect(mockContinueKanbanTask).toHaveBeenCalledWith(
+        'task-alpha',
+        { instanceId: 'instance-alpha' },
+        'default'
+      );
     });
   });
 
@@ -514,11 +519,26 @@ describe('SummaryPage', () => {
   });
 
   it('keeps summary content within constrained desktop frame width', async () => {
+    const originalWidth = window.innerWidth;
+    await act(async () => {
+      window.innerWidth = 1280;
+      window.dispatchEvent(new Event('resize'));
+    });
+
     renderPage();
 
     const page = await screen.findByTestId('summary-page');
     const contentFrame = await screen.findByTestId('summary-content-frame');
     expect(page).toHaveStyle({ minHeight: '100%', height: 'auto', overflow: 'visible' });
-    expect(contentFrame).toHaveStyle({ maxWidth: '1520px' });
+    expect(contentFrame).toHaveStyle({
+      width: '100%',
+      maxWidth: `${WORKSPACE_CONTENT_MAX_WIDTH_PX}px`,
+      overflow: 'visible',
+    });
+
+    await act(async () => {
+      window.innerWidth = originalWidth;
+      window.dispatchEvent(new Event('resize'));
+    });
   });
 });

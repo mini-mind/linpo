@@ -19,6 +19,7 @@ import { listInstances } from './instanceClient';
 import { listUserMessages } from './messageClient';
 
 const fetchMock = vi.fn();
+const BOARD_ID = 'default';
 
 describe('business API client instance context', () => {
   beforeEach(() => {
@@ -280,9 +281,13 @@ describe('business API client instance context', () => {
       }),
     });
 
-    const result = await stopFlowPlannerSession({
-      planner_session_key: 'linpo:flow:default:planner:claw3:test',
-    });
+    const result = await stopFlowPlannerSession(
+      {
+        planner_session_key: 'linpo:flow:default:planner:claw3:test',
+      },
+      undefined,
+      BOARD_ID
+    );
 
     expect(result).toEqual({
       session_key: 'linpo:flow:default:planner:claw3:test',
@@ -305,7 +310,7 @@ describe('business API client instance context', () => {
   });
 
   it('probeFlowPlannerSession short-circuits empty key and encodes non-empty key', async () => {
-    await expect(probeFlowPlannerSession('   ')).resolves.toEqual({ exists: false });
+    await expect(probeFlowPlannerSession('   ', undefined, BOARD_ID)).resolves.toEqual({ exists: false });
     expect(fetchMock).not.toHaveBeenCalled();
 
     fetchMock.mockResolvedValue({
@@ -315,7 +320,7 @@ describe('business API client instance context', () => {
       json: async () => ({ exists: true }),
     });
 
-    await probeFlowPlannerSession('linpo:flow:default:planner:claw3:test');
+    await probeFlowPlannerSession('linpo:flow:default:planner:claw3:test', undefined, BOARD_ID);
 
     expect(fetchMock).toHaveBeenCalledWith(
       'http://localhost:8000/api/v1/boards/default/tasks/flow/planner-sessions/linpo%3Aflow%3Adefault%3Aplanner%3Aclaw3%3Atest/exists?data_source=openclaw',
@@ -352,7 +357,7 @@ describe('business API client instance context', () => {
       ]),
     });
 
-    const result = await listKanbanTasks();
+    const result = await listKanbanTasks(undefined, BOARD_ID);
 
     expect(result).toEqual([
       {
@@ -398,12 +403,16 @@ describe('business API client instance context', () => {
       }),
     });
 
-    await createKanbanTask({
-      requirement: '实现节点',
-      agent_id: 'agent-1',
-      agent_name: 'Agent 1',
-      instance_id: 'instance-1',
-    });
+    await createKanbanTask(
+      {
+        requirement: '实现节点',
+        agent_id: 'agent-1',
+        agent_name: 'Agent 1',
+        instance_id: 'instance-1',
+      },
+      undefined,
+      BOARD_ID
+    );
 
     expect(fetchMock).toHaveBeenCalledWith(
       'http://localhost:8000/api/v1/boards/default/tasks?data_source=openclaw',
@@ -419,5 +428,10 @@ describe('business API client instance context', () => {
         }),
       }),
     );
+  });
+
+  it('throws when boardId is blank', async () => {
+    await expect(listKanbanTasks(undefined, '   ')).rejects.toThrow('boardId is required');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

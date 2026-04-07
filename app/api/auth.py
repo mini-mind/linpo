@@ -77,7 +77,7 @@ def register(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     session_state = create_session(user.id)
-    store_session(session_state)
+    store_session(db_session, session_state)
     set_session_cookie(response, session_state)
     return _user_payload(user.id, user.username, user.email, user.avatar_data_url)
 
@@ -97,16 +97,20 @@ def login(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid identifier or password")
 
     session_state = create_session(user.id)
-    store_session(session_state)
+    store_session(db_session, session_state)
     set_session_cookie(response, session_state)
     return _user_payload(user.id, user.username, user.email, user.avatar_data_url)
 
 
 @router.post("/logout")
-def logout(request: Request, response: Response) -> dict[str, bool]:
+def logout(
+    request: Request,
+    response: Response,
+    db_session: Session = Depends(get_session),
+) -> dict[str, bool]:
     session_id = get_session_id(request)
     if session_id is not None:
-        delete_session(session_id)
+        delete_session(db_session, session_id)
     clear_session_cookie(response)
     return {"ok": True}
 

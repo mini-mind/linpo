@@ -12,9 +12,9 @@ from fastapi import HTTPException
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
-from app.api.task_output_helpers import parse_task_dependencies, task_temp_input_paths, task_temp_output_path
 from app.db.models import Task
 from app.services.instance_service import InstanceNotFoundError, InstanceService
+from app.services.task_output_service import parse_task_dependencies, task_temp_input_paths, task_temp_output_path
 from app.services.provider_application_service import (
     ProviderApplicationService,
     ProviderExecutionContext,
@@ -240,6 +240,57 @@ class TaskDispatchService:
         return TaskDispatchReconcileResult(
             changed=changed,
             failed_task_ids=failed_task_ids,
+        )
+
+    def dispatch_queue_once(
+        self,
+        db_session: Session,
+        *,
+        user_id: UUID,
+        board_id: str,
+        execution_context: ProviderExecutionContext | None = None,
+        instance_id: UUID | None = None,
+    ) -> list[str]:
+        result = self.dispatch_next_queued_task(
+            db_session,
+            user_id=user_id,
+            board_id=board_id,
+            execution_context=execution_context,
+            instance_id=instance_id,
+        )
+        if result is None:
+            return []
+        return [result.task_id]
+
+    def dispatch_queue_for_instance(
+        self,
+        db_session: Session,
+        *,
+        user_id: UUID,
+        board_id: str,
+        instance_id: UUID,
+    ) -> list[str]:
+        return self.dispatch_queue_once(
+            db_session,
+            user_id=user_id,
+            board_id=board_id,
+            instance_id=instance_id,
+        )
+
+    def dispatch_queue_for_task_owner(
+        self,
+        db_session: Session,
+        *,
+        task: Task,
+        board_id: str,
+    ) -> list[str]:
+        if task.instance_id is None:
+            return []
+        return self.dispatch_queue_for_instance(
+            db_session,
+            user_id=task.user_id,
+            board_id=board_id,
+            instance_id=task.instance_id,
         )
 
     def _sorted_board_tasks(

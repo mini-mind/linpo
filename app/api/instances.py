@@ -15,7 +15,6 @@ from app.api.task_output_helpers import (
     extract_output_paths_from_artifact,
     guess_output_mime_type,
     normalize_output_path,
-    pick_existing_task_output_path,
     resolve_task_output_path,
     task_temp_output_path,
 )
@@ -413,13 +412,10 @@ def preview_instance_file(
     )
     output_path = resolve_task_output_path(task, path)
     if not output_path.exists() or not output_path.is_file():
-        fallback = pick_existing_task_output_path(task, path)
-        if fallback is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Output file not found on Linpo host. The file may still exist inside the agent instance.",
-            )
-        output_path = fallback
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Output file not found on Linpo host. The file may still exist inside the agent instance.",
+        )
     normalized_board_id = board_id.strip() or "default"
     return build_task_output_preview(
         board_id=normalized_board_id,
@@ -458,13 +454,10 @@ def download_instance_file(
     )
     output_path = resolve_task_output_path(task, path)
     if not output_path.exists() or not output_path.is_file():
-        fallback = pick_existing_task_output_path(task, path)
-        if fallback is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Output file not found on Linpo host. The file may still exist inside the agent instance.",
-            )
-        output_path = fallback
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Output file not found on Linpo host. The file may still exist inside the agent instance.",
+        )
 
     media_type = guess_output_mime_type(output_path)
     if download:

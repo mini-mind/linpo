@@ -253,7 +253,7 @@ export function TeamPage(): JSX.Element {
 function TeamLoadingStage({ isMobile }: { isMobile: boolean }): JSX.Element {
 	return (
 		<section style={stageStyle}>
-			<div style={getCardGridStyle(isMobile)} data-testid="team-agent-cards-stage">
+			<div style={getCardGridStyle(isMobile)} data-testid="team-agent-loading-stage">
 				{loadingCardIds.slice(0, isMobile ? 2 : 3).map((loadingCardId) => (
 					<article
 						key={`loading-card-${loadingCardId}`}

@@ -14,7 +14,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.models import AuthSession, User
-from app.db.session import get_database_url, get_engine
 
 SESSION_COOKIE_NAME = "linpo_session"
 _SESSION_TTL = timedelta(days=7)
@@ -330,43 +329,40 @@ def find_user_by_username_and_email(
     ).scalar_one_or_none()
 
 
-def store_session(session_state: SessionState) -> None:
-    with Session(get_engine(get_database_url())) as db_session:
-        db_session.merge(
-            AuthSession(
-                session_id=session_state.session_id,
-                user_id=session_state.user_id,
-                created_at=session_state.created_at,
-                expires_at=session_state.expires_at,
-            )
+def store_session(db_session: Session, session_state: SessionState) -> None:
+    db_session.merge(
+        AuthSession(
+            session_id=session_state.session_id,
+            user_id=session_state.user_id,
+            created_at=session_state.created_at,
+            expires_at=session_state.expires_at,
         )
-        db_session.commit()
+    )
+    db_session.commit()
 
 
-def load_session(session_id: str) -> SessionState | None:
-    with Session(get_engine(get_database_url())) as db_session:
-        auth_session = db_session.get(AuthSession, session_id)
+def load_session(db_session: Session, session_id: str) -> SessionState | None:
+    auth_session = db_session.get(AuthSession, session_id)
 
-        if auth_session is None:
-            return None
+    if auth_session is None:
+        return None
 
-        session_state = _to_session_state(auth_session)
-        if session_state.expires_at <= _utc_now():
-            db_session.delete(auth_session)
-            db_session.commit()
-            return None
-
-        return session_state
-
-
-def delete_session(session_id: str) -> None:
-    with Session(get_engine(get_database_url())) as db_session:
-        auth_session = db_session.get(AuthSession, session_id)
-        if auth_session is None:
-            return
-
+    session_state = _to_session_state(auth_session)
+    if session_state.expires_at <= _utc_now():
         db_session.delete(auth_session)
         db_session.commit()
+        return None
+
+    return session_state
+
+
+def delete_session(db_session: Session, session_id: str) -> None:
+    auth_session = db_session.get(AuthSession, session_id)
+    if auth_session is None:
+        return
+
+    db_session.delete(auth_session)
+    db_session.commit()
 
 
 def get_authenticated_user(db_session: Session, request: Request) -> User | None:
@@ -374,12 +370,12 @@ def get_authenticated_user(db_session: Session, request: Request) -> User | None
     if session_id is None:
         return None
 
-    session_state = load_session(session_id)
+    session_state = load_session(db_session, session_id)
     if session_state is None:
         return None
 
     user = db_session.get(User, session_state.user_id)
     if user is None:
-        delete_session(session_id)
+        delete_session(db_session, session_id)
         return None
     return user

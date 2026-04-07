@@ -361,7 +361,7 @@ describe("SessionPage", () => {
 				).toBeInTheDocument();
 			});
 
-			const headerTitle = screen.getByRole("heading", {
+			const headerTitle = await screen.findByRole("heading", {
 				name: "Full Width Instance",
 			});
 			const headerInner = headerTitle.parentElement;

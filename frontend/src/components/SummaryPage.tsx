@@ -104,7 +104,7 @@ export function SummaryPage(): JSX.Element {
 
   const loadTasks = useCallback(async () => {
     try {
-      const result = await listKanbanTasks({ disableInstanceContext: true });
+      const result = await listKanbanTasks({ disableInstanceContext: true }, BOARD_REALTIME_ID);
       setTasks(result);
       setTasksError(null);
     } catch (error) {
@@ -497,7 +497,7 @@ export function SummaryPage(): JSX.Element {
     async (taskId: string, instanceId?: string | null) => {
       try {
         setContinuingTaskId(taskId);
-        await continueKanbanTask(taskId, { instanceId: instanceId ?? null });
+        await continueKanbanTask(taskId, { instanceId: instanceId ?? null }, BOARD_REALTIME_ID);
         addToast('审批项已继续执行', 'success');
         await Promise.all([loadTasks(), loadOverview()]);
       } catch (error) {

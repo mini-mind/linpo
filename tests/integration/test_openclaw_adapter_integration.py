@@ -63,7 +63,7 @@ def test_agents_route_uses_adapter_normalized_error_contract(monkeypatch: pytest
     import app.services.observer_data as observer_data
     observer_data._OPENCLAW_DATA_SOURCES.clear()
 
-    status_code, _, body = request("GET", "/agents?data_source=openclaw")
+    status_code, _, body = request("GET", "/api/v1/agents?data_source=openclaw")
 
     assert status_code == 503
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))

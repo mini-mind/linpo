@@ -13,7 +13,6 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.models import FlowPlannerMessage, FlowPlannerSession
-from app.db.session import get_database_url, get_engine
 from app.services.flow_planner_realtime import FlowPlannerRealtimeHub, get_flow_planner_realtime_hub
 
 PlannerSessionStatus = str
@@ -1179,11 +1178,9 @@ class FlowPlannerSessionService:
 
     @contextmanager
     def _session_scope(self, db_session: Session | None) -> Iterator[Session]:
-        if db_session is not None:
-            yield db_session
-            return
-        with Session(get_engine(get_database_url())) as managed_session:
-            yield managed_session
+        if db_session is None:
+            raise RuntimeError("db_session is required")
+        yield db_session
 
 
 _GLOBAL_FLOW_PLANNER_SESSION_SERVICE = FlowPlannerSessionService()

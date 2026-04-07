@@ -153,6 +153,10 @@ function renderWithRouter(): ReturnType<typeof render> {
 	);
 }
 
+async function waitForOverviewLoaded(): Promise<void> {
+	await screen.findByRole("button", { name: "刷新" });
+}
+
 describe("OverviewPage", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -167,9 +171,7 @@ describe("OverviewPage", () => {
 
 		renderWithRouter();
 
-		await waitFor(() => {
-			expect(screen.getByTestId("overview-stats-panel")).toBeInTheDocument();
-		});
+		await waitForOverviewLoaded();
 
 		expect(listInstancesSpy).not.toHaveBeenCalled();
 
@@ -241,9 +243,7 @@ describe("OverviewPage", () => {
 
 		renderWithRouter();
 
-		await waitFor(() => {
-			expect(screen.getByTestId("overview-stats-panel")).toBeInTheDocument();
-		});
+		await waitForOverviewLoaded();
 
 		expect(screen.getByText("实例总数")).toBeInTheDocument();
 		expect(screen.getByText("活跃 agents")).toBeInTheDocument();
@@ -262,9 +262,7 @@ describe("OverviewPage", () => {
 
 		renderWithRouter();
 
-		await waitFor(() => {
-			expect(screen.getByTestId("overview-stats-panel")).toBeInTheDocument();
-		});
+		await waitForOverviewLoaded();
 
 		fireEvent.click(screen.getByRole("button", { name: "刷新" }));
 
@@ -309,18 +307,16 @@ describe("OverviewPage", () => {
 		renderWithRouter();
 
 		await waitFor(() => {
-			expect(screen.getByTestId("overview-stats-panel")).toBeInTheDocument();
+			expect(screen.getByTestId("overview-token-stage")).toHaveTextContent(
+				"当前没有可展示的实例 token 数据",
+			);
 		});
-
-		expect(screen.getByTestId("overview-token-stage")).toHaveTextContent(
-			"当前没有可展示的实例 token 数据",
-		);
 		expect(screen.getByTestId("overview-global-events")).toHaveTextContent(
 			"当前没有可展示的全局事件",
 		);
 	});
 
-it("keeps the event rail rendered even when there are no global events yet", async () => {
+	it("keeps the event rail rendered even when there are no global events yet", async () => {
 		mockGetAggregateOverview.mockResolvedValue({
 			...overviewFixture,
 			global_events: [],
@@ -329,7 +325,7 @@ it("keeps the event rail rendered even when there are no global events yet", asy
 		renderWithRouter();
 
 		await waitFor(() => {
-			expect(screen.getByTestId("overview-global-events")).toBeInTheDocument();
+			expect(screen.getByText("当前没有可展示的全局事件")).toBeInTheDocument();
 		});
 
 		const eventsRail = screen.getByTestId("overview-global-events");
@@ -346,15 +342,15 @@ it("keeps the event rail rendered even when there are no global events yet", asy
 		renderWithRouter();
 
 		await waitFor(() => {
-			expect(screen.getByTestId("overview-stats-panel")).toBeInTheDocument();
+			expect(screen.getByTestId("overview-token-stage")).toHaveTextContent(
+				"alpha-instance",
+			);
 		});
 
-		expect(screen.getByTestId("overview-token-stage")).toHaveTextContent(
-			"alpha-instance",
-		);
 		expect(screen.getByTestId("overview-global-events")).toHaveTextContent(
 			"beta-instance is waiting for upstream recovery.",
 		);
+		expect(screen.queryByTestId("overview-partial-failure")).not.toBeInTheDocument();
 	});
 
 	it("shows a partial failure notice when the payload is explicitly marked partial_failure", async () => {
@@ -367,11 +363,12 @@ it("keeps the event rail rendered even when there are no global events yet", asy
 		renderWithRouter();
 
 		await waitFor(() => {
-			expect(screen.getByTestId("overview-stats-panel")).toBeInTheDocument();
+			expect(screen.getByTestId("overview-token-stage")).toHaveTextContent(
+				"alpha-instance",
+			);
 		});
-
-		expect(screen.getByTestId("overview-token-stage")).toHaveTextContent(
-			"alpha-instance",
+		expect(await screen.findByTestId("overview-partial-failure")).toHaveTextContent(
+			"部分实例数据获取失败，当前总览可能不完整。",
 		);
 	});
 
@@ -463,9 +460,7 @@ it("keeps the event rail rendered even when there are no global events yet", asy
 
 		fireEvent.click(screen.getByRole("button", { name: "重试" }));
 
-		await waitFor(() => {
-			expect(screen.getByTestId("overview-stats-panel")).toBeInTheDocument();
-		});
+		await waitForOverviewLoaded();
 
 		expect(mockGetAggregateOverview).toHaveBeenCalledTimes(2);
 	});
@@ -481,9 +476,7 @@ it("keeps the event rail rendered even when there are no global events yet", asy
 
 		renderWithRouter();
 
-		await waitFor(() => {
-			expect(screen.getByTestId("overview-stats-panel")).toBeInTheDocument();
-		});
+		await waitForOverviewLoaded();
 
 		expect(screen.getByTestId("overview-stats-panel")).toHaveTextContent("330");
 		expect(screen.getByTestId("overview-token-stage")).toHaveTextContent(

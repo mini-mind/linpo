@@ -65,16 +65,17 @@ import {
   encodeKanbanTaskCreateRequest,
 } from './taskFlowContract';
 const DEFAULT_OBSERVER_DATA_SOURCE = 'openclaw';
-const DEFAULT_BOARD_ID = 'default';
-
 interface ObserverRequestOptions {
   instanceId?: string | null;
   disableInstanceContext?: boolean;
 }
 
-function resolveBoardId(boardId?: string | null): string {
-  const normalized = (boardId ?? '').trim();
-  return normalized || DEFAULT_BOARD_ID;
+function resolveBoardId(boardId: string): string {
+  const normalized = boardId.trim();
+  if (!normalized) {
+    throw new Error('boardId is required');
+  }
+  return normalized;
 }
 
 function withDefaultDataSource(path: string): string {
@@ -267,8 +268,8 @@ export async function getAggregateTopology(
 }
 
 export async function listKanbanTasks(
-  options?: ObserverRequestOptions,
-  boardId?: string | null
+  options: ObserverRequestOptions | undefined,
+  boardId: string
 ): Promise<KanbanTaskItem[]> {
   const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
   const payload = await fetchApi<unknown>(
@@ -280,8 +281,8 @@ export async function listKanbanTasks(
 }
 
 export async function listFlowDraftRecords(
-  options?: ObserverRequestOptions,
-  boardId?: string | null
+  options: ObserverRequestOptions | undefined,
+  boardId: string
 ): Promise<FlowDraftItem[]> {
   const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
   const payload = await fetchApi<unknown>(
@@ -294,8 +295,8 @@ export async function listFlowDraftRecords(
 
 export async function upsertFlowDraftRecord(
   payload: FlowDraftUpsertRequest,
-  options?: ObserverRequestOptions,
-  boardId?: string | null
+  options: ObserverRequestOptions | undefined,
+  boardId: string
 ): Promise<FlowDraftItem> {
   const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
   const response = await fetchApi<unknown>(
@@ -312,8 +313,8 @@ export async function upsertFlowDraftRecord(
 
 export async function deleteFlowDraftRecord(
   flowId: string,
-  options?: ObserverRequestOptions,
-  boardId?: string | null
+  options: ObserverRequestOptions | undefined,
+  boardId: string
 ): Promise<FlowDraftDeleteResponse> {
   const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
   const encodedFlowId = encodeURIComponent(flowId);
@@ -332,8 +333,8 @@ export async function deleteFlowDraftRecord(
 
 export async function createKanbanTask(
   payload: KanbanTaskCreateRequest,
-  options?: ObserverRequestOptions,
-  boardId?: string | null
+  options: ObserverRequestOptions | undefined,
+  boardId: string
 ): Promise<KanbanTaskItem> {
   const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
   const response = await fetchApi<unknown>(
@@ -350,81 +351,45 @@ export async function createKanbanTask(
 
 export async function deleteKanbanTask(
   taskId: string,
-  options?: ObserverRequestOptions,
-  boardId?: string | null
+  options: ObserverRequestOptions | undefined,
+  boardId: string
 ): Promise<TaskDeleteResponse> {
   const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
   const encodedTaskId = encodeURIComponent(taskId);
-  const path = `/api/v1/boards/${encodedBoardId}/tasks/${encodedTaskId}`;
-  try {
-    const payload = await fetchApi<unknown>(
-      path,
-      {
-        method: 'DELETE',
-      },
-      options
-    );
-    return decodeRequired(decodeTaskDeleteResponse(payload), 'Invalid task delete response');
-  } catch (error) {
-    if (error instanceof TypeError) {
-      const payload = await fetchApi<unknown>(
-        `${path}/delete`,
-        {
-          method: 'POST',
-        },
-        options
-      );
-      return decodeRequired(
-        decodeTaskDeleteResponse(payload),
-        'Invalid task delete fallback response'
-      );
-    }
-    throw error;
-  }
+  const payload = await fetchApi<unknown>(
+    `/api/v1/boards/${encodedBoardId}/tasks/${encodedTaskId}`,
+    {
+      method: 'DELETE',
+    },
+    options
+  );
+  return decodeRequired(decodeTaskDeleteResponse(payload), 'Invalid task delete response');
 }
 
 export async function deleteKanbanRequirementTasks(
   requirementId: string,
-  options?: ObserverRequestOptions,
-  boardId?: string | null
+  options: ObserverRequestOptions | undefined,
+  boardId: string
 ): Promise<TaskDeleteResponse> {
   const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
   const encodedRequirementId = encodeURIComponent(requirementId);
-  const path = `/api/v1/boards/${encodedBoardId}/tasks/requirements/${encodedRequirementId}`;
-  try {
-    const payload = await fetchApi<unknown>(
-      path,
-      {
-        method: 'DELETE',
-      },
-      options
-    );
-    return decodeRequired(
-      decodeTaskDeleteResponse(payload),
-      'Invalid requirement delete response'
-    );
-  } catch (error) {
-    if (error instanceof TypeError) {
-      const payload = await fetchApi<unknown>(
-        `${path}/delete`,
-        {
-          method: 'POST',
-        },
-        options
-      );
-      return decodeRequired(
-        decodeTaskDeleteResponse(payload),
-        'Invalid requirement delete fallback response'
-      );
-    }
-    throw error;
-  }
+  const payload = await fetchApi<unknown>(
+    `/api/v1/boards/${encodedBoardId}/tasks/requirements/${encodedRequirementId}`,
+    {
+      method: 'DELETE',
+    },
+    options
+  );
+  return decodeRequired(
+    decodeTaskDeleteResponse(payload),
+    'Invalid requirement delete response'
+  );
 }
 
 export async function interruptKanbanTask(
   taskId: string,
-  options?: ObserverRequestOptions,
-  boardId?: string | null
+  options: ObserverRequestOptions | undefined,
+  boardId: string
 ): Promise<TaskInterruptResponse> {
   const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
   const encodedTaskId = encodeURIComponent(taskId);
@@ -440,8 +405,8 @@ export async function interruptKanbanTask(
 
 export async function continueKanbanTask(
   taskId: string,
-  options?: ObserverRequestOptions,
-  boardId?: string | null
+  options: ObserverRequestOptions | undefined,
+  boardId: string
 ): Promise<TaskContinueResponse> {
   const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
   const encodedTaskId = encodeURIComponent(taskId);
@@ -458,8 +423,8 @@ export async function continueKanbanTask(
 export async function previewKanbanTaskOutput(
   taskId: string,
   path: string | null | undefined,
-  options?: ObserverRequestOptions,
-  boardId?: string | null
+  options: ObserverRequestOptions | undefined,
+  boardId: string
 ): Promise<TaskOutputPreviewResponse> {
   const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
   const encodedTaskId = encodeURIComponent(taskId);
@@ -482,8 +447,8 @@ export async function previewKanbanTaskOutput(
 export function buildKanbanTaskOutputDownloadUrl(
   taskId: string,
   path: string,
-  options?: ObserverRequestOptions,
-  boardId?: string | null
+  options: ObserverRequestOptions | undefined,
+  boardId: string
 ): string {
   return buildKanbanTaskOutputFileUrl(
     taskId,
@@ -499,9 +464,9 @@ export function buildKanbanTaskOutputDownloadUrl(
 export function buildKanbanTaskOutputFileUrl(
   taskId: string,
   path: string,
-  query?: { download?: boolean },
-  options?: ObserverRequestOptions,
-  boardId?: string | null
+  query: { download?: boolean } | undefined,
+  options: ObserverRequestOptions | undefined,
+  boardId: string
 ): string {
   const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
   const encodedTaskId = encodeURIComponent(taskId);
@@ -516,8 +481,8 @@ export function buildKanbanTaskOutputFileUrl(
 
 export async function generateFlowFromRequirement(
   payload: FlowGenerateRequest,
-  options?: ObserverRequestOptions,
-  boardId?: string | null
+  options: ObserverRequestOptions | undefined,
+  boardId: string
 ): Promise<FlowGenerateResponse> {
   const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
   const response = await fetchApi<unknown>(
@@ -534,8 +499,8 @@ export async function generateFlowFromRequirement(
 
 export async function confirmFlowToKanban(
   payload: FlowConfirmRequest,
-  options?: ObserverRequestOptions,
-  boardId?: string | null
+  options: ObserverRequestOptions | undefined,
+  boardId: string
 ): Promise<FlowConfirmResponse> {
   const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
   const response = await fetchApi<unknown>(
@@ -552,8 +517,8 @@ export async function confirmFlowToKanban(
 
 export async function stopFlowPlannerSession(
   payload: FlowPlannerStopRequest,
-  options?: ObserverRequestOptions,
-  boardId?: string | null
+  options: ObserverRequestOptions | undefined,
+  boardId: string
 ): Promise<FlowPlannerStopResponse> {
   const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
   const response = await fetchApi<unknown>(
@@ -573,8 +538,8 @@ export async function stopFlowPlannerSession(
 
 export async function probeFlowPlannerSession(
   sessionKey: string,
-  options?: ObserverRequestOptions,
-  boardId?: string | null
+  options: ObserverRequestOptions | undefined,
+  boardId: string
 ): Promise<{ exists: boolean }> {
   const normalizedSessionKey = sessionKey.trim();
   if (!normalizedSessionKey) {
@@ -592,8 +557,8 @@ export async function probeFlowPlannerSession(
 export async function renameFlowRequirement(
   requirementId: string,
   payload: FlowRequirementRenameRequest,
-  options?: ObserverRequestOptions,
-  boardId?: string | null
+  options: ObserverRequestOptions | undefined,
+  boardId: string
 ): Promise<FlowRequirementRenameResponse> {
   const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
   const encodedRequirementId = encodeURIComponent(requirementId);
@@ -614,8 +579,8 @@ export async function renameFlowRequirement(
 
 export async function stopFlowRequirement(
   requirementId: string,
-  options?: ObserverRequestOptions,
-  boardId?: string | null
+  options: ObserverRequestOptions | undefined,
+  boardId: string
 ): Promise<FlowRequirementStopResponse> {
   const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
   const encodedRequirementId = encodeURIComponent(requirementId);
@@ -634,8 +599,8 @@ export async function stopFlowRequirement(
 
 export async function continueFlowRequirement(
   requirementId: string,
-  options?: ObserverRequestOptions,
-  boardId?: string | null
+  options: ObserverRequestOptions | undefined,
+  boardId: string
 ): Promise<FlowRequirementContinueResponse> {
   const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
   const encodedRequirementId = encodeURIComponent(requirementId);
@@ -655,8 +620,8 @@ export async function continueFlowRequirement(
 export async function syncFlowRequirement(
   requirementId: string,
   payload: FlowRequirementSyncRequest,
-  options?: ObserverRequestOptions,
-  boardId?: string | null
+  options: ObserverRequestOptions | undefined,
+  boardId: string
 ): Promise<FlowRequirementSyncResponse> {
   const encodedBoardId = encodeURIComponent(resolveBoardId(boardId));
   const encodedRequirementId = encodeURIComponent(requirementId);

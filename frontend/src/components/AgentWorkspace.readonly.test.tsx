@@ -58,6 +58,7 @@ vi.mock("react-router-dom", () => ({
 describe("AgentWorkspace session workspace", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.spyOn(console, "info").mockImplementation(() => {});
 		mockGetAgentDetail.mockResolvedValue({
 			id: "main",
 			name: "Main Agent",
@@ -474,6 +475,7 @@ describe("AgentWorkspace session workspace", () => {
 describe("AgentWorkspace five-block structure", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.spyOn(console, "info").mockImplementation(() => {});
 	});
 
 	it("renders agent header with agent id", async () => {

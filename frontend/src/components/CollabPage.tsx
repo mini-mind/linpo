@@ -158,7 +158,10 @@ export default function CollabPage(): JSX.Element {
     try {
       setLoading(true);
       setLoadError(null);
-      const [data, tasks] = await Promise.all([getAggregateOverview(), listKanbanTasks()]);
+      const [data, tasks] = await Promise.all([
+        getAggregateOverview(),
+        listKanbanTasks(undefined, KANBAN_BOARD_REALTIME_ID),
+      ]);
       setOverview(data);
       setTaskRecords(tasks.map(toBoardTaskFromKanbanTask));
     } catch (error) {
@@ -360,7 +363,7 @@ export default function CollabPage(): JSX.Element {
       selectedOutputEntry.value,
       { download: false },
       selectedTask.instanceId ? { instanceId: selectedTask.instanceId } : undefined,
-      'default'
+      KANBAN_BOARD_REALTIME_ID
     );
   }, [selectedOutputEntry, selectedTask]);
 
@@ -509,7 +512,7 @@ export default function CollabPage(): JSX.Element {
           instance_id: selectedAgent.instanceId,
         },
         { instanceId: selectedAgent.instanceId },
-        'default'
+        KANBAN_BOARD_REALTIME_ID
       );
       setIsCreateModalOpen(false);
       setRequirementInput('');
@@ -528,7 +531,7 @@ export default function CollabPage(): JSX.Element {
     }
 
     try {
-      await deleteKanbanTask(task.id);
+      await deleteKanbanTask(task.id, undefined, KANBAN_BOARD_REALTIME_ID);
       if (selectedTask?.id === task.id) {
         setSelectedTask(null);
       }
@@ -548,7 +551,7 @@ export default function CollabPage(): JSX.Element {
 
     setInterruptingFlowId(targetRequirementId);
     try {
-      await stopFlowRequirement(targetRequirementId, undefined, 'default');
+      await stopFlowRequirement(targetRequirementId, undefined, KANBAN_BOARD_REALTIME_ID);
       addToast('流程已中断，运行中与待调度节点已阻断', 'success');
       await loadOverview();
     } catch (error) {
@@ -567,7 +570,7 @@ export default function CollabPage(): JSX.Element {
 
     setContinuingFlowId(targetRequirementId);
     try {
-      await continueFlowRequirement(targetRequirementId, undefined, 'default');
+      await continueFlowRequirement(targetRequirementId, undefined, KANBAN_BOARD_REALTIME_ID);
       addToast('流程已继续', 'success');
       await loadOverview();
     } catch (error) {
@@ -600,7 +603,7 @@ export default function CollabPage(): JSX.Element {
       const response = await confirmFlowToKanban(
         payload,
         { instanceId: payload.instance_id },
-        'default'
+        KANBAN_BOARD_REALTIME_ID
       );
       addToast(
         `已重新入队 ${response.created_task_ids.length} 个任务，已投放 ${response.dispatched_task_ids.length} 个`,
@@ -634,7 +637,7 @@ export default function CollabPage(): JSX.Element {
       await interruptKanbanTask(
         selectedTask.id,
         selectedTask.instanceId ? { instanceId: selectedTask.instanceId } : undefined,
-        'default'
+        KANBAN_BOARD_REALTIME_ID
       );
       addToast('已提交中断指令', 'success');
       await loadOverview();
@@ -665,7 +668,7 @@ export default function CollabPage(): JSX.Element {
       await continueKanbanTask(
         selectedTask.id,
         selectedTask.instanceId ? { instanceId: selectedTask.instanceId } : undefined,
-        'default'
+        KANBAN_BOARD_REALTIME_ID
       );
       addToast('已提交继续指令', 'success');
       await loadOverview();
@@ -859,7 +862,7 @@ export default function CollabPage(): JSX.Element {
       selectedTask.id,
       selectedOutputEntry.value,
       selectedTask.instanceId ? { instanceId: selectedTask.instanceId } : undefined,
-      'default'
+      KANBAN_BOARD_REALTIME_ID
     )
       .then((payload) => {
         if (cancelled) {
@@ -1330,7 +1333,7 @@ export default function CollabPage(): JSX.Element {
                               selectedTask.id,
                               selectedOutputEntry.value,
                               selectedTask.instanceId ? { instanceId: selectedTask.instanceId } : undefined,
-                              'default'
+                              KANBAN_BOARD_REALTIME_ID
                             )}
                             style={taskOutputDownloadLinkStyle}
                             target="_blank"

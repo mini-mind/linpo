@@ -9,12 +9,12 @@ from app.main import app
 
 def test_app_boots_with_asgi_request() -> None:
     assert isinstance(app, FastAPI), "expected app.main.app to be a FastAPI instance"
-    status_code, _, _ = request("GET", "/health")
+    status_code, _, _ = request("GET", "/api/v1/health")
     assert status_code == 200
 
 
 def test_health_endpoint_returns_ok() -> None:
-    status_code, _, body = request("GET", "/health")
+    status_code, _, body = request("GET", "/api/v1/health")
 
     assert status_code == 200
     payload = cast(object, json.loads(body.decode("utf-8")))
@@ -24,7 +24,7 @@ def test_health_endpoint_returns_ok() -> None:
 def test_health_endpoint_allows_local_vite_origin_for_preflight() -> None:
     status_code, headers, _ = request(
         "OPTIONS",
-        "/health",
+        "/api/v1/health",
         headers={
             "Origin": "http://127.0.0.1:5173",
             "Access-Control-Request-Method": "GET",
@@ -38,7 +38,7 @@ def test_health_endpoint_allows_local_vite_origin_for_preflight() -> None:
 def test_health_endpoint_allows_alternate_local_vite_origin_for_preflight() -> None:
     status_code, headers, _ = request(
         "OPTIONS",
-        "/health",
+        "/api/v1/health",
         headers={
             "Origin": "http://127.0.0.1:4173",
             "Access-Control-Request-Method": "GET",
@@ -52,7 +52,7 @@ def test_health_endpoint_allows_alternate_local_vite_origin_for_preflight() -> N
 def test_health_endpoint_allows_local_origin_for_preflight() -> None:
     status_code, headers, _ = request(
         "OPTIONS",
-        "/health",
+        "/api/v1/health",
         headers={
             "Origin": "http://127.0.0.1:5173",
             "Access-Control-Request-Method": "GET",
@@ -66,7 +66,7 @@ def test_health_endpoint_allows_local_origin_for_preflight() -> None:
 def test_health_preflight_echoes_requested_content_type_header() -> None:
     status_code, headers, _ = request(
         "OPTIONS",
-        "/health",
+        "/api/v1/health",
         headers={
             "Origin": "http://127.0.0.1:5173",
             "Access-Control-Request-Method": "GET",
@@ -82,12 +82,17 @@ def test_health_preflight_echoes_requested_content_type_header() -> None:
 
 def test_legacy_demo_routes_are_not_exposed() -> None:
     legacy_paths = (
+        "/health",
         "/sessions",
         "/debates",
         "/claw-endpoints",
         "/echo",
         "/conversations",
         "/test",
+        "/instances/messages",
+        "/agents",
+        "/chat/models",
+        "/sse/boards/default/tasks",
     )
 
     for path in legacy_paths:

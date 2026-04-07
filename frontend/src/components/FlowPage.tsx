@@ -653,7 +653,7 @@ export function FlowPage(): JSX.Element {
   }, [uniqueAgents]);
 
   const refreshFlowTasks = useCallback(async (): Promise<KanbanTaskItem[]> => {
-    const tasks = await listKanbanTasks(undefined, 'default');
+    const tasks = await listKanbanTasks(undefined, FLOW_BOARD_REALTIME_ID);
     setFlowTasks(tasks);
     return tasks;
   }, []);
@@ -683,7 +683,7 @@ export function FlowPage(): JSX.Element {
         planner_messages: record.planner_messages ?? [],
       },
       undefined,
-      'default'
+      FLOW_BOARD_REALTIME_ID
     )
       .then(() => {
         draftApiAvailabilityRef.current = 'enabled';
@@ -710,7 +710,7 @@ export function FlowPage(): JSX.Element {
     if (draftApiAvailabilityRef.current === 'disabled') {
       return;
     }
-    void deleteFlowDraftRecord(normalizedFlowId, undefined, 'default')
+    void deleteFlowDraftRecord(normalizedFlowId, undefined, FLOW_BOARD_REALTIME_ID)
       .then(() => {
         draftApiAvailabilityRef.current = 'enabled';
         hasDraftSyncErrorToastRef.current = false;
@@ -776,7 +776,7 @@ export function FlowPage(): JSX.Element {
 
   useEffect(() => {
     let active = true;
-    void listFlowDraftRecords(undefined, 'default')
+    void listFlowDraftRecords(undefined, FLOW_BOARD_REALTIME_ID)
       .then((remoteDrafts) => {
         if (!active) {
           return;
@@ -811,7 +811,7 @@ export function FlowPage(): JSX.Element {
                 planner_messages: localDraft.planner_messages ?? [],
               },
               undefined,
-              'default'
+              FLOW_BOARD_REALTIME_ID
             )
               .then(() => {
                 hasDraftSyncErrorToastRef.current = false;
@@ -1253,7 +1253,7 @@ export function FlowPage(): JSX.Element {
       plannerRealtimeRef.current = client;
     };
 
-    void probeFlowPlannerSession(normalizedPlannerSessionKey, undefined, 'default')
+    void probeFlowPlannerSession(normalizedPlannerSessionKey, undefined, FLOW_BOARD_REALTIME_ID)
       .then(({ exists }) => {
         if (cancelled) {
           return;
@@ -1634,7 +1634,7 @@ export function FlowPage(): JSX.Element {
     }
     try {
       if (submittedRequirementId) {
-        await deleteKanbanRequirementTasks(submittedRequirementId, undefined, 'default');
+        await deleteKanbanRequirementTasks(submittedRequirementId, undefined, FLOW_BOARD_REALTIME_ID);
         setFlowTasks((current) =>
           current.filter((task) => getRequirementIdFromTask(task) !== submittedRequirementId)
         );
@@ -3066,7 +3066,7 @@ export function FlowPage(): JSX.Element {
           edges: flowEdges,
         },
         undefined,
-        'default'
+        FLOW_BOARD_REALTIME_ID
       )
         .then(async () => {
           blockedSyncSignatureRef.current = signature;
@@ -3177,7 +3177,7 @@ export function FlowPage(): JSX.Element {
           current_edges: flowEdges,
         },
         { instanceId: executor.instance_id },
-        'default'
+        FLOW_BOARD_REALTIME_ID
       );
 
       if (flowScopeAtRequest !== activeFlowScopeRef.current) {
@@ -3315,7 +3315,7 @@ export function FlowPage(): JSX.Element {
           planner_session_key: sessionKey,
         },
         undefined,
-        'default'
+        FLOW_BOARD_REALTIME_ID
       );
       plannerSessionStatusRef.current = response.status;
       setPlannerSessionStatus(response.status);
@@ -3354,7 +3354,7 @@ export function FlowPage(): JSX.Element {
     }
     setIsFlowActioning(true);
     try {
-      await stopFlowRequirement(requirementId, undefined, 'default');
+      await stopFlowRequirement(requirementId, undefined, FLOW_BOARD_REALTIME_ID);
       await refreshFlowTasks();
       addToast('流程已中断', 'success');
     } catch (error) {
@@ -3373,7 +3373,7 @@ export function FlowPage(): JSX.Element {
     }
     setIsFlowActioning(true);
     try {
-      await continueFlowRequirement(requirementId, undefined, 'default');
+      await continueFlowRequirement(requirementId, undefined, FLOW_BOARD_REALTIME_ID);
       await refreshFlowTasks();
       addToast('流程已继续', 'success');
     } catch (error) {
@@ -3460,7 +3460,7 @@ export function FlowPage(): JSX.Element {
           edges: flowEdges,
         },
         { instanceId: executor.instance_id },
-        'default'
+        FLOW_BOARD_REALTIME_ID
       );
 
       const normalizedResponseNodes = normalizeFlowNodes(response.nodes, response.edges);
@@ -3537,7 +3537,7 @@ export function FlowPage(): JSX.Element {
     try {
       const requirementId = activeSubmittedRequirementId;
       if (requirementId) {
-        await renameFlowRequirement(requirementId, { name: nextName }, undefined, 'default');
+        await renameFlowRequirement(requirementId, { name: nextName }, undefined, FLOW_BOARD_REALTIME_ID);
         await refreshFlowTasks();
       }
 

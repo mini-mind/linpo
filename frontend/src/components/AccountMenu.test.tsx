@@ -111,7 +111,7 @@ describe('AccountMenu avatar trigger text', () => {
 
   it('opens instance list modal when auto-open signal arrives', async () => {
     renderMenu(1);
-    expect(screen.getByText('实例列表弹窗')).toBeInTheDocument();
+    expect(await screen.findByText('实例列表弹窗')).toBeInTheDocument();
   });
 
   it('does not render instance files menu item in account dropdown', async () => {

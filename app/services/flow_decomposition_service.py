@@ -19,9 +19,6 @@ from app.services.provider_application_service import (
 )
 
 
-_DEFAULT_DECOMPOSITION_BASE_URL = "ws://175.178.213.10:38789"
-_DEFAULT_DECOMPOSITION_ORIGIN = "http://127.0.0.1:38789"
-_DEFAULT_DECOMPOSITION_GATEWAY_TOKEN = "replace-with-env-token"
 _DEFAULT_DECOMPOSITION_AGENT_ID = "claw3"
 _DEFAULT_HISTORY_LIMIT = 60
 _DEFAULT_MAX_NODES = 12
@@ -215,11 +212,6 @@ class FlowDecompositionService:
         base_url = self._decomposition_base_url()
         token = self._decomposition_gateway_token()
         origin = self._decomposition_origin()
-        if token == "":
-            raise HTTPException(
-                status_code=503,
-                detail="Flow decomposition service is not configured: missing claw3 token",
-            )
 
         client = OpenClawClient(
             base_url=base_url,
@@ -608,23 +600,23 @@ class FlowDecompositionService:
                 result[node_id] = description
         return result
 
+    def _required_flow_decomposition_env(self, env_name: str) -> str:
+        value = os.getenv(env_name, "").strip()
+        if value == "":
+            raise HTTPException(
+                status_code=503,
+                detail=f"Flow decomposition service is not configured: missing {env_name}",
+            )
+        return value
+
     def _decomposition_base_url(self) -> str:
-        return (
-            os.getenv("FLOW_DECOMPOSITION_OPENCLAW_BASE_URL", "").strip()
-            or _DEFAULT_DECOMPOSITION_BASE_URL
-        )
+        return self._required_flow_decomposition_env("FLOW_DECOMPOSITION_OPENCLAW_BASE_URL")
 
     def _decomposition_origin(self) -> str:
-        return (
-            os.getenv("FLOW_DECOMPOSITION_OPENCLAW_ORIGIN", "").strip()
-            or _DEFAULT_DECOMPOSITION_ORIGIN
-        )
+        return self._required_flow_decomposition_env("FLOW_DECOMPOSITION_OPENCLAW_ORIGIN")
 
     def _decomposition_gateway_token(self) -> str:
-        return (
-            os.getenv("FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN", "").strip()
-            or _DEFAULT_DECOMPOSITION_GATEWAY_TOKEN
-        )
+        return self._required_flow_decomposition_env("FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN")
 
     def _decomposition_agent_id(self) -> str:
         return _DEFAULT_DECOMPOSITION_AGENT_ID

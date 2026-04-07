@@ -9,11 +9,11 @@ from sqlalchemy.orm import Session
 
 from app.db.models import Base
 
-_DEFAULT_DATABASE_URL = "postgresql+psycopg://postgres:postgres@127.0.0.1:5432/linpo"
-
-
 def get_database_url() -> str:
-    return os.getenv("LINPO_DATABASE_URL", _DEFAULT_DATABASE_URL)
+    database_url = (os.getenv("LINPO_DATABASE_URL") or "").strip()
+    if database_url == "":
+        raise RuntimeError("LINPO_DATABASE_URL is required and must be explicitly configured")
+    return database_url
 
 
 @lru_cache(maxsize=None)

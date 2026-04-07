@@ -609,11 +609,14 @@ describe('FlowPage', () => {
       throw new Error('planner mock resolver missing');
     }
     const resolveGenerateFn = resolveGenerate as (value: FlowGenerateResponse) => void;
-    resolveGenerateFn(
-      buildGenerateResponse({
-        planner_session_key: plannerSseOptions.sessionKey,
-      })
-    );
+    await act(async () => {
+      resolveGenerateFn(
+        buildGenerateResponse({
+          planner_session_key: plannerSseOptions.sessionKey,
+        })
+      );
+      await Promise.resolve();
+    });
     act(() => {
       plannerSseOptions.onMessage({
         type: 'planner_session_updated',
@@ -667,11 +670,14 @@ describe('FlowPage', () => {
       throw new Error('planner mock resolver missing');
     }
     const resolveGenerateFn = resolveGenerate as (value: FlowGenerateResponse) => void;
-    resolveGenerateFn(
-      buildGenerateResponse({
-        planner_session_key: plannerSseOptions.sessionKey,
-      })
-    );
+    await act(async () => {
+      resolveGenerateFn(
+        buildGenerateResponse({
+          planner_session_key: plannerSseOptions.sessionKey,
+        })
+      );
+      await Promise.resolve();
+    });
 
     act(() => {
       plannerSseOptions.onMessage({
@@ -729,11 +735,14 @@ describe('FlowPage', () => {
       throw new Error('planner mock resolver missing');
     }
     const resolveGenerateFn = resolveGenerate as (value: FlowGenerateResponse) => void;
-    resolveGenerateFn(
-      buildGenerateResponse({
-        planner_session_key: plannerSseOptions.sessionKey,
-      })
-    );
+    await act(async () => {
+      resolveGenerateFn(
+        buildGenerateResponse({
+          planner_session_key: plannerSseOptions.sessionKey,
+        })
+      );
+      await Promise.resolve();
+    });
 
     act(() => {
       plannerSseOptions.onMessage({
@@ -751,6 +760,7 @@ describe('FlowPage', () => {
     });
 
     expect(screen.queryByText('已停止当前规划会话。')).not.toBeInTheDocument();
+    await waitForPlannerFeedbackSettled();
   });
 
   it('compresses planner http/source messages into concise node edit hints', async () => {
@@ -815,11 +825,15 @@ describe('FlowPage', () => {
       throw new Error('planner mock resolver missing');
     }
     const resolveGenerateFn = resolveGenerate as (value: FlowGenerateResponse) => void;
-    resolveGenerateFn(
-      buildGenerateResponse({
-        planner_session_key: plannerSseOptions.sessionKey,
-      })
-    );
+    await act(async () => {
+      resolveGenerateFn(
+        buildGenerateResponse({
+          planner_session_key: plannerSseOptions.sessionKey,
+        })
+      );
+      await Promise.resolve();
+    });
+    await waitForPlannerFeedbackSettled();
   });
 
   it('does not subscribe planner sse when planner session probe reports missing session', async () => {
@@ -1663,6 +1677,7 @@ describe('FlowPage', () => {
 
     renderFlowPage('/flow/edit/req-flow-a');
     await waitForFlowCanvasReady();
+    await screen.findByRole('button', { name: '编辑流程-流程B' });
 
     expect(screen.queryByLabelText('流程分组-草稿')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('流程分组-已提交')).not.toBeInTheDocument();
@@ -1868,7 +1883,11 @@ describe('FlowPage', () => {
     const plannerInput = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
     await userEvent.click(plannerInput);
     await userEvent.type(plannerInput, '这是流程A的消息');
-    await userEvent.keyboard('{Enter}');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => {
+      expect(mockGenerateFlowFromRequirement).toHaveBeenCalledTimes(1);
+    });
+    await screen.findByTestId('flow-planner-messages');
     expect(await screen.findByText('这是流程A的消息')).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: '切换流程-消息流B' }));
@@ -1879,9 +1898,14 @@ describe('FlowPage', () => {
     const secondPlannerInput = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
     await userEvent.click(secondPlannerInput);
     await userEvent.type(secondPlannerInput, '这是流程B的消息');
-    await userEvent.keyboard('{Enter}');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => {
+      expect(mockGenerateFlowFromRequirement).toHaveBeenCalledTimes(2);
+    });
     expect(await screen.findByText('这是流程B的消息')).toBeInTheDocument();
-    expect(screen.queryByText('这是流程A的消息')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText('这是流程A的消息')).not.toBeInTheDocument();
+    });
 
     await userEvent.click(screen.getByRole('button', { name: '切换流程-消息流A' }));
     await waitFor(() => {
@@ -1889,7 +1913,9 @@ describe('FlowPage', () => {
     });
     await userEvent.click(screen.getByTestId('flow-planner-input'));
     expect(await screen.findByText('这是流程A的消息')).toBeInTheDocument();
-    expect(screen.queryByText('这是流程B的消息')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText('这是流程B的消息')).not.toBeInTheDocument();
+    });
   });
 
   it('does not render planning placeholder text while awaiting planner response', async () => {
@@ -1915,11 +1941,19 @@ describe('FlowPage', () => {
 
     const view = renderFlowPage(`/flow/edit/${flowId}`);
     await waitForFlowCanvasReady();
+    await act(async () => {
+      const overviewRequest = mockGetAggregateOverview.mock.results.at(-1)?.value;
+      if (overviewRequest && typeof (overviewRequest as Promise<unknown>).then === 'function') {
+        await overviewRequest;
+      }
+    });
 
     const plannerInput = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
     await userEvent.click(plannerInput);
-    await userEvent.type(plannerInput, '这条消息需要跨刷新恢复');
-    await userEvent.keyboard('{Enter}');
+    await userEvent.type(plannerInput, '这条消息需要跨刷新恢复{enter}');
+    await waitFor(() => {
+      expect(mockGenerateFlowFromRequirement).toHaveBeenCalledTimes(1);
+    });
     expect(await screen.findByText('这条消息需要跨刷新恢复')).toBeInTheDocument();
 
     await waitFor(() => {
@@ -2161,13 +2195,16 @@ describe('FlowPage', () => {
 
     await waitForFlowCanvasReady();
     expect(screen.queryByTestId('flow-canvas-floating-actions')).not.toBeInTheDocument();
-    const currentCard = findCurrentFlowSidebarCard();
-    expect(within(currentCard).getByRole('button', { name: /运行流程-/ })).toBeDisabled();
-    expect(screen.queryByRole('button', { name: '停止流程' })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('流程实例面板')).not.toBeInTheDocument();
-    expect(within(currentCard).getByRole('button', { current: 'page' })).toHaveTextContent('运行中');
-    expect(screen.getByTestId('flow-planner-input')).toBeDisabled();
+    await waitFor(() => {
+      const currentCard = findCurrentFlowSidebarCard();
+      expect(within(currentCard).getByRole('button', { name: /运行流程-/ })).toBeDisabled();
+      expect(screen.queryByRole('button', { name: '停止流程' })).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('流程实例面板')).not.toBeInTheDocument();
+      expect(within(currentCard).getByRole('button', { current: 'page' })).toHaveTextContent('运行中');
+      expect(screen.getByTestId('flow-planner-input')).toBeDisabled();
+    });
 
+    const currentCard = findCurrentFlowSidebarCard();
     await userEvent.click(within(currentCard).getByRole('button', { name: /编辑流程-/ }));
     const detailDialog = await screen.findByRole('dialog', { name: '流程编辑窗口' });
     expect(within(detailDialog).getByRole('button', { name: '中断' })).toBeInTheDocument();

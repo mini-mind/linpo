@@ -55,13 +55,6 @@ def _json_headers(cookie_header: str | None = None) -> dict[str, str]:
     return headers
 
 
-def _planner_json_headers(planner_token: str) -> dict[str, str]:
-    return {
-        "content-type": "application/json",
-        "X-Linpo-Planner-Token": planner_token,
-    }
-
-
 _RAW_KEY_MAP_FIELDS = {"node_lane_by_id", "nodeLaneById"}
 
 
@@ -137,14 +130,14 @@ def _register_and_login(username: str, password: str = "secret-123") -> str:
     email = f"{username}@example.com"
     register_status, _, _ = _request_json(
         "POST",
-        "/auth/register",
+        "/api/v1/auth/register",
         {"username": username, "email": email, "password": password},
     )
     assert register_status == 201
 
     login_status, login_headers, _ = _request_json(
         "POST",
-        "/auth/login",
+        "/api/v1/auth/login",
         {"identifier": username, "password": password},
     )
     assert login_status == 200
@@ -171,7 +164,7 @@ def _create_instance(
 ) -> dict[str, Any]:
     status_code, _, payload = _request_json(
         "POST",
-        "/instances",
+        "/api/v1/instances",
         {
             "name": name,
             "type": "openclaw",
@@ -261,30 +254,6 @@ def _provider_payload_result(payload: dict[str, Any]) -> ProviderPayloadResult:
 
 def _provider_snapshot_result(snapshot: dict[str, Any]) -> ProviderSnapshotResult:
     return ProviderSnapshotResult(response=_provider_response(), snapshot=snapshot)
-
-
-def _seed_planner_session(
-    database_url: str,
-    *,
-    username: str,
-    session_key: str,
-    nodes: list[dict[str, Any]] | None = None,
-    flow_name: str = "测试流程",
-) -> str:
-    planner_service = get_flow_planner_session_service()
-    user_id = _user_id_for_username(database_url, username)
-    with Session(db_session.get_engine(database_url)) as session:
-        planner_service.create_or_restore_session(
-            user_id=user_id,
-            board_id="default",
-            planner_agent_id="claw3",
-            planner_session_key=session_key,
-            flow_name=flow_name,
-            current_nodes=nodes or [],
-            db_session=session,
-            publish_realtime=False,
-        )
-    return _planner_token_for_session(database_url, session_key)
 
 
 @pytest.fixture(autouse=True)
@@ -465,7 +434,7 @@ def test_board_tasks_sse_requires_authentication(
     isolated_database_url: str,
 ) -> None:
     del isolated_database_url
-    status_code, _, _ = request("GET", "/sse/boards/default/tasks?snapshotOnly=1")
+    status_code, _, _ = request("GET", "/api/v1/sse/boards/default/tasks?snapshotOnly=1")
     assert status_code == 401
 
 
@@ -479,7 +448,7 @@ def test_board_tasks_sse_returns_snapshot_payload(
 
     status_code, _, body = request(
         "GET",
-        "/sse/boards/default/tasks?snapshotOnly=1",
+        "/api/v1/sse/boards/default/tasks?snapshotOnly=1",
         headers={"cookie": auth_cookie},
     )
     assert status_code == 200
@@ -505,7 +474,7 @@ def test_board_tasks_sse_snapshot_only_accepts_instance_id(
 
     status_code, headers, body = request(
         "GET",
-        f"/sse/boards/default/tasks?snapshotOnly=1&instanceId={instance['id']}",
+        f"/api/v1/sse/boards/default/tasks?snapshotOnly=1&instanceId={instance['id']}",
         headers={"cookie": auth_cookie},
     )
     assert status_code == 200
@@ -525,7 +494,7 @@ def test_board_tasks_sse_rejects_invalid_instance_id_query(
 
     status_code, _, body = request(
         "GET",
-        "/sse/boards/default/tasks?snapshotOnly=1&instanceId=not-a-uuid",
+        "/api/v1/sse/boards/default/tasks?snapshotOnly=1&instanceId=not-a-uuid",
         headers={"cookie": auth_cookie},
     )
     assert status_code == 422
@@ -550,7 +519,7 @@ def test_board_tasks_sse_rejects_foreign_instance_id_query(
 
     status_code, _, body = request(
         "GET",
-        f"/sse/boards/default/tasks?snapshotOnly=1&instanceId={owner_instance['id']}",
+        f"/api/v1/sse/boards/default/tasks?snapshotOnly=1&instanceId={owner_instance['id']}",
         headers={"cookie": viewer_cookie},
     )
     assert status_code == 404
@@ -2385,6 +2354,21 @@ def test_flow_drafts_are_persisted_and_queryable(
     assert final_payload == []
 
 
+def test_delete_flow_draft_returns_deleted_false_when_not_found() -> None:
+    unique_username = f"flow-draft-delete-miss-{int(datetime.now(UTC).timestamp() * 1000)}"
+    auth_cookie = _register_and_login(unique_username)
+
+    delete_status, _, delete_payload_raw = request(
+        "DELETE",
+        f"{DEFAULT_FLOW_DRAFTS_PATH}/missing-draft",
+        headers={"cookie": auth_cookie},
+    )
+    assert delete_status == 200
+    delete_payload = cast(dict[str, Any], json.loads(delete_payload_raw.decode("utf-8")))
+    assert delete_payload["deleted"] is False
+    assert delete_payload["flowId"] == "missing-draft"
+
+
 def test_task_run_completed_event_dispatches_next_queued_task(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -2941,7 +2925,7 @@ def test_instance_agent_docs_filters_to_whitelist_and_rejects_non_whitelist_acce
 
     list_status, _, list_body = request(
         "GET",
-        f"/instances/{instance['id']}/agent-docs",
+        f"/api/v1/instances/{instance['id']}/agent-docs",
         headers={"cookie": auth_cookie},
     )
     assert list_status == 200
@@ -2950,7 +2934,7 @@ def test_instance_agent_docs_filters_to_whitelist_and_rejects_non_whitelist_acce
 
     preview_status, _, preview_body = request(
         "GET",
-        f"/instances/{instance['id']}/agent-docs/preview?agentId=main&name=secret.txt",
+        f"/api/v1/instances/{instance['id']}/agent-docs/preview?agentId=main&name=secret.txt",
         headers={"cookie": auth_cookie},
     )
     assert preview_status == 404
@@ -2959,7 +2943,7 @@ def test_instance_agent_docs_filters_to_whitelist_and_rejects_non_whitelist_acce
 
     download_status, _, download_body = request(
         "GET",
-        f"/instances/{instance['id']}/agent-docs/download?agentId=main&name=secret.txt&download=true",
+        f"/api/v1/instances/{instance['id']}/agent-docs/download?agentId=main&name=secret.txt&download=true",
         headers={"cookie": auth_cookie},
     )
     assert download_status == 404
@@ -3356,7 +3340,7 @@ def test_delete_requirement_tasks_removes_entire_requirement_group(
     assert after_tasks == []
 
 
-def test_delete_task_node_post_alias_supported(
+def test_delete_task_node_post_alias_removed(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3398,13 +3382,12 @@ def test_delete_task_node_post_alias_supported(
         f"{DEFAULT_TASKS_PATH}/{task_id}/delete",
         headers={"cookie": auth_cookie},
     )
-    assert delete_status == 200
+    assert delete_status == 404
     payload = cast(dict[str, Any], json.loads(delete_body.decode("utf-8")))
-    assert payload["deleted"] is True
-    assert payload["deletedTaskIds"] == [task_id]
+    assert payload["detail"] == "Not Found"
 
 
-def test_delete_requirement_post_alias_supported(
+def test_delete_requirement_post_alias_removed(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3478,10 +3461,9 @@ def test_delete_requirement_post_alias_supported(
         f"{DEFAULT_TASKS_PATH}/requirements/{requirement_id}/delete",
         headers={"cookie": auth_cookie},
     )
-    assert delete_status == 200
+    assert delete_status == 404
     payload = cast(dict[str, Any], json.loads(delete_body.decode("utf-8")))
-    assert payload["deleted"] is True
-    assert payload["requirementId"] == requirement_id
+    assert payload["detail"] == "Not Found"
 
 
 def test_task_output_preview_and_download_with_task_scoped_path(
@@ -3569,7 +3551,7 @@ def test_task_output_preview_and_download_with_task_scoped_path(
     assert "attachment" in file_headers.get("content-disposition", "")
 
 
-def test_task_output_preview_falls_back_to_existing_path_when_requested_path_missing(
+def test_task_output_preview_returns_404_when_requested_path_missing_without_fallback(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3652,11 +3634,9 @@ def test_task_output_preview_falls_back_to_existing_path_when_requested_path_mis
         f"{preview_path}?path={quote(missing_path, safe='')}",
         headers={"cookie": auth_cookie},
     )
-    assert preview_status == 200
+    assert preview_status == 404
     preview_payload = cast(dict[str, Any], json.loads(preview_body.decode("utf-8")))
-    assert preview_payload["path"] == str(output_path)
-    assert preview_payload["kind"] == "json"
-    assert '"fallback-ok"' in str(preview_payload["content"])
+    assert "output file not found" in str(preview_payload["detail"]).lower()
 
     file_path = DEFAULT_TASK_OUTPUT_FILE_PATH.format(task_id=output_task_id)
     file_status, _, file_body = request(
@@ -3664,8 +3644,9 @@ def test_task_output_preview_falls_back_to_existing_path_when_requested_path_mis
         f"{file_path}?path={quote(missing_path, safe='')}&download=true",
         headers={"cookie": auth_cookie},
     )
-    assert file_status == 200
-    assert b'"fallback-ok"' in file_body
+    assert file_status == 404
+    file_payload = cast(dict[str, Any], json.loads(file_body.decode("utf-8")))
+    assert "output file not found" in str(file_payload["detail"]).lower()
 
 
 def test_task_output_preview_rejects_non_task_path(

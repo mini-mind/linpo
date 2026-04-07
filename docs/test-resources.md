@@ -17,8 +17,8 @@
 
 - 本地开发为前端 + 后端进程本机运行，分别监听 5173 / 8000；数据库通过 Docker（宿主机端口 40193）。
 - OpenClaw 联调实例通常运行于 Docker 容器（如 `claw1` / `claw2` / `claw3`）。
-- v0.7 联调默认实例：`claw1`。
-- v0.7 流程拆解服务默认实例：`claw3`（后端服务化拆解）。
+- v0.7 联调实例按当前配对与环境配置选择，不在文档约定默认实例。
+- v0.7 流程拆解服务实例由 `FLOW_DECOMPOSITION_*` 显式配置决定（后端服务化拆解）。
 
 ## 角色分工
 
@@ -32,7 +32,7 @@
 - `npm --prefix frontend run test`：前端单元/集成测试。
 - `npm --prefix frontend run build`：前端构建产物。
 - `make quality`：统一质量门（聚合后端测试、类型检查与前端构建）。
-- `curl -i http://175.178.213.10:8000/health`：后端健康检查。
+- `curl -i http://175.178.213.10:8000/api/v1/health`：后端健康检查。
 
 ## CI/CD 门禁（GitHub Actions）
 
@@ -75,13 +75,13 @@
 | `LINPO_CORS_ALLOW_ORIGINS` | 公网前端联调时的 CORS 白名单 |
 | `LINPO_SESSION_COOKIE_SECURE` | 会话 Cookie `Secure` 开关；不显式配置时，若 `LINPO_CORS_ALLOW_ORIGINS` 含非本地域名则自动启用 |
 | `VITE_API_BASE_URL` | 前端 API 地址（如 `http://175.178.213.10:8000`）；由 `frontend/.env(.local)` 注入 |
-| `OPENCLAW_BASE_URL` | OpenClaw 网关地址（v0.7 默认指向 claw1） |
+| `OPENCLAW_BASE_URL` | OpenClaw 网关地址（按部署环境显式配置） |
 | `OPENCLAW_GATEWAY_TOKEN` | OpenClaw 网关令牌 |
 | `OPENCLAW_ORIGIN` | OpenClaw 请求来源标识 |
-| `FLOW_DECOMPOSITION_OPENCLAW_BASE_URL` | 流程拆解服务网关地址（默认 claw3） |
+| `FLOW_DECOMPOSITION_OPENCLAW_BASE_URL` | 流程拆解服务网关地址（必须显式配置） |
 | `FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN` | 流程拆解服务网关令牌 |
 | `FLOW_DECOMPOSITION_OPENCLAW_ORIGIN` | 流程拆解服务 Origin |
-| `FLOW_DECOMPOSITION_AGENT_ID` | 流程拆解服务使用的 agentId（默认 `main`） |
+| `FLOW_DECOMPOSITION_AGENT_ID` | 已废弃；拆解服务 agent 固定为 `claw3` |
 | `LINPO_TASK_EVENT_CALLBACK_BASE_URL` | 任务事件回调地址基座；建议显式配置。留空时按实例 endpoint host 自动推导公网 callback URL，若无法推导则任务投放失败 |
 | `LINPO_TASK_EVENT_CALLBACK_PORT` | 自动推导 callback URL 时使用的端口（默认 `8000`） |
 | `LINPO_TASK_RUN_STALE_SECONDS` | `running` 任务无 heartbeat 的超时阈值（秒） |

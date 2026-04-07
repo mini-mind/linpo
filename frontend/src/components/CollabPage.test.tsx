@@ -854,7 +854,7 @@ describe('CollabPage', () => {
     await userEvent.click(screen.getByRole('button', { name: '删除节点' }));
 
     await waitFor(() => {
-      expect(mockDeleteKanbanTask).toHaveBeenCalledWith('task-delete-node');
+      expect(mockDeleteKanbanTask).toHaveBeenCalledWith('task-delete-node', undefined, 'default');
     });
     expect(screen.queryByText('待删除节点')).not.toBeInTheDocument();
     confirmSpy.mockRestore();

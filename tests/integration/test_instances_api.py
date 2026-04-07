@@ -59,14 +59,14 @@ def _register_and_login(username: str, password: str = "secret-123") -> str:
     email = f"{username}@example.com"
     register_status, _, _ = _request_json(
         "POST",
-        "/auth/register",
+        "/api/v1/auth/register",
         {"username": username, "email": email, "password": password},
     )
     assert register_status == 201
 
     login_status, login_headers, _ = _request_json(
         "POST",
-        "/auth/login",
+        "/api/v1/auth/login",
         {"identifier": username, "password": password},
     )
     assert login_status == 200
@@ -76,7 +76,7 @@ def _register_and_login(username: str, password: str = "secret-123") -> str:
 def _extract_receipt_token(confirmation_url: str) -> str:
     parsed = urlparse(confirmation_url)
     path = parsed.path if parsed.scheme else confirmation_url
-    for marker in ("/instances/agent-receipts/", "/pairing/receipt/"):
+    for marker in ("/api/v1/instances/agent-receipts/", "/pairing/receipt/"):
         if marker in path:
             segment = path.split(marker, 1)[1]
             token = segment.split("/confirm", 1)[0].strip("/")
@@ -96,7 +96,7 @@ def _require_confirmation_url(status_code: int, payload: dict[str, Any]) -> str:
 
 
 def _list_messages(auth_cookie: str) -> list[dict[str, Any]]:
-    status_code, _, body = request("GET", "/instances/messages", headers={"cookie": auth_cookie})
+    status_code, _, body = request("GET", "/api/v1/instances/messages", headers={"cookie": auth_cookie})
     assert status_code == 200
     payload = cast(list[dict[str, Any]], json.loads(body.decode("utf-8")))
     return payload
@@ -111,7 +111,7 @@ def _confirm_receipt(
         headers["cookie"] = auth_cookie
     status_code, _, body = request(
         "POST",
-        f"/instances/agent-receipts/{token}/confirm",
+        f"/api/v1/instances/agent-receipts/{token}/confirm",
         headers=headers,
     )
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8"))) if body else {}
@@ -194,7 +194,7 @@ def test_instance_files_list_preview_and_download(
 
     list_status, _, list_body = request(
         "GET",
-        f"/instances/{instance.id}/files?boardId=default",
+        f"/api/v1/instances/{instance.id}/files?boardId=default",
         headers={"cookie": auth_cookie},
     )
     assert list_status == 200
@@ -218,7 +218,7 @@ def test_instance_files_list_preview_and_download(
 
     preview_status, _, preview_body = request(
         "GET",
-        f"/instances/{instance.id}/files/preview?taskId={task.id}&boardId=default&path={quote(str(output_path), safe='')}",
+        f"/api/v1/instances/{instance.id}/files/preview?taskId={task.id}&boardId=default&path={quote(str(output_path), safe='')}",
         headers={"cookie": auth_cookie},
     )
     assert preview_status == 200
@@ -229,7 +229,7 @@ def test_instance_files_list_preview_and_download(
 
     download_status, download_headers, download_body = request(
         "GET",
-        f"/instances/{instance.id}/files/download?taskId={task.id}&boardId=default&path={quote(str(output_path), safe='')}&download=true",
+        f"/api/v1/instances/{instance.id}/files/download?taskId={task.id}&boardId=default&path={quote(str(output_path), safe='')}&download=true",
         headers={"cookie": auth_cookie},
     )
     assert download_status == 200
@@ -279,12 +279,75 @@ def test_instance_files_preview_returns_clear_404_when_missing(
 
     preview_status, _, preview_body = request(
         "GET",
-        f"/instances/{instance.id}/files/preview?taskId={task.id}&boardId=default&path={quote(missing_path, safe='')}",
+        f"/api/v1/instances/{instance.id}/files/preview?taskId={task.id}&boardId=default&path={quote(missing_path, safe='')}",
         headers={"cookie": auth_cookie},
     )
     assert preview_status == 404
     preview_payload = cast(dict[str, Any], json.loads(preview_body.decode("utf-8")))
     assert "file may still exist inside the agent instance" in preview_payload["detail"].lower()
+
+
+def test_instance_files_preview_and_download_do_not_fallback_to_task_output_path(
+    isolated_database_url: str,
+    auth_cookie: str,
+    db_handle: Session,
+) -> None:
+    del isolated_database_url
+    user = db_handle.execute(select(User).where(User.username == "alice")).scalar_one()
+    instance = Instance(
+        user_id=user.id,
+        name="claw1-files-no-fallback",
+        type="openclaw",
+        endpoint="http://127.0.0.1:28789",
+        gateway_token_enc="enc",
+        status="ok",
+    )
+    db_handle.add(instance)
+    db_handle.commit()
+    db_handle.refresh(instance)
+
+    output_path = Path("/tmp/linpo/test-instance-files/no_fallback_report.json")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text('{"decision":"hold"}', encoding="utf-8")
+    missing_path = "/tmp/linpo/test-instance-files/requested_missing_report.json"
+    task = Task(
+        user_id=user.id,
+        instance_id=instance.id,
+        title="缺失路径不回退",
+        summary="即使任务输出存在也不能兜底",
+        status="completed",
+        source="flow",
+        agent_id="agent-alpha",
+        agent_name="Alpha Agent",
+        artifacts=[f"artifact: {output_path}"],
+        extras={
+            "board_id": "default",
+            "requirement_id": "req-no-fallback",
+            "temp_output_path": str(output_path),
+            "temp_input_paths": missing_path,
+        },
+    )
+    db_handle.add(task)
+    db_handle.commit()
+    db_handle.refresh(task)
+
+    preview_status, _, preview_body = request(
+        "GET",
+        f"/api/v1/instances/{instance.id}/files/preview?taskId={task.id}&boardId=default&path={quote(missing_path, safe='')}",
+        headers={"cookie": auth_cookie},
+    )
+    assert preview_status == 404
+    preview_payload = cast(dict[str, Any], json.loads(preview_body.decode("utf-8")))
+    assert "output file not found" in str(preview_payload["detail"]).lower()
+
+    download_status, _, download_body = request(
+        "GET",
+        f"/api/v1/instances/{instance.id}/files/download?taskId={task.id}&boardId=default&path={quote(missing_path, safe='')}&download=true",
+        headers={"cookie": auth_cookie},
+    )
+    assert download_status == 404
+    download_payload = cast(dict[str, Any], json.loads(download_body.decode("utf-8")))
+    assert "output file not found" in str(download_payload["detail"]).lower()
 
 
 def test_instance_files_list_normalizes_dirty_task_fields(
@@ -331,7 +394,7 @@ def test_instance_files_list_normalizes_dirty_task_fields(
 
     list_status, _, list_body = request(
         "GET",
-        f"/instances/{instance.id}/files?boardId=default",
+        f"/api/v1/instances/{instance.id}/files?boardId=default",
         headers={"cookie": auth_cookie},
     )
     assert list_status == 200
@@ -432,7 +495,7 @@ def test_instance_agent_docs_list_preview_and_download(
 
     list_status, _, list_body = request(
         "GET",
-        f"/instances/{instance.id}/agent-docs",
+        f"/api/v1/instances/{instance.id}/agent-docs",
         headers={"cookie": auth_cookie},
     )
     assert list_status == 200
@@ -444,7 +507,7 @@ def test_instance_agent_docs_list_preview_and_download(
 
     preview_status, _, preview_body = request(
         "GET",
-        f"/instances/{instance.id}/agent-docs/preview?agentId=planner&name=SOUL.md",
+        f"/api/v1/instances/{instance.id}/agent-docs/preview?agentId=planner&name=SOUL.md",
         headers={"cookie": auth_cookie},
     )
     assert preview_status == 200
@@ -456,7 +519,7 @@ def test_instance_agent_docs_list_preview_and_download(
 
     download_status, download_headers, download_body = request(
         "GET",
-        f"/instances/{instance.id}/agent-docs/download?agentId=planner&name=SOUL.md&download=true",
+        f"/api/v1/instances/{instance.id}/agent-docs/download?agentId=planner&name=SOUL.md&download=true",
         headers={"cookie": auth_cookie},
     )
     assert download_status == 200
@@ -505,7 +568,7 @@ def test_instance_agent_docs_preview_returns_404_when_missing(
 
     preview_status, _, preview_body = request(
         "GET",
-        f"/instances/{instance.id}/agent-docs/preview?agentId=planner&name=SOUL.md",
+        f"/api/v1/instances/{instance.id}/agent-docs/preview?agentId=planner&name=SOUL.md",
         headers={"cookie": auth_cookie},
     )
     assert preview_status == 404
@@ -566,7 +629,7 @@ def test_instance_agent_docs_preview_truncates_and_download_rejects_oversized_co
 
     preview_status, _, preview_body = request(
         "GET",
-        f"/instances/{instance.id}/agent-docs/preview?agentId=planner&name=SOUL.md",
+        f"/api/v1/instances/{instance.id}/agent-docs/preview?agentId=planner&name=SOUL.md",
         headers={"cookie": auth_cookie},
     )
     assert preview_status == 200
@@ -577,7 +640,7 @@ def test_instance_agent_docs_preview_truncates_and_download_rejects_oversized_co
 
     download_status, _, download_body = request(
         "GET",
-        f"/instances/{instance.id}/agent-docs/download?agentId=planner&name=SOUL.md&download=true",
+        f"/api/v1/instances/{instance.id}/agent-docs/download?agentId=planner&name=SOUL.md&download=true",
         headers={"cookie": auth_cookie},
     )
     assert download_status == 413
@@ -617,7 +680,7 @@ def test_instance_agent_docs_reject_cross_user_access_before_provider_call(
 
     list_status, _, list_body = request(
         "GET",
-        f"/instances/{instance.id}/agent-docs",
+        f"/api/v1/instances/{instance.id}/agent-docs",
         headers={"cookie": auth_cookie},
     )
     assert list_status == 404
@@ -650,7 +713,7 @@ def test_validate_instance_returns_auth_failed_for_invalid_token(
 
     status_code, _, payload = _request_json(
         "POST",
-        "/instances/validate",
+        "/api/v1/instances/validate",
         {
             "name": "claw-a",
             "type": "openclaw",
@@ -692,7 +755,7 @@ def test_validate_instance_accepts_gateway_token_alias_success_path(
 
     status_code, _, payload = _request_json(
         "POST",
-        "/instances/validate",
+        "/api/v1/instances/validate",
         {
             "name": "claw2",
             "type": "openclaw",
@@ -726,7 +789,7 @@ def test_pairing_session_create_attach_and_poll_bound(
 
     create_status, _, create_payload = _request_json(
         "POST",
-        "/instances/pairing-sessions",
+        "/api/v1/instances/pairing-sessions",
         {
             "name": "claw2-via-session",
             "expSeconds": 600,
@@ -742,7 +805,7 @@ def test_pairing_session_create_attach_and_poll_bound(
 
     attach_status, _, attach_payload = _request_json(
         "POST",
-        f"/instances/pairing-sessions/{session_id}/attach",
+        f"/api/v1/instances/pairing-sessions/{session_id}/attach",
         {
             "endpoint": "http://127.0.0.1:28789",
             "gatewayToken": "session-token-1",
@@ -756,7 +819,7 @@ def test_pairing_session_create_attach_and_poll_bound(
 
     poll_status, _, poll_payload = request(
         "GET",
-        f"/instances/pairing-sessions/{session_id}",
+        f"/api/v1/instances/pairing-sessions/{session_id}",
         headers={"cookie": auth_cookie},
     )
     assert poll_status == 200
@@ -766,7 +829,7 @@ def test_pairing_session_create_attach_and_poll_bound(
     assert instance["name"] == "claw2-via-session"
     assert instance["endpoint"] == "http://127.0.0.1:28789"
 
-    list_status, _, list_body = request("GET", "/instances", headers={"cookie": auth_cookie})
+    list_status, _, list_body = request("GET", "/api/v1/instances", headers={"cookie": auth_cookie})
     assert list_status == 200
     items = cast(list[dict[str, Any]], json.loads(list_body.decode("utf-8")))
     assert any(item["name"] == "claw2-via-session" for item in items)
@@ -790,7 +853,7 @@ def test_pairing_session_attach_by_short_code_binds_instance(
 
     create_status, _, create_payload = _request_json(
         "POST",
-        "/instances/pairing-sessions",
+        "/api/v1/instances/pairing-sessions",
         {
             "name": "claw1-by-short-code",
             "expSeconds": 600,
@@ -803,7 +866,7 @@ def test_pairing_session_attach_by_short_code_binds_instance(
 
     attach_status, _, attach_payload = _request_json(
         "POST",
-        "/instances/pairing-sessions/attach-by-code",
+        "/api/v1/instances/pairing-sessions/attach-by-code",
         {
             "shortCode": short_code,
             "endpoint": "http://127.0.0.1:18789",
@@ -835,7 +898,7 @@ def test_agent_mount_request_returns_confirmation_url_and_writes_message(
 
     request_status, _, request_payload = _request_json(
         "POST",
-        "/instances/agent-mount/request",
+        "/api/v1/instances/agent-mount/request",
         {
             "email": "alice@example.com",
             "name": "alice-self-mount",
@@ -879,7 +942,7 @@ def test_agent_mount_request_stores_encrypted_gateway_token_in_receipt(
 
     request_status, _, request_payload = _request_json(
         "POST",
-        "/instances/agent-mount/request",
+        "/api/v1/instances/agent-mount/request",
         {
             "email": "alice@example.com",
             "name": "alice-encrypted-receipt",
@@ -918,7 +981,7 @@ def test_agent_mount_request_hides_user_not_found(
 
     request_status, _, request_payload = _request_json(
         "POST",
-        "/instances/agent-mount/request",
+        "/api/v1/instances/agent-mount/request",
         {
             "email": "missing-user@example.com",
             "name": "ghost-mount",
@@ -949,7 +1012,7 @@ def test_message_read_endpoint_marks_message_as_read(
 
     request_status, _, request_payload = _request_json(
         "POST",
-        "/instances/agent-mount/request",
+        "/api/v1/instances/agent-mount/request",
         {
             "email": "alice@example.com",
             "name": "alice-message-read",
@@ -974,7 +1037,7 @@ def test_message_read_endpoint_marks_message_as_read(
 
     read_status, _, read_body = request(
         "POST",
-        f"/instances/messages/{target['id']}/read",
+        f"/api/v1/instances/messages/{target['id']}/read",
         headers={"cookie": auth_cookie},
     )
     assert read_status == 200
@@ -1009,7 +1072,7 @@ def test_agent_mount_request_is_not_blocked_by_legacy_challenge_delivery_env(
 
     request_status, _, request_payload = _request_json(
         "POST",
-        "/instances/agent-mount/request",
+        "/api/v1/instances/agent-mount/request",
         {
             "email": "alice@example.com",
             "name": "alice-self-mount",
@@ -1040,7 +1103,7 @@ def test_agent_unmount_request_returns_confirmation_url(
 
     create_status, _, create_payload = _request_json(
         "POST",
-        "/instances",
+        "/api/v1/instances",
         {
             "name": "alice-to-unmount",
             "type": "openclaw",
@@ -1053,7 +1116,7 @@ def test_agent_unmount_request_returns_confirmation_url(
 
     request_status, _, request_payload = _request_json(
         "POST",
-        "/instances/agent-unmount/request",
+        "/api/v1/instances/agent-unmount/request",
         {
             "email": "alice@example.com",
             "instanceId": create_payload["id"],
@@ -1082,7 +1145,7 @@ def test_agent_unmount_request_hides_user_not_found(
 
     create_status, _, create_payload = _request_json(
         "POST",
-        "/instances",
+        "/api/v1/instances",
         {
             "name": "alice-to-unmount-noop",
             "type": "openclaw",
@@ -1095,7 +1158,7 @@ def test_agent_unmount_request_hides_user_not_found(
 
     request_status, _, request_payload = _request_json(
         "POST",
-        "/instances/agent-unmount/request",
+        "/api/v1/instances/agent-unmount/request",
         {
             "email": "missing-user@example.com",
             "instanceId": create_payload["id"],
@@ -1122,7 +1185,7 @@ def test_agent_receipt_confirm_requires_login(
     )
     request_status, _, request_payload = _request_json(
         "POST",
-        "/instances/agent-mount/request",
+        "/api/v1/instances/agent-mount/request",
         {
             "email": "alice@example.com",
             "name": "alice-require-login",
@@ -1156,7 +1219,7 @@ def test_agent_receipt_confirm_rejects_email_mismatch(
     )
     request_status, _, request_payload = _request_json(
         "POST",
-        "/instances/agent-mount/request",
+        "/api/v1/instances/agent-mount/request",
         {
             "email": "alice@example.com",
             "name": "alice-email-mismatch",
@@ -1194,7 +1257,7 @@ def test_agent_receipt_confirm_mount_and_unmount_success(
 
     mount_request_status, _, mount_request_payload = _request_json(
         "POST",
-        "/instances/agent-mount/request",
+        "/api/v1/instances/agent-mount/request",
         {
             "email": "alice@example.com",
             "name": "alice-mount-success",
@@ -1217,7 +1280,7 @@ def test_agent_receipt_confirm_mount_and_unmount_success(
 
     unmount_request_status, _, unmount_request_payload = _request_json(
         "POST",
-        "/instances/agent-unmount/request",
+        "/api/v1/instances/agent-unmount/request",
         {
             "email": "alice@example.com",
             "instanceId": mounted_instance_id,
@@ -1254,7 +1317,7 @@ def test_agent_receipt_confirm_rejects_expired_or_duplicate_token(
 
     duplicate_status, _, duplicate_payload = _request_json(
         "POST",
-        "/instances/agent-mount/request",
+        "/api/v1/instances/agent-mount/request",
         {
             "email": "alice@example.com",
             "name": "alice-consume-once",
@@ -1281,7 +1344,7 @@ def test_agent_receipt_confirm_rejects_expired_or_duplicate_token(
 
     expired_status, _, expired_payload = _request_json(
         "POST",
-        "/instances/agent-mount/request",
+        "/api/v1/instances/agent-mount/request",
         {
             "email": "alice@example.com",
             "name": "alice-expired-token",
@@ -1319,7 +1382,7 @@ def test_agent_receipt_confirm_failure_keeps_receipt_retryable(
 
     request_status, _, request_payload = _request_json(
         "POST",
-        "/instances/agent-mount/request",
+        "/api/v1/instances/agent-mount/request",
         {
             "email": "alice@example.com",
             "name": "alice-retryable-receipt",
@@ -1374,7 +1437,7 @@ def test_validate_instance_rejects_unsafe_endpoint_before_probe(
 
     status_code, _, payload = _request_json(
         "POST",
-        "/instances/validate",
+        "/api/v1/instances/validate",
         {
             "name": "claw-a",
             "type": "openclaw",
@@ -1416,7 +1479,7 @@ def test_create_instance_requires_successful_validation_before_save(
 
     status_code, _, payload = _request_json(
         "POST",
-        "/instances",
+        "/api/v1/instances",
         {
             "name": "claw-a",
             "type": "openclaw",
@@ -1524,7 +1587,7 @@ def test_public_readme_candidate_can_validate_and_create_with_backend_origin_ove
 
     validate_status, _, validate_payload = _request_json(
         "POST",
-        "/instances/validate",
+        "/api/v1/instances/validate",
         payload,
         auth_cookie,
     )
@@ -1534,7 +1597,7 @@ def test_public_readme_candidate_can_validate_and_create_with_backend_origin_ove
 
     create_status, _, create_payload = _request_json(
         "POST",
-        "/instances",
+        "/api/v1/instances",
         payload,
         auth_cookie,
     )
@@ -1573,7 +1636,7 @@ def test_user_cannot_create_more_than_three_instances(
     for index in range(3):
         response_status, _, response_payload = _request_json(
             "POST",
-            "/instances",
+            "/api/v1/instances",
             {
                 "name": f"claw-{index}",
                 "type": "openclaw",
@@ -1587,7 +1650,7 @@ def test_user_cannot_create_more_than_three_instances(
 
     fourth_status, _, fourth_payload = _request_json(
         "POST",
-        "/instances",
+        "/api/v1/instances",
         {
             "name": "claw-3",
             "type": "openclaw",
@@ -1620,7 +1683,7 @@ def test_list_returns_only_current_users_instances_and_hides_plaintext_token(
 
     alice_status, _, alice_payload = _request_json(
         "POST",
-        "/instances",
+        "/api/v1/instances",
         {
             "name": "alice-claw",
             "type": "openclaw",
@@ -1633,7 +1696,7 @@ def test_list_returns_only_current_users_instances_and_hides_plaintext_token(
 
     bob_status, _, _ = _request_json(
         "POST",
-        "/instances",
+        "/api/v1/instances",
         {
             "name": "bob-claw",
             "type": "openclaw",
@@ -1644,7 +1707,7 @@ def test_list_returns_only_current_users_instances_and_hides_plaintext_token(
     )
     assert bob_status == 201
 
-    list_status, _, list_body = request("GET", "/instances", headers={"cookie": auth_cookie})
+    list_status, _, list_body = request("GET", "/api/v1/instances", headers={"cookie": auth_cookie})
 
     assert list_status == 200
     payload = cast(list[dict[str, Any]], json.loads(list_body.decode("utf-8")))
@@ -1686,7 +1749,7 @@ def test_claw2_pairing_create_then_list_visible_for_same_user(
 
     create_status, _, create_payload = _request_json(
         "POST",
-        "/instances",
+        "/api/v1/instances",
         {
             "name": "claw2",
             "type": "openclaw",
@@ -1698,7 +1761,7 @@ def test_claw2_pairing_create_then_list_visible_for_same_user(
     assert create_status == 201
     assert create_payload["name"] == "claw2"
 
-    list_status, _, list_body = request("GET", "/instances", headers={"cookie": auth_cookie})
+    list_status, _, list_body = request("GET", "/api/v1/instances", headers={"cookie": auth_cookie})
     assert list_status == 200
     items = cast(list[dict[str, Any]], json.loads(list_body.decode("utf-8")))
     claw2 = next(item for item in items if item["id"] == create_payload["id"])
@@ -1731,7 +1794,7 @@ def test_patch_revalidates_when_endpoint_or_token_changes(
 
     create_status, _, create_payload = _request_json(
         "POST",
-        "/instances",
+        "/api/v1/instances",
         {
             "name": "claw-a",
             "type": "openclaw",
@@ -1744,7 +1807,7 @@ def test_patch_revalidates_when_endpoint_or_token_changes(
 
     patch_status, _, patch_payload = _request_json(
         "PATCH",
-        f"/instances/{create_payload['id']}",
+        f"/api/v1/instances/{create_payload['id']}",
         {
             "endpoint": "http://127.0.0.1:38789",
             "gatewayToken": "rotated-token",
@@ -1798,7 +1861,7 @@ def test_patch_rejects_failed_revalidation_without_mutating_instance(
 
     create_status, _, create_payload = _request_json(
         "POST",
-        "/instances",
+        "/api/v1/instances",
         {
             "name": "claw-a",
             "type": "openclaw",
@@ -1811,7 +1874,7 @@ def test_patch_rejects_failed_revalidation_without_mutating_instance(
 
     patch_status, _, patch_payload = _request_json(
         "PATCH",
-        f"/instances/{create_payload['id']}",
+        f"/api/v1/instances/{create_payload['id']}",
         {
             "endpoint": "http://127.0.0.1:38789",
             "gatewayToken": "bad-token",
@@ -1852,7 +1915,7 @@ def test_patch_blank_gateway_token_keeps_existing_secret(
 
     create_status, _, create_payload = _request_json(
         "POST",
-        "/instances",
+        "/api/v1/instances",
         {
             "name": "claw-a",
             "type": "openclaw",
@@ -1865,7 +1928,7 @@ def test_patch_blank_gateway_token_keeps_existing_secret(
 
     patch_status, _, patch_payload = _request_json(
         "PATCH",
-        f"/instances/{create_payload['id']}",
+        f"/api/v1/instances/{create_payload['id']}",
         {
             "name": "renamed-claw",
             "gatewayToken": "",
@@ -1902,7 +1965,7 @@ def test_user_cannot_patch_or_delete_another_users_instance(
 
     create_status, _, create_payload = _request_json(
         "POST",
-        "/instances",
+        "/api/v1/instances",
         {
             "name": "bob-claw",
             "type": "openclaw",
@@ -1915,7 +1978,7 @@ def test_user_cannot_patch_or_delete_another_users_instance(
 
     patch_status, _, patch_payload = _request_json(
         "PATCH",
-        f"/instances/{create_payload['id']}",
+        f"/api/v1/instances/{create_payload['id']}",
         {"name": "hacked"},
         auth_cookie,
     )
@@ -1924,7 +1987,7 @@ def test_user_cannot_patch_or_delete_another_users_instance(
 
     delete_status, _, delete_body = request(
         "DELETE",
-        f"/instances/{create_payload['id']}",
+        f"/api/v1/instances/{create_payload['id']}",
         headers={"cookie": auth_cookie},
     )
     assert delete_status == 404
@@ -1954,7 +2017,7 @@ def test_delete_hard_deletes_owned_instance(
 
     create_status, _, create_payload = _request_json(
         "POST",
-        "/instances",
+        "/api/v1/instances",
         {
             "name": "claw-a",
             "type": "openclaw",
@@ -1967,7 +2030,7 @@ def test_delete_hard_deletes_owned_instance(
 
     delete_status, _, delete_body = request(
         "DELETE",
-        f"/instances/{create_payload['id']}",
+        f"/api/v1/instances/{create_payload['id']}",
         headers={"cookie": auth_cookie},
     )
 
@@ -1994,7 +2057,7 @@ def test_observer_request_uses_selected_instance_context(
 
     create_status, _, create_payload = _request_json(
         "POST",
-        "/instances",
+        "/api/v1/instances",
         {
             "name": "alice-claw",
             "type": "openclaw",
@@ -2042,7 +2105,7 @@ def test_observer_request_uses_selected_instance_context(
 
     status_code, _, body = request(
         "GET",
-        f"/agents?data_source=openclaw&instanceId={create_payload['id']}",
+        f"/api/v1/agents?data_source=openclaw&instanceId={create_payload['id']}",
         headers={"cookie": auth_cookie},
     )
 
@@ -2077,7 +2140,7 @@ def test_observer_request_requires_auth_for_selected_instance_context(
 
     create_status, _, create_payload = _request_json(
         "POST",
-        "/instances",
+        "/api/v1/instances",
         {
             "name": "alice-claw",
             "type": "openclaw",
@@ -2102,7 +2165,7 @@ def test_observer_request_requires_auth_for_selected_instance_context(
 
     status_code, _, body = request(
         "GET",
-        f"/agents?data_source=openclaw&instanceId={create_payload['id']}",
+        f"/api/v1/agents?data_source=openclaw&instanceId={create_payload['id']}",
     )
 
     assert status_code == 401
@@ -2128,7 +2191,7 @@ def test_chat_request_rejects_other_users_instance_context(
 
     create_status, _, create_payload = _request_json(
         "POST",
-        "/instances",
+        "/api/v1/instances",
         {
             "name": "bob-claw",
             "type": "openclaw",
@@ -2154,7 +2217,7 @@ def test_chat_request_rejects_other_users_instance_context(
     status_code, _, body = request(
         "GET",
         (
-            "/chat/sessions?agentId=main"
+            "/api/v1/chat/sessions?agentId=main"
             f"&data_source=openclaw&instanceId={create_payload['id']}"
         ),
         headers=_json_headers(auth_cookie),
@@ -2183,7 +2246,7 @@ def test_observer_websocket_uses_selected_instance_context(
 
     create_status, _, create_payload = _request_json(
         "POST",
-        "/instances",
+        "/api/v1/instances",
         {
             "name": "alice-claw",
             "type": "openclaw",
@@ -2241,7 +2304,7 @@ def test_observer_websocket_uses_selected_instance_context(
     )
 
     messages = websocket(
-        f"/ws/observer?data_source=openclaw&instanceId={create_payload['id']}",
+        f"/api/v1/ws/observer?data_source=openclaw&instanceId={create_payload['id']}",
         headers={"cookie": auth_cookie},
         messages=[{"type": "subscribe", "channel": "agents:list"}],
     )
@@ -2281,7 +2344,7 @@ def test_observer_websocket_rejects_unauthenticated_instance_context(
 
     create_status, _, create_payload = _request_json(
         "POST",
-        "/instances",
+        "/api/v1/instances",
         {
             "name": "alice-claw",
             "type": "openclaw",
@@ -2293,7 +2356,7 @@ def test_observer_websocket_rejects_unauthenticated_instance_context(
     assert create_status == 201
 
     messages = websocket(
-        f"/ws/observer?data_source=openclaw&instanceId={create_payload['id']}",
+        f"/api/v1/ws/observer?data_source=openclaw&instanceId={create_payload['id']}",
         messages=[{"type": "subscribe", "channel": "agents:list"}],
     )
     payloads = [
@@ -2332,7 +2395,7 @@ def test_observer_websocket_rejects_other_users_instance_context(
 
     create_status, _, create_payload = _request_json(
         "POST",
-        "/instances",
+        "/api/v1/instances",
         {
             "name": "bob-claw",
             "type": "openclaw",
@@ -2344,7 +2407,7 @@ def test_observer_websocket_rejects_other_users_instance_context(
     assert create_status == 201
 
     messages = websocket(
-        f"/ws/observer?data_source=openclaw&instanceId={create_payload['id']}",
+        f"/api/v1/ws/observer?data_source=openclaw&instanceId={create_payload['id']}",
         headers={"cookie": auth_cookie},
         messages=[{"type": "subscribe", "channel": "agents:list"}],
     )

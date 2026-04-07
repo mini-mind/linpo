@@ -168,7 +168,7 @@
 
 ### 7.1 v0.7 任务 API 最小契约
 
-- 对外文档 canonical 路径统一采用 `/api/v1/**`；历史无前缀路径保留为兼容别名（不作为文档主入口）。
+- 对外 API 路径统一采用 `/api/v1/**`；不再保留历史无前缀兼容别名。
 - `GET /api/v1/boards/{board_id}/tasks`：返回当前登录用户在指定看板可见任务列表，作为看板主数据源。
 - `GET /api/v1/sse/boards/{board_id}/tasks`：看板任务 SSE 实时事件通道（按当前登录用户隔离），推送 `snapshot_ready/tasks_changed/error` 事件；看板页与流程编辑页统一使用该通道同步任务与节点状态。支持可选查询参数 `instanceId`（UUID）：
   - 未传 `instanceId`：保持现有行为，返回当前用户在该 board 的全部任务事件。
@@ -210,6 +210,8 @@
 - `GET /api/v1/instances/{instance_id}/agent-docs/download`：下载指定 Agent 文档内容。
 - `GET /api/v1/summary/topology`：实例列表详情态用于构建关系树（实例节点、Agent 节点、Session 节点），前端按选中实例筛选并渲染。
 - `GET /api/v1/summary/overview`：摘要页与看板页的聚合入口，返回实例诊断、事件流、总 token 与按实例分组的 token 曲线样本。
+- `GET /api/v1/ops/setup`：私有化部署配置检查入口；返回必填运行配置检查结果（仅状态，不回传明文敏感值）、实例接入状态与可执行修复建议。
+- `GET /api/v1/ops/diagnostics`：私有化部署诊断导出入口；返回可复制的脱敏诊断信息（版本、配置检查摘要、实例连通性、最近错误上下文与 requestId），用于工单/群内协同排障。
 - `POST /api/v1/instances/pairing-sessions`：登录用户创建配对会话，返回 `session_id + short_code + pairing_url + expires_at`。
 - `pairing_url` 统一返回协议短链 `linpo://pair?code=...`，用于复制转发给 OpenClaw；前端不再提供扫码页面入口。
 - `GET /api/v1/instances/pairing-sessions/{session_id}`：登录用户查询配对会话状态（`pending/attached/bound/expired/failed`）与已绑定实例摘要。
@@ -224,7 +226,7 @@
 - `POST /api/v1/instances/agent-mount/request`：免登录的 Agent 自助挂载申请，提交 `email + endpoint + gatewayToken`；后端按 email 定位用户并返回 `confirmation_url`，同时投递到用户消息中心。
 - `POST /api/v1/instances/agent-unmount/request`：免登录的 Agent 自助卸载申请，提交 `email + instance_id`；后端校验实例归属并返回 `confirmation_url`，同时投递到用户消息中心。
 - `POST /api/v1/instances/agent-receipts/{token}/confirm`：登录用户确认回执；需校验 token、TTL、一次性消费与“登录用户邮箱=回执目标邮箱”。
-- 为兼容部分网关对 `DELETE` 的限制，提供等价兜底：`POST /api/v1/boards/{board_id}/tasks/{task_id}/delete`、`POST /api/v1/boards/{board_id}/tasks/requirements/{requirement_id}/delete`。
+- 删除动作仅保留标准 `DELETE` 契约；不再提供 `POST .../delete` 兜底别名。
 - v0.7 默认单看板，前端默认使用 `board_id=default`。
 - 任务状态机最小集遵循 `queued/running/blocked_by_approval/failed/completed`。
 - `session` 不作为任务主键来源，任务标识由 Linpo 侧生成并持久化。
@@ -253,12 +255,13 @@
 - Provider Adapter：OpenClaw RPC 与事件映射。
 - Infra/Persistence：实例配置、会话、审计、重试与超时。
 
-### 8.1 拆解服务配置（claw3）
+### 8.1 拆解服务配置（claw3，必须显式配置）
 
-- `FLOW_DECOMPOSITION_OPENCLAW_BASE_URL`：拆解服务网关地址（默认 `ws://175.178.213.10:38789`）。
-- `FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN`：拆解服务 Token（默认 claw3）。
-- `FLOW_DECOMPOSITION_OPENCLAW_ORIGIN`：拆解服务 Origin（默认 `http://127.0.0.1:38789`）。
-- `FLOW_DECOMPOSITION_AGENT_ID`：拆解服务使用的 agent（默认 `main`）。
+- `FLOW_DECOMPOSITION_OPENCLAW_BASE_URL`：拆解服务网关地址（必填）。
+- `FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN`：拆解服务 Token（必填）。
+- `FLOW_DECOMPOSITION_OPENCLAW_ORIGIN`：拆解服务 Origin（必填）。
+- 拆解服务 agent 固定为 `claw3`（不通过环境变量覆盖）。
+- 以上配置不提供默认公网地址或默认 token；缺失时视为配置错误并阻断拆解链路。
 
 ### 8.2 任务事件回调配置
 

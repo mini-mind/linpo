@@ -9,16 +9,12 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, WebSocket
 from fastapi.responses import StreamingResponse
 from fastapi.websockets import WebSocketDisconnect
-from sqlalchemy.orm import Session
 
-from app.db.models import User
-from app.db.session import get_database_url, get_engine
 from app.domain.agent import Agent
 from app.domain.event import EventRecord
 from app.domain.node import TopologyNode
-from app.services.auth_service import get_authenticated_user
+from app.db.session import get_session
 from app.services.board_task_realtime import get_board_task_realtime_hub
-from app.services.instance_service import InstanceNotFoundError, InstanceService
 from app.services.observer_data import (
     BufferedObserverEvent,
     ObserverRealtimeEvent,
@@ -30,6 +26,7 @@ from app.services.provider_application_service import (
     ProviderApplicationService,
     ProviderExecutionContext,
 )
+from app.services.realtime_access_service import RealtimeAccessService
 
 router = APIRouter()
 
@@ -51,48 +48,8 @@ def get_provider_application_service(websocket: WebSocket) -> ProviderApplicatio
     return cast(ProviderApplicationService, websocket.app.state.provider_application_service)
 
 
-def _resolve_realtime_openclaw_context(
-    websocket: WebSocket,
-    *,
-    data_source_name: str,
-    provider_application_service: ProviderApplicationService,
-) -> RealtimeOpenClawContext | None:
-    if data_source_name != "openclaw":
-        return None
-
-    raw_instance_id = websocket.query_params.get("instanceId")
-    if raw_instance_id is None:
-        return None
-
-    try:
-        instance_id = UUID(raw_instance_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail="Invalid instanceId") from exc
-
-    with Session(get_engine(get_database_url())) as db_session:
-        current_user = get_authenticated_user(db_session, cast(Any, websocket))
-        if current_user is None:
-            raise HTTPException(status_code=401, detail="Unauthorized")
-
-        instance_service = InstanceService()
-        try:
-            instance_context = instance_service.get_openclaw_context(
-                db_session,
-                user_id=current_user.id,
-                instance_id=instance_id,
-            )
-        except InstanceNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="Instance not found") from exc
-
-    return provider_application_service.build_execution_context(instance_context)
-
-
-def _resolve_http_realtime_user(request: Request) -> User:
-    with Session(get_engine(get_database_url())) as db_session:
-        current_user = get_authenticated_user(db_session, cast(Any, request))
-        if current_user is None:
-            raise HTTPException(status_code=401, detail="Unauthorized")
-        return current_user
+def get_realtime_access_service() -> RealtimeAccessService:
+    return RealtimeAccessService()
 
 
 def _resolve_realtime_data_source(
@@ -113,6 +70,8 @@ def _resolve_realtime_data_source(
 async def observer_websocket(
     websocket: WebSocket,
     provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
+    realtime_access_service: RealtimeAccessService = Depends(get_realtime_access_service),
+    db_session=Depends(get_session),
 ) -> None:
     await websocket.accept()
     channel = "unknown"
@@ -127,7 +86,8 @@ async def observer_websocket(
         last_seq = _parse_last_seq(message.get("last_seq"))
         data_source_name = websocket.query_params.get("data_source")
         selected_data_source = get_observer_data_source_name(data_source_name)
-        request_context = _resolve_realtime_openclaw_context(
+        request_context = realtime_access_service.resolve_realtime_openclaw_context(
+            db_session,
             websocket,
             data_source_name=selected_data_source,
             provider_application_service=provider_application_service,
@@ -189,11 +149,14 @@ async def board_tasks_sse(
     board_id: str,
     snapshot_only: bool = Query(default=False, alias="snapshotOnly"),
     instance_id: str | None = Query(default=None, alias="instanceId"),
+    realtime_access_service: RealtimeAccessService = Depends(get_realtime_access_service),
+    db_session=Depends(get_session),
 ) -> Response:
     normalized_board_id = board_id.strip() or "default"
     channel = f"board:{normalized_board_id}:tasks"
-    current_user = _resolve_http_realtime_user(request)
-    resolved_instance_id = _resolve_sse_instance_id(
+    current_user = realtime_access_service.resolve_http_realtime_user(db_session, request)
+    resolved_instance_id = realtime_access_service.resolve_sse_instance_id(
+        db_session,
         current_user=current_user,
         instance_id=instance_id,
     )
@@ -475,29 +438,6 @@ def _error_detail(exc: Exception) -> str:
             return detail
         return json.dumps(detail)
     return str(exc)
-
-
-def _resolve_sse_instance_id(*, current_user: User, instance_id: str | None) -> UUID | None:
-    if instance_id is None:
-        return None
-
-    try:
-        parsed_instance_id = UUID(instance_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail="Invalid instanceId") from exc
-
-    with Session(get_engine(get_database_url())) as db_session:
-        instance_service = InstanceService()
-        try:
-            instance_service.get_openclaw_context(
-                db_session,
-                user_id=current_user.id,
-                instance_id=parsed_instance_id,
-            )
-        except InstanceNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="Instance not found") from exc
-
-    return parsed_instance_id
 
 
 def _is_board_task_event_visible_for_instance(

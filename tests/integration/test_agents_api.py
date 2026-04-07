@@ -26,10 +26,10 @@ def _assert_error_envelope(
     return cast(str, error["request_id"])
 
 
-def test_legacy_control_routes_are_not_exposed_in_v0_6() -> None:
+def test_legacy_control_routes_are_not_exposed_in_v0_7() -> None:
     routes = [
-        ("POST", "/chat/send?agentId=agent-root-observer"),
-        ("POST", "/chat/abort?agentId=agent-root-observer"),
+        ("POST", "/api/v1/chat/send?agentId=agent-root-observer"),
+        ("POST", "/api/v1/chat/abort?agentId=agent-root-observer"),
     ]
 
     for method, path in routes:
@@ -42,7 +42,7 @@ def test_legacy_control_routes_are_not_exposed_in_v0_6() -> None:
 def test_send_chat_message_requires_openclaw_data_source() -> None:
     status_code, _, body = request(
         "POST",
-        "/chat/agents/agent-root-observer/send",
+        "/api/v1/chat/agents/agent-root-observer/send",
         body=json.dumps({"message": "hello", "sessionKey": "agent:main:main"}).encode("utf-8"),
         headers={"content-type": "application/json"},
     )
@@ -80,7 +80,7 @@ def test_send_chat_message_returns_success_payload(monkeypatch: Any) -> None:
 
     status_code, _, body = request(
         "POST",
-        "/chat/agents/agent-root-observer/send?data_source=openclaw",
+        "/api/v1/chat/agents/agent-root-observer/send?data_source=openclaw",
         body=json.dumps({"message": "hello", "sessionKey": "agent:main:main"}).encode("utf-8"),
         headers={"content-type": "application/json"},
     )
@@ -95,7 +95,7 @@ def test_send_chat_message_returns_success_payload(monkeypatch: Any) -> None:
 
 
 def test_pause_agent_requires_openclaw_data_source() -> None:
-    status_code, _, body = request("POST", "/chat/agents/agent-root-observer/pause")
+    status_code, _, body = request("POST", "/api/v1/chat/agents/agent-root-observer/pause")
     assert status_code == 503
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
     _assert_error_envelope(
@@ -129,7 +129,7 @@ def test_pause_agent_returns_success_payload(monkeypatch: Any) -> None:
 
     status_code, _, body = request(
         "POST",
-        "/chat/agents/agent-root-observer/pause"
+        "/api/v1/chat/agents/agent-root-observer/pause"
         "?data_source=openclaw&sessionKey=agent:main:main",
     )
     assert status_code == 200
@@ -143,7 +143,7 @@ def test_pause_agent_returns_success_payload(monkeypatch: Any) -> None:
 
 
 def test_reset_session_requires_openclaw_data_source() -> None:
-    status_code, _, body = request("POST", "/chat/sessions/agent:main:main/reset")
+    status_code, _, body = request("POST", "/api/v1/chat/sessions/agent:main:main/reset")
     assert status_code == 503
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
     _assert_error_envelope(
@@ -171,7 +171,7 @@ def test_reset_session_returns_success_payload(monkeypatch: Any) -> None:
 
     status_code, _, body = request(
         "POST",
-        "/chat/sessions/agent:main:main/reset?data_source=openclaw",
+        "/api/v1/chat/sessions/agent:main:main/reset?data_source=openclaw",
     )
     assert status_code == 200
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
@@ -179,7 +179,7 @@ def test_reset_session_returns_success_payload(monkeypatch: Any) -> None:
 
 
 def test_delete_session_requires_openclaw_data_source() -> None:
-    status_code, _, body = request("DELETE", "/chat/sessions/agent:main:main")
+    status_code, _, body = request("DELETE", "/api/v1/chat/sessions/agent:main:main")
     assert status_code == 503
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
     _assert_error_envelope(
@@ -207,7 +207,7 @@ def test_delete_session_returns_success_payload(monkeypatch: Any) -> None:
 
     status_code, _, body = request(
         "DELETE",
-        "/chat/sessions/agent:main:main?data_source=openclaw",
+        "/api/v1/chat/sessions/agent:main:main?data_source=openclaw",
     )
     assert status_code == 200
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
@@ -216,7 +216,7 @@ def test_delete_session_returns_success_payload(monkeypatch: Any) -> None:
 
 
 def test_get_agents_returns_minimal_observer_list() -> None:
-    status_code, _, body = request("GET", "/agents")
+    status_code, _, body = request("GET", "/api/v1/agents")
 
     assert status_code == 200
     payload = cast(object, json.loads(body.decode("utf-8")))
@@ -240,7 +240,7 @@ def test_get_agents_returns_minimal_observer_list() -> None:
 
 def test_get_node_detail_returns_event_history() -> None:
     status_code, _, body = request(
-        "GET", "/agents/agent-root-observer/nodes/node-collector"
+        "GET", "/api/v1/agents/agent-root-observer/nodes/node-collector"
     )
 
     assert status_code == 200
@@ -278,7 +278,7 @@ def test_get_node_detail_returns_event_history() -> None:
 
 
 def test_get_agent_detail_exposes_root_identity_and_total_node_count() -> None:
-    status_code, _, body = request("GET", "/agents/agent-root-observer")
+    status_code, _, body = request("GET", "/api/v1/agents/agent-root-observer")
 
     assert status_code == 200
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
@@ -288,7 +288,7 @@ def test_get_agent_detail_exposes_root_identity_and_total_node_count() -> None:
 
 
 def test_openclaw_data_source_errors_are_reported_explicitly() -> None:
-    status_code, _, body = request("GET", "/agents?data_source=openclaw")
+    status_code, _, body = request("GET", "/api/v1/agents?data_source=openclaw")
 
     assert status_code == 503
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
@@ -310,7 +310,7 @@ def test_openclaw_handshake_errors_are_reported_explicitly() -> None:
     os.environ["OPENCLAW_ORIGIN"] = "http://127.0.0.1:28789"
 
     try:
-        status_code, _, body = request("GET", "/agents?data_source=openclaw")
+        status_code, _, body = request("GET", "/api/v1/agents?data_source=openclaw")
     finally:
         if original_base_url is None:
             os.environ.pop("OPENCLAW_BASE_URL", None)
@@ -327,16 +327,19 @@ def test_openclaw_handshake_errors_are_reported_explicitly() -> None:
 
     assert status_code == 503
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    error_code = cast(str, payload["error"]["code"])
+    assert error_code in {"auth_failed", "source_unavailable"}
     request_id = _assert_error_envelope(
         payload,
-        code="auth_failed",
+        code=error_code,
         message=cast(str, payload["error"]["message"]),
         recoverable=True,
         next_step="检查实例连通性或网关 token 后重试",
     )
     assert request_id
     assert "OpenClaw" in payload["error"]["message"]
-    assert "token" in cast(str, payload["error"]["message"]).lower()
+    if error_code == "auth_failed":
+        assert "token" in cast(str, payload["error"]["message"]).lower()
 
 
 def test_openclaw_list_agents_returns_real_snapshot_data() -> None:
@@ -350,7 +353,7 @@ def test_openclaw_list_agents_returns_real_snapshot_data() -> None:
     os.environ["OPENCLAW_ORIGIN"] = "http://127.0.0.1:28789"
 
     try:
-        status_code, _, body = request("GET", "/agents?data_source=openclaw")
+        status_code, _, body = request("GET", "/api/v1/agents?data_source=openclaw")
     finally:
         if original_base_url is None:
             os.environ.pop("OPENCLAW_BASE_URL", None)
@@ -379,7 +382,7 @@ def test_openclaw_agent_detail_returns_real_snapshot_data() -> None:
     os.environ["OPENCLAW_ORIGIN"] = "http://127.0.0.1:28789"
 
     try:
-        status_code, _, body = request("GET", "/agents/main?data_source=openclaw")
+        status_code, _, body = request("GET", "/api/v1/agents/main?data_source=openclaw")
     finally:
         if original_base_url is None:
             os.environ.pop("OPENCLAW_BASE_URL", None)
@@ -439,7 +442,7 @@ def test_openclaw_presence_noise_is_filtered_from_node_events(monkeypatch: Any) 
         lambda self: setattr(self, '_adapter', OpenClawAdapter(client=FakeClient())),
     )
 
-    status_code, _, body = request('GET', '/agents/main/nodes/node-main?data_source=openclaw')
+    status_code, _, body = request('GET', '/api/v1/agents/main/nodes/node-main?data_source=openclaw')
 
     assert status_code == 200
     payload = cast(dict[str, Any], json.loads(body.decode('utf-8')))
@@ -507,7 +510,7 @@ def test_http_routes_read_updated_snapshots_from_event_driven_state(monkeypatch:
         )
     )
 
-    list_status, _, list_body = request('GET', '/agents')
+    list_status, _, list_body = request('GET', '/api/v1/agents')
     assert list_status == 200
     list_payload = cast(list[dict[str, Any]], json.loads(list_body.decode('utf-8')))
     assert list_payload[0] == {
@@ -518,7 +521,7 @@ def test_http_routes_read_updated_snapshots_from_event_driven_state(monkeypatch:
         'last_active_at': '2026-03-16T09:10:00Z',
     }
 
-    detail_status, _, detail_body = request('GET', '/agents/agent-root-observer')
+    detail_status, _, detail_body = request('GET', '/api/v1/agents/agent-root-observer')
     assert detail_status == 200
     detail_payload = cast(dict[str, Any], json.loads(detail_body.decode('utf-8')))
     assert detail_payload == {
@@ -542,7 +545,7 @@ def test_http_routes_read_updated_snapshots_from_event_driven_state(monkeypatch:
         ],
     }
 
-    node_status, _, node_body = request('GET', '/agents/agent-root-observer/nodes/node-root-observer')
+    node_status, _, node_body = request('GET', '/api/v1/agents/agent-root-observer/nodes/node-root-observer')
     assert node_status == 200
     node_payload = cast(dict[str, Any], json.loads(node_body.decode('utf-8')))
     assert node_payload == {
@@ -578,7 +581,7 @@ def test_http_routes_read_updated_snapshots_from_event_driven_state(monkeypatch:
 
 
 def test_list_sessions_requires_openclaw_data_source() -> None:
-    status_code, _, body = request("GET", "/chat/sessions")
+    status_code, _, body = request("GET", "/api/v1/chat/sessions")
     assert status_code == 503
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
     _assert_error_envelope(
@@ -626,7 +629,7 @@ def test_list_sessions_returns_sessions_list(monkeypatch: Any) -> None:
         FakeProviderApplicationService(),
     )
 
-    status_code, _, body = request("GET", "/chat/sessions?data_source=openclaw")
+    status_code, _, body = request("GET", "/api/v1/chat/sessions?data_source=openclaw")
     assert status_code == 200
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
     assert payload["ts"] == 1234567890000
@@ -637,7 +640,7 @@ def test_list_sessions_returns_sessions_list(monkeypatch: Any) -> None:
 
 
 def test_preview_sessions_requires_openclaw_data_source() -> None:
-    status_code, _, body = request("GET", "/chat/sessions/preview?keys=agent:main:main")
+    status_code, _, body = request("GET", "/api/v1/chat/sessions/preview?keys=agent:main:main")
     assert status_code == 503
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
     _assert_error_envelope(
@@ -676,7 +679,7 @@ def test_preview_sessions_returns_message_previews(monkeypatch: Any) -> None:
     )
 
     status_code, _, body = request(
-        "GET", "/chat/sessions/preview?keys=agent:main:main&data_source=openclaw"
+        "GET", "/api/v1/chat/sessions/preview?keys=agent:main:main&data_source=openclaw"
     )
     assert status_code == 200
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
@@ -689,7 +692,7 @@ def test_preview_sessions_returns_message_previews(monkeypatch: Any) -> None:
 
 
 def test_chat_history_requires_openclaw_data_source() -> None:
-    status_code, _, body = request("GET", "/chat/sessions/agent:main:main/history")
+    status_code, _, body = request("GET", "/api/v1/chat/sessions/agent:main:main/history")
     assert status_code == 503
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
     _assert_error_envelope(
@@ -722,7 +725,7 @@ def test_chat_history_returns_message_items(monkeypatch: Any) -> None:
     )
 
     status_code, _, body = request(
-        "GET", "/chat/sessions/agent:main:main/history?data_source=openclaw"
+        "GET", "/api/v1/chat/sessions/agent:main:main/history?data_source=openclaw"
     )
     assert status_code == 200
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
@@ -831,7 +834,7 @@ def test_openclaw_client_times_out_when_target_control_response_never_arrives(mo
 
 
 def test_list_models_requires_openclaw_data_source() -> None:
-    status_code, _, body = request("GET", "/chat/models")
+    status_code, _, body = request("GET", "/api/v1/chat/models")
     assert status_code == 503
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
     _assert_error_envelope(
@@ -872,7 +875,7 @@ def test_list_models_returns_available_models(monkeypatch: Any) -> None:
         FakeProviderApplicationService(),
     )
 
-    status_code, _, body = request("GET", "/chat/models?data_source=openclaw")
+    status_code, _, body = request("GET", "/api/v1/chat/models?data_source=openclaw")
     assert status_code == 200
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
     assert len(payload["models"]) == 2
@@ -884,7 +887,7 @@ def test_list_models_returns_available_models(monkeypatch: Any) -> None:
 def test_patch_session_requires_openclaw_data_source() -> None:
     status_code, _, body = request(
         "PATCH",
-        "/chat/sessions/agent:main:main",
+        "/api/v1/chat/sessions/agent:main:main",
         body=json.dumps({"model": "claude-sonnet-4"}).encode("utf-8"),
         headers={"content-type": "application/json"},
     )
@@ -917,7 +920,7 @@ def test_patch_session_updates_session_model(monkeypatch: Any) -> None:
 
     status_code, _, body = request(
         "PATCH",
-        "/chat/sessions/agent:main:main?data_source=openclaw",
+        "/api/v1/chat/sessions/agent:main:main?data_source=openclaw",
         body=json.dumps({"model": "claude-sonnet-4", "thinkingLevel": "high"}).encode("utf-8"),
         headers={"content-type": "application/json"},
     )

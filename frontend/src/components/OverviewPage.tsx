@@ -83,6 +83,9 @@ export function OverviewPage(): JSX.Element {
 	return (
 		<div style={getContainerStyle(isMobile)}>
 			<StatsPanel overview={overview} onReload={handleReload} />
+			{overview.partial_failure ? (
+				<PartialFailureNotice diagnostics={overview.diagnostics} />
+			) : null}
 			<div style={getMainLayoutStyle(isMobile)}>
 				<TokenStage
 					tokenGroups={overview.token_groups}
@@ -92,6 +95,24 @@ export function OverviewPage(): JSX.Element {
 				<GlobalEventsRail events={overview.global_events} isMobile={isMobile} />
 			</div>
 		</div>
+	);
+}
+
+function PartialFailureNotice({
+	diagnostics,
+}: {
+	diagnostics: AggregateInstanceDiagnostic[];
+}): JSX.Element {
+	const failedDiagnostics = diagnostics.filter((item) => item.status === "failed");
+	const failedNames = failedDiagnostics.map((item) => item.instance_name).slice(0, 3);
+
+	return (
+		<section style={partialFailureStyle} data-testid="overview-partial-failure">
+			<p style={partialFailureTitleStyle}>部分实例数据获取失败，当前总览可能不完整。</p>
+			{failedNames.length > 0 ? (
+				<p style={partialFailureMetaStyle}>受影响实例：{failedNames.join("、")}</p>
+			) : null}
+		</section>
 	);
 }
 
@@ -616,6 +637,29 @@ const loadingPanelStyle: React.CSSProperties = {
 	border: "1px dashed #d4c8b6",
 	fontSize: "0.8125rem",
 	color: "#6b7280",
+};
+
+const partialFailureStyle: React.CSSProperties = {
+	padding: "0.75rem 1rem",
+	borderRadius: "0.875rem",
+	background: "#fff6e8",
+	border: "1px solid #e7c892",
+	display: "flex",
+	flexDirection: "column",
+	gap: "0.25rem",
+};
+
+const partialFailureTitleStyle: React.CSSProperties = {
+	margin: 0,
+	fontSize: "0.8125rem",
+	fontWeight: 700,
+	color: "#8b5e34",
+};
+
+const partialFailureMetaStyle: React.CSSProperties = {
+	margin: 0,
+	fontSize: "0.75rem",
+	color: "#8b5e34",
 };
 
 const loadingCardStyle: React.CSSProperties = {

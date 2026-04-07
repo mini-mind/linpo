@@ -8,7 +8,6 @@ from typing import Any, Protocol, cast
 import pytest
 from cryptography.fernet import Fernet
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
 
 from app.db import session as db_session
 from app.domain.agent import Agent, AgentStatus
@@ -56,14 +55,14 @@ def _register_and_login(username: str, password: str = "secret-123") -> str:
     email = f"{username}@example.com"
     register_status, _, _ = _request_json(
         "POST",
-        "/auth/register",
+        "/api/v1/auth/register",
         {"username": username, "email": email, "password": password},
     )
     assert register_status == 201
 
     login_status, login_headers, _ = _request_json(
         "POST",
-        "/auth/login",
+        "/api/v1/auth/login",
         {"identifier": username, "password": password},
     )
     assert login_status == 200
@@ -90,7 +89,7 @@ def _create_instance(
 ) -> dict[str, Any]:
     status_code, _, payload = _request_json(
         "POST",
-        "/instances",
+        "/api/v1/instances",
         {
             "name": name,
             "type": "openclaw",
@@ -225,18 +224,12 @@ def isolated_database_url(
 
 
 @pytest.fixture
-def db_handle(isolated_database_url: str) -> Iterator[Session]:
-    with Session(db_session.get_engine(isolated_database_url)) as session:
-        yield session
-
-
-@pytest.fixture
 def auth_cookie(isolated_database_url: str) -> str:
     del isolated_database_url
     return _register_and_login("alice")
 
 
-@pytest.mark.parametrize("path", ["/summary/overview", "/summary/topology"])
+@pytest.mark.parametrize("path", ["/api/v1/summary/overview", "/api/v1/summary/topology"])
 def test_aggregate_routes_require_authentication(
     isolated_database_url: str,
     path: str,
@@ -377,7 +370,7 @@ def test_overview_returns_aggregated_agents_with_request_id_freshness_and_diagno
         },
     )
 
-    status_code, _, body = request("GET", "/summary/overview", headers={"cookie": auth_cookie})
+    status_code, _, body = request("GET", "/api/v1/summary/overview", headers={"cookie": auth_cookie})
 
     assert status_code == 200
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
@@ -554,7 +547,7 @@ def test_overview_exposes_partial_failure_without_fake_empty_success(
         },
     )
 
-    status_code, _, body = request("GET", "/summary/overview", headers={"cookie": auth_cookie})
+    status_code, _, body = request("GET", "/api/v1/summary/overview", headers={"cookie": auth_cookie})
 
     assert status_code == 200
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
@@ -634,7 +627,7 @@ def test_overview_returns_failed_freshness_when_all_instances_fail(
         },
     )
 
-    status_code, _, body = request("GET", "/summary/overview", headers={"cookie": auth_cookie})
+    status_code, _, body = request("GET", "/api/v1/summary/overview", headers={"cookie": auth_cookie})
 
     assert status_code == 200
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
@@ -724,7 +717,7 @@ def test_overview_keeps_token_groups_when_observer_snapshot_fails_but_usage_cost
         },
     )
 
-    status_code, _, body = request("GET", "/summary/overview", headers={"cookie": auth_cookie})
+    status_code, _, body = request("GET", "/api/v1/summary/overview", headers={"cookie": auth_cookie})
 
     assert status_code == 200
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
@@ -831,7 +824,7 @@ def test_topology_returns_four_lane_relationships_with_sessions_and_tools(
         },
     )
 
-    status_code, _, body = request("GET", "/summary/topology", headers={"cookie": auth_cookie})
+    status_code, _, body = request("GET", "/api/v1/summary/topology", headers={"cookie": auth_cookie})
 
     assert status_code == 200
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
