@@ -247,6 +247,51 @@
 
 `API -> Application -> Domain Contract -> Provider Adapter -> Infra/Persistence`
 
+### 8.0 Tasks 模块关系（当前拆分）
+
+以下关系以当前 `app/main.py` 路由挂载与 `openapi` 路径分组为准：
+
+```mermaid
+flowchart LR
+    Client["Web/Tauri Client"] --> Main["app.main"]
+    Main --> TPlanner["app.api.tasks_flow_planner"]
+    Main --> TFlowTask["app.api.tasks_flow_task"]
+    Main --> TDraft["app.api.tasks_flow_draft"]
+    Main --> TRuntime["app.api.tasks_runtime"]
+
+    TPlanner --> TDeps["app.api.tasks_dependencies"]
+    TFlowTask --> TDeps
+    TDraft --> TDeps
+    TRuntime --> TDeps
+
+    TPlanner --> TCommon["app.api.tasks_common"]
+    TFlowTask --> TCommon
+    TRuntime --> TCommon
+    Instances["app.api.instances"] --> TCommon
+
+    TPlanner --> PlannerSvc["FlowPlannerSessionService / FlowDecompositionService"]
+    TFlowTask --> TaskSvc["TaskService / TaskDispatchService"]
+    TDraft --> DraftSvc["FlowDraftService"]
+    TRuntime --> RuntimeSvc["TaskService / TaskDispatchService / CallbackSecurity"]
+
+    PlannerSvc --> DB[(DB)]
+    TaskSvc --> DB
+    DraftSvc --> DB
+    RuntimeSvc --> DB
+```
+
+约束补充：
+
+- `app/api/tasks.py` 仅保留占位，不再承载路由与业务逻辑。
+- `tasks_*` 路由模块之间不互相导入，公共逻辑只允许下沉到 `tasks_common` 或 service 层。
+- API 层不直接执行 `Session.add/delete/execute/commit/flush/rollback/merge`。
+
+继续拆分与解耦建议（按收益排序）：
+
+1. 把 `tasks_flow_task.py` 中画布布局算法（layers/nodes）下沉到独立 `flow_canvas_service`，避免 API 文件继续膨胀。  
+2. 把 `tasks_runtime.py` 的 callback URL 解析与容错规则下沉到 `task_callback_security` 旁路 service，减少 HTTP 层环境变量细节。  
+3. 在 `tasks_common` 只保留纯函数；涉及 DB/外部依赖的共享逻辑必须进 service，避免再次形成“胖 API helper”。
+
 分层职责：
 
 - API：路由、鉴权、参数校验、错误封装。
@@ -317,6 +362,26 @@
 - 任务链路：
   - `app/api/tasks.py` 逐步拆分：`TaskDispatchService`、`TaskRunCallbackService`、`FlowRequirementService`。
   - 路由层仅保留请求/响应组装与调用编排入口。
+
+### 11.3.1 任务模块关系图（当前/目标）
+
+当前（高耦合）：
+
+`main.py -> app/api/tasks.py (flow planner + flow task + runtime callback + task crud + requirement lifecycle)`
+`tasks.py -> app/services/* + app/db/models + app/api/schemas`
+
+目标（解耦后）：
+
+`main.py -> app/api/tasks_flow_planner.py`
+`main.py -> app/api/tasks_flow_task.py`
+`main.py -> app/api/tasks_runtime.py`
+`tasks_* routers -> app/api/tasks_dependencies.py -> app/services/*`
+
+约束：
+
+- 仅拆文件和依赖注入组织，不新增兼容别名路由。
+- 对外 API 路径、状态码、响应结构保持不变。
+- API 层继续禁止直接使用 `db_session` 事务写原语。
 
 ### 11.4 分阶段推进
 

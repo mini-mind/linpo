@@ -39,10 +39,10 @@ from app.api.schemas import (
     PairingSessionInstanceItem,
     PairingSessionResponse,
     TaskOutputPreviewResponse,
-    TaskStatus,
     UserMessageItem,
     UserMessageReadResponse,
 )
+from app.api.tasks_common import normalize_task_status
 from app.db.models import Instance, Task, User, UserMessage
 from app.db.session import get_session
 from app.services.auth_service import get_authenticated_user
@@ -212,12 +212,6 @@ def _to_iso_from_millis(value: object) -> str:
     return ""
 
 
-def _normalize_task_status(value: str) -> TaskStatus:
-    if value in {"queued", "running", "blocked_by_approval", "failed", "completed"}:
-        return cast(TaskStatus, value)
-    return "queued"
-
-
 def _build_execution_context_or_404(
     *,
     instance_service: InstanceService,
@@ -286,7 +280,7 @@ def _to_instance_file_items(tasks: list[Task]) -> list[InstanceFileItem]:
                     agent_id=task.agent_id or "",
                     agent_name=task.agent_name,
                     task_title=task.title,
-                    task_status=_normalize_task_status(task.status),
+                    task_status=normalize_task_status(task.status),
                     requirement_id=requirement_id,
                     requirement_title=requirement_title,
                     path=str(path),

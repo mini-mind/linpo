@@ -135,7 +135,7 @@ class FlowPlannerSessionService:
         planner_token: str | None = None,
         flow_name: str | None = None,
         current_nodes: list[PlannerNodePayload] | None = None,
-        db_session: Session | None = None,
+        db_session: Session,
         publish_realtime: bool = True,
     ) -> FlowPlannerSessionRecord:
         normalized_user_id = _normalize_uuid(user_id, field_name="user_id")
@@ -225,7 +225,7 @@ class FlowPlannerSessionService:
         flow_name: str | None = None,
         current_nodes: list[PlannerNodePayload] | None = None,
         include_messages: bool = True,
-        db_session: Session | None = None,
+        db_session: Session,
         publish_realtime: bool = True,
     ) -> FlowPlannerSessionRecord:
         normalized_user_id = _normalize_uuid(user_id, field_name="user_id")
@@ -387,7 +387,7 @@ class FlowPlannerSessionService:
         content: str,
         kind: PlannerMessageKind = "message",
         payload: dict[str, Any] | None = None,
-        db_session: Session | None = None,
+        db_session: Session,
         publish_realtime: bool = True,
     ) -> FlowPlannerSessionRecord:
         normalized_session_key = _require_non_empty(session_key, field_name="session_key")
@@ -470,7 +470,7 @@ class FlowPlannerSessionService:
         *,
         session_key: str,
         node: PlannerNodePayload,
-        db_session: Session | None = None,
+        db_session: Session,
         publish_realtime: bool = True,
     ) -> FlowPlannerSessionRecord:
         normalized_session_key = _require_non_empty(session_key, field_name="session_key")
@@ -569,7 +569,7 @@ class FlowPlannerSessionService:
         *,
         session_key: str,
         node_id: str,
-        db_session: Session | None = None,
+        db_session: Session,
         publish_realtime: bool = True,
     ) -> FlowPlannerSessionRecord:
         normalized_session_key = _require_non_empty(session_key, field_name="session_key")
@@ -632,7 +632,7 @@ class FlowPlannerSessionService:
         *,
         session_key: str,
         nodes: list[PlannerNodePayload],
-        db_session: Session | None = None,
+        db_session: Session,
         publish_realtime: bool = True,
     ) -> FlowPlannerSessionRecord:
         normalized_session_key = _require_non_empty(session_key, field_name="session_key")
@@ -718,7 +718,7 @@ class FlowPlannerSessionService:
         session_key: str,
         content: str | None = None,
         payload: dict[str, Any] | None = None,
-        db_session: Session | None = None,
+        db_session: Session,
         publish_realtime: bool = True,
     ) -> FlowPlannerSessionRecord:
         normalized_session_key = _require_non_empty(session_key, field_name="session_key")
@@ -854,7 +854,7 @@ class FlowPlannerSessionService:
         session_key: str,
         reason: str,
         payload: dict[str, Any] | None = None,
-        db_session: Session | None = None,
+        db_session: Session,
         publish_realtime: bool = True,
     ) -> FlowPlannerSessionRecord:
         return self._set_terminal_state(
@@ -910,7 +910,7 @@ class FlowPlannerSessionService:
         session_key: str,
         reason: str | None = None,
         payload: dict[str, Any] | None = None,
-        db_session: Session | None = None,
+        db_session: Session,
         publish_realtime: bool = True,
     ) -> FlowPlannerSessionRecord:
         return self._set_terminal_state(
@@ -956,7 +956,7 @@ class FlowPlannerSessionService:
         message_kind: PlannerMessageKind,
         message_content: str,
         payload: dict[str, Any] | None,
-        db_session: Session | None,
+        db_session: Session,
         publish_realtime: bool,
     ) -> FlowPlannerSessionRecord:
         normalized_session_key = _require_non_empty(session_key, field_name="session_key")

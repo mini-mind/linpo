@@ -274,6 +274,66 @@
    - `realtime_access_service` 与 `flow_planner_session_service` 不再隐式打开数据库会话；
    - 关键回归测试全绿。
 
+#### 阶段 10（tasks router 物理解耦）
+
+目标：把 `app/api/tasks.py` 从“大一统 router”拆分为按职责域独立模块，降低跨功能改动冲突面。
+
+1. 调查：
+   - 固化当前职责分组：`flow_planner`、`flow_task`、`task_runtime`；
+   - 盘点共用依赖注入与共用 helper，避免重复定义。
+2. 设计：
+   - 新增 `app/api/tasks_dependencies.py` 收口依赖提供器；
+   - 新增 3 个 router 文件：`tasks_flow_planner.py`、`tasks_flow_task.py`、`tasks_runtime.py`；
+   - 保持所有公开 URL 与响应结构不变，不保留兼容别名。
+3. 实现：
+   - 先迁移依赖与纯 helper，再按域迁移端点；
+   - `app/main.py` 改为显式挂载拆分后的 router。
+4. 测试：
+   - 最小集：`tests/integration/test_tasks_api.py`、`tests/integration/test_observer_ws.py`、`tests/test_architecture_constraints.py`；
+   - OpenAPI 快照校验：路径与 schema 不漂移。
+5. 验收：
+   - `tasks.py` 不再承载跨 3 个以上职责域；
+   - 功能回归与 OpenAPI 回归全绿。
+
+#### 阶段 11（事务边界合同补强）
+
+目标：将“API 不写库”与“关键服务显式会话依赖”从约定升级为可执行测试合同。
+
+1. 调查：
+   - 梳理 `tests/test_architecture_constraints.py` 当前覆盖盲区（别名绕过、方法集不足、可选 session 签名）。
+2. 设计：
+   - 增加 API 层会话原语调用别名检测；
+   - 增加 `FlowPlannerSessionService` 关键写方法必须显式传入 `db_session` 的签名约束。
+3. 实现：
+   - 补充对应 AST 约束测试；
+   - 不修改业务行为，仅加护栏。
+4. 测试：
+   - `tests/test_architecture_constraints.py` 全量通过；
+   - 关键回归集抽样通过（auth/tasks/planner）。
+5. 验收：
+   - 新增事务边界回归红线可阻止已知回归模式；
+   - 不引入接口行为变化。
+
+#### 阶段 12（tasks 公共 helper 收敛）
+
+目标：在 router 物理拆分后继续消除重复 helper，降低跨模块漂移风险。
+
+1. 调查：
+   - 识别 `tasks_flow_planner/tasks_flow_task/tasks_runtime/instances` 的重复纯函数（状态归一化、requirement id 提取、边构建）。
+2. 设计：
+   - 新增 `app/api/tasks_common.py`，仅承载纯函数共享逻辑；
+   - 各模块改为显式导入，不保留兼容路径。
+3. 实现：
+   - 删除重复 helper 定义并替换调用；
+   - 保持 API 契约、状态码与响应字段不变。
+4. 测试：
+   - `tests/test_architecture_constraints.py`
+   - `tests/integration/test_tasks_api.py`
+   - `tests/integration/test_task_callback_security.py`
+5. 验收：
+   - 共享逻辑单点维护；
+   - 任务运行与回调安全链路回归全绿。
+
 ## 6. 验收标准
 
 1. 新用户按文档可在 30 分钟内完成部署与首个实例接入。

@@ -48,7 +48,10 @@ from app.api.auth import router as auth_router
 from app.api.instances import router as instances_router
 from app.api.ops import router as ops_router
 from app.api.realtime import router as realtime_router
-from app.api.tasks import router as tasks_router
+from app.api.tasks_flow_planner import router as tasks_flow_planner_router
+from app.api.tasks_flow_task import router as tasks_flow_task_router
+from app.api.tasks_flow_draft import router as tasks_flow_draft_router
+from app.api.tasks_runtime import router as tasks_runtime_router
 from app.db.session import init_db
 from app.services.aggregate_service import AggregateService
 from app.services.provider_application_service import ProviderApplicationService
@@ -194,7 +197,10 @@ async def add_http_cors_headers(
 
 for router in (aggregate_router, agents_router, auth_router, instances_router, ops_router, realtime_router):
     app.include_router(router, prefix=_API_V1_PREFIX)
-app.include_router(tasks_router)
+app.include_router(tasks_flow_planner_router)
+app.include_router(tasks_flow_task_router)
+app.include_router(tasks_flow_draft_router)
+app.include_router(tasks_runtime_router)
 
 
 @app.get("/api/v1/health", tags=["system"])

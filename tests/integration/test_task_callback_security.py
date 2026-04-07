@@ -10,7 +10,7 @@ from cryptography.fernet import Fernet
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.tasks import _sign_task_callback_event
+from app.services.task_callback_security import sign_task_callback_event
 from app.db import session as db_session
 from app.db.models import Task
 from app.main import app
@@ -183,7 +183,7 @@ def test_task_run_event_callback_requires_valid_hmac_signature(
     assert invalid_payload["detail"] == "Invalid callback signature"
 
     occurred_at = _iso_now()
-    valid_signature = _sign_task_callback_event(
+    valid_signature = sign_task_callback_event(
         callback_token=callback_token,
         run_id=run_id,
         event_type="completed",
@@ -248,7 +248,7 @@ def test_task_run_event_callback_rejects_tampered_payload_after_signature_genera
     run_id = create_payload["extras"]["dispatch_run_id"]
     callback_token = _dispatch_callback_token_for_task_id(isolated_database_url, create_payload["id"])
     occurred_at = _iso_now()
-    signature = _sign_task_callback_event(
+    signature = sign_task_callback_event(
         callback_token=callback_token,
         run_id=run_id,
         event_type="completed",

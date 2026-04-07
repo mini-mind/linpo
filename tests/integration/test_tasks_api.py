@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.adapters.provider_adapter import ProviderPayloadResult, ProviderSnapshotResult
-from app.api.tasks import _sign_task_callback_event
+from app.services.task_callback_security import sign_task_callback_event
 from app.db.models import FlowDraft, FlowPlannerSession, Task, User
 from app.db import session as db_session
 from app.domain.provider_contract import (
@@ -217,7 +217,7 @@ def _signed_task_run_event_payload(
     return {
         "eventType": event_type,
         "callbackToken": callback_token,
-        "callbackSignature": _sign_task_callback_event(
+        "callbackSignature": sign_task_callback_event(
             callback_token=callback_token,
             run_id=run_id,
             event_type=event_type,
@@ -713,7 +713,7 @@ def test_flow_generate_starts_persistent_planner_session(
     from app.services.flow_decomposition_service import FlowPlannerDispatch
 
     monkeypatch.setattr(
-        "app.api.tasks.FlowDecompositionService.dispatch_planner",
+        "app.api.tasks_flow_planner.FlowDecompositionService.dispatch_planner",
         lambda self, **kwargs: FlowPlannerDispatch(
             planner_agent_id="claw3",
             planner_session_key="linpo:flow:default:planner:claw3",
@@ -859,7 +859,7 @@ def test_flow_generate_returns_current_snapshot_from_persisted_planner_session(
     from app.services.flow_decomposition_service import FlowPlannerDispatch
 
     monkeypatch.setattr(
-        "app.api.tasks.FlowDecompositionService.dispatch_planner",
+        "app.api.tasks_flow_planner.FlowDecompositionService.dispatch_planner",
         lambda self, **kwargs: FlowPlannerDispatch(
             planner_agent_id="claw3",
             planner_session_key="linpo:flow:default:planner:claw3:current",
@@ -2691,7 +2691,7 @@ def test_task_dispatch_fails_when_callback_candidate_list_is_empty(
     )
 
     monkeypatch.setattr(
-        "app.api.tasks._event_callback_base_url_candidates",
+        "app.api.tasks_runtime._event_callback_base_url_candidates",
         lambda **kwargs: [],
     )
     send_invoked = {"value": False}
