@@ -1,6 +1,7 @@
 import json
 from typing import cast
 
+import pytest
 from fastapi import FastAPI
 
 from ._asgi import request
@@ -21,46 +22,25 @@ def test_health_endpoint_returns_ok() -> None:
     assert payload == {"status": "ok"}
 
 
-def test_health_endpoint_allows_local_vite_origin_for_preflight() -> None:
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://127.0.0.1:4173",
+        "http://127.0.0.1:5173",
+    ],
+)
+def test_health_endpoint_allows_local_origins_for_preflight(origin: str) -> None:
     status_code, headers, _ = request(
         "OPTIONS",
         "/api/v1/health",
         headers={
-            "Origin": "http://127.0.0.1:5173",
+            "Origin": origin,
             "Access-Control-Request-Method": "GET",
         },
     )
 
     assert status_code == 200
-    assert headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
-
-
-def test_health_endpoint_allows_alternate_local_vite_origin_for_preflight() -> None:
-    status_code, headers, _ = request(
-        "OPTIONS",
-        "/api/v1/health",
-        headers={
-            "Origin": "http://127.0.0.1:4173",
-            "Access-Control-Request-Method": "GET",
-        },
-    )
-
-    assert status_code == 200
-    assert headers["access-control-allow-origin"] == "http://127.0.0.1:4173"
-
-
-def test_health_endpoint_allows_local_origin_for_preflight() -> None:
-    status_code, headers, _ = request(
-        "OPTIONS",
-        "/api/v1/health",
-        headers={
-            "Origin": "http://127.0.0.1:5173",
-            "Access-Control-Request-Method": "GET",
-        },
-    )
-
-    assert status_code == 200
-    assert headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
+    assert headers["access-control-allow-origin"] == origin
 
 
 def test_health_preflight_echoes_requested_content_type_header() -> None:
@@ -78,6 +58,21 @@ def test_health_preflight_echoes_requested_content_type_header() -> None:
     assert headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
     assert headers["access-control-allow-credentials"] == "true"
     assert headers["access-control-allow-headers"] == "content-type"
+
+
+def test_health_preflight_from_disallowed_origin_does_not_include_cors_headers() -> None:
+    status_code, headers, _ = request(
+        "OPTIONS",
+        "/api/v1/health",
+        headers={
+            "Origin": "https://untrusted.example",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert status_code == 405
+    assert "access-control-allow-origin" not in headers
+    assert "access-control-allow-credentials" not in headers
 
 
 def test_legacy_demo_routes_are_not_exposed() -> None:

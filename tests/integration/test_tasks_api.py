@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
-from http.cookies import SimpleCookie
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import quote
@@ -16,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.adapters.provider_adapter import ProviderPayloadResult, ProviderSnapshotResult
 from app.services.task_callback_security import sign_task_callback_event
-from app.db.models import FlowDraft, FlowPlannerSession, Task, User
+from app.db.models import FlowDraft, FlowPlannerSession, User
 from app.db import session as db_session
 from app.domain.provider_contract import (
     DomainFreshness,
@@ -29,7 +28,18 @@ from app.services.flow_planner_session_service import (
     FlowPlannerSessionService,
     get_flow_planner_session_service,
 )
-from app.services.instance_validator import InstanceValidationResult
+from tests.integration._task_test_helpers import (
+    allow_instance_validation as _allow_instance_validation,
+    assert_dispatch_signature_prompt_contract,
+    camelize_request_payload_keys as _camelize_request_payload_keys,
+    create_instance as _create_instance,
+    dispatch_callback_token_for_task_id as _dispatch_callback_token_for_task_id,
+    install_send_chat_message_fake,
+    iso_now as _iso_now,
+    json_headers as _json_headers,
+    register_and_login as _register_and_login,
+    request_json as _request_json,
+)
 from tests.integration._asgi import request
 
 DEFAULT_TASKS_PATH = "/api/v1/boards/default/tasks"
@@ -46,57 +56,6 @@ DEFAULT_TASK_INTERRUPT_PATH = "/api/v1/boards/default/tasks/{task_id}/interrupt"
 DEFAULT_TASK_CONTINUE_PATH = "/api/v1/boards/default/tasks/{task_id}/continue"
 DEFAULT_TASK_OUTPUT_PREVIEW_PATH = "/api/v1/boards/default/tasks/{task_id}/output-preview"
 DEFAULT_TASK_OUTPUT_FILE_PATH = "/api/v1/boards/default/tasks/{task_id}/output-file"
-
-
-def _json_headers(cookie_header: str | None = None) -> dict[str, str]:
-    headers = {"content-type": "application/json"}
-    if cookie_header:
-        headers["cookie"] = cookie_header
-    return headers
-
-
-_RAW_KEY_MAP_FIELDS = {"node_lane_by_id", "nodeLaneById"}
-
-
-def _to_camel_case(value: str) -> str:
-    parts = value.split("_")
-    if len(parts) <= 1:
-        return value
-    return parts[0] + "".join(part[:1].upper() + part[1:] for part in parts[1:])
-
-
-def _camelize_request_payload_keys(payload: object, *, parent_key: str | None = None) -> object:
-    if isinstance(payload, list):
-        return [_camelize_request_payload_keys(item, parent_key=parent_key) for item in payload]
-    if not isinstance(payload, dict):
-        return payload
-    if parent_key in _RAW_KEY_MAP_FIELDS:
-        return {str(key): value for key, value in payload.items()}
-    normalized: dict[str, object] = {}
-    for raw_key, raw_value in payload.items():
-        key = _to_camel_case(str(raw_key))
-        normalized[key] = _camelize_request_payload_keys(raw_value, parent_key=key)
-    return normalized
-
-
-def _request_json(
-    method: str,
-    path: str,
-    payload: dict[str, object],
-    cookie_header: str | None = None,
-) -> tuple[int, dict[str, str], dict[str, Any]]:
-    normalized_payload = cast(dict[str, object], _camelize_request_payload_keys(payload))
-    status_code, headers, body = request(
-        method,
-        path,
-        headers=_json_headers(cookie_header),
-        body=json.dumps(normalized_payload).encode("utf-8"),
-    )
-    return status_code, headers, cast(dict[str, Any], json.loads(body.decode("utf-8")))
-
-
-def _iso_now(*, delta_seconds: int = 0) -> str:
-    return (datetime.now(UTC) + timedelta(seconds=delta_seconds)).isoformat()
 
 
 def _planner_request_json(
@@ -119,64 +78,6 @@ def _planner_request_json(
     return status_code, headers, cast(dict[str, Any], json.loads(body.decode("utf-8")))
 
 
-def _cookie_header_from_set_cookie(set_cookie: str) -> str:
-    cookies = SimpleCookie()
-    cookies.load(set_cookie)
-    morsel = cookies["linpo_session"]
-    return f"{morsel.key}={morsel.value}"
-
-
-def _register_and_login(username: str, password: str = "secret-123") -> str:
-    email = f"{username}@example.com"
-    register_status, _, _ = _request_json(
-        "POST",
-        "/api/v1/auth/register",
-        {"username": username, "email": email, "password": password},
-    )
-    assert register_status == 201
-
-    login_status, login_headers, _ = _request_json(
-        "POST",
-        "/api/v1/auth/login",
-        {"identifier": username, "password": password},
-    )
-    assert login_status == 200
-    return _cookie_header_from_set_cookie(login_headers["set-cookie"])
-
-
-def _allow_instance_validation(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "app.services.instance_validator.InstanceValidatorService.validate",
-        lambda self, validation_request: InstanceValidationResult(
-            ok=True,
-            status="active",
-            message=f"validated:{validation_request.endpoint}",
-        ),
-    )
-
-
-def _create_instance(
-    auth_cookie: str,
-    *,
-    name: str,
-    endpoint: str,
-    gateway_token: str,
-) -> dict[str, Any]:
-    status_code, _, payload = _request_json(
-        "POST",
-        "/api/v1/instances",
-        {
-            "name": name,
-            "type": "openclaw",
-            "endpoint": endpoint,
-            "gatewayToken": gateway_token,
-        },
-        auth_cookie,
-    )
-    assert status_code == 201
-    return payload
-
-
 def _planner_token_for_session(database_url: str, session_key: str) -> str:
     with Session(db_session.get_engine(database_url)) as session:
         planner_session = session.get(FlowPlannerSession, session_key)
@@ -187,19 +88,6 @@ def _planner_token_for_session(database_url: str, session_key: str) -> str:
 def _user_id_for_username(database_url: str, username: str) -> Any:
     with Session(db_session.get_engine(database_url)) as session:
         return session.execute(select(User.id).where(User.username == username)).scalar_one()
-
-
-def _task_by_id(database_url: str, task_id: str) -> Task:
-    with Session(db_session.get_engine(database_url)) as session:
-        task = next((item for item in session.execute(select(Task)).scalars().all() if str(item.id) == task_id), None)
-        assert task is not None
-        return task
-
-
-def _dispatch_callback_token_for_task_id(database_url: str, task_id: str) -> str:
-    task = _task_by_id(database_url, task_id)
-    extras = task.extras if isinstance(task.extras, dict) else {}
-    return str(extras.get("dispatch_callback_token", ""))
 
 
 def _signed_task_run_event_payload(
@@ -1868,7 +1756,7 @@ def test_flow_requirement_rename_updates_all_requirement_tasks(
     after_tasks = cast(list[dict[str, Any]], json.loads(after_body.decode("utf-8")))
     assert len(after_tasks) == 2
     assert all(item["extras"]["requirement_title"] == "新流程名" for item in after_tasks)
-    assert all(item["extras"]["requirement"] == "新流程名" for item in after_tasks)
+    assert all("requirement" not in item["extras"] for item in after_tasks)
 
 
 def test_flow_requirement_stop_marks_future_tasks_and_requests_running_stop(
@@ -2574,20 +2462,10 @@ def test_task_dispatch_prompt_contains_tasks_callback_path(
     )
 
     captured_messages: list[str] = []
-
-    def _fake_send(self: Any, **kwargs: Any) -> dict[str, str]:
-        message = kwargs.get("message")
-        if isinstance(message, str):
-            captured_messages.append(message)
-        return {
-            "request_id": "req-dispatch-prompt",
-            "agent_id": str(kwargs["agent_id"]),
-            "status": "accepted",
-        }
-
-    monkeypatch.setattr(
-        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
-        _fake_send,
+    install_send_chat_message_fake(
+        monkeypatch,
+        request_id="req-dispatch-prompt",
+        capture_messages=captured_messages,
     )
 
     create_status, _, create_payload = _request_json(
@@ -2609,14 +2487,15 @@ def test_task_dispatch_prompt_contains_tasks_callback_path(
     expected_callback = (
         f"http://linpo.local:8000/api/v1/boards/default/tasks/task-runs/{run_id}/events"
     )
-    assert f"主回调地址: {expected_callback}" in captured_messages[0]
-    assert expected_callback in captured_messages[0]
-    assert "回调地址候选(按顺序尝试，直到返回 accepted=true):" in captured_messages[0]
-    assert f"回调令牌: {callback_token}" in captured_messages[0]
-    assert "callbackSignature = HMAC-SHA256(key=callbackToken, message=canonical_json)" in captured_messages[0]
-    assert '"callbackSignature":"<hex_hmac_sha256>"' in captured_messages[0]
-    assert "若无法落地到指定输出路径，不得回调 completed，必须回调 failed" in captured_messages[0]
-    assert "completed 事件请同时填写 artifact=最终输出文件绝对路径" in captured_messages[0]
+    prompt = captured_messages[0]
+    assert expected_callback in prompt
+    assert callback_token in prompt
+    assert "回调地址候选" in prompt
+    assert_dispatch_signature_prompt_contract(prompt)
+    assert "输出路径" in prompt
+    assert "artifact" in prompt
+    assert "completed" in prompt
+    assert "failed" in prompt
 
 
 def test_task_dispatch_prompt_derives_public_callback_from_instance_endpoint(
@@ -2637,20 +2516,10 @@ def test_task_dispatch_prompt_derives_public_callback_from_instance_endpoint(
     )
 
     captured_messages: list[str] = []
-
-    def _fake_send(self: Any, **kwargs: Any) -> dict[str, str]:
-        message = kwargs.get("message")
-        if isinstance(message, str):
-            captured_messages.append(message)
-        return {
-            "request_id": "req-dispatch-fallback",
-            "agent_id": str(kwargs["agent_id"]),
-            "status": "accepted",
-        }
-
-    monkeypatch.setattr(
-        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
-        _fake_send,
+    install_send_chat_message_fake(
+        monkeypatch,
+        request_id="req-dispatch-fallback",
+        capture_messages=captured_messages,
     )
 
     create_status, _, create_payload = _request_json(
@@ -2671,8 +2540,10 @@ def test_task_dispatch_prompt_derives_public_callback_from_instance_endpoint(
     public_callback = (
         f"http://175.178.213.10:8000/api/v1/boards/default/tasks/task-runs/{run_id}/events"
     )
-    assert f"主回调地址: {public_callback}" in captured_messages[0]
-    assert f"1) {public_callback}" in captured_messages[0]
+    prompt = captured_messages[0]
+    assert public_callback in prompt
+    assert "主回调地址" in prompt
+    assert "1)" in prompt
 
 
 def test_task_dispatch_fails_when_callback_candidate_list_is_empty(
@@ -2737,13 +2608,9 @@ def test_task_run_event_callback_requires_fresh_occurred_at(
         gateway_token="token-event-freshness",
     )
 
-    monkeypatch.setattr(
-        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
-        lambda self, **kwargs: {
-            "request_id": "req-freshness",
-            "agent_id": kwargs["agent_id"],
-            "status": "accepted",
-        },
+    install_send_chat_message_fake(
+        monkeypatch,
+        request_id="req-freshness",
     )
 
     create_status, _, create_payload = _request_json(
@@ -2806,13 +2673,9 @@ def test_task_run_event_callback_rejects_missing_or_invalid_signature(
         gateway_token="token-event-signature",
     )
 
-    monkeypatch.setattr(
-        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
-        lambda self, **kwargs: {
-            "request_id": "req-signature",
-            "agent_id": kwargs["agent_id"],
-            "status": "accepted",
-        },
+    install_send_chat_message_fake(
+        monkeypatch,
+        request_id="req-signature",
     )
 
     create_status, _, create_payload = _request_json(

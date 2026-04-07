@@ -188,6 +188,55 @@ def test_ops_setup_ready_when_required_configs_exist_and_instance_bound(
     assert checks["instance_bound"]["status"] == "ok"
 
 
+def test_ops_diagnostics_ready_when_all_checks_pass(
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_database_url: str,
+    auth_cookie: str,
+    db_handle: Session,
+) -> None:
+    monkeypatch.setenv("LINPO_DATABASE_URL", isolated_database_url)
+    monkeypatch.setenv("FLOW_DECOMPOSITION_OPENCLAW_BASE_URL", "ws://ops.example:38789")
+    monkeypatch.setenv("FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN", "token-ops")
+    monkeypatch.setenv("FLOW_DECOMPOSITION_OPENCLAW_ORIGIN", "http://ops.example:38789")
+
+    user = db_handle.execute(select(User).where(User.username == "ops-user")).scalar_one()
+    db_handle.add_all(
+        [
+            Instance(
+                user_id=user.id,
+                name="ops-instance-running",
+                type="openclaw",
+                endpoint="http://198.51.100.20:28789",
+                gateway_token_enc="enc",
+                status=" RUNNING ",
+            ),
+            Instance(
+                user_id=user.id,
+                name="ops-instance-ok",
+                type="openclaw",
+                endpoint="http://198.51.100.21:28789",
+                gateway_token_enc="enc",
+                status="ok",
+            ),
+        ]
+    )
+    db_handle.commit()
+
+    status_code, _, body = request("GET", "/api/v1/ops/diagnostics", headers={"cookie": auth_cookie})
+
+    assert status_code == 200
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    summary = cast(dict[str, Any], payload["summary"])
+    assert summary["ready"] is True
+    assert summary["checksFailedCount"] == 0
+    assert summary["instancesTotal"] == 2
+    assert summary["instancesActive"] == 2
+
+    copy_text = cast(str, payload["copyText"])
+    assert "checks_failed_count: 0" in copy_text
+    assert "next_step=none" in copy_text
+
+
 def test_ops_diagnostics_returns_copy_text_with_summary_and_check_suggestions(
     monkeypatch: pytest.MonkeyPatch,
     isolated_database_url: str,

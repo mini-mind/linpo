@@ -33,11 +33,7 @@ class RegisterRequest(BaseModel):
 
 class LoginRequest(BaseModel):
     identifier: str | None = None
-    username: str | None = None
     password: str
-
-    def resolve_identifier(self) -> str:
-        return (self.identifier or self.username or "").strip()
 
 
 class ProfileUpdateRequest(BaseModel):
@@ -88,7 +84,7 @@ def login(
     response: Response,
     db_session: Session = Depends(get_session),
 ) -> dict[str, str | None]:
-    identifier = payload.resolve_identifier()
+    identifier = payload.identifier.strip() if isinstance(payload.identifier, str) else ""
     if identifier == "":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="identifier is required")
 

@@ -249,6 +249,43 @@ def test_aggregate_routes_require_authentication(
     )
 
 
+def test_summary_routes_return_stable_empty_payloads_when_no_instances(
+    isolated_database_url: str,
+    auth_cookie: str,
+) -> None:
+    del isolated_database_url
+
+    overview_status, _, overview_body = request("GET", "/api/v1/summary/overview", headers={"cookie": auth_cookie})
+    topology_status, _, topology_body = request("GET", "/api/v1/summary/topology", headers={"cookie": auth_cookie})
+
+    assert overview_status == 200
+    overview_payload = cast(dict[str, Any], json.loads(overview_body.decode("utf-8")))
+    assert overview_payload["partial_failure"] is False
+    assert overview_payload["freshness"] == {"status": "fresh", "checked_at": None}
+    assert overview_payload["diagnostics"] == []
+    assert overview_payload["agents"] == []
+    assert overview_payload["token_groups"] == []
+    assert overview_payload["global_events"] == []
+    assert overview_payload["stats"] == {
+        "instance_count": 0,
+        "agent_count": 0,
+        "active_agent_count": 0,
+        "attention_instance_count": 0,
+        "total_tokens": None,
+    }
+
+    assert topology_status == 200
+    topology_payload = cast(dict[str, Any], json.loads(topology_body.decode("utf-8")))
+    assert topology_payload["partial_failure"] is False
+    assert topology_payload["freshness"] == {"status": "fresh", "checked_at": None}
+    assert topology_payload["diagnostics"] == []
+    assert topology_payload["instances"] == []
+    assert topology_payload["agents"] == []
+    assert topology_payload["sessions"] == []
+    assert topology_payload["tools"] == []
+    assert topology_payload["edges"] == []
+
+
 def test_overview_returns_aggregated_agents_with_request_id_freshness_and_diagnostics(
     isolated_database_url: str,
     auth_cookie: str,
@@ -595,6 +632,115 @@ def test_overview_exposes_partial_failure_without_fake_empty_success(
             },
             "error": None,
         },
+    ]
+
+
+def test_topology_exposes_partial_failure_and_keeps_healthy_nodes(
+    isolated_database_url: str,
+    auth_cookie: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+
+    healthy = _create_instance(
+        auth_cookie,
+        name="healthy-instance",
+        endpoint="http://175.178.213.10:28801",
+        gateway_token="token-healthy",
+    )
+    failing = _create_instance(
+        auth_cookie,
+        name="failing-instance",
+        endpoint="http://175.178.213.10:28802",
+        gateway_token="token-failing",
+    )
+
+    _install_aggregate_data_source(
+        monkeypatch,
+        providers_by_token={
+            "token-healthy": FakeObserverDataSource(
+                [
+                    Agent(
+                        id="agent-healthy",
+                        name="Healthy Agent",
+                        status=AgentStatus.RUNNING,
+                        is_active=True,
+                        last_active_at="2026-03-22T12:00:00Z",
+                        root_node_id="node-healthy",
+                    )
+                ]
+            ),
+            "token-failing": HTTPException(status_code=503, detail="Topology snapshot unavailable"),
+        },
+    )
+
+    status_code, _, body = request("GET", "/api/v1/summary/topology", headers={"cookie": auth_cookie})
+
+    assert status_code == 200
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload["partial_failure"] is True
+    assert payload["freshness"] == {
+        "status": "stale",
+        "checked_at": healthy["last_check_at"],
+    }
+
+    diagnostics = cast(list[dict[str, Any]], payload["diagnostics"])
+    failing_diagnostic = next(item for item in diagnostics if item["instance_id"] == failing["id"])
+    assert failing_diagnostic["status"] == "failed"
+    assert failing_diagnostic["error"] == {
+        "code": "source_unavailable",
+        "message": "Topology snapshot unavailable",
+        "request_id": payload["request_id"],
+        "recoverable": True,
+        "next_step": "检查实例连通性或网关 token 后重试",
+    }
+
+    healthy_diagnostic = next(item for item in diagnostics if item["instance_id"] == healthy["id"])
+    assert healthy_diagnostic["status"] == "ok"
+    assert healthy_diagnostic["error"] is None
+
+    assert payload["instances"] == [
+        {
+            "node_id": f"instance:{failing['id']}",
+            "instance_id": failing["id"],
+            "name": "failing-instance",
+            "type": "openclaw",
+            "status": "active",
+            "last_check_at": failing["last_check_at"],
+            "created_at": failing["created_at"],
+        },
+        {
+            "node_id": f"instance:{healthy['id']}",
+            "instance_id": healthy["id"],
+            "name": "healthy-instance",
+            "type": "openclaw",
+            "status": "active",
+            "last_check_at": healthy["last_check_at"],
+            "created_at": healthy["created_at"],
+        },
+    ]
+    assert payload["agents"] == [
+        {
+            "node_id": f"agent:{healthy['id']}:agent-healthy",
+            "instance_id": healthy["id"],
+            "instance_name": "healthy-instance",
+            "agent_id": "agent-healthy",
+            "agent_name": "Healthy Agent",
+            "status": "running",
+            "is_active": True,
+            "last_active_at": "2026-03-22T12:00:00Z",
+            "drilldown_path": f"/session/agent-healthy/__none__/__new__?instanceId={healthy['id']}",
+        }
+    ]
+    assert payload["sessions"] == []
+    assert payload["tools"] == []
+    assert payload["edges"] == [
+        {
+            "source": f"instance:{healthy['id']}",
+            "target": f"agent:{healthy['id']}:agent-healthy",
+            "kind": "instance_agent",
+        }
     ]
 
 

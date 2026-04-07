@@ -1,14 +1,10 @@
-import json
 from typing import Any, cast
 
-from ._asgi import request
+from ._api_coverage import load_openapi_payload
 
 
 def test_openapi_docs_expose_ordered_tag_metadata() -> None:
-    status_code, _, body = request("GET", "/openapi.json")
-
-    assert status_code == 200
-    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    payload = cast(dict[str, Any], load_openapi_payload())
     tags = cast(list[dict[str, str]], payload["tags"])
 
     assert [tag["name"] for tag in tags] == [
@@ -26,15 +22,10 @@ def test_openapi_docs_expose_ordered_tag_metadata() -> None:
 
 
 def test_openapi_paths_are_versioned_and_grouped_by_domain() -> None:
-    status_code, _, body = request("GET", "/openapi.json")
-
-    assert status_code == 200
-    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    payload = cast(dict[str, Any], load_openapi_payload())
     paths = cast(dict[str, Any], payload["paths"])
 
-    for path in paths:
-        assert path.startswith("/api/v1/")
-
+    assert all(path.startswith("/api/v1/") for path in paths), "all public API paths must be versioned under /api/v1/"
     assert cast(dict[str, Any], paths["/api/v1/health"])["get"]["tags"] == ["system"]
     assert cast(dict[str, Any], paths["/api/v1/agents"])["get"]["tags"] == ["observer"]
     assert cast(dict[str, Any], paths["/api/v1/chat/models"])["get"]["tags"] == ["chat"]

@@ -468,6 +468,50 @@ def test_register_rejects_duplicate_username(isolated_database_url: str) -> None
     assert payload == {"detail": "Username already exists"}
 
 
+def test_register_rejects_duplicate_email(isolated_database_url: str) -> None:
+    del isolated_database_url
+    _request_json(
+        "POST",
+        "/api/v1/auth/register",
+        {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
+    )
+
+    status_code, _, payload = _request_json(
+        "POST",
+        "/api/v1/auth/register",
+        {"username": "alice2", "email": "alice@example.com", "password": "secret-123"},
+    )
+
+    assert status_code == 409
+    assert payload == {"detail": "Email already exists"}
+
+
+def test_register_rejects_invalid_email_format(isolated_database_url: str) -> None:
+    del isolated_database_url
+
+    status_code, _, payload = _request_json(
+        "POST",
+        "/api/v1/auth/register",
+        {"username": "alice", "email": "not-an-email", "password": "secret-123"},
+    )
+
+    assert status_code == 400
+    assert payload == {"detail": "Invalid email"}
+
+
+def test_register_rejects_short_password(isolated_database_url: str) -> None:
+    del isolated_database_url
+
+    status_code, _, payload = _request_json(
+        "POST",
+        "/api/v1/auth/register",
+        {"username": "alice", "email": "alice@example.com", "password": "12345"},
+    )
+
+    assert status_code == 400
+    assert payload == {"detail": "password must be at least 6 characters"}
+
+
 def test_auth_login_preflight_allows_credentials_for_allowed_origin() -> None:
     status_code, headers, _ = request(
         "OPTIONS",
@@ -593,6 +637,37 @@ def test_login_rejects_bad_password(isolated_database_url: str) -> None:
     assert payload == {"detail": "Invalid identifier or password"}
 
 
+def test_login_requires_identifier(isolated_database_url: str) -> None:
+    del isolated_database_url
+
+    status_code, _, payload = _request_json(
+        "POST",
+        "/api/v1/auth/login",
+        {"password": "secret-123"},
+    )
+
+    assert status_code == 400
+    assert payload == {"detail": "identifier is required"}
+
+
+def test_login_rejects_username_alias_field(isolated_database_url: str) -> None:
+    del isolated_database_url
+    _request_json(
+        "POST",
+        "/api/v1/auth/register",
+        {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
+    )
+
+    status_code, _, payload = _request_json(
+        "POST",
+        "/api/v1/auth/login",
+        {"username": "alice", "password": "secret-123"},
+    )
+
+    assert status_code == 400
+    assert payload == {"detail": "identifier is required"}
+
+
 def test_profile_patch_updates_avatar_and_me_reflects_change(isolated_database_url: str) -> None:
     del isolated_database_url
     _, register_headers, _ = _request_json(
@@ -653,6 +728,26 @@ def test_profile_patch_requires_authentication(isolated_database_url: str) -> No
     )
     assert status_code == 401
     assert payload == {"detail": "Unauthorized"}
+
+
+def test_profile_patch_requires_at_least_one_field(isolated_database_url: str) -> None:
+    del isolated_database_url
+    _, register_headers, _ = _request_json(
+        "POST",
+        "/api/v1/auth/register",
+        {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
+    )
+    cookie_header = _cookie_header_from_set_cookie(register_headers["set-cookie"])
+
+    status_code, _, payload = _request_json(
+        "PATCH",
+        "/api/v1/auth/profile",
+        {},
+        cookie_header=cookie_header,
+    )
+
+    assert status_code == 400
+    assert payload == {"detail": "at least one profile field is required"}
 
 
 def test_profile_patch_updates_username(isolated_database_url: str) -> None:
@@ -766,6 +861,26 @@ def test_password_update_rejects_wrong_current_password(isolated_database_url: s
     )
     assert status_code == 400
     assert payload == {"detail": "Current password is incorrect"}
+
+
+def test_password_update_rejects_reusing_current_password(isolated_database_url: str) -> None:
+    del isolated_database_url
+    _, register_headers, _ = _request_json(
+        "POST",
+        "/api/v1/auth/register",
+        {"username": "alice", "email": "alice@example.com", "password": "secret-123"},
+    )
+    cookie_header = _cookie_header_from_set_cookie(register_headers["set-cookie"])
+
+    status_code, _, payload = _request_json(
+        "POST",
+        "/api/v1/auth/password",
+        {"current_password": "secret-123", "new_password": "secret-123"},
+        cookie_header=cookie_header,
+    )
+
+    assert status_code == 400
+    assert payload == {"detail": "new password must be different from current password"}
 
 
 def test_password_update_requires_authentication(isolated_database_url: str) -> None:

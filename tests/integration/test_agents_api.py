@@ -26,6 +26,36 @@ def _assert_error_envelope(
     return cast(str, error["request_id"])
 
 
+def _decode_json_body(body: bytes) -> object:
+    return cast(object, json.loads(body.decode("utf-8")))
+
+
+def _request_json(
+    method: str,
+    path: str,
+    *,
+    payload: dict[str, object] | None = None,
+    headers: dict[str, str] | None = None,
+) -> tuple[int, object]:
+    request_headers = headers
+    request_body: bytes | None = None
+    if payload is not None:
+        request_headers = {"content-type": "application/json", **(headers or {})}
+        request_body = json.dumps(payload).encode("utf-8")
+    status_code, _, body = request(method, path, body=request_body, headers=request_headers)
+    return status_code, _decode_json_body(body)
+
+
+def _install_provider_application_service(monkeypatch: Any, provider_application_service: object) -> None:
+    from app.main import app as fastapi_app
+
+    monkeypatch.setattr(
+        fastapi_app.state,
+        "provider_application_service",
+        provider_application_service,
+    )
+
+
 def test_legacy_control_routes_are_not_exposed_in_v0_7() -> None:
     routes = [
         ("POST", "/api/v1/chat/send?agentId=agent-root-observer"),
@@ -40,16 +70,14 @@ def test_legacy_control_routes_are_not_exposed_in_v0_7() -> None:
 
 
 def test_send_chat_message_requires_openclaw_data_source() -> None:
-    status_code, _, body = request(
+    status_code, payload = _request_json(
         "POST",
         "/api/v1/chat/agents/agent-root-observer/send",
-        body=json.dumps({"message": "hello", "sessionKey": "agent:main:main"}).encode("utf-8"),
-        headers={"content-type": "application/json"},
+        payload={"message": "hello", "sessionKey": "agent:main:main"},
     )
     assert status_code == 503
-    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
     _assert_error_envelope(
-        payload,
+        cast(dict[str, Any], payload),
         code="unsupported_data_source",
         message="chat.send is only available with the OpenClaw data source",
         recoverable=True,
@@ -58,8 +86,6 @@ def test_send_chat_message_requires_openclaw_data_source() -> None:
 
 
 def test_send_chat_message_returns_success_payload(monkeypatch: Any) -> None:
-    from app.main import app as fastapi_app
-
     class FakeProviderApplicationService:
         def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
             assert kwargs["agent_id"] == "agent-root-observer"
@@ -72,22 +98,63 @@ def test_send_chat_message_returns_success_payload(monkeypatch: Any) -> None:
                 "message": None,
             }
 
-    monkeypatch.setattr(
-        fastapi_app.state,
-        "provider_application_service",
-        FakeProviderApplicationService(),
-    )
+    _install_provider_application_service(monkeypatch, FakeProviderApplicationService())
 
-    status_code, _, body = request(
+    status_code, payload = _request_json(
         "POST",
         "/api/v1/chat/agents/agent-root-observer/send?data_source=openclaw",
-        body=json.dumps({"message": "hello", "sessionKey": "agent:main:main"}).encode("utf-8"),
-        headers={"content-type": "application/json"},
+        payload={"message": "hello", "sessionKey": "agent:main:main"},
     )
     assert status_code == 200
-    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
     assert payload == {
         "requestId": "control-send-1",
+        "agentId": "agent-root-observer",
+        "status": "accepted",
+        "message": None,
+    }
+
+
+def test_send_chat_message_rejects_blank_message() -> None:
+    status_code, payload = _request_json(
+        "POST",
+        "/api/v1/chat/agents/agent-root-observer/send?data_source=openclaw",
+        payload={"message": "   ", "sessionKey": "agent:main:main"},
+    )
+
+    assert status_code == 400
+    _assert_error_envelope(
+        cast(dict[str, Any], payload),
+        code="invalid_request",
+        message="message is required",
+        recoverable=True,
+        next_step="修正请求参数后重试",
+    )
+
+
+def test_send_chat_message_normalizes_optional_session_key(monkeypatch: Any) -> None:
+    class FakeProviderApplicationService:
+        def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
+            assert kwargs["agent_id"] == "agent-root-observer"
+            assert kwargs["message"] == "hello"
+            assert kwargs["session_key"] is None
+            return {
+                "request_id": "control-send-blank-session",
+                "agent_id": "agent-root-observer",
+                "status": "accepted",
+                "message": None,
+            }
+
+    _install_provider_application_service(monkeypatch, FakeProviderApplicationService())
+
+    status_code, payload = _request_json(
+        "POST",
+        "/api/v1/chat/agents/agent-root-observer/send?data_source=openclaw",
+        payload={"message": " hello ", "sessionKey": "   "},
+    )
+
+    assert status_code == 200
+    assert payload == {
+        "requestId": "control-send-blank-session",
         "agentId": "agent-root-observer",
         "status": "accepted",
         "message": None,
@@ -108,8 +175,6 @@ def test_pause_agent_requires_openclaw_data_source() -> None:
 
 
 def test_pause_agent_returns_success_payload(monkeypatch: Any) -> None:
-    from app.main import app as fastapi_app
-
     class FakeProviderApplicationService:
         def pause_agent(self, **kwargs: Any) -> dict[str, Any]:
             assert kwargs["agent_id"] == "agent-root-observer"
@@ -121,11 +186,7 @@ def test_pause_agent_returns_success_payload(monkeypatch: Any) -> None:
                 "message": None,
             }
 
-    monkeypatch.setattr(
-        fastapi_app.state,
-        "provider_application_service",
-        FakeProviderApplicationService(),
-    )
+    _install_provider_application_service(monkeypatch, FakeProviderApplicationService())
 
     status_code, _, body = request(
         "POST",
@@ -136,6 +197,34 @@ def test_pause_agent_returns_success_payload(monkeypatch: Any) -> None:
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
     assert payload == {
         "requestId": "control-pause-1",
+        "agentId": "agent-root-observer",
+        "status": "accepted",
+        "message": None,
+    }
+
+
+def test_pause_agent_normalizes_optional_session_key(monkeypatch: Any) -> None:
+    class FakeProviderApplicationService:
+        def pause_agent(self, **kwargs: Any) -> dict[str, Any]:
+            assert kwargs["agent_id"] == "agent-root-observer"
+            assert kwargs["session_key"] is None
+            return {
+                "request_id": "control-pause-blank-session",
+                "agent_id": "agent-root-observer",
+                "status": "accepted",
+                "message": None,
+            }
+
+    _install_provider_application_service(monkeypatch, FakeProviderApplicationService())
+
+    status_code, payload = _request_json(
+        "POST",
+        "/api/v1/chat/agents/agent-root-observer/pause"
+        "?data_source=openclaw&sessionKey=%20%20",
+    )
+    assert status_code == 200
+    assert payload == {
+        "requestId": "control-pause-blank-session",
         "agentId": "agent-root-observer",
         "status": "accepted",
         "message": None,
@@ -178,6 +267,22 @@ def test_reset_session_returns_success_payload(monkeypatch: Any) -> None:
     assert payload == {"reset": True}
 
 
+def test_reset_session_returns_false_payload_when_upstream_reports_noop(monkeypatch: Any) -> None:
+    class FakeProviderApplicationService:
+        def reset_session(self, **kwargs: Any) -> bool:
+            assert kwargs["key"] == "agent:main:main"
+            return False
+
+    _install_provider_application_service(monkeypatch, FakeProviderApplicationService())
+
+    status_code, payload = _request_json(
+        "POST",
+        "/api/v1/chat/sessions/agent:main:main/reset?data_source=openclaw",
+    )
+    assert status_code == 200
+    assert payload == {"reset": False}
+
+
 def test_delete_session_requires_openclaw_data_source() -> None:
     status_code, _, body = request("DELETE", "/api/v1/chat/sessions/agent:main:main")
     assert status_code == 503
@@ -212,6 +317,22 @@ def test_delete_session_returns_success_payload(monkeypatch: Any) -> None:
     assert status_code == 200
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
     assert payload == {"deleted": True}
+
+
+def test_delete_session_returns_false_payload_when_upstream_reports_noop(monkeypatch: Any) -> None:
+    class FakeProviderApplicationService:
+        def delete_session(self, **kwargs: Any) -> bool:
+            assert kwargs["key"] == "agent:main:main"
+            return False
+
+    _install_provider_application_service(monkeypatch, FakeProviderApplicationService())
+
+    status_code, payload = _request_json(
+        "DELETE",
+        "/api/v1/chat/sessions/agent:main:main?data_source=openclaw",
+    )
+    assert status_code == 200
+    assert payload == {"deleted": False}
 
 
 
@@ -285,6 +406,51 @@ def test_get_agent_detail_exposes_root_identity_and_total_node_count() -> None:
     assert payload["root_node_id"] == "node-root-observer"
     assert payload["total_node_count"] == 3
     assert payload["root_child_count"] == 2
+
+
+def test_get_agent_detail_returns_not_found_error_for_missing_agent() -> None:
+    status_code, payload = _request_json("GET", "/api/v1/agents/missing-agent")
+
+    assert status_code == 404
+    _assert_error_envelope(
+        cast(dict[str, Any], payload),
+        code="not_found",
+        message="Agent not found",
+        recoverable=False,
+        next_step="确认目标资源仍存在后重试",
+    )
+
+
+def test_get_node_detail_returns_not_found_error_for_missing_node() -> None:
+    status_code, payload = _request_json(
+        "GET",
+        "/api/v1/agents/agent-root-observer/nodes/missing-node",
+    )
+
+    assert status_code == 404
+    _assert_error_envelope(
+        cast(dict[str, Any], payload),
+        code="not_found",
+        message="Node not found",
+        recoverable=False,
+        next_step="确认目标资源仍存在后重试",
+    )
+
+
+def test_get_node_detail_returns_not_found_error_for_missing_agent() -> None:
+    status_code, payload = _request_json(
+        "GET",
+        "/api/v1/agents/missing-agent/nodes/node-any",
+    )
+
+    assert status_code == 404
+    _assert_error_envelope(
+        cast(dict[str, Any], payload),
+        code="not_found",
+        message="Agent not found",
+        recoverable=False,
+        next_step="确认目标资源仍存在后重试",
+    )
 
 
 def test_openclaw_data_source_errors_are_reported_explicitly() -> None:
@@ -639,6 +805,36 @@ def test_list_sessions_returns_sessions_list(monkeypatch: Any) -> None:
     assert payload["sessions"][0]["derivedTitle"] == "Session about Python"
 
 
+def test_list_sessions_forwards_query_filters(monkeypatch: Any) -> None:
+    class FakeProviderApplicationService:
+        def list_sessions(self, **kwargs: Any) -> dict[str, Any]:
+            assert kwargs["agent_id"] == "main"
+            assert kwargs["include_derived_titles"] is False
+            assert kwargs["include_last_message"] is False
+            return {
+                "ts": 1234567890001,
+                "count": 0,
+                "sessions": [],
+                "defaults": {"model": "claude-sonnet-4"},
+            }
+
+    _install_provider_application_service(monkeypatch, FakeProviderApplicationService())
+
+    status_code, payload = _request_json(
+        "GET",
+        "/api/v1/chat/sessions?data_source=openclaw"
+        "&agentId=main&includeDerivedTitles=false&includeLastMessage=false",
+    )
+
+    assert status_code == 200
+    assert payload == {
+        "ts": 1234567890001,
+        "count": 0,
+        "sessions": [],
+        "defaults": {"model": "claude-sonnet-4"},
+    }
+
+
 def test_preview_sessions_requires_openclaw_data_source() -> None:
     status_code, _, body = request("GET", "/api/v1/chat/sessions/preview?keys=agent:main:main")
     assert status_code == 503
@@ -691,6 +887,49 @@ def test_preview_sessions_returns_message_previews(monkeypatch: Any) -> None:
     assert payload["previews"][0]["items"][0]["role"] == "user"
 
 
+def test_preview_sessions_requires_keys_query_parameter() -> None:
+    status_code, payload = _request_json(
+        "GET",
+        "/api/v1/chat/sessions/preview?data_source=openclaw",
+    )
+
+    assert status_code == 422
+    detail = cast(list[dict[str, Any]], cast(dict[str, Any], payload)["detail"])
+    assert detail[0]["loc"] == ["query", "keys"]
+
+
+def test_preview_sessions_forwards_split_keys_and_limits(monkeypatch: Any) -> None:
+    class FakeProviderApplicationService:
+        def preview_sessions(self, **kwargs: Any) -> dict[str, Any]:
+            assert kwargs["keys"] == ["agent:main:main", "agent:main:secondary"]
+            assert kwargs["limit"] == 3
+            assert kwargs["max_chars"] == 120
+            return {
+                "ts": 1234567890002,
+                "previews": [
+                    {"key": "agent:main:main", "status": "ok", "items": []},
+                    {"key": "agent:main:secondary", "status": "missing", "items": []},
+                ],
+            }
+
+    _install_provider_application_service(monkeypatch, FakeProviderApplicationService())
+
+    status_code, payload = _request_json(
+        "GET",
+        "/api/v1/chat/sessions/preview"
+        "?data_source=openclaw&keys=agent:main:main,agent:main:secondary&limit=3&maxChars=120",
+    )
+
+    assert status_code == 200
+    assert payload == {
+        "ts": 1234567890002,
+        "previews": [
+            {"key": "agent:main:main", "status": "ok", "items": []},
+            {"key": "agent:main:secondary", "status": "missing", "items": []},
+        ],
+    }
+
+
 def test_chat_history_requires_openclaw_data_source() -> None:
     status_code, _, body = request("GET", "/api/v1/chat/sessions/agent:main:main/history")
     assert status_code == 503
@@ -734,6 +973,47 @@ def test_chat_history_returns_message_items(monkeypatch: Any) -> None:
         {"role": "user", "text": "Write a Python script"},
         {"role": "assistant", "text": "Here's a script"},
     ]
+
+
+@pytest.mark.parametrize("limit", [0, 1001])
+def test_chat_history_validates_limit_range(limit: int) -> None:
+    status_code, payload = _request_json(
+        "GET",
+        f"/api/v1/chat/sessions/agent:main:main/history?data_source=openclaw&limit={limit}",
+    )
+
+    assert status_code == 422
+    detail = cast(list[dict[str, Any]], cast(dict[str, Any], payload)["detail"])
+    assert detail[0]["loc"] == ["query", "limit"]
+
+
+def test_chat_history_preserves_upstream_timestamp_and_normalizes_roles(monkeypatch: Any) -> None:
+    class FakeProviderApplicationService:
+        def chat_history(self, **kwargs: Any) -> dict[str, Any]:
+            assert kwargs["limit"] == 2
+            return {
+                "ts": 1234567890321,
+                "messages": [
+                    {"role": 123, "content": "tool output"},
+                    {"role": "assistant", "content": [{"type": "text", "text": "reply"}]},
+                ],
+            }
+
+    _install_provider_application_service(monkeypatch, FakeProviderApplicationService())
+
+    status_code, payload = _request_json(
+        "GET",
+        "/api/v1/chat/sessions/agent:main:main/history?data_source=openclaw&limit=2",
+    )
+
+    assert status_code == 200
+    assert payload == {
+        "ts": 1234567890321,
+        "items": [
+            {"role": "other", "text": "tool output"},
+            {"role": "assistant", "text": "reply"},
+        ],
+    }
 
 
 def test_openclaw_client_sessions_preview_uses_default_max_chars_2000(monkeypatch: Any) -> None:
@@ -884,6 +1164,40 @@ def test_list_models_returns_available_models(monkeypatch: Any) -> None:
     assert payload["models"][0]["provider"] == "anthropic"
 
 
+def test_list_models_ignores_non_object_entries(monkeypatch: Any) -> None:
+    class FakeProviderApplicationService:
+        def list_models(self, **kwargs: Any) -> list[object]:
+            assert kwargs["data_source"] == "openclaw"
+            return [
+                {
+                    "id": "claude-sonnet-4",
+                    "name": "Claude Sonnet 4",
+                    "provider": "anthropic",
+                    "contextWindow": 200000,
+                    "reasoning": True,
+                },
+                "not-a-model",
+                123,
+            ]
+
+    _install_provider_application_service(monkeypatch, FakeProviderApplicationService())
+
+    status_code, payload = _request_json("GET", "/api/v1/chat/models?data_source=openclaw")
+
+    assert status_code == 200
+    assert payload == {
+        "models": [
+            {
+                "id": "claude-sonnet-4",
+                "name": "Claude Sonnet 4",
+                "provider": "anthropic",
+                "context_window": 200000,
+                "reasoning": True,
+            }
+        ]
+    }
+
+
 def test_patch_session_requires_openclaw_data_source() -> None:
     status_code, _, body = request(
         "PATCH",
@@ -926,4 +1240,25 @@ def test_patch_session_updates_session_model(monkeypatch: Any) -> None:
     )
     assert status_code == 200
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload == {"updated": True}
+
+
+def test_patch_session_supports_agent_id_alias(monkeypatch: Any) -> None:
+    class FakeProviderApplicationService:
+        def patch_session(self, **kwargs: Any) -> bool:
+            assert kwargs["key"] == "agent:main:main"
+            assert kwargs["agent_id"] == "main"
+            assert kwargs["model"] is None
+            assert kwargs["thinking_level"] == "medium"
+            return True
+
+    _install_provider_application_service(monkeypatch, FakeProviderApplicationService())
+
+    status_code, payload = _request_json(
+        "PATCH",
+        "/api/v1/chat/sessions/agent:main:main?data_source=openclaw",
+        payload={"agentId": "main", "thinkingLevel": "medium"},
+    )
+
+    assert status_code == 200
     assert payload == {"updated": True}

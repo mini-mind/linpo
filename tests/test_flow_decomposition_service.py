@@ -9,6 +9,26 @@ import app.services.flow_decomposition_service as flow_decomposition_service
 from app.services.flow_decomposition_service import FlowDecompositionService
 
 
+def _assert_contains_keywords(text: str, keywords: tuple[str, ...]) -> None:
+    for keyword in keywords:
+        assert keyword in text
+
+
+def _install_fast_clock(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    monotonic_step: float,
+) -> None:
+    tick = {"value": -monotonic_step}
+
+    def _fake_monotonic() -> float:
+        tick["value"] += monotonic_step
+        return tick["value"]
+
+    monkeypatch.setattr(flow_decomposition_service.time, "monotonic", _fake_monotonic)
+    monkeypatch.setattr(flow_decomposition_service.time, "sleep", lambda _: None)
+
+
 @pytest.fixture(autouse=True)
 def _set_required_flow_decomposition_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FLOW_DECOMPOSITION_OPENCLAW_BASE_URL", "ws://test-openclaw:38789")
@@ -53,8 +73,10 @@ def test_decompose_returns_nodes_from_claw3_history_payload() -> None:
     assert result.nodes[1].sensitive is True
     assert len(fake.send_calls) == 1
     assert fake.send_calls[0]["agent_id"] == "claw3"
-    assert "可委派 subagent 并行执行" in cast(str, fake.send_calls[0]["message"])
-    assert "必须回写到指定输出路径" in cast(str, fake.send_calls[0]["message"])
+    _assert_contains_keywords(
+        cast(str, fake.send_calls[0]["message"]),
+        ("subagent", "depends_on", "输出路径"),
+    )
 
 
 def test_decompose_marks_last_node_sensitive_when_missing_flag() -> None:
@@ -87,8 +109,7 @@ def test_decompose_marks_last_node_sensitive_when_missing_flag() -> None:
 def test_decompose_raises_when_claw3_never_returns_json(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(flow_decomposition_service, "_DEFAULT_POLL_TIMEOUT_SECONDS", 0.0)
-    monkeypatch.setattr(flow_decomposition_service, "_DEFAULT_POLL_INTERVAL_SECONDS", 0.0)
+    _install_fast_clock(monkeypatch, monotonic_step=61.0)
 
     class FakeProviderApplicationService:
         def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
@@ -110,8 +131,7 @@ def test_decompose_raises_when_claw3_never_returns_json(
 def test_decompose_repairs_non_json_reply_in_same_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(flow_decomposition_service, "_DEFAULT_POLL_TIMEOUT_SECONDS", 1.0)
-    monkeypatch.setattr(flow_decomposition_service, "_DEFAULT_POLL_INTERVAL_SECONDS", 0.0)
+    _install_fast_clock(monkeypatch, monotonic_step=1.0)
 
     class FakeProviderApplicationService:
         def __init__(self) -> None:
@@ -159,14 +179,16 @@ def test_decompose_repairs_non_json_reply_in_same_session(
     assert result.nodes[1].depends_on == ["a"]
     assert len(fake.send_calls) == 2
     assert fake.send_calls[0]["session_key"] == fake.send_calls[1]["session_key"]
-    assert "仅输出一个合法 JSON 对象" in cast(str, fake.send_calls[1]["message"])
+    _assert_contains_keywords(
+        cast(str, fake.send_calls[1]["message"]),
+        ("合法 JSON", '"nodes"', "id/title/description/depends_on/sensitive"),
+    )
 
 
 def test_decompose_retries_retryable_history_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(flow_decomposition_service, "_DEFAULT_POLL_TIMEOUT_SECONDS", 1.0)
-    monkeypatch.setattr(flow_decomposition_service, "_DEFAULT_POLL_INTERVAL_SECONDS", 0.0)
+    _install_fast_clock(monkeypatch, monotonic_step=1.0)
 
     class FakeProviderApplicationService:
         def __init__(self) -> None:
@@ -203,8 +225,7 @@ def test_decompose_retries_retryable_history_error(
 def test_decompose_waits_for_delayed_but_valid_json_reply(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(flow_decomposition_service, "_DEFAULT_POLL_TIMEOUT_SECONDS", 0.2)
-    monkeypatch.setattr(flow_decomposition_service, "_DEFAULT_POLL_INTERVAL_SECONDS", 0.0)
+    _install_fast_clock(monkeypatch, monotonic_step=1.0)
 
     class FakeProviderApplicationService:
         def __init__(self) -> None:
@@ -288,7 +309,10 @@ def test_decompose_supports_incremental_prompt_context_and_reuses_planner_sessio
     assert result.planner_session_key == session_key
     assert len(fake.send_calls) == 1
     assert fake.send_calls[0]["session_key"] == session_key
-    assert "当前流程上下文" in cast(str, fake.send_calls[0]["message"])
+    _assert_contains_keywords(
+        cast(str, fake.send_calls[0]["message"]),
+        ("flow_name", "测试流程", '"id": "n1"', "新增指令"),
+    )
     assert result.nodes[0].description == "旧描述应保留"
 
 

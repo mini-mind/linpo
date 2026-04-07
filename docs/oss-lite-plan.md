@@ -433,6 +433,30 @@
    - 回调候选地址规则单点维护；
    - dispatch 与 callback 安全链路回归全绿。
 
+#### 阶段 18（兼容分支与测试脆弱点清理）
+
+目标：清理剩余旧兼容分支与高重复/高脆弱测试样板，收敛为 breakly 契约。
+
+1. 调查：
+   - 盘点 `requirement` 双键、`username` 登录别名、`depends_on/dependencies` 双键等兼容路径；
+   - 盘点 flow/tasks 相关测试中的重复 fixture、私有符号 patch、硬编码文案断言。
+2. 设计：
+   - 删除明确标记为旧兼容的 API 输入分支，不保留别名；
+   - 测试改为结构断言与共享 fixture，减少对文案与私有实现细节耦合。
+3. 实现：
+   - 清理兼容分支并同步更新文档与测试；
+   - 明确移除并冻结以下输入兼容分支：`identifier-only`、`requirement_title-only`、`depends_on-only`（不再接受别名/单键兜底）。
+   - 清理重复测试样板与脆弱断言。
+4. 测试：
+   - `tests/integration/test_tasks_api.py`
+   - `tests/integration/test_task_callback_security.py`
+   - `tests/integration/test_auth_api.py`
+   - `tests/test_flow_decomposition_service.py`
+   - 全量 `pytest`
+5. 验收：
+   - 旧兼容分支已移除（至少包含 `identifier-only`、`requirement_title-only`、`depends_on-only`）；
+   - 测试重复与脆弱点显著下降，且全量回归通过。
+
 ## 6. 验收标准
 
 1. 新用户按文档可在 30 分钟内完成部署与首个实例接入。

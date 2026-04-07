@@ -72,9 +72,6 @@ def _task_requirement_title(task: Task) -> str:
     requirement_title = str(extras.get("requirement_title", "")).strip()
     if requirement_title:
         return requirement_title
-    requirement = str(extras.get("requirement", "")).strip()
-    if requirement:
-        return requirement
     return task.title
 
 
@@ -414,7 +411,6 @@ def confirm_flow(
                     extras={
                         "requirement_id": flow_id,
                         "requirement_title": requirement_title,
-                        "requirement": requirement_title,
                         "flow_id": flow_id,
                         "board_id": normalized_board_id,
                         "instance_id": assigned_instance_id,
@@ -546,7 +542,7 @@ def rename_requirement(
     for task in matched:
         extras = dict(task.extras if isinstance(task.extras, dict) else {})
         extras["requirement_title"] = next_name
-        extras["requirement"] = next_name
+        extras.pop("requirement", None)
         task_service.update_task_extras(
             db_session,
             task=task,
@@ -833,7 +829,7 @@ def sync_requirement(
             extras = dict(existing_task.extras if isinstance(existing_task.extras, dict) else {})
             extras["requirement_id"] = normalized_requirement_id
             extras["requirement_title"] = requirement_title
-            extras["requirement"] = requirement_title
+            extras.pop("requirement", None)
             extras["flow_id"] = normalized_requirement_id
             extras["board_id"] = normalized_board_id
             extras["instance_id"] = resolved_instance_id
@@ -889,7 +885,6 @@ def sync_requirement(
                 extras={
                     "requirement_id": normalized_requirement_id,
                     "requirement_title": requirement_title,
-                    "requirement": requirement_title,
                     "flow_id": normalized_requirement_id,
                     "board_id": normalized_board_id,
                     "instance_id": resolved_instance_id,

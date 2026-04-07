@@ -413,6 +413,143 @@ def test_instance_files_list_normalizes_dirty_task_fields(
     assert matched.get("agent_id", matched.get("agentId")) == ""
 
 
+def test_instance_files_list_supports_keyword_and_only_existing_filters(
+    isolated_database_url: str,
+    auth_cookie: str,
+    db_handle: Session,
+) -> None:
+    del isolated_database_url
+    user = db_handle.execute(select(User).where(User.username == "alice")).scalar_one()
+    instance = Instance(
+        user_id=user.id,
+        name="claw1-files-filter",
+        type="openclaw",
+        endpoint="http://127.0.0.1:28789",
+        gateway_token_enc="enc",
+        status="ok",
+    )
+    db_handle.add(instance)
+    db_handle.commit()
+    db_handle.refresh(instance)
+
+    existing_path = Path("/tmp/linpo/test-instance-files/filter-existing.json")
+    existing_path.parent.mkdir(parents=True, exist_ok=True)
+    existing_path.write_text('{"result":"keep"}', encoding="utf-8")
+    missing_path = "/tmp/linpo/test-instance-files/filter-missing.json"
+    db_handle.add_all(
+        [
+            Task(
+                user_id=user.id,
+                instance_id=instance.id,
+                title="过滤-已有文件",
+                summary="keyword filter fixture",
+                status="completed",
+                source="flow",
+                agent_id="agent-a",
+                agent_name="Agent A",
+                artifacts=[f"artifact: {existing_path}"],
+                extras={
+                    "board_id": "default",
+                    "requirement_id": "target-req",
+                    "temp_output_path": str(existing_path),
+                },
+            ),
+            Task(
+                user_id=user.id,
+                instance_id=instance.id,
+                title="过滤-缺失文件",
+                summary="only existing filter fixture",
+                status="completed",
+                source="flow",
+                agent_id="agent-b",
+                agent_name="Agent B",
+                artifacts=[f"artifact: {missing_path}"],
+                extras={
+                    "board_id": "default",
+                    "requirement_id": "target-req",
+                    "temp_output_path": missing_path,
+                },
+            ),
+        ]
+    )
+    db_handle.commit()
+
+    keyword_status, _, keyword_body = request(
+        "GET",
+        f"/api/v1/instances/{instance.id}/files?boardId=default&q=target-req",
+        headers={"cookie": auth_cookie},
+    )
+    assert keyword_status == 200
+    keyword_payload = cast(dict[str, Any], json.loads(keyword_body.decode("utf-8")))
+    assert keyword_payload["total"] == 2
+    assert cast(int, keyword_payload.get("existing_count", keyword_payload.get("existingCount"))) == 1
+
+    filtered_status, _, filtered_body = request(
+        "GET",
+        f"/api/v1/instances/{instance.id}/files?boardId=default&q=target-req&onlyExisting=true",
+        headers={"cookie": auth_cookie},
+    )
+    assert filtered_status == 200
+    filtered_payload = cast(dict[str, Any], json.loads(filtered_body.decode("utf-8")))
+    assert filtered_payload["total"] == 1
+    assert cast(int, filtered_payload.get("existing_count", filtered_payload.get("existingCount"))) == 1
+    items = cast(list[dict[str, Any]], filtered_payload["items"])
+    assert items[0]["exists"] is True
+    assert items[0]["path"] == str(existing_path)
+
+
+def test_instance_files_download_without_attachment_when_download_false(
+    isolated_database_url: str,
+    auth_cookie: str,
+    db_handle: Session,
+) -> None:
+    del isolated_database_url
+    user = db_handle.execute(select(User).where(User.username == "alice")).scalar_one()
+    instance = Instance(
+        user_id=user.id,
+        name="claw1-files-inline-download",
+        type="openclaw",
+        endpoint="http://127.0.0.1:28789",
+        gateway_token_enc="enc",
+        status="ok",
+    )
+    db_handle.add(instance)
+    db_handle.commit()
+    db_handle.refresh(instance)
+
+    output_path = Path("/tmp/linpo/test-instance-files/inline-download.json")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text('{"mode":"inline"}', encoding="utf-8")
+    task = Task(
+        user_id=user.id,
+        instance_id=instance.id,
+        title="文件内联下载",
+        summary="download=false branch",
+        status="completed",
+        source="flow",
+        agent_id="agent-inline",
+        agent_name="Agent Inline",
+        artifacts=[f"artifact: {output_path}"],
+        extras={
+            "board_id": "default",
+            "temp_output_path": str(output_path),
+        },
+    )
+    db_handle.add(task)
+    db_handle.commit()
+    db_handle.refresh(task)
+
+    download_status, download_headers, download_body = request(
+        "GET",
+        f"/api/v1/instances/{instance.id}/files/download?taskId={task.id}&boardId=default&path={quote(str(output_path), safe='')}&download=false",
+        headers={"cookie": auth_cookie},
+    )
+    assert download_status == 200
+    assert "application/json" in download_headers.get("content-type", "")
+    assert "content-disposition" not in download_headers
+    assert b'"mode":"inline"' in download_body
+
+
 def test_instance_agent_docs_list_preview_and_download(
     isolated_database_url: str,
     auth_cookie: str,

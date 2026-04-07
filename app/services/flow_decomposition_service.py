@@ -320,7 +320,7 @@ class FlowDecompositionService:
             node_id_raw = item.get("id")
             title_raw = item.get("title")
             description_raw = item.get("description")
-            depends_raw = item.get("depends_on", item.get("dependencies", []))
+            depends_raw = item.get("depends_on", [])
             sensitive_raw = item.get("sensitive")
 
             title = str(title_raw).strip() if isinstance(title_raw, str) else ""

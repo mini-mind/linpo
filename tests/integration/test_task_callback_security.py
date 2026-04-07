@@ -7,22 +7,23 @@ from typing import Any, cast
 
 import pytest
 from cryptography.fernet import Fernet
-from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from app.services.task_callback_security import sign_task_callback_event
 from app.db import session as db_session
-from app.db.models import Task
 from app.main import app
 from tests.integration._asgi import request
-from tests.integration.test_tasks_api import (
-    DEFAULT_TASKS_PATH,
-    _allow_instance_validation,
-    _create_instance,
-    _register_and_login,
-    _request_json,
-    _iso_now,
+from tests.integration._task_test_helpers import (
+    allow_instance_validation as _allow_instance_validation,
+    assert_dispatch_signature_prompt_contract,
+    create_instance as _create_instance,
+    dispatch_callback_token_for_task_id as _dispatch_callback_token_for_task_id,
+    install_send_chat_message_fake,
+    iso_now as _iso_now,
+    register_and_login as _register_and_login,
+    request_json as _request_json,
 )
+
+DEFAULT_TASKS_PATH = "/api/v1/boards/default/tasks"
 
 
 @pytest.fixture(autouse=True)
@@ -45,19 +46,6 @@ def isolated_database_url(
     return database_url
 
 
-def _task_for_id(database_url: str, task_id: str) -> Task:
-    with Session(db_session.get_engine(database_url)) as session:
-        task = next((item for item in session.execute(select(Task)).scalars().all() if str(item.id) == task_id), None)
-        assert task is not None
-        return task
-
-
-def _dispatch_callback_token_for_task_id(database_url: str, task_id: str) -> str:
-    task = _task_for_id(database_url, task_id)
-    extras = task.extras if isinstance(task.extras, dict) else {}
-    return str(extras.get("dispatch_callback_token", ""))
-
-
 def test_task_dispatch_prompt_includes_signature_instructions_and_hides_secret(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -74,20 +62,10 @@ def test_task_dispatch_prompt_includes_signature_instructions_and_hides_secret(
     )
 
     captured_messages: list[str] = []
-
-    def _fake_send(self: Any, **kwargs: Any) -> dict[str, str]:
-        message = kwargs.get("message")
-        if isinstance(message, str):
-            captured_messages.append(message)
-        return {
-            "request_id": "req-dispatch-signature",
-            "agent_id": str(kwargs["agent_id"]),
-            "status": "accepted",
-        }
-
-    monkeypatch.setattr(
-        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
-        _fake_send,
+    install_send_chat_message_fake(
+        monkeypatch,
+        request_id="req-dispatch-signature",
+        capture_messages=captured_messages,
     )
 
     create_status, _, create_payload = _request_json(
@@ -105,9 +83,9 @@ def test_task_dispatch_prompt_includes_signature_instructions_and_hides_secret(
     assert captured_messages
     assert "dispatch_callback_secret" not in create_payload["extras"]
 
-    assert "callbackSignature = HMAC-SHA256(key=callbackToken, message=canonical_json)" in captured_messages[0]
-    assert '"callbackSignature":"<hex_hmac_sha256>"' in captured_messages[0]
-    assert "callbackSignature = hex(HMAC-SHA256" in captured_messages[0]
+    prompt = captured_messages[0]
+    assert_dispatch_signature_prompt_contract(prompt)
+    assert "回调令牌" in prompt
 
     list_status, _, list_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
     assert list_status == 200
@@ -128,13 +106,9 @@ def test_task_run_event_callback_requires_valid_hmac_signature(
         gateway_token="token-event-signature",
     )
 
-    monkeypatch.setattr(
-        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
-        lambda self, **kwargs: {
-            "request_id": "req-event-signature",
-            "agent_id": kwargs["agent_id"],
-            "status": "accepted",
-        },
+    install_send_chat_message_fake(
+        monkeypatch,
+        request_id="req-event-signature",
     )
 
     create_status, _, create_payload = _request_json(
@@ -223,13 +197,9 @@ def test_task_run_event_callback_rejects_tampered_payload_after_signature_genera
         gateway_token="token-event-signature-tamper",
     )
 
-    monkeypatch.setattr(
-        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
-        lambda self, **kwargs: {
-            "request_id": "req-event-signature-tamper",
-            "agent_id": kwargs["agent_id"],
-            "status": "accepted",
-        },
+    install_send_chat_message_fake(
+        monkeypatch,
+        request_id="req-event-signature-tamper",
     )
 
     create_status, _, create_payload = _request_json(

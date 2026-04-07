@@ -219,6 +219,7 @@
 - `POST /api/v1/instances/pairing-sessions/attach-by-code`：免登录短码 attach 入口，OpenClaw 侧仅持有 `short_code` 时也可提交 `endpoint + gatewayToken (+instanceName)` 完成绑定，避免用户暴露 `session_id`。
 - `POST /api/v1/auth/register`：注册请求需包含 `username + email + password`，邮箱全局唯一。
 - `POST /api/v1/auth/login`：登录请求支持 `identifier(用户名或邮箱) + password`。
+- 兼容输入分支已清理：`identifier-only`、`requirement_title-only`、`depends_on-only` 均不再作为可接受输入；请求必须满足当前主契约字段要求，缺失或别名输入按校验失败处理（4xx）。
 - `PATCH /api/v1/auth/profile`：登录态下更新用户头像（`avatar_url`，`data:image/*;base64`）。
 - `POST /api/v1/auth/password`：登录态下修改密码（校验 `current_password`，更新 `new_password`）。
 - `GET /api/v1/instances/messages`：读取当前登录用户的消息中心列表（包含回执链接与确认状态）。
