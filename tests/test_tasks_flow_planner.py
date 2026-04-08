@@ -30,7 +30,7 @@ def test_planner_snapshot_to_canvas_nodes_accepts_nodes_and_depends_on_contract(
                 "sensitive": True,
             },
         ],
-        planner_agent_id="claw3",
+        planner_agent_id="planner-default",
     )
 
     nodes = _planner_snapshot_to_canvas_nodes(snapshot)

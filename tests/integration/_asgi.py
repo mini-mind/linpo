@@ -8,12 +8,19 @@ from starlette.types import Message, Scope
 from typing import cast
 
 
+def _ensure_database_bootstrapped() -> None:
+    bootstrap = getattr(app.state, "bootstrap_database", None)
+    if callable(bootstrap):
+        bootstrap()
+
+
 def request(
     method: str,
     path: str,
     headers: dict[str, str] | None = None,
     body: bytes | None = None,
 ) -> tuple[int, dict[str, str], bytes]:
+    _ensure_database_bootstrapped()
     return asyncio.run(_request(method, path, headers=headers, body=body))
 
 
@@ -76,6 +83,7 @@ def websocket(
     headers: dict[str, str] | None = None,
     idle_hooks: list[Callable[[], None]] | None = None,
 ) -> list[Message]:
+    _ensure_database_bootstrapped()
     return asyncio.run(
         _websocket(path, messages=messages, headers=headers, idle_hooks=idle_hooks)
     )

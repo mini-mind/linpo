@@ -21,7 +21,7 @@ from app.services.provider_application_service import (
 
 
 _DEFAULT_DECOMPOSITION_PROVIDER = "openclaw"
-_DEFAULT_DECOMPOSITION_AGENT_ID = "claw3"
+_DEFAULT_DECOMPOSITION_AGENT_ID = "planner-default"
 _DEFAULT_HISTORY_LIMIT = 60
 _DEFAULT_MAX_NODES = 12
 _DEFAULT_POLL_INTERVAL_SECONDS = 0.6
@@ -110,7 +110,7 @@ class FlowDecompositionService:
         )
 
     def build_realtime_execution_context(self) -> ProviderExecutionContext:
-        return self._build_claw3_execution_context()
+        return self._build_flow_decomposition_execution_context()
 
     def decomposition_provider_name(self) -> str:
         return self._decomposition_provider_name()
@@ -266,10 +266,6 @@ class FlowDecompositionService:
             adapter=adapter,
             cache_key=(f"flow-decomposer-{provider_name}", *adapter.config_key()),
         )
-
-    # keep stable test seam name
-    def _build_claw3_execution_context(self) -> ProviderExecutionContext:
-        return self._build_flow_decomposition_execution_context()
 
     def _wait_for_assistant_json(
         self,

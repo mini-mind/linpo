@@ -19,9 +19,11 @@ Linpo 是位于 OpenClaw 与用户之间的人机协作编排交互层。
 后端：
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate
 cp .env.example .env
-/data/projects/linpo/.venv/bin/pip install -e .
-/data/projects/linpo/.venv/bin/fastapi dev app/main.py
+pip install -e .
+fastapi dev app/main.py
 ```
 
 前端：
@@ -50,7 +52,7 @@ npm run dev
 ## 质量命令
 
 ```bash
-/data/projects/linpo/.venv/bin/pytest
+pytest
 npm --prefix frontend run test
 npm --prefix frontend run build
 ```

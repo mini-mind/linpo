@@ -358,7 +358,7 @@ describe('business API client instance context', () => {
       status: 200,
       statusText: 'OK',
       json: async () => ({
-        sessionKey: 'linpo:flow:default:planner:claw3:test',
+        sessionKey: 'linpo:flow:default:planner:planner-default:test',
         status: 'stopped',
         revision: 3,
         updatedAt: '2026-04-03T10:00:00Z',
@@ -367,14 +367,14 @@ describe('business API client instance context', () => {
 
     const result = await stopFlowPlannerSession(
       {
-        planner_session_key: 'linpo:flow:default:planner:claw3:test',
+        planner_session_key: 'linpo:flow:default:planner:planner-default:test',
       },
       undefined,
       BOARD_ID
     );
 
     expect(result).toEqual({
-      session_key: 'linpo:flow:default:planner:claw3:test',
+      session_key: 'linpo:flow:default:planner:planner-default:test',
       status: 'stopped',
       revision: 3,
       updated_at: '2026-04-03T10:00:00Z',
@@ -387,7 +387,7 @@ describe('business API client instance context', () => {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          plannerSessionKey: 'linpo:flow:default:planner:claw3:test',
+          plannerSessionKey: 'linpo:flow:default:planner:planner-default:test',
         }),
       }),
     );
@@ -404,10 +404,10 @@ describe('business API client instance context', () => {
       json: async () => ({ exists: true }),
     });
 
-    await probeFlowPlannerSession('linpo:flow:default:planner:claw3:test', undefined, BOARD_ID);
+    await probeFlowPlannerSession('linpo:flow:default:planner:planner-default:test', undefined, BOARD_ID);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8000/api/v1/boards/default/tasks/flow/planner-sessions/linpo%3Aflow%3Adefault%3Aplanner%3Aclaw3%3Atest/exists?data_source=openclaw',
+      'http://localhost:8000/api/v1/boards/default/tasks/flow/planner-sessions/linpo%3Aflow%3Adefault%3Aplanner%3Aplanner-default%3Atest/exists?data_source=openclaw',
       expect.objectContaining({
         credentials: 'include',
       }),

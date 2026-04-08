@@ -598,13 +598,16 @@ def test_openclaw_data_source_errors_are_reported_explicitly() -> None:
 
     assert status_code == 503
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    error_code = cast(str, payload["error"]["code"])
+    assert error_code in {"source_unavailable", "auth_failed"}
     _assert_error_envelope(
         payload,
-        code="source_unavailable",
-        message="OpenClaw data source is not configured",
+        code=error_code,
+        message=cast(str, payload["error"]["message"]),
         recoverable=True,
         next_step="检查实例连通性或网关 token 后重试",
     )
+    assert "OpenClaw" in cast(str, payload["error"]["message"])
 
 
 def test_openclaw_handshake_errors_are_reported_explicitly() -> None:

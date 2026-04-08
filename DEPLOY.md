@@ -48,8 +48,13 @@ docker compose up -d --build
 
 ```bash
 curl -fsS http://localhost:8000/api/v1/health
-curl -fsS http://localhost:8000/api/v1/ops/setup
+curl -i http://localhost:8000/api/v1/ops/setup
 ```
+
+说明：
+
+- `GET /api/v1/ops/setup` 需要登录态；未登录时返回 `401 Unauthorized` 属于预期。
+- 完整部署验收建议在浏览器登录后，再调用该接口检查配置项状态。
 
 ## 5. 停止与清理
 

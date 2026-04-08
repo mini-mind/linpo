@@ -142,7 +142,7 @@ def test_decompose_repairs_non_json_reply_in_same_session(
 
         def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
             self.send_calls.append(kwargs)
-            return {"request_id": f"req-{len(self.send_calls)}", "status": "accepted", "agent_id": "claw3"}
+            return {"request_id": f"req-{len(self.send_calls)}", "status": "accepted", "agent_id": "planner-default"}
 
         def chat_history(self, **kwargs: Any) -> dict[str, Any]:
             del kwargs
@@ -235,7 +235,7 @@ def test_decompose_waits_for_delayed_but_valid_json_reply(
 
         def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
             del kwargs
-            return {"request_id": "req-1", "status": "accepted", "agent_id": "claw3"}
+            return {"request_id": "req-1", "status": "accepted", "agent_id": "planner-default"}
 
         def chat_history(self, **kwargs: Any) -> dict[str, Any]:
             del kwargs

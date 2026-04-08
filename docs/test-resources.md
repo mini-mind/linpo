@@ -16,7 +16,7 @@
 ## 部署形态
 
 - 本地开发为前端 + 后端进程本机运行，分别监听 5173 / 8000；数据库默认使用本地 SQLite（`./linpo.db`），如需外部数据库可显式配置 `LINPO_DATABASE_URL`。
-- OpenClaw 联调实例通常运行于 Docker 容器（如 `claw1` / `claw2` / `claw3`）。
+- OpenClaw 联调实例通常运行于 Docker 容器（如 `openclaw-a` / `openclaw-b` / `openclaw-planner`）。
 - v0.7 联调实例按当前配对与环境配置选择，不在文档约定默认实例。
 - v0.7 流程拆解服务由 `FLOW_DECOMPOSITION_PROVIDER + FLOW_DECOMPOSITION_*` 显式配置决定（后端服务化拆解）。
 
@@ -28,7 +28,7 @@
 ## 标准命令
 
 - `nvm use`：切换到仓库约定 Node 版本（`20.19.0`）。
-- `/data/projects/linpo/.venv/bin/pytest`：后端核心逻辑测试。
+- `pytest`：后端核心逻辑测试。
 - `npm --prefix frontend run test`：前端单元/集成测试。
 - `npm --prefix frontend run build`：前端构建产物。
 - `make quality`：统一质量门（聚合后端测试、类型检查与前端构建）。
@@ -63,9 +63,9 @@
 
 | 名称 | 端口 | 令牌 |
 |---|---|---|
-| claw1 | `18789` | 通过本地安全配置注入，不在仓库明文记录 |
-| claw2 | `28789` | 通过本地安全配置注入，不在仓库明文记录 |
-| claw3 | `38789` | 通过本地安全配置注入，不在仓库明文记录 |
+| openclaw-a | `18789` | 通过本地安全配置注入，不在仓库明文记录 |
+| openclaw-b | `28789` | 通过本地安全配置注入，不在仓库明文记录 |
+| openclaw-planner | `38789` | 通过本地安全配置注入，不在仓库明文记录 |
 
 ## 运行时前置条件（环境变量）
 

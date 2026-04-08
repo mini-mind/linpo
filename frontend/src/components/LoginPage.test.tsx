@@ -10,7 +10,7 @@ import { ProtectedRoute, PublicRoute } from '../routes';
 import { LoginPage } from './LoginPage';
 
 const mockFetch = vi.fn();
-global.fetch = mockFetch;
+globalThis.fetch = mockFetch as typeof fetch;
 
 function LocationDisplay() {
   const location = useLocation();

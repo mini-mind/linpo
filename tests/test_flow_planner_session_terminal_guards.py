@@ -73,7 +73,7 @@ def _create_planning_session(
         user_id=uuid4(),
         board_id="default",
         planner_session_key=session_key,
-        planner_agent_id="claw3",
+        planner_agent_id="planner-default",
         flow_name="终态门禁测试",
         current_nodes=_VALID_NODES,
         db_session=db_handle,
@@ -105,7 +105,7 @@ def test_terminal_sessions_reject_complete_fail_and_stop(
     session_key, planner_token = _create_planning_session(
         service,
         db_handle,
-        session_key=f"linpo:flow:default:planner:claw3:{terminal_status}-{transition}",
+        session_key=f"linpo:flow:default:planner:planner-default:{terminal_status}-{transition}",
     )
     user_id = service.restore_session(
         session_key=session_key,

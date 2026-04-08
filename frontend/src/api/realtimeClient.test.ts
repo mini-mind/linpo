@@ -427,14 +427,14 @@ describe('flow planner sse client', () => {
     const client = createFlowPlannerSseClient({
       baseUrl: 'http://linpo.test:8000',
       boardId: 'default',
-      sessionKey: 'linpo:flow:default:planner:claw3:test',
+      sessionKey: 'linpo:flow:default:planner:planner-default:test',
       onMessage: vi.fn(),
       createEventSource: sourceFactory,
     });
 
     client.connect();
     expect(sourceFactory).toHaveBeenCalledWith(
-      'http://linpo.test:8000/api/v1/boards/default/tasks/flow/planner-sse?sessionKey=linpo%3Aflow%3Adefault%3Aplanner%3Aclaw3%3Atest'
+      'http://linpo.test:8000/api/v1/boards/default/tasks/flow/planner-sse?sessionKey=linpo%3Aflow%3Adefault%3Aplanner%3Aplanner-default%3Atest'
     );
   });
 
@@ -444,7 +444,7 @@ describe('flow planner sse client', () => {
     const client = createFlowPlannerSseClient({
       baseUrl: 'http://linpo.test:8000',
       boardId: 'default',
-      sessionKey: 'linpo:flow:default:planner:claw3:test',
+      sessionKey: 'linpo:flow:default:planner:planner-default:test',
       onMessage,
       createEventSource: () => fakeSource,
     });
@@ -453,11 +453,11 @@ describe('flow planner sse client', () => {
     fakeSource.emitMessage(
       JSON.stringify({
         type: 'planner_messages_updated',
-        channel: 'session:linpo:flow:default:planner:claw3:test:messages',
+        channel: 'session:linpo:flow:default:planner:planner-default:test:messages',
         seq: 3,
         timestamp: '2026-04-01T00:00:00Z',
         payload: {
-          sessionKey: 'linpo:flow:default:planner:claw3:test',
+          sessionKey: 'linpo:flow:default:planner:planner-default:test',
           messages: [
             {
               role: 'assistant',
@@ -473,7 +473,7 @@ describe('flow planner sse client', () => {
       expect.objectContaining({
         type: 'planner_messages_updated',
         payload: {
-          session_key: 'linpo:flow:default:planner:claw3:test',
+          session_key: 'linpo:flow:default:planner:planner-default:test',
           messages: [
             {
               role: 'assistant',
@@ -492,7 +492,7 @@ describe('flow planner sse client', () => {
     const client = createFlowPlannerSseClient({
       baseUrl: 'http://linpo.test:8000',
       boardId: 'default',
-      sessionKey: 'linpo:flow:default:planner:claw3:test',
+      sessionKey: 'linpo:flow:default:planner:planner-default:test',
       onMessage,
       createEventSource: () => fakeSource,
     });
@@ -501,11 +501,11 @@ describe('flow planner sse client', () => {
     fakeSource.emitMessage(
       JSON.stringify({
         type: 'planner_nodes_patched',
-        channel: 'session:linpo:flow:default:planner:claw3:test:messages',
+        channel: 'session:linpo:flow:default:planner:planner-default:test:messages',
         seq: 4,
         timestamp: '2026-04-02T00:00:00Z',
         payload: {
-          sessionKey: 'linpo:flow:default:planner:claw3:test',
+          sessionKey: 'linpo:flow:default:planner:planner-default:test',
           revision: 2,
           operations: [
             {
@@ -527,7 +527,7 @@ describe('flow planner sse client', () => {
       expect.objectContaining({
         type: 'planner_nodes_patched',
         payload: {
-          session_key: 'linpo:flow:default:planner:claw3:test',
+          session_key: 'linpo:flow:default:planner:planner-default:test',
           revision: 2,
           operations: [
             {
@@ -552,7 +552,7 @@ describe('flow planner sse client', () => {
     const client = createFlowPlannerSseClient({
       baseUrl: 'http://linpo.test:8000',
       boardId: 'default',
-      sessionKey: 'linpo:flow:default:planner:claw3:test',
+      sessionKey: 'linpo:flow:default:planner:planner-default:test',
       onMessage,
       createEventSource: () => fakeSource,
     });
@@ -561,11 +561,11 @@ describe('flow planner sse client', () => {
     fakeSource.emitMessage(
       JSON.stringify({
         type: 'planner_snapshot_updated',
-        channel: 'session:linpo:flow:default:planner:claw3:test:messages',
+        channel: 'session:linpo:flow:default:planner:planner-default:test:messages',
         seq: 5,
         timestamp: '2026-04-02T00:00:00Z',
         payload: {
-          sessionKey: 'linpo:flow:default:planner:claw3:test',
+          sessionKey: 'linpo:flow:default:planner:planner-default:test',
           revision: 3,
           nodes: [
             {
@@ -584,7 +584,7 @@ describe('flow planner sse client', () => {
       expect.objectContaining({
         type: 'planner_snapshot_updated',
         payload: {
-          session_key: 'linpo:flow:default:planner:claw3:test',
+          session_key: 'linpo:flow:default:planner:planner-default:test',
           revision: 3,
           nodes: [
             {
@@ -606,7 +606,7 @@ describe('flow planner sse client', () => {
     const client = createFlowPlannerSseClient({
       baseUrl: 'http://linpo.test:8000',
       boardId: 'default',
-      sessionKey: 'linpo:flow:default:planner:claw3:test',
+      sessionKey: 'linpo:flow:default:planner:planner-default:test',
       onMessage,
       createEventSource: () => fakeSource,
     });
@@ -615,11 +615,11 @@ describe('flow planner sse client', () => {
     fakeSource.emitMessage(
       JSON.stringify({
         type: 'planner_nodes_patched',
-        channel: 'session:linpo:flow:default:planner:claw3:test:messages',
+        channel: 'session:linpo:flow:default:planner:planner-default:test:messages',
         seq: 4,
         timestamp: '2026-04-02T00:00:00Z',
         payload: {
-          sessionKey: 'linpo:flow:default:planner:claw3:test',
+          sessionKey: 'linpo:flow:default:planner:planner-default:test',
           revision: 2,
           operations: [
             {
@@ -641,7 +641,7 @@ describe('flow planner sse client', () => {
       expect.objectContaining({
         type: 'planner_nodes_patched',
         payload: {
-          session_key: 'linpo:flow:default:planner:claw3:test',
+          session_key: 'linpo:flow:default:planner:planner-default:test',
           revision: 2,
           operations: [
             {
@@ -666,7 +666,7 @@ describe('flow planner sse client', () => {
     const client = createFlowPlannerSseClient({
       baseUrl: 'http://linpo.test:8000',
       boardId: 'default',
-      sessionKey: 'linpo:flow:default:planner:claw3:test',
+      sessionKey: 'linpo:flow:default:planner:planner-default:test',
       onMessage,
       createEventSource: () => fakeSource,
     });
@@ -675,11 +675,11 @@ describe('flow planner sse client', () => {
     fakeSource.emitMessage(
       JSON.stringify({
         type: 'planner_snapshot_updated',
-        channel: 'session:linpo:flow:default:planner:claw3:test:messages',
+        channel: 'session:linpo:flow:default:planner:planner-default:test:messages',
         seq: 5,
         timestamp: '2026-04-02T00:00:00Z',
         payload: {
-          sessionKey: 'linpo:flow:default:planner:claw3:test',
+          sessionKey: 'linpo:flow:default:planner:planner-default:test',
           revision: 3,
           nodes: [
             {
@@ -698,7 +698,7 @@ describe('flow planner sse client', () => {
       expect.objectContaining({
         type: 'planner_snapshot_updated',
         payload: {
-          session_key: 'linpo:flow:default:planner:claw3:test',
+          session_key: 'linpo:flow:default:planner:planner-default:test',
           revision: 3,
           nodes: [
             {
@@ -720,7 +720,7 @@ describe('flow planner sse client', () => {
     const client = createFlowPlannerSseClient({
       baseUrl: 'http://linpo.test:8000',
       boardId: 'default',
-      sessionKey: 'linpo:flow:default:planner:claw3:test',
+      sessionKey: 'linpo:flow:default:planner:planner-default:test',
       onMessage,
       createEventSource: () => fakeSource,
     });
@@ -729,11 +729,11 @@ describe('flow planner sse client', () => {
     fakeSource.emitMessage(
       JSON.stringify({
         type: 'planner_session_updated',
-        channel: 'session:linpo:flow:default:planner:claw3:test:messages',
+        channel: 'session:linpo:flow:default:planner:planner-default:test:messages',
         seq: 6,
         timestamp: '2026-04-02T00:00:00Z',
         payload: {
-          sessionKey: 'linpo:flow:default:planner:claw3:test',
+          sessionKey: 'linpo:flow:default:planner:planner-default:test',
           status: 'completed',
           revision: 4,
           updatedAt: '2026-04-02T00:02:00Z',
@@ -746,7 +746,7 @@ describe('flow planner sse client', () => {
       expect.objectContaining({
         type: 'planner_session_updated',
         payload: {
-          session_key: 'linpo:flow:default:planner:claw3:test',
+          session_key: 'linpo:flow:default:planner:planner-default:test',
           status: 'completed',
           revision: 4,
           updated_at: '2026-04-02T00:02:00Z',
