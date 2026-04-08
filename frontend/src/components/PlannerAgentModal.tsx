@@ -200,7 +200,7 @@ const backdropStyle: React.CSSProperties = {
 const panelStyle: React.CSSProperties = {
   position: 'relative',
   width: 'min(460px, 100%)',
-  maxHeight: 'calc(100vh - 2rem)',
+  maxHeight: 'calc(100dvh - 2rem)',
   overflow: 'hidden',
   borderRadius: '0.95rem',
   border: '1px solid rgba(148, 163, 184, 0.3)',

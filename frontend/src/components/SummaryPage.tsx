@@ -1388,7 +1388,7 @@ const mobileEventsOverlayStyle: React.CSSProperties = {
 const mobileEventsDialogStyle: React.CSSProperties = {
   width: 'min(92vw, 440px)',
   maxWidth: '100%',
-  maxHeight: 'calc(100vh - 1.5rem)',
+  maxHeight: 'calc(100dvh - 1.5rem)',
   display: 'flex',
   flexDirection: 'column',
   gap: '0.55rem',
@@ -1586,7 +1586,7 @@ function getApprovalPaneStyle(isMobile: boolean): React.CSSProperties {
     boxShadow: '0 18px 42px rgba(15, 23, 42, 0.06)',
     padding: isMobile ? '0.88rem' : '1rem',
     minHeight: isMobile ? '280px' : '420px',
-    maxHeight: isMobile ? '56vh' : 'calc(100vh - 14rem)',
+    maxHeight: isMobile ? '56vh' : 'calc(100dvh - 14rem)',
     display: 'flex',
     flexDirection: 'column',
   };
@@ -1602,7 +1602,7 @@ function getEventsPaneStyle(isMobile: boolean): React.CSSProperties {
     display: 'flex',
     flexDirection: 'column',
     minHeight: isMobile ? '300px' : '420px',
-    maxHeight: isMobile ? '60vh' : 'calc(100vh - 14rem)',
+    maxHeight: isMobile ? '60vh' : 'calc(100dvh - 14rem)',
   };
 }
 

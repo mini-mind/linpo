@@ -43,7 +43,7 @@ export function PublicRoute(): JSX.Element {
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', color: '#4b5563' }}>
+      <div style={{ display: 'flex', height: '100dvh', alignItems: 'center', justifyContent: 'center', color: '#4b5563' }}>
         加载中...
       </div>
     );

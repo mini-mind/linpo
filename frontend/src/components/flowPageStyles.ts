@@ -821,7 +821,7 @@ export const flowDetailCardStyle: React.CSSProperties = {
 
 export const flowDetailCardMobileStyle: React.CSSProperties = {
   width: '100%',
-  maxHeight: 'calc(100vh - 5rem)',
+  maxHeight: 'calc(100dvh - 5rem)',
   overflowY: 'auto',
 };
 
@@ -918,7 +918,7 @@ export const confirmCardStyle: React.CSSProperties = {
 
 export const confirmCardMobileStyle: React.CSSProperties = {
   width: '100%',
-  maxHeight: 'calc(100vh - 1.5rem)',
+  maxHeight: 'calc(100dvh - 1.5rem)',
   overflowY: 'auto',
 };
 

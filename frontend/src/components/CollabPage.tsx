@@ -1737,8 +1737,8 @@ const modalActionStyle: React.CSSProperties = {
 const taskDetailCardStyle: React.CSSProperties = {
   ...modalCardStyle,
   width: 'min(1080px, calc(100vw - 1.5rem))',
-  height: 'min(860px, calc(100vh - 1.5rem))',
-  maxHeight: 'calc(100vh - 1.5rem)',
+  height: 'min(860px, calc(100dvh - 1.5rem))',
+  maxHeight: 'calc(100dvh - 1.5rem)',
   overflow: 'hidden',
   display: 'flex',
   flexDirection: 'column',
@@ -1748,8 +1748,8 @@ const taskDetailCardStyle: React.CSSProperties = {
 const taskDetailCardMobileStyle: React.CSSProperties = {
   width: '100%',
   height: 'auto',
-  minHeight: 'calc(100vh - 1.5rem)',
-  maxHeight: 'calc(100vh - 1.5rem)',
+  minHeight: 'calc(100dvh - 1.5rem)',
+  maxHeight: 'calc(100dvh - 1.5rem)',
   padding: '0.72rem',
 };
 
