@@ -23,15 +23,15 @@ function normalizeMessageItem(payload: unknown): UserMessageItem {
   const record = (payload && typeof payload === 'object') ? (payload as Record<string, unknown>) : {};
   return {
     id: String(record.id ?? ''),
-    target_email: (record.target_email as string | undefined) ?? (record.targetEmail as string | undefined),
+    target_email: (record.target_email as string | undefined),
     action: typeof record.action === 'string' ? record.action : undefined,
     payload: (record.payload && typeof record.payload === 'object') ? (record.payload as Record<string, string>) : undefined,
     title: String(record.title ?? ''),
     body: String(record.body ?? ''),
-    created_at: String(record.created_at ?? record.createdAt ?? ''),
-    is_read: (record.is_read as boolean | undefined) ?? (record.isRead as boolean | undefined),
-    read_at: (record.read_at as string | null | undefined) ?? (record.readAt as string | null | undefined),
-    confirmation_url: (record.confirmation_url as string | null | undefined) ?? (record.confirmationUrl as string | null | undefined),
+    created_at: String(record.created_at ?? ''),
+    is_read: (record.is_read as boolean | undefined),
+    read_at: (record.read_at as string | null | undefined),
+    confirmation_url: (record.confirmation_url as string | null | undefined),
   };
 }
 

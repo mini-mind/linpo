@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import os
 import re
 from typing import Any
 from uuid import UUID, uuid4
@@ -45,6 +46,7 @@ from app.services.task_dispatch_service import TaskDispatchService
 from app.services.task_service import TaskCreateInput, TaskService
 
 router = APIRouter(prefix="/boards/{board_id}/tasks")
+_DEFAULT_PLANNER_AGENT_ID = "planner-default"
 
 
 @dataclass(frozen=True)
@@ -65,6 +67,13 @@ def _normalize_agent_id(raw: str | None, fallback: str) -> str:
     if value:
         return value
     return fallback
+
+
+def _default_planner_agent_id() -> str:
+    configured = (os.getenv("FLOW_DECOMPOSITION_AGENT_ID") or "").strip()
+    if configured:
+        return configured
+    return _DEFAULT_PLANNER_AGENT_ID
 
 
 def _task_requirement_title(task: Task) -> str:
@@ -330,7 +339,7 @@ def confirm_flow(
     planner_session_key = (
         payload.planner_session_key.strip()
         if isinstance(payload.planner_session_key, str) and payload.planner_session_key.strip()
-        else f"linpo:flow:{normalized_board_id}:planner:planner:{uuid4().hex[:8]}"
+        else f"linpo:flow:{normalized_board_id}:planner:{_default_planner_agent_id()}:{uuid4().hex[:8]}"
     )
     execution_session_prefix = (
         payload.execution_session_prefix.strip()

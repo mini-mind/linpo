@@ -39,7 +39,7 @@ export function AccountMenu({
     try {
       const messages = await listUserMessages();
       const count = messages.reduce((total, item) => {
-        const isRead = item.is_read === true || String(item.status ?? '').toLowerCase() === 'read';
+        const isRead = item.is_read === true;
         return isRead ? total : total + 1;
       }, 0);
       setUnreadCount(count);

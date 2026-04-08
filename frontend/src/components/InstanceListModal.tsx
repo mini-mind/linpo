@@ -63,7 +63,7 @@ async function copyTextWithFallback(text: string): Promise<boolean> {
       await navigator.clipboard.writeText(text);
       return true;
     } catch {
-      // Continue with legacy fallback.
+      // Continue with document command fallback.
     }
   }
 

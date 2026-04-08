@@ -125,11 +125,6 @@ export interface UserMessageItem {
   is_read?: boolean;
   read_at?: string | null;
   confirmation_url?: string | null;
-  // backward-compatible fields
-  status?: 'unread' | 'read' | string;
-  action_url?: string | null;
-  action_label?: string | null;
-  links?: UserMessageLinkItem[] | null;
 }
 
 export interface UserMessageListResponse {

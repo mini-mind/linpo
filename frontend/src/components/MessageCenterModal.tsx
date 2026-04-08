@@ -198,44 +198,22 @@ export function MessageCenterModal({ open, onClose }: MessageCenterModalProps): 
 }
 
 function normalizeMessage(raw: UserMessageItem): MessageViewItem {
-  const candidate = raw as Partial<UserMessageItem> & {
-    message?: string | null;
-    content?: string | null;
-    timestamp?: string | null;
-    url?: string | null;
-  };
-
-  const title = String(candidate.title ?? '').trim() || '系统消息';
-  const body = String(candidate.body ?? candidate.message ?? candidate.content ?? '').trim() || '暂无正文';
-  const createdAt = String(candidate.created_at ?? candidate.timestamp ?? '').trim() || new Date().toISOString();
-  const status = candidate.is_read === true || String(candidate.status ?? '').toLowerCase() === 'read' ? 'read' : 'unread';
+  const title = String(raw.title ?? '').trim() || '系统消息';
+  const body = String(raw.body ?? '').trim() || '暂无正文';
+  const createdAt = String(raw.created_at ?? '').trim() || new Date().toISOString();
+  const status = raw.is_read === true ? 'read' : 'unread';
 
   const links = new Map<string, UserMessageLinkItem>();
-  const rawLinks = Array.isArray(candidate.links) ? candidate.links : [];
-  for (const item of rawLinks) {
-    if (!item || typeof item.href !== 'string') {
-      continue;
-    }
-    const href = item.href.trim();
-    if (!href) {
-      continue;
-    }
-    links.set(href, {
-      href,
-      label: typeof item.label === 'string' ? item.label : null,
-    });
-  }
-
-  const actionUrl = String(candidate.confirmation_url ?? candidate.action_url ?? candidate.url ?? '').trim();
-  if (actionUrl) {
-    links.set(actionUrl, {
-      href: actionUrl,
-      label: typeof candidate.action_label === 'string' ? candidate.action_label : '打开回执链接',
+  const confirmationUrl = String(raw.confirmation_url ?? '').trim();
+  if (confirmationUrl) {
+    links.set(confirmationUrl, {
+      href: confirmationUrl,
+      label: '打开回执链接',
     });
   }
 
   return {
-    id: String(candidate.id ?? ''),
+    id: String(raw.id ?? ''),
     title,
     body,
     createdAt,
