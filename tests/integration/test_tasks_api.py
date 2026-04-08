@@ -720,12 +720,8 @@ def test_flow_generate_prompt_includes_history_workflow_json_and_planner_http_in
     assert len(send_calls) == 1
     assert send_calls[0]["agent_id"] == "claw3"
     prompt = cast(str, send_calls[0]["message"])
-    planner_token = _planner_token_for_session(isolated_database_url, payload["plannerSessionKey"])
-    assert "/flow/planner-sessions/" in prompt
-    assert "/nodes/upsert" in prompt
-    assert "/complete" in prompt
-    assert "X-Linpo-Planner-Token" in prompt
-    assert planner_token in prompt
+    assert "/flow/planner-sessions/" not in prompt
+    assert "X-Linpo-Planner-Token" not in prompt
     assert "当前流程上下文" in prompt or "用户需求" in prompt
     assert "历史会话摘要" in prompt
     assert "今天 github 上 star 飙升的 openclaw 相关项目，并输出商业画布" in prompt
@@ -2618,14 +2614,13 @@ def test_task_dispatch_prompt_contains_tasks_callback_path(
     assert "failed" in prompt
 
 
-def test_task_dispatch_prompt_derives_public_callback_from_instance_endpoint(
+def test_task_dispatch_without_explicit_callback_base_url_fails(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     del isolated_database_url
     _allow_instance_validation(monkeypatch)
     monkeypatch.delenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", raising=False)
-    monkeypatch.delenv("LINPO_TASK_EVENT_CALLBACK_PORT", raising=False)
 
     auth_cookie = _register_and_login("dispatch-prompt-fallback-user")
     instance = _create_instance(
@@ -2635,18 +2630,11 @@ def test_task_dispatch_prompt_derives_public_callback_from_instance_endpoint(
         gateway_token="token-dispatch-fallback",
     )
 
-    captured_messages: list[str] = []
-    install_send_chat_message_fake(
-        monkeypatch,
-        request_id="req-dispatch-fallback",
-        capture_messages=captured_messages,
-    )
-
     create_status, _, create_payload = _request_json(
         "POST",
         DEFAULT_TASKS_PATH,
         {
-            "requirement": "验证公网回调推导",
+            "requirement": "未配置回调地址时应失败",
             "agent_id": "agent-alpha",
             "agent_name": "Alpha Agent",
             "instance_id": instance["id"],
@@ -2654,16 +2642,8 @@ def test_task_dispatch_prompt_derives_public_callback_from_instance_endpoint(
         auth_cookie,
     )
     assert create_status == 201
-    assert captured_messages
-
-    run_id = create_payload["extras"]["dispatch_run_id"]
-    public_callback = (
-        f"http://175.178.213.10:8000/api/v1/boards/default/tasks/task-runs/{run_id}/events"
-    )
-    prompt = captured_messages[0]
-    assert public_callback in prompt
-    assert "主回调地址" in prompt
-    assert "1)" in prompt
+    assert create_payload["status"] == "failed"
+    assert "LINPO_TASK_EVENT_CALLBACK_BASE_URL" in create_payload["extras"]["dispatch_error"]
 
 
 def test_task_dispatch_fails_when_callback_candidate_list_is_empty(
@@ -2720,6 +2700,7 @@ def test_task_run_event_callback_requires_fresh_occurred_at(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _allow_instance_validation(monkeypatch)
+    monkeypatch.setenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", "http://linpo.local:8000")
     auth_cookie = _register_and_login("event-freshness-user")
     instance = _create_instance(
         auth_cookie,
@@ -2785,6 +2766,7 @@ def test_task_run_event_callback_rejects_missing_or_invalid_signature(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _allow_instance_validation(monkeypatch)
+    monkeypatch.setenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", "http://linpo.local:8000")
     auth_cookie = _register_and_login("event-signature-user")
     instance = _create_instance(
         auth_cookie,

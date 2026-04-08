@@ -85,8 +85,6 @@ router = APIRouter(prefix="/instances", tags=["instances"])
 
 _AGENT_DOC_PREVIEW_MAX_BYTES = 120_000
 _AGENT_DOC_DOWNLOAD_MAX_BYTES = 2_000_000
-_PAIRING_REQUEST_NOOP_EXPIRES_SECONDS = 600
-
 
 def get_instance_service() -> InstanceService:
     return InstanceService()
@@ -131,15 +129,6 @@ def _instance_to_item(instance: Instance) -> InstanceItem:
         status=instance.status,
         last_check_at=None if instance.last_check_at is None else instance.last_check_at.isoformat(),
         created_at=instance.created_at.isoformat(),
-    )
-
-
-def _build_noop_pairing_response() -> AgentPairingRequestResponse:
-    now = datetime.now(UTC)
-    return AgentPairingRequestResponse(
-        confirmation_url="/pairing/receipt/pending/confirm",
-        expires_at=now.isoformat(),
-        expires_in_seconds=_PAIRING_REQUEST_NOOP_EXPIRES_SECONDS,
     )
 
 
@@ -643,6 +632,7 @@ def create_instance(
 )
 def request_agent_mount(
     payload: AgentMountRequestPayload,
+    current_user: User = Depends(get_current_user),
     db_session: Session = Depends(get_session),
     pairing_service: AgentSelfPairingService = Depends(get_agent_self_pairing_service),
 ) -> AgentPairingRequestResponse | JSONResponse:
@@ -650,15 +640,16 @@ def request_agent_mount(
         created = pairing_service.start_mount(
             db_session,
             payload=AgentMountStartInput(
-                email=payload.email,
+                user_id=current_user.id,
+                user_email=current_user.email or "",
                 name=payload.name,
                 type=payload.type,
                 endpoint=payload.endpoint,
                 gateway_token=payload.gateway_token,
             ),
         )
-    except AgentSelfPairingUserNotFoundError:
-        return _build_noop_pairing_response()
+    except AgentSelfPairingUserNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="user email unavailable") from exc
     except InstanceValidationFailedError as exc:
         return _validation_error_response(
             ok=exc.result.ok,
@@ -680,6 +671,7 @@ def request_agent_mount(
 )
 def request_agent_unmount(
     payload: AgentUnmountRequestPayload,
+    current_user: User = Depends(get_current_user),
     db_session: Session = Depends(get_session),
     pairing_service: AgentSelfPairingService = Depends(get_agent_self_pairing_service),
 ) -> AgentPairingRequestResponse:
@@ -687,14 +679,15 @@ def request_agent_unmount(
         created = pairing_service.start_unmount(
             db_session,
             payload=AgentUnmountStartInput(
-                email=payload.email,
+                user_id=current_user.id,
+                user_email=current_user.email or "",
                 instance_id=UUID(payload.instance_id),
             ),
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid instance id") from exc
-    except AgentSelfPairingUserNotFoundError:
-        return _build_noop_pairing_response()
+    except AgentSelfPairingUserNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="user email unavailable") from exc
     except InstanceNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found") from exc
 

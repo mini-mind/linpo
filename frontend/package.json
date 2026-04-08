@@ -9,9 +9,7 @@
     "test": "vitest run",
     "e2e": "npm run e2e:local",
     "e2e:local": "playwright test --project=local",
-    "e2e:deployed": "node -e \"const required=['PLAYWRIGHT_DEPLOYED_BASE_URL','PLAYWRIGHT_E2E_IDENTIFIER','PLAYWRIGHT_E2E_PASSWORD'];const miss=required.filter((k)=>!(process.env[k]||'').trim());if(miss.length){console.error('Missing env for deployed e2e: '+miss.join(', '));process.exit(1);}\" && PLAYWRIGHT_SKIP_LOCAL_WEB_SERVER=1 playwright test --project=deployed",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "e2e:deployed": "node -e \"const required=['PLAYWRIGHT_DEPLOYED_BASE_URL','PLAYWRIGHT_E2E_IDENTIFIER','PLAYWRIGHT_E2E_PASSWORD'];const miss=required.filter((k)=>!(process.env[k]||'').trim());if(miss.length){console.error('Missing env for deployed e2e: '+miss.join(', '));process.exit(1);}\" && PLAYWRIGHT_SKIP_LOCAL_WEB_SERVER=1 playwright test --project=deployed"
   },
   "dependencies": {
     "@dagrejs/dagre": "^1.1.4",
@@ -24,7 +22,6 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
-    "@tauri-apps/cli": "^2.1.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",

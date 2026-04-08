@@ -80,8 +80,7 @@ def _create_task(
 
 
 def test_dispatch_next_queued_task_dispatches_first_runnable_task(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", raising=False)
-    monkeypatch.setenv("LINPO_TASK_EVENT_CALLBACK_PORT", "18080")
+    monkeypatch.setenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", "http://linpo.private:8000")
     engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
 
@@ -163,14 +162,13 @@ def test_dispatch_next_queued_task_dispatches_first_runnable_task(monkeypatch: p
         assert fake_provider.calls[0]["agent_id"] == "agent-bravo"
         sent_message = cast(str, fake_provider.calls[0]["message"])
         assert f"/api/v1/boards/default/tasks/task-runs/{result.run_id}/events" in sent_message
-        assert "http://dispatch.example:18080/api/v1/boards/default/tasks/task-runs/" in sent_message
+        assert "http://linpo.private:8000/api/v1/boards/default/tasks/task-runs/" in sent_message
 
 
 def test_dispatch_next_queued_task_marks_failed_when_callback_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", raising=False)
-    monkeypatch.delenv("LINPO_TASK_EVENT_CALLBACK_PORT", raising=False)
     engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
 

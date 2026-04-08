@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 import asyncio
 import json
 from typing import Any, cast
-from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
@@ -173,14 +172,6 @@ def _is_retryable_flow_history_error(exc: HTTPException) -> bool:
     )
 
 
-def _planner_service_base_url(request: Request) -> str:
-    callback_url = str(request.url_for("flow_planner_sse", board_id="default"))
-    parsed = urlparse(callback_url)
-    if parsed.hostname is None:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="planner callback host unavailable")
-    return f"{parsed.scheme}://{parsed.netloc}"
-
-
 def _planner_snapshot_to_messages(snapshot: object) -> list[FlowChatMessageItem]:
     raw_messages = getattr(snapshot, "messages", [])
     parsed_messages: list[FlowChatMessageItem] = []
@@ -251,6 +242,78 @@ def _planner_snapshot_to_canvas_nodes(snapshot: object) -> list[FlowCanvasNode]:
     if canvas_nodes:
         return canvas_nodes
     return _build_canvas_nodes(drafts, agent_id=planner_agent_id)
+
+
+def _planner_node_signature(nodes: list[dict[str, object]]) -> str:
+    normalized: list[dict[str, object]] = []
+    for item in nodes:
+        if not isinstance(item, dict):
+            continue
+        normalized.append(
+            {
+                "id": str(item.get("id", "")).strip(),
+                "title": str(item.get("title", "")).strip(),
+                "description": str(item.get("description", "")).strip(),
+                "depends_on": _normalize_depends_on(item.get("depends_on")),
+                "sensitive": bool(item.get("sensitive", False)),
+            }
+        )
+    normalized.sort(key=lambda node: cast(str, node["id"]))
+    return json.dumps(normalized, ensure_ascii=False, sort_keys=True)
+
+
+def _sync_planner_snapshot_from_provider_history(
+    *,
+    db_session: Session,
+    current_user: User,
+    session_key: str,
+    flow_decomposition_service: FlowDecompositionService,
+    flow_planner_session_service: FlowPlannerSessionService,
+) -> None:
+    snapshot = flow_planner_session_service.get_snapshot_for_user(
+        db_session=db_session,
+        user_id=current_user.id,
+        session_key=session_key,
+    )
+    if snapshot.status != "planning":
+        return
+
+    current_raw_nodes = _require_snapshot_nodes(snapshot)
+    try:
+        resolved = flow_decomposition_service.read_latest_snapshot(
+            planner_session_key=session_key,
+            current_nodes=current_raw_nodes,
+        )
+    except Exception:
+        return
+    if resolved is None:
+        return
+
+    next_nodes_payload = [
+        {
+            "id": node.id,
+            "title": node.title,
+            "description": node.description,
+            "depends_on": list(node.depends_on),
+            "sensitive": node.sensitive,
+        }
+        for node in resolved.nodes
+    ]
+    if _planner_node_signature(current_raw_nodes) != _planner_node_signature(next_nodes_payload):
+        flow_planner_session_service.replace_nodes(
+            session_key=session_key,
+            nodes=next_nodes_payload,
+            db_session=db_session,
+            publish_realtime=True,
+        )
+
+    flow_planner_session_service.complete_session(
+        session_key=session_key,
+        content="规划完成，Linpo 已根据 planner 会话输出更新节点快照。",
+        payload={"origin": "provider_history_sync"},
+        db_session=db_session,
+        publish_realtime=True,
+    )
 
 
 def _to_sse_data(payload: dict[str, object]) -> str:
@@ -329,7 +392,6 @@ def _build_canvas_nodes(
 @router.post("/flow/generate", response_model=FlowGenerateResponse, tags=["flow"])
 def generate_flow(
     board_id: str,
-    request: Request,
     payload: FlowGenerateRequest,
     db_session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
@@ -390,8 +452,6 @@ def generate_flow(
                 db_session=db_session,
                 session_key=session_record.session_key,
             ),
-            planner_api_base_url=_planner_service_base_url(request),
-            planner_api_token=session_record.planner_token,
         )
     except HTTPException as exc:
         flow_planner_session_service.fail_session(
@@ -427,6 +487,13 @@ def generate_flow(
         )
     manager_session_key = f"linpo:flow:{normalized_board_id}:manager"
     execution_session_prefix = f"linpo:flow:{normalized_board_id}:exec"
+    _sync_planner_snapshot_from_provider_history(
+        db_session=db_session,
+        current_user=current_user,
+        session_key=planner_session_key,
+        flow_decomposition_service=flow_decomposition_service,
+        flow_planner_session_service=flow_planner_session_service,
+    )
     latest_snapshot = flow_planner_session_service.get_snapshot_for_user(
         db_session=db_session,
         user_id=current_user.id,
@@ -664,6 +731,13 @@ async def flow_planner_sse(
                 await asyncio.sleep(_FLOW_PLANNER_SSE_POLL_INTERVAL_SECONDS)
                 keepalive_elapsed += _FLOW_PLANNER_SSE_POLL_INTERVAL_SECONDS
                 db_session.expire_all()
+                _sync_planner_snapshot_from_provider_history(
+                    db_session=db_session,
+                    current_user=current_user,
+                    session_key=normalized_session_key,
+                    flow_decomposition_service=flow_decomposition_service,
+                    flow_planner_session_service=flow_planner_session_service,
+                )
                 next_snapshot = flow_planner_session_service.get_snapshot_for_user(
                     db_session=db_session,
                     user_id=current_user.id,

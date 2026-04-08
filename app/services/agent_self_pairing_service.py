@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from sqlalchemy import select
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -24,7 +23,8 @@ from app.services.pairing_receipt_service import (
 
 @dataclass(frozen=True)
 class AgentMountStartInput:
-    email: str
+    user_id: UUID
+    user_email: str
     name: str
     type: str
     endpoint: str
@@ -33,7 +33,8 @@ class AgentMountStartInput:
 
 @dataclass(frozen=True)
 class AgentUnmountStartInput:
-    email: str
+    user_id: UUID
+    user_email: str
     instance_id: UUID
 
 
@@ -66,7 +67,8 @@ class AgentSelfPairingService:
         *,
         payload: AgentMountStartInput,
     ) -> PairingReceiptCreated:
-        user = self._resolve_user_by_email(db_session, email=payload.email)
+        user = self._resolve_user_by_id(db_session, user_id=payload.user_id)
+        normalized_target_email = normalize_email(payload.user_email)
         validation_result = self._instance_service.validate_instance(
             db_session,
             user_id=user.id,
@@ -84,7 +86,7 @@ class AgentSelfPairingService:
             db_session,
             action="mount",
             user_id=user.id,
-            target_email=payload.email,
+            target_email=normalized_target_email,
             payload={
                 "name": payload.name,
                 "type": payload.type,
@@ -95,7 +97,7 @@ class AgentSelfPairingService:
         self._message_center_service.create_pairing_receipt_message(
             db_session,
             user_id=user.id,
-            target_email=payload.email,
+            target_email=normalized_target_email,
             action="mount",
             payload={
                 "name": payload.name,
@@ -113,7 +115,8 @@ class AgentSelfPairingService:
         *,
         payload: AgentUnmountStartInput,
     ) -> PairingReceiptCreated:
-        user = self._resolve_user_by_email(db_session, email=payload.email)
+        user = self._resolve_user_by_id(db_session, user_id=payload.user_id)
+        normalized_target_email = normalize_email(payload.user_email)
         owned_instance = self._instance_service.get_owned_instance(
             db_session,
             user_id=user.id,
@@ -126,13 +129,13 @@ class AgentSelfPairingService:
             db_session,
             action="unmount",
             user_id=user.id,
-            target_email=payload.email,
+            target_email=normalized_target_email,
             payload={"instance_id": str(payload.instance_id)},
         )
         self._message_center_service.create_pairing_receipt_message(
             db_session,
             user_id=user.id,
-            target_email=payload.email,
+            target_email=normalized_target_email,
             action="unmount",
             payload={"instance_id": str(payload.instance_id)},
             confirmation_url=created.confirmation_url,
@@ -188,9 +191,8 @@ class AgentSelfPairingService:
             db_session.rollback()
             raise
 
-    def _resolve_user_by_email(self, db_session: Session, *, email: str) -> User:
-        normalized_email = normalize_email(email)
-        user = db_session.execute(select(User).where(User.email == normalized_email)).scalar_one_or_none()
+    def _resolve_user_by_id(self, db_session: Session, *, user_id: UUID) -> User:
+        user = db_session.get(User, user_id)
         if user is None:
             raise AgentSelfPairingUserNotFoundError
         return user

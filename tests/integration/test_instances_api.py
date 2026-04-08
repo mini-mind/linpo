@@ -1197,12 +1197,12 @@ def test_agent_mount_request_returns_confirmation_url_and_writes_message(
         "POST",
         "/api/v1/instances/agent-mount/request",
         {
-            "email": "alice@example.com",
             "name": "alice-self-mount",
             "type": "openclaw",
             "endpoint": "http://127.0.0.1:28789",
             "gatewayToken": "self-mount-token",
         },
+        auth_cookie,
     )
     confirmation_url = _require_confirmation_url(request_status, request_payload)
     token = _extract_receipt_token(confirmation_url)
@@ -1226,7 +1226,6 @@ def test_agent_mount_request_stores_encrypted_gateway_token_in_receipt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     auth_cookie = _register_and_login("alice")
-    del auth_cookie
 
     monkeypatch.setattr(
         "app.services.instance_validator.InstanceValidatorService.validate",
@@ -1241,12 +1240,12 @@ def test_agent_mount_request_stores_encrypted_gateway_token_in_receipt(
         "POST",
         "/api/v1/instances/agent-mount/request",
         {
-            "email": "alice@example.com",
             "name": "alice-encrypted-receipt",
             "type": "openclaw",
             "endpoint": "http://127.0.0.1:28789",
             "gatewayToken": "encrypted-receipt-token",
         },
+        auth_cookie,
     )
     confirmation_url = _require_confirmation_url(request_status, request_payload)
     token = _extract_receipt_token(confirmation_url)
@@ -1260,7 +1259,7 @@ def test_agent_mount_request_stores_encrypted_gateway_token_in_receipt(
         assert decrypt_secret(gateway_token_enc) == "encrypted-receipt-token"
 
 
-def test_agent_mount_request_hides_user_not_found(
+def test_agent_mount_request_requires_login(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1280,15 +1279,14 @@ def test_agent_mount_request_hides_user_not_found(
         "POST",
         "/api/v1/instances/agent-mount/request",
         {
-            "email": "missing-user@example.com",
             "name": "ghost-mount",
             "type": "openclaw",
             "endpoint": "http://127.0.0.1:28789",
             "gatewayToken": "ghost-token",
         },
     )
-    confirmation_url = _require_confirmation_url(request_status, request_payload)
-    assert confirmation_url == "/pairing/receipt/pending/confirm"
+    assert request_status == 401
+    assert request_payload["detail"] == "Unauthorized"
 
 
 def test_message_read_endpoint_marks_message_as_read(
@@ -1311,12 +1309,12 @@ def test_message_read_endpoint_marks_message_as_read(
         "POST",
         "/api/v1/instances/agent-mount/request",
         {
-            "email": "alice@example.com",
             "name": "alice-message-read",
             "type": "openclaw",
             "endpoint": "http://127.0.0.1:28789",
             "gatewayToken": "message-read-token",
         },
+        auth_cookie,
     )
     confirmation_url = _require_confirmation_url(request_status, request_payload)
 
@@ -1354,7 +1352,7 @@ def test_agent_mount_request_is_not_blocked_by_legacy_challenge_delivery_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     del isolated_database_url
-    _register_and_login("alice")
+    auth_cookie = _register_and_login("alice")
     monkeypatch.setenv("LINPO_PAIRING_CHALLENGE_DELIVERY", "smtp")
     monkeypatch.delenv("LINPO_SMTP_HOST", raising=False)
     monkeypatch.delenv("LINPO_SMTP_FROM", raising=False)
@@ -1371,12 +1369,12 @@ def test_agent_mount_request_is_not_blocked_by_legacy_challenge_delivery_env(
         "POST",
         "/api/v1/instances/agent-mount/request",
         {
-            "email": "alice@example.com",
             "name": "alice-self-mount",
             "type": "openclaw",
             "endpoint": "http://127.0.0.1:28789",
             "gatewayToken": "self-mount-token",
         },
+        auth_cookie,
     )
     confirmation_url = _require_confirmation_url(request_status, request_payload)
     assert confirmation_url.startswith("/pairing/receipt/")
@@ -1415,16 +1413,16 @@ def test_agent_unmount_request_returns_confirmation_url(
         "POST",
         "/api/v1/instances/agent-unmount/request",
         {
-            "email": "alice@example.com",
             "instanceId": create_payload["id"],
         },
+        auth_cookie,
     )
     confirmation_url = _require_confirmation_url(request_status, request_payload)
     token = _extract_receipt_token(confirmation_url)
     assert token != ""
 
 
-def test_agent_unmount_request_hides_user_not_found(
+def test_agent_unmount_request_requires_login(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1457,12 +1455,11 @@ def test_agent_unmount_request_hides_user_not_found(
         "POST",
         "/api/v1/instances/agent-unmount/request",
         {
-            "email": "missing-user@example.com",
             "instanceId": create_payload["id"],
         },
     )
-    confirmation_url = _require_confirmation_url(request_status, request_payload)
-    assert confirmation_url == "/pairing/receipt/pending/confirm"
+    assert request_status == 401
+    assert request_payload["detail"] == "Unauthorized"
 
 
 def test_agent_receipt_confirm_requires_login(
@@ -1470,7 +1467,7 @@ def test_agent_receipt_confirm_requires_login(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     del isolated_database_url
-    _register_and_login("alice")
+    auth_cookie = _register_and_login("alice")
 
     monkeypatch.setattr(
         "app.services.instance_validator.InstanceValidatorService.validate",
@@ -1484,12 +1481,12 @@ def test_agent_receipt_confirm_requires_login(
         "POST",
         "/api/v1/instances/agent-mount/request",
         {
-            "email": "alice@example.com",
             "name": "alice-require-login",
             "type": "openclaw",
             "endpoint": "http://127.0.0.1:28789",
             "gatewayToken": "login-required-token",
         },
+        auth_cookie,
     )
     confirmation_url = _require_confirmation_url(request_status, request_payload)
     token = _extract_receipt_token(confirmation_url)
@@ -1503,7 +1500,7 @@ def test_agent_receipt_confirm_rejects_email_mismatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     del isolated_database_url
-    _register_and_login("alice")
+    auth_cookie = _register_and_login("alice")
     bob_cookie = _register_and_login("bob")
 
     monkeypatch.setattr(
@@ -1518,12 +1515,12 @@ def test_agent_receipt_confirm_rejects_email_mismatch(
         "POST",
         "/api/v1/instances/agent-mount/request",
         {
-            "email": "alice@example.com",
             "name": "alice-email-mismatch",
             "type": "openclaw",
             "endpoint": "http://127.0.0.1:28789",
             "gatewayToken": "email-mismatch-token",
         },
+        auth_cookie,
     )
     confirmation_url = _require_confirmation_url(request_status, request_payload)
     token = _extract_receipt_token(confirmation_url)
@@ -1556,12 +1553,12 @@ def test_agent_receipt_confirm_mount_and_unmount_success(
         "POST",
         "/api/v1/instances/agent-mount/request",
         {
-            "email": "alice@example.com",
             "name": "alice-mount-success",
             "type": "openclaw",
             "endpoint": "http://127.0.0.1:28789",
             "gatewayToken": "mount-success-token",
         },
+        auth_cookie,
     )
     mount_confirmation_url = _require_confirmation_url(mount_request_status, mount_request_payload)
     mount_token = _extract_receipt_token(mount_confirmation_url)
@@ -1579,9 +1576,9 @@ def test_agent_receipt_confirm_mount_and_unmount_success(
         "POST",
         "/api/v1/instances/agent-unmount/request",
         {
-            "email": "alice@example.com",
             "instanceId": mounted_instance_id,
         },
+        auth_cookie,
     )
     unmount_confirmation_url = _require_confirmation_url(unmount_request_status, unmount_request_payload)
     unmount_token = _extract_receipt_token(unmount_confirmation_url)
@@ -1616,12 +1613,12 @@ def test_agent_receipt_confirm_rejects_expired_or_duplicate_token(
         "POST",
         "/api/v1/instances/agent-mount/request",
         {
-            "email": "alice@example.com",
             "name": "alice-consume-once",
             "type": "openclaw",
             "endpoint": "http://127.0.0.1:28789",
             "gatewayToken": "consume-once-token",
         },
+        auth_cookie,
     )
     duplicate_confirmation_url = _require_confirmation_url(duplicate_status, duplicate_payload)
     duplicate_token = _extract_receipt_token(duplicate_confirmation_url)
@@ -1643,12 +1640,12 @@ def test_agent_receipt_confirm_rejects_expired_or_duplicate_token(
         "POST",
         "/api/v1/instances/agent-mount/request",
         {
-            "email": "alice@example.com",
             "name": "alice-expired-token",
             "type": "openclaw",
             "endpoint": "http://127.0.0.1:28789",
             "gatewayToken": "expired-token",
         },
+        auth_cookie,
     )
     expired_confirmation_url = _require_confirmation_url(expired_status, expired_payload)
     expired_token = _extract_receipt_token(expired_confirmation_url)
@@ -1681,12 +1678,12 @@ def test_agent_receipt_confirm_failure_keeps_receipt_retryable(
         "POST",
         "/api/v1/instances/agent-mount/request",
         {
-            "email": "alice@example.com",
             "name": "alice-retryable-receipt",
             "type": "openclaw",
             "endpoint": "http://127.0.0.1:28789",
             "gatewayToken": "retryable-token",
         },
+        auth_cookie,
     )
     confirmation_url = _require_confirmation_url(request_status, request_payload)
     token = _extract_receipt_token(confirmation_url)

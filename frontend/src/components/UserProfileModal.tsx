@@ -12,7 +12,7 @@ type UserProfileModalProps = {
   onClose: () => void;
 };
 
-type AccountTab = 'basic' | 'password' | 'membership';
+type AccountTab = 'basic' | 'password';
 
 export function UserProfileModal({ open, user, onClose }: UserProfileModalProps): JSX.Element | null {
   const isMobile = useIsMobile(960);
@@ -186,13 +186,6 @@ export function UserProfileModal({ open, user, onClose }: UserProfileModalProps)
             >
               修改密码
             </button>
-            <button
-              type="button"
-              style={{ ...tabButtonStyle, ...(activeTab === 'membership' ? tabButtonActiveStyle : null) }}
-              onClick={() => setActiveTab('membership')}
-            >
-              会员
-            </button>
           </aside>
 
           <div style={panelBodyStyle}>
@@ -336,22 +329,6 @@ export function UserProfileModal({ open, user, onClose }: UserProfileModalProps)
               </div>
             ) : null}
 
-            {activeTab === 'membership' ? (
-              <div style={sectionCardStyle}>
-                <h4 style={membershipTitleStyle}>会员充值</h4>
-                <p style={membershipHintStyle}>支付通道建设中，暂未开通</p>
-                <div style={channelGridStyle}>
-                  <div style={channelItemStyle}>
-                    <span style={channelNameStyle}>支付宝</span>
-                    <span style={channelStatusStyle}>未开通</span>
-                  </div>
-                  <div style={channelItemStyle}>
-                    <span style={channelNameStyle}>PayPal</span>
-                    <span style={channelStatusStyle}>未开通</span>
-                  </div>
-                </div>
-              </div>
-            ) : null}
           </div>
         </div>
       </section>
@@ -646,44 +623,4 @@ const smallActionButtonStyle: React.CSSProperties = {
 const passwordActionRowStyle: React.CSSProperties = {
   display: 'flex',
   justifyContent: 'flex-end',
-};
-
-const membershipTitleStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: '0.86rem',
-  fontWeight: 700,
-  color: '#0f172a',
-};
-
-const membershipHintStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: '0.76rem',
-  color: '#64748b',
-};
-
-const channelGridStyle: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
-  gap: '0.5rem',
-};
-
-const channelItemStyle: React.CSSProperties = {
-  border: '1px solid rgba(148, 163, 184, 0.28)',
-  borderRadius: '0.58rem',
-  background: 'rgba(248, 250, 252, 0.95)',
-  padding: '0.52rem 0.58rem',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-};
-
-const channelNameStyle: React.CSSProperties = {
-  fontSize: '0.8rem',
-  color: '#0f172a',
-  fontWeight: 600,
-};
-
-const channelStatusStyle: React.CSSProperties = {
-  fontSize: '0.72rem',
-  color: '#64748b',
 };

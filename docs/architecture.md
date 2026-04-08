@@ -10,7 +10,7 @@
 
 - OpenClaw 继续作为 Agent 执行后端
 - Linpo 负责流程编排交互、审批汇总与结果可视化
-- 支持 Web 与 Tauri 双构建
+- 仅支持 Web 形态（PC 浏览器 + 移动浏览器）
 
 ## 2. 系统边界
 
@@ -66,8 +66,8 @@
 - `InstanceFilesPage`：任务产物与 Agent 文档是两条数据链，前者走 Linpo 任务文件作用域校验，后者走 OpenClaw `agents.files.list/get` 白名单文档转调。
 - `MessageCenterModal`：导航栏账户下拉菜单触发的消息中心弹窗，承接“消息列表 + 详情 + 回执确认跳转”。
 - `MessageCenterModal`：通过 portal 挂载到 `document.body`，避免受局部层级与滚动容器影响导致不可见。
-- `AccountMenu`：下拉菜单提供 `账户/实例/消息/退出` 菜单动作；`账户`打开 `UserProfileModal`（左侧 `基本信息/修改密码/会员` 侧边栏 + 右侧展示区）。
-- `UserProfileModal`：`基本信息`页提供“头像更换按钮 + 用户名编辑按钮”；`修改密码`页提供密码更新表单；`会员`页展示充值渠道占位。
+- `AccountMenu`：下拉菜单提供 `账户/实例/消息/退出` 菜单动作；`账户`打开 `UserProfileModal`（左侧 `基本信息/修改密码` 侧边栏 + 右侧展示区）。
+- `UserProfileModal`：`基本信息`页提供“头像更换按钮 + 用户名编辑按钮”；`修改密码`页提供密码更新表单；不提供会员充值或第三方支付入口。
 - `InstanceListModal`：由账户下拉菜单“实例”触发，展示已配对实例列表、实例信息与拓扑（`实例 -> Agent -> Session`）；当用户进入`/kanban`且无实例时自动弹出。
 - `InstanceListModal`：添加实例页支持`配对会话`、`Token`两种方式；默认打开`配对会话`标签页，`Token`作为第二标签页。
 - `InstanceListModal`：配对会话页由 Linpo 创建短时会话，展示 `short_code + pairing_url` 并轮询状态；OpenClaw 侧 attach 成功后自动落库实例并切换到实例详情。
@@ -99,8 +99,8 @@
 - 流程图 canonical 结构是 `nodes[].depends_on`；`edges` 属于前端/后端根据节点快照计算出的派生表示，仅用于画布渲染和兼容已有提交接口。
 - 流程规划改为“节点级 patch 流”而非“整图 JSON commit”：Linpo 维护独立的持久化 `planner session`，记录 `messages/current_nodes/revision/status`，并在每次有效增量后产出最新节点快照。
 - 节点级 patch 最小集合冻结为：`upsert_node`（创建/更新节点，包含完整 `id/title/description/depends_on/sensitive`）与 `delete_node`（按 `id` 删除节点）。节点依赖变更必须通过 `upsert_node.depends_on` 表达，不再定义独立 edge patch。
-- `FlowDecompositionService` 负责向 `claw3` 发起规划会话，但不再依赖 claw3 最终回整图 JSON 作为主链；主链改为 claw3 在会话中调用 Linpo planner HTTP 接口进行 `upsert_node/delete_node/complete/fail`。
-- Planner HTTP 接口必须携带 `planner_token`；Linpo 在收到每次节点编辑请求后，先落持久化消息，再更新 draft snapshot/revision，并通过 SSE 推送 `planner_messages_updated / planner_nodes_patched / planner_snapshot_updated / planner_session_updated`。
+- `FlowDecompositionService` 负责向 `claw3` 发起规划会话，claw3 在会话中返回节点协议 JSON；Linpo 后端负责解析并写入 planner session，再通过 SSE 推送 `planner_messages_updated / planner_nodes_patched / planner_snapshot_updated / planner_session_updated`。
+- `planner_token` 仅用于 Linpo 受信内部接口，不下发到外部 agent 提示词，不进入外部会话文本上下文。
 - `complete` 接口负责对最终节点集执行完整校验：节点数、唯一 id、`depends_on` 引用合法、至少一个 `sensitive=true`。校验通过才将 planner session 置为 `completed`；否则写入失败消息并保持会话 `failed`。
 - `stop` 接口由前端触发，Linpo 需同时落会话状态、写入消息流，并通过 Provider `chat.pause` 中断 claw3 对应 session。
 - `FlowEditorPanel` 应用 patch 后立即重算派生边；若 SSE 重连、丢序或解析失败，则请求当前 draft snapshot 并整体替换本地 nodes，再继续接收后续 patch。
@@ -175,7 +175,7 @@
   - 传入合法且归属当前用户的 `instanceId`：`snapshot_ready` 仍按原契约返回，`tasks_changed` 仅返回该实例相关事件。
   - `instanceId` 非法 UUID 返回 `422`；`instanceId` 不属于当前登录用户返回 `404`。
 - `POST /api/v1/boards/{board_id}/tasks`：创建任务并记录指派信息，创建成功后由应用层触发 OpenClaw `chat.send`。
-- `POST /api/v1/boards/{board_id}/tasks/flow/generate`：启动或续接一次 planner 增量编辑会话，不直接落看板任务；支持可选 `current_nodes/current_edges/planner_session_key` 以在已有流程上增量改图。后端固定以 `claw3` 作为 planner 目标，先持久化用户消息、当前工作流快照与 planner session 状态，再把“历史消息 + 当前快照 + 本次需求 + planner HTTP 接口信息”发送给 `claw3`。响应至少返回 `planner_session_key` 与当前 draft snapshot，不再要求等待完整整图生成结束。
+- `POST /api/v1/boards/{board_id}/tasks/flow/generate`：启动或续接一次 planner 增量编辑会话，不直接落看板任务；支持可选 `current_nodes/current_edges/planner_session_key` 以在已有流程上增量改图。后端固定以 `claw3` 作为 planner 目标，先持久化用户消息、当前工作流快照与 planner session 状态，再把“历史消息 + 当前快照 + 本次需求”发送给 `claw3`。响应至少返回 `planner_session_key` 与当前 draft snapshot，不再要求等待完整整图生成结束。
 - `GET /api/v1/boards/{board_id}/tasks/flow/planner-sse?sessionKey=...`：流程规划 SSE 通道；固定连接 `FlowDecompositionService` 的 `claw3` planner session，除 `snapshot_ready/planner_messages_updated/error` 外，还需推送图补丁事件与快照事件，供流程页在消息流外同步实时改图。
 - 图补丁事件最小集合冻结为 `planner_nodes_patched` 与 `planner_snapshot_updated`：
   - `planner_nodes_patched`：负载包含 `session_key/revision/operations[]`，其中操作仅允许 `upsert_node/delete_node`。
@@ -226,8 +226,8 @@
 - `POST /api/v1/auth/password`：登录态下修改密码（校验 `current_password`，更新 `new_password`）。
 - `GET /api/v1/instances/messages`：读取当前登录用户的消息中心列表（包含回执链接与确认状态）。
 - `POST /api/v1/instances/messages/{message_id}/read`：将消息标记为已读。
-- `POST /api/v1/instances/agent-mount/request`：免登录的 Agent 自助挂载申请，提交 `email + endpoint + gatewayToken`；后端按 email 定位用户并返回 `confirmation_url`，同时投递到用户消息中心。
-- `POST /api/v1/instances/agent-unmount/request`：免登录的 Agent 自助卸载申请，提交 `email + instance_id`；后端校验实例归属并返回 `confirmation_url`，同时投递到用户消息中心。
+- `POST /api/v1/instances/agent-mount/request`：登录态内控挂载申请，提交 `endpoint + gatewayToken (+name/type)`；后端基于当前登录用户创建回执并返回 `confirmation_url`，同时投递到该用户消息中心。
+- `POST /api/v1/instances/agent-unmount/request`：登录态内控卸载申请，提交 `instance_id`；后端基于当前登录用户校验实例归属并返回 `confirmation_url`，同时投递到该用户消息中心。
 - `POST /api/v1/instances/agent-receipts/{token}/confirm`：登录用户确认回执；需校验 token、TTL、一次性消费与“登录用户邮箱=回执目标邮箱”。
 - 删除动作仅保留标准 `DELETE` 契约；不再提供 `POST .../delete` 兜底别名。
 - v0.7 默认单看板，前端默认使用 `board_id=default`。
@@ -256,7 +256,7 @@
 
 ```mermaid
 flowchart LR
-    Client["Web/Tauri Client"] --> Main["app.main"]
+    Client["Web Client"] --> Main["app.main"]
     Main --> TPlanner["app.api.tasks_flow_planner"]
     Main --> TFlowTask["app.api.tasks_flow_task"]
     Main --> TDraft["app.api.tasks_flow_draft"]
@@ -313,12 +313,11 @@ flowchart LR
 
 ### 8.2 任务事件回调配置
 
-- `LINPO_TASK_EVENT_CALLBACK_BASE_URL`：写入任务投放提示词的回调基地址（建议显式配置）。
-- 未显式配置 `LINPO_TASK_EVENT_CALLBACK_BASE_URL` 时，后端会根据实例 endpoint 推导公网回调地址（host 不变，端口默认 `8000`）；若无法推导候选回调地址，任务投放直接失败。
-- `LINPO_TASK_EVENT_CALLBACK_PORT`：未显式配置回调基地址时，推导公网回调地址使用的端口（默认 `8000`）。
+- `LINPO_TASK_EVENT_CALLBACK_BASE_URL`：写入任务投放提示词的回调基地址（必填）。
+- 未配置 `LINPO_TASK_EVENT_CALLBACK_BASE_URL` 时，任务投放直接失败；不再自动推导公网/内网回调地址。
 - `LINPO_TASK_RUN_STALE_SECONDS`：`running` 无 heartbeat 的超时阈值（默认 `900` 秒，最小 `60` 秒）。
 
-### 8.3 Agent 自助挂载回执配置
+### 8.3 挂载回执配置
 
 - `LINPO_PAIRING_RECEIPT_TTL_SECONDS`：挂载/卸载回执有效期（默认 `1800` 秒）。
 - `LINPO_PAIRING_ATTACH_BY_CODE_RATE_LIMIT_WINDOW_SECONDS`：`attach-by-code` 失败计数窗口（默认 `60` 秒）。
@@ -326,11 +325,11 @@ flowchart LR
 - 回执 token 必须一次性消费，确认成功后立即失效。
 - 回执确认必须要求登录态；登录用户邮箱与回执目标邮箱不一致时必须拒绝确认。
 
-## 9. Tauri 构建约束
+## 9. Web 端构建约束
 
-- 前端打包产物可被 Tauri WebView 加载。
-- 桌面端运行时沿用同一套 API 基地址注入机制。
-- 新增 Tauri 配置时不破坏现有 Web 构建脚本。
+- 前端仅提供 Web 构建产物，目标运行形态为 PC 浏览器与移动浏览器。
+- 同一套 API 基地址注入机制同时覆盖 PC 端与移动端 Web。
+- 不再维护 Tauri/桌面壳相关配置、脚本与运行时约束。
 
 ## 10. 迁移纪律
 

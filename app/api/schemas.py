@@ -326,7 +326,6 @@ class InstanceAgentDocListResponse(_CommonCamelResponseModel):
 
 
 class AgentMountRequestPayload(_CommonCamelRequestModel):
-    email: str
     name: str
     type: str
     endpoint: str
@@ -334,7 +333,6 @@ class AgentMountRequestPayload(_CommonCamelRequestModel):
 
 
 class AgentUnmountRequestPayload(_CommonCamelRequestModel):
-    email: str
     instance_id: str
 
 
