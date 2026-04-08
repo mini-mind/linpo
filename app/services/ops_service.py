@@ -15,6 +15,8 @@ _FLOW_DECOMPOSITION_REQUIRED_KEYS = (
     "FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN",
     "FLOW_DECOMPOSITION_OPENCLAW_ORIGIN",
 )
+_FLOW_DECOMPOSITION_PROVIDER_KEY = "FLOW_DECOMPOSITION_PROVIDER"
+_DEFAULT_FLOW_DECOMPOSITION_PROVIDER = "openclaw"
 _OPENCLAW_RUNTIME_REQUIRED_KEYS = (
     "OPENCLAW_BASE_URL",
     "OPENCLAW_GATEWAY_TOKEN",
@@ -145,8 +147,17 @@ class OpsService:
         ]
         openclaw_runtime_configured = len(missing_openclaw_runtime_keys) == 0
 
-        missing_flow_keys = [key for key in _FLOW_DECOMPOSITION_REQUIRED_KEYS if (os.getenv(key) or "").strip() == ""]
-        flow_configured = len(missing_flow_keys) == 0
+        flow_provider = (
+            (os.getenv(_FLOW_DECOMPOSITION_PROVIDER_KEY) or "").strip().lower()
+            or _DEFAULT_FLOW_DECOMPOSITION_PROVIDER
+        )
+        flow_provider_supported = flow_provider == "openclaw"
+        missing_flow_keys = (
+            [key for key in _FLOW_DECOMPOSITION_REQUIRED_KEYS if (os.getenv(key) or "").strip() == ""]
+            if flow_provider == "openclaw"
+            else []
+        )
+        flow_configured = flow_provider_supported and len(missing_flow_keys) == 0
 
         callback_base_url = (os.getenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL") or "").strip()
         callback_base_url_configured = callback_base_url != ""
@@ -200,14 +211,22 @@ class OpsService:
                 key="flow_decomposition_configured",
                 status="ok" if flow_configured else "failed",
                 message=(
-                    "FLOW_DECOMPOSITION_* 已完整配置。"
+                    f"FLOW_DECOMPOSITION 已配置（provider={flow_provider}）。"
                     if flow_configured
-                    else f"缺少 FLOW_DECOMPOSITION 配置: {', '.join(missing_flow_keys)}"
+                    else (
+                        f"FLOW_DECOMPOSITION provider 不受支持: {flow_provider}"
+                        if not flow_provider_supported
+                        else f"缺少 FLOW_DECOMPOSITION 配置: {', '.join(missing_flow_keys)}"
+                    )
                 ),
                 next_step=(
                     ""
                     if flow_configured
-                    else "补齐 FLOW_DECOMPOSITION_OPENCLAW_BASE_URL / FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN / FLOW_DECOMPOSITION_OPENCLAW_ORIGIN。"
+                    else (
+                        "将 FLOW_DECOMPOSITION_PROVIDER 设为当前受支持 provider（openclaw）并重启服务。"
+                        if not flow_provider_supported
+                        else "补齐 FLOW_DECOMPOSITION_OPENCLAW_BASE_URL / FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN / FLOW_DECOMPOSITION_OPENCLAW_ORIGIN。"
+                    )
                 ),
             ),
             OpsCheck(

@@ -31,12 +31,14 @@ def _install_fast_clock(
 
 @pytest.fixture(autouse=True)
 def _set_required_flow_decomposition_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FLOW_DECOMPOSITION_PROVIDER", "openclaw")
+    monkeypatch.setenv("FLOW_DECOMPOSITION_AGENT_ID", "planner-default")
     monkeypatch.setenv("FLOW_DECOMPOSITION_OPENCLAW_BASE_URL", "ws://test-openclaw:38789")
     monkeypatch.setenv("FLOW_DECOMPOSITION_OPENCLAW_ORIGIN", "http://test-openclaw:38789")
     monkeypatch.setenv("FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN", "test-token")
 
 
-def test_decompose_returns_nodes_from_claw3_history_payload() -> None:
+def test_decompose_returns_nodes_from_provider_history_payload() -> None:
     class FakeProviderApplicationService:
         def __init__(self) -> None:
             self.send_calls: list[dict[str, Any]] = []
@@ -66,13 +68,13 @@ def test_decompose_returns_nodes_from_claw3_history_payload() -> None:
 
     result = service.decompose(requirement="做一个发布流程", board_id="default")
 
-    assert result.planner_session_key.startswith("linpo:flow:default:planner:claw3:")
+    assert result.planner_session_key.startswith("linpo:flow:default:planner:planner-default:")
     assert len(result.nodes) == 2
     assert result.nodes[0].id == "a"
     assert result.nodes[1].depends_on == ["a"]
     assert result.nodes[1].sensitive is True
     assert len(fake.send_calls) == 1
-    assert fake.send_calls[0]["agent_id"] == "claw3"
+    assert fake.send_calls[0]["agent_id"] == "planner-default"
     _assert_contains_keywords(
         cast(str, fake.send_calls[0]["message"]),
         ("subagent", "depends_on", "输出路径"),
@@ -106,7 +108,7 @@ def test_decompose_marks_last_node_sensitive_when_missing_flag() -> None:
     assert result.nodes[1].sensitive is True
 
 
-def test_decompose_raises_when_claw3_never_returns_json(
+def test_decompose_raises_when_planner_never_returns_json(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _install_fast_clock(monkeypatch, monotonic_step=61.0)
@@ -196,7 +198,7 @@ def test_decompose_retries_retryable_history_error(
 
         def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
             del kwargs
-            return {"request_id": "req-1", "status": "accepted", "agent_id": "claw3"}
+            return {"request_id": "req-1", "status": "accepted", "agent_id": "planner-default"}
 
         def chat_history(self, **kwargs: Any) -> dict[str, Any]:
             del kwargs
@@ -288,7 +290,7 @@ def test_decompose_supports_incremental_prompt_context_and_reuses_planner_sessio
 
     fake = FakeProviderApplicationService()
     service = FlowDecompositionService(provider_application_service=cast(Any, fake))
-    session_key = "linpo:flow:default:planner:claw3:reuse"
+    session_key = "linpo:flow:default:planner:planner-default:reuse"
 
     result = service.decompose(
         requirement="把验收前置并补并行分支",
@@ -316,11 +318,11 @@ def test_decompose_supports_incremental_prompt_context_and_reuses_planner_sessio
     assert result.nodes[0].description == "旧描述应保留"
 
 
-def test_decompose_rejects_non_claw3_planner_agent_id() -> None:
+def test_decompose_accepts_custom_planner_agent_id() -> None:
     class FakeProviderApplicationService:
         def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
             del kwargs
-            return {"request_id": "req-1", "status": "accepted", "agent_id": "claw3"}
+            return {"request_id": "req-1", "status": "accepted", "agent_id": "planner-x"}
 
         def chat_history(self, **kwargs: Any) -> dict[str, Any]:
             del kwargs
@@ -337,12 +339,12 @@ def test_decompose_rejects_non_claw3_planner_agent_id() -> None:
         provider_application_service=cast(Any, FakeProviderApplicationService())
     )
 
-    with pytest.raises(HTTPException, match="planner_agent_id must be claw3"):
-        service.decompose(
-            requirement="拆解任务",
-            board_id="default",
-            planner_agent_id="main",
-        )
+    result = service.decompose(
+        requirement="拆解任务",
+        board_id="default",
+        planner_agent_id="planner-x",
+    )
+    assert result.planner_session_key.startswith("linpo:flow:default:planner:planner-x:")
 
 
 def test_dispatch_planner_returns_session_key_without_waiting() -> None:
@@ -356,7 +358,7 @@ def test_dispatch_planner_returns_session_key_without_waiting() -> None:
 
     fake = FakeProviderApplicationService()
     service = FlowDecompositionService(provider_application_service=cast(Any, fake))
-    session_key = "linpo:flow:default:planner:claw3:fast"
+    session_key = "linpo:flow:default:planner:planner-default:fast"
 
     dispatch = service.dispatch_planner(
         requirement="快速生成当前草图",
@@ -367,7 +369,7 @@ def test_dispatch_planner_returns_session_key_without_waiting() -> None:
     )
 
     assert dispatch.planner_session_key == session_key
-    assert dispatch.planner_agent_id == "claw3"
+    assert dispatch.planner_agent_id == "planner-default"
     assert len(fake.send_calls) == 1
     assert fake.send_calls[0]["session_key"] == session_key
 
@@ -383,11 +385,11 @@ def test_snapshot_from_history_messages_returns_latest_valid_snapshot() -> None:
                 "text": '{"nodes":[{"id":"n1","title":"步骤1","description":"说明","depends_on":[],"sensitive":false},{"id":"n2","title":"步骤2","description":"依赖步骤1","depends_on":["n1"],"sensitive":true}]}',
             },
         ],
-        planner_session_key="linpo:flow:default:planner:claw3:test",
+        planner_session_key="linpo:flow:default:planner:planner-default:test",
     )
 
     assert snapshot is not None
-    assert snapshot.planner_session_key == "linpo:flow:default:planner:claw3:test"
+    assert snapshot.planner_session_key == "linpo:flow:default:planner:planner-default:test"
     assert [node.id for node in snapshot.nodes] == ["n1", "n2"]
     assert snapshot.nodes[1].depends_on == ["n1"]
 
@@ -421,8 +423,8 @@ def test_build_execution_context_succeeds_with_required_envs() -> None:
 
     assert context.adapter is not None
     assert context.cache_key == (
-        "flow-decomposer-claw3",
+        "flow-decomposer-openclaw",
         "ws://test-openclaw:38789",
         "http://test-openclaw:38789",
-        "claw3",
+        "planner-default",
     )

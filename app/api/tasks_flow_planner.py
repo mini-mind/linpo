@@ -55,7 +55,7 @@ from app.services.provider_application_service import ProviderApplicationService
 
 router = APIRouter(prefix="/boards/{board_id}/tasks")
 
-_FLOW_PLANNER_AGENT_ID = "claw3"
+_FLOW_PLANNER_AGENT_ID = "planner"
 _FLOW_PLANNER_SSE_POLL_INTERVAL_SECONDS = 0.6
 _FLOW_PLANNER_SSE_KEEPALIVE_SECONDS = 12.0
 _MISSING = object()
@@ -133,16 +133,11 @@ def _require_node_depends_on(
     return _normalize_depends_on(raw_depends_on)
 
 
-def _resolve_flow_planner_agent_id(raw: str | None) -> str:
+def _resolve_flow_planner_agent_id(raw: str | None, *, default_agent_id: str) -> str:
     value = (raw or "").strip()
     if value == "":
-        return _FLOW_PLANNER_AGENT_ID
-    if value != _FLOW_PLANNER_AGENT_ID:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"planner_agent_id must be {_FLOW_PLANNER_AGENT_ID}",
-        )
-    return _FLOW_PLANNER_AGENT_ID
+        return default_agent_id
+    return value
 
 
 def _planner_snapshot_nodes_to_canvas_nodes(nodes: list[dict[str, object]]) -> list[FlowCanvasNode]:
@@ -402,7 +397,10 @@ def generate_flow(
     requirement = payload.requirement.strip()
     if not requirement:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="requirement is required")
-    planner_agent_id = _resolve_flow_planner_agent_id(payload.planner_agent_id)
+    planner_agent_id = _resolve_flow_planner_agent_id(
+        payload.planner_agent_id,
+        default_agent_id=flow_decomposition_service.resolve_planner_agent_id(None),
+    )
     normalized_current_nodes = _normalize_canvas_nodes(
         nodes=payload.current_nodes,
         edges=payload.current_edges,
@@ -873,8 +871,8 @@ def stop_flow_planner(
         session_key=payload.planner_session_key,
     )
     try:
-        provider_application_service.pause_agent(
-            data_source="openclaw",
+        provider_application_service.pause_agent_for_provider(
+            data_source=flow_decomposition_service.decomposition_provider_name(),
             execution_context=flow_decomposition_service.build_realtime_execution_context(),
             agent_id=snapshot.planner_agent_id,
             session_key=snapshot.session_key,

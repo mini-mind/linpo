@@ -639,7 +639,7 @@ def test_flow_generate_starts_persistent_planner_session(
     assert list_payload == []
 
 
-def test_flow_generate_rejects_non_claw3_planner_agent(
+def test_flow_generate_accepts_custom_planner_agent(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -652,6 +652,15 @@ def test_flow_generate_rejects_non_claw3_planner_agent(
         endpoint="http://175.178.213.10:18789",
         gateway_token="token-flow-guard",
     )
+    from app.services.flow_decomposition_service import FlowPlannerDispatch
+
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.dispatch_planner",
+        lambda self, **kwargs: FlowPlannerDispatch(
+            planner_agent_id="planner-x",
+            planner_session_key="linpo:flow:default:planner:planner-x",
+        ),
+    )
 
     status_code, _, payload = _request_json(
         "POST",
@@ -660,14 +669,14 @@ def test_flow_generate_rejects_non_claw3_planner_agent(
             "requirement": "拆解上线计划",
             "instance_id": instance["id"],
             "executor_agent_id": "agent-executor",
-            "planner_agent_id": "main",
+            "planner_agent_id": "planner-x",
             "manager_agent_id": "agent-manager",
         },
         auth_cookie,
     )
 
-    assert status_code == 400
-    assert payload["detail"] == "planner_agent_id must be claw3"
+    assert status_code == 200
+    assert payload["plannerSessionKey"].startswith("linpo:flow:default:planner:planner-x")
 
 
 def test_flow_generate_prompt_includes_history_workflow_json_and_planner_http_interface(
@@ -699,7 +708,7 @@ def test_flow_generate_prompt_includes_history_workflow_json_and_planner_http_in
         }
 
     monkeypatch.setattr(
-        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
+        "app.services.provider_application_service.ProviderApplicationService.send_chat_message_for_provider",
         fake_send_chat_message,
     )
 

@@ -51,6 +51,13 @@ class ProviderApplicationService:
             cache_key=instance_context.cache_key,
         )
 
+    def build_default_execution_context(self, provider_name: str) -> ProviderExecutionContext:
+        adapter = self._provider_registry.create_adapter(provider_name)
+        return ProviderExecutionContext(
+            adapter=adapter,
+            cache_key=adapter.config_key(),
+        )
+
     def resolve_observer_data_source(
         self,
         data_source: str | None,
@@ -283,6 +290,84 @@ class ProviderApplicationService:
         )
         return self._payload_or_raise(result)
 
+    def send_chat_message_for_provider(
+        self,
+        *,
+        data_source: str,
+        execution_context: ProviderExecutionContext | None,
+        agent_id: str,
+        message: str,
+        session_key: str | None,
+    ) -> dict[str, Any]:
+        result = self._adapter_for_provider(
+            data_source=data_source,
+            execution_context=execution_context,
+        ).chat_send(
+            to_domain_request(
+                request_id=_provider_request_id(),
+                capability=DomainProviderCapability.SESSION_CONTROL,
+            ),
+            agent_id=agent_id,
+            message=message,
+            session_key=session_key,
+        )
+        payload = self._payload_or_raise(result)
+        request_id = payload.get("request_id")
+        return {
+            "request_id": request_id if isinstance(request_id, str) and request_id else _provider_request_id(),
+            "agent_id": str(payload.get("agent_id", agent_id)),
+            "status": str(payload.get("status", "accepted")),
+            "message": payload.get("message"),
+        }
+
+    def chat_history_for_provider(
+        self,
+        *,
+        data_source: str,
+        execution_context: ProviderExecutionContext | None,
+        session_key: str,
+        limit: int,
+    ) -> dict[str, Any]:
+        result = self._adapter_for_provider(
+            data_source=data_source,
+            execution_context=execution_context,
+        ).chat_history(
+            to_domain_request(
+                request_id=_provider_request_id(),
+                capability=DomainProviderCapability.SESSION_READ,
+            ),
+            session_key=session_key,
+            limit=limit,
+        )
+        return self._payload_or_raise(result)
+
+    def pause_agent_for_provider(
+        self,
+        *,
+        data_source: str,
+        execution_context: ProviderExecutionContext | None,
+        agent_id: str,
+        session_key: str | None,
+    ) -> dict[str, Any]:
+        result = self._adapter_for_provider(
+            data_source=data_source,
+            execution_context=execution_context,
+        ).chat_pause(
+            to_domain_request(
+                request_id=_provider_request_id(),
+                capability=DomainProviderCapability.SESSION_CONTROL,
+            ),
+            agent_id=agent_id,
+            session_key=session_key,
+        )
+        payload = self._payload_or_raise(result)
+        request_id = payload.get("request_id")
+        return {
+            "request_id": request_id if isinstance(request_id, str) and request_id else _provider_request_id(),
+            "agent_id": str(payload.get("agent_id", agent_id)),
+            "status": str(payload.get("status", "accepted")),
+        }
+
     def list_agent_docs(
         self,
         *,
@@ -425,6 +510,25 @@ class ProviderApplicationService:
         if execution_context is not None:
             return execution_context.adapter
         return self._provider_registry.create_adapter("openclaw")
+
+    def _adapter_for_provider(
+        self,
+        *,
+        data_source: str,
+        execution_context: ProviderExecutionContext | None,
+    ) -> ProviderAdapter:
+        normalized_data_source = data_source.strip().lower()
+        if normalized_data_source == "":
+            raise HTTPException(status_code=503, detail="provider data source is required")
+        if execution_context is not None:
+            return execution_context.adapter
+        try:
+            return self._provider_registry.create_adapter(normalized_data_source)
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Unsupported provider data source: {normalized_data_source}",
+            ) from exc
 
     def _payload_or_raise(self, result: ProviderPayloadResult) -> dict[str, Any]:
         error = result.response.error

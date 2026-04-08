@@ -12,6 +12,7 @@ from fastapi import HTTPException
 
 from app.adapters.provider_adapter import ProviderAdapter
 from app.adapters.openclaw_adapter import OpenClawAdapter
+from app.adapters.provider_registry import ProviderRegistry, build_default_provider_registry
 from app.services.openclaw_client import OpenClawClient
 from app.services.provider_application_service import (
     ProviderApplicationService,
@@ -19,6 +20,7 @@ from app.services.provider_application_service import (
 )
 
 
+_DEFAULT_DECOMPOSITION_PROVIDER = "openclaw"
 _DEFAULT_DECOMPOSITION_AGENT_ID = "claw3"
 _DEFAULT_HISTORY_LIMIT = 60
 _DEFAULT_MAX_NODES = 12
@@ -53,8 +55,10 @@ class FlowDecompositionService:
         self,
         *,
         provider_application_service: ProviderApplicationService | None = None,
+        provider_registry: ProviderRegistry | None = None,
     ) -> None:
         self._provider_application_service = provider_application_service or ProviderApplicationService()
+        self._provider_registry = provider_registry or build_default_provider_registry()
 
     def decompose(
         self,
@@ -88,7 +92,8 @@ class FlowDecompositionService:
             planner_api_token=planner_api_token,
         )
         assistant_message = self._wait_for_assistant_json(
-            context=self._build_claw3_execution_context(),
+            provider_name=self.decomposition_provider_name(),
+            context=self.build_realtime_execution_context(),
             session_key=dispatch.planner_session_key,
             planner_agent_id=dispatch.planner_agent_id,
         )
@@ -100,6 +105,12 @@ class FlowDecompositionService:
 
     def build_realtime_execution_context(self) -> ProviderExecutionContext:
         return self._build_claw3_execution_context()
+
+    def decomposition_provider_name(self) -> str:
+        return self._decomposition_provider_name()
+
+    def resolve_planner_agent_id(self, planner_agent_id: str | None) -> str:
+        return self._resolve_planner_agent_id(planner_agent_id)
 
     def dispatch_planner(
         self,
@@ -123,6 +134,7 @@ class FlowDecompositionService:
         normalized_planner_session_key = self._normalize_planner_session_key(
             board_id=board_id,
             planner_session_key=planner_session_key,
+            planner_agent_id=normalized_planner_agent_id,
         )
         prompt = self._build_decomposition_prompt(
             normalized_requirement,
@@ -137,9 +149,9 @@ class FlowDecompositionService:
         )
 
         try:
-            self._provider_application_service.send_chat_message(
-                data_source="openclaw",
-                execution_context=self._build_claw3_execution_context(),
+            self._send_chat_message(
+                provider_name=self.decomposition_provider_name(),
+                execution_context=self.build_realtime_execution_context(),
                 agent_id=normalized_planner_agent_id,
                 message=prompt,
                 session_key=normalized_planner_session_key,
@@ -161,10 +173,10 @@ class FlowDecompositionService:
         current_nodes: list[dict[str, Any]] | None = None,
         limit: int = _DEFAULT_HISTORY_LIMIT,
     ) -> FlowDecompositionResult | None:
-        context = self._build_claw3_execution_context()
+        context = self.build_realtime_execution_context()
         try:
-            history_payload = self._provider_application_service.chat_history(
-                data_source="openclaw",
+            history_payload = self._chat_history(
+                provider_name=self.decomposition_provider_name(),
                 execution_context=context,
                 session_key=planner_session_key,
                 limit=limit,
@@ -208,29 +220,48 @@ class FlowDecompositionService:
             )
         return None
 
-    def _build_claw3_execution_context(self) -> ProviderExecutionContext:
-        base_url = self._decomposition_base_url()
-        token = self._decomposition_gateway_token()
-        origin = self._decomposition_origin()
+    def _build_flow_decomposition_execution_context(self) -> ProviderExecutionContext:
+        provider_name = self._decomposition_provider_name()
+        if provider_name == "openclaw":
+            base_url = self._decomposition_base_url()
+            token = self._decomposition_gateway_token()
+            origin = self._decomposition_origin()
 
-        client = OpenClawClient(
-            base_url=base_url,
-            gateway_token=token,
-            origin=origin,
-        )
-        adapter = OpenClawAdapter(
-            client=client,
-            instance_id="flow-decomposer-claw3",
-            instance_name="claw3",
-        )
+            client = OpenClawClient(
+                base_url=base_url,
+                gateway_token=token,
+                origin=origin,
+            )
+            adapter = OpenClawAdapter(
+                client=client,
+                instance_id=f"flow-decomposer-{self._decomposition_agent_id()}",
+                instance_name=self._decomposition_agent_id(),
+            )
+            return ProviderExecutionContext(
+                adapter=cast(ProviderAdapter, adapter),
+                cache_key=(f"flow-decomposer-{provider_name}", base_url, origin, self._decomposition_agent_id()),
+            )
+
+        try:
+            adapter = self._provider_registry.create_adapter(provider_name)
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Flow decomposition provider is not supported: {provider_name}",
+            ) from exc
         return ProviderExecutionContext(
-            adapter=cast(ProviderAdapter, adapter),
-            cache_key=("flow-decomposer-claw3", base_url, origin, self._decomposition_agent_id()),
+            adapter=adapter,
+            cache_key=(f"flow-decomposer-{provider_name}", *adapter.config_key()),
         )
+
+    # keep stable test seam name
+    def _build_claw3_execution_context(self) -> ProviderExecutionContext:
+        return self._build_flow_decomposition_execution_context()
 
     def _wait_for_assistant_json(
         self,
         *,
+        provider_name: str,
         context: ProviderExecutionContext,
         session_key: str,
         planner_agent_id: str,
@@ -240,8 +271,8 @@ class FlowDecompositionService:
         deadline = time.monotonic() + max(_DEFAULT_POLL_TIMEOUT_SECONDS, 0.0)
         while True:
             try:
-                payload = self._provider_application_service.chat_history(
-                    data_source="openclaw",
+                payload = self._chat_history(
+                    provider_name=provider_name,
                     execution_context=context,
                     session_key=session_key,
                     limit=_DEFAULT_HISTORY_LIMIT,
@@ -269,8 +300,8 @@ class FlowDecompositionService:
                         signature not in repaired_signatures
                         and repair_attempts < _DEFAULT_JSON_REPAIR_ATTEMPTS
                     ):
-                        self._provider_application_service.send_chat_message(
-                            data_source="openclaw",
+                        self._send_chat_message(
+                            provider_name=provider_name,
                             execution_context=context,
                             agent_id=planner_agent_id,
                             message=self._build_json_repair_prompt(text),
@@ -285,7 +316,7 @@ class FlowDecompositionService:
 
         raise HTTPException(
             status_code=503,
-            detail="Flow decomposition failed: claw3 did not return structured JSON",
+            detail=f"Flow decomposition failed: {planner_agent_id} did not return structured JSON",
         )
 
     def _normalize_planner_session_key(
@@ -293,11 +324,12 @@ class FlowDecompositionService:
         *,
         board_id: str,
         planner_session_key: str | None,
+        planner_agent_id: str,
     ) -> str:
         return (
             planner_session_key.strip()
             if isinstance(planner_session_key, str) and planner_session_key.strip()
-            else f"linpo:flow:{board_id}:planner:claw3:{uuid4().hex[:8]}"
+            else f"linpo:flow:{board_id}:planner:{planner_agent_id}:{uuid4().hex[:8]}"
         )
 
     def _parse_nodes_from_message(
@@ -581,6 +613,65 @@ class FlowDecompositionService:
                 result[node_id] = description
         return result
 
+    def _send_chat_message(
+        self,
+        *,
+        provider_name: str,
+        execution_context: ProviderExecutionContext,
+        agent_id: str,
+        message: str,
+        session_key: str | None,
+    ) -> dict[str, Any]:
+        if hasattr(self._provider_application_service, "send_chat_message_for_provider"):
+            return cast(
+                dict[str, Any],
+                self._provider_application_service.send_chat_message_for_provider(
+                    data_source=provider_name,
+                    execution_context=execution_context,
+                    agent_id=agent_id,
+                    message=message,
+                    session_key=session_key,
+                ),
+            )
+        return cast(
+            dict[str, Any],
+            self._provider_application_service.send_chat_message(
+                data_source=provider_name,
+                execution_context=execution_context,
+                agent_id=agent_id,
+                message=message,
+                session_key=session_key,
+            ),
+        )
+
+    def _chat_history(
+        self,
+        *,
+        provider_name: str,
+        execution_context: ProviderExecutionContext,
+        session_key: str,
+        limit: int,
+    ) -> dict[str, Any]:
+        if hasattr(self._provider_application_service, "chat_history_for_provider"):
+            return cast(
+                dict[str, Any],
+                self._provider_application_service.chat_history_for_provider(
+                    data_source=provider_name,
+                    execution_context=execution_context,
+                    session_key=session_key,
+                    limit=limit,
+                ),
+            )
+        return cast(
+            dict[str, Any],
+            self._provider_application_service.chat_history(
+                data_source=provider_name,
+                execution_context=execution_context,
+                session_key=session_key,
+                limit=limit,
+            ),
+        )
+
     def _required_flow_decomposition_env(self, env_name: str) -> str:
         value = os.getenv(env_name, "").strip()
         if value == "":
@@ -599,14 +690,20 @@ class FlowDecompositionService:
     def _decomposition_gateway_token(self) -> str:
         return self._required_flow_decomposition_env("FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN")
 
+    def _decomposition_provider_name(self) -> str:
+        value = os.getenv("FLOW_DECOMPOSITION_PROVIDER", "").strip().lower()
+        if value == "":
+            return _DEFAULT_DECOMPOSITION_PROVIDER
+        return value
+
     def _decomposition_agent_id(self) -> str:
-        return _DEFAULT_DECOMPOSITION_AGENT_ID
+        value = os.getenv("FLOW_DECOMPOSITION_AGENT_ID", "").strip()
+        if value == "":
+            return _DEFAULT_DECOMPOSITION_AGENT_ID
+        return value
 
     def _resolve_planner_agent_id(self, planner_agent_id: str | None) -> str:
-        expected = self._decomposition_agent_id()
         candidate = (planner_agent_id or "").strip()
         if candidate == "":
-            return expected
-        if candidate != expected:
-            raise HTTPException(status_code=400, detail=f"planner_agent_id must be {expected}")
-        return expected
+            return self._decomposition_agent_id()
+        return candidate

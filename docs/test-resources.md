@@ -18,7 +18,7 @@
 - 本地开发为前端 + 后端进程本机运行，分别监听 5173 / 8000；数据库通过 Docker（宿主机端口 40193）。
 - OpenClaw 联调实例通常运行于 Docker 容器（如 `claw1` / `claw2` / `claw3`）。
 - v0.7 联调实例按当前配对与环境配置选择，不在文档约定默认实例。
-- v0.7 流程拆解服务实例由 `FLOW_DECOMPOSITION_*` 显式配置决定（后端服务化拆解）。
+- v0.7 流程拆解服务由 `FLOW_DECOMPOSITION_PROVIDER + FLOW_DECOMPOSITION_*` 显式配置决定（后端服务化拆解）。
 
 ## 角色分工
 
@@ -78,10 +78,11 @@
 | `OPENCLAW_BASE_URL` | OpenClaw 网关地址（按部署环境显式配置） |
 | `OPENCLAW_GATEWAY_TOKEN` | OpenClaw 网关令牌 |
 | `OPENCLAW_ORIGIN` | OpenClaw 请求来源标识 |
-| `FLOW_DECOMPOSITION_OPENCLAW_BASE_URL` | 流程拆解服务网关地址（必须显式配置） |
-| `FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN` | 流程拆解服务网关令牌 |
-| `FLOW_DECOMPOSITION_OPENCLAW_ORIGIN` | 流程拆解服务 Origin |
-| `FLOW_DECOMPOSITION_AGENT_ID` | 已废弃；拆解服务 agent 固定为 `claw3` |
+| `FLOW_DECOMPOSITION_PROVIDER` | 流程拆解 provider（默认 `openclaw`） |
+| `FLOW_DECOMPOSITION_AGENT_ID` | 流程拆解默认 planner agent（默认 `claw3`） |
+| `FLOW_DECOMPOSITION_OPENCLAW_BASE_URL` | 当 provider=`openclaw` 时必填：拆解服务网关地址 |
+| `FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN` | 当 provider=`openclaw` 时必填：拆解服务网关令牌 |
+| `FLOW_DECOMPOSITION_OPENCLAW_ORIGIN` | 当 provider=`openclaw` 时必填：拆解服务 Origin |
 | `LINPO_TASK_EVENT_CALLBACK_BASE_URL` | 任务事件回调地址基座（必填）；留空时任务投放直接失败 |
 | `LINPO_TASK_RUN_STALE_SECONDS` | `running` 任务无 heartbeat 的超时阈值（秒） |
 
