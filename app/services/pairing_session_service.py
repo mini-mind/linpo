@@ -10,7 +10,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import Instance, PairingSession
+from app.db.models import Instance, PairingAttachByCodeFailure, PairingSession
 from app.services.instance_service import (
     InstanceCreateInput,
     InstanceService,
@@ -22,6 +22,8 @@ _MIN_TTL_SECONDS = 60
 _MAX_TTL_SECONDS = 3600
 _SHORT_CODE_ALPHABET = string.ascii_uppercase + string.digits
 _SHORT_CODE_LEN = 8
+_ATTACH_BY_CODE_RATE_LIMIT_WINDOW_SECONDS = 60
+_ATTACH_BY_CODE_RATE_LIMIT_MAX_FAILURES = 8
 
 
 def _utc_now() -> datetime:
@@ -79,6 +81,10 @@ class PairingSessionNotFoundError(Exception):
 
 
 class PairingSessionExpiredError(Exception):
+    pass
+
+
+class PairingSessionAttachRateLimitError(Exception):
     pass
 
 
@@ -189,22 +195,43 @@ class PairingSessionService:
         db_session: Session,
         *,
         short_code: str,
+        client_ip: str,
         endpoint: str,
         gateway_token: str,
         name: str | None,
     ) -> PairingSessionSnapshot:
-        session = db_session.execute(
-            select(PairingSession).where(PairingSession.short_code == short_code.strip().upper())
-        ).scalar_one_or_none()
+        normalized_short_code = short_code.strip().upper()
+        client_key = self._attach_attempt_key(client_ip=client_ip, short_code=normalized_short_code)
+        self._ensure_attach_by_code_not_rate_limited(db_session, key=client_key)
+
+        session = db_session.execute(select(PairingSession).where(PairingSession.short_code == normalized_short_code)).scalar_one_or_none()
         if session is None:
+            self._record_attach_by_code_failure(
+                db_session,
+                key=client_key,
+                client_ip=client_ip,
+                short_code=normalized_short_code,
+            )
             raise PairingSessionNotFoundError
-        return self.attach(
-            db_session,
-            session_id=session.id,
-            endpoint=endpoint,
-            gateway_token=gateway_token,
-            name=name,
-        )
+        try:
+            attached = self.attach(
+                db_session,
+                session_id=session.id,
+                endpoint=endpoint,
+                gateway_token=gateway_token,
+                name=name,
+            )
+        except Exception:
+            self._record_attach_by_code_failure(
+                db_session,
+                key=client_key,
+                client_ip=client_ip,
+                short_code=normalized_short_code,
+            )
+            raise
+
+        self._clear_attach_by_code_failures(db_session, key=client_key)
+        return attached
 
     def _maybe_expire_session(self, db_session: Session, session: PairingSession) -> None:
         now = _coerce_utc_datetime(_utc_now())
@@ -251,3 +278,99 @@ class PairingSessionService:
             ).scalar_one_or_none()
             if exists is None:
                 return short_code
+
+    def _attach_attempt_key(self, *, client_ip: str, short_code: str) -> str:
+        normalized_ip = client_ip.strip() or "unknown"
+        normalized_code = short_code.strip().upper()
+        return f"{normalized_ip}:{normalized_code}"
+
+    def _read_rate_limit_window_seconds(self) -> int:
+        raw_value = (os.getenv("LINPO_PAIRING_ATTACH_BY_CODE_RATE_LIMIT_WINDOW_SECONDS") or "").strip()
+        if raw_value == "":
+            return _ATTACH_BY_CODE_RATE_LIMIT_WINDOW_SECONDS
+        try:
+            parsed = int(raw_value)
+        except ValueError:
+            return _ATTACH_BY_CODE_RATE_LIMIT_WINDOW_SECONDS
+        return max(1, parsed)
+
+    def _read_rate_limit_max_failures(self) -> int:
+        raw_value = (os.getenv("LINPO_PAIRING_ATTACH_BY_CODE_RATE_LIMIT_MAX_FAILURES") or "").strip()
+        if raw_value == "":
+            return _ATTACH_BY_CODE_RATE_LIMIT_MAX_FAILURES
+        try:
+            parsed = int(raw_value)
+        except ValueError:
+            return _ATTACH_BY_CODE_RATE_LIMIT_MAX_FAILURES
+        return max(1, parsed)
+
+    def _ensure_attach_by_code_not_rate_limited(self, db_session: Session, *, key: str) -> None:
+        now = _coerce_utc_datetime(_utc_now())
+        window_seconds = self._read_rate_limit_window_seconds()
+        max_failures = self._read_rate_limit_max_failures()
+        record = db_session.execute(
+            select(PairingAttachByCodeFailure).where(PairingAttachByCodeFailure.key == key)
+        ).scalar_one_or_none()
+        if record is None:
+            return
+
+        window_started_at = _coerce_utc_datetime(record.window_started_at)
+        if now > (window_started_at + timedelta(seconds=window_seconds)):
+            db_session.delete(record)
+            db_session.commit()
+            return
+
+        if int(record.failure_count) >= max_failures:
+            raise PairingSessionAttachRateLimitError
+
+    def _record_attach_by_code_failure(
+        self,
+        db_session: Session,
+        *,
+        key: str,
+        client_ip: str,
+        short_code: str,
+    ) -> None:
+        now = _coerce_utc_datetime(_utc_now())
+        window_seconds = self._read_rate_limit_window_seconds()
+        record = db_session.execute(
+            select(PairingAttachByCodeFailure).where(PairingAttachByCodeFailure.key == key)
+        ).scalar_one_or_none()
+        if record is None:
+            db_session.add(
+                PairingAttachByCodeFailure(
+                    key=key,
+                    client_ip=client_ip.strip() or "unknown",
+                    short_code=short_code.strip().upper(),
+                    failure_count=1,
+                    window_started_at=now,
+                    last_failed_at=now,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            db_session.commit()
+            return
+
+        window_started_at = _coerce_utc_datetime(record.window_started_at)
+        if now > (window_started_at + timedelta(seconds=window_seconds)):
+            record.failure_count = 1
+            record.window_started_at = now
+        else:
+            record.failure_count = int(record.failure_count) + 1
+
+        record.client_ip = client_ip.strip() or "unknown"
+        record.short_code = short_code.strip().upper()
+        record.last_failed_at = now
+        record.updated_at = now
+        db_session.add(record)
+        db_session.commit()
+
+    def _clear_attach_by_code_failures(self, db_session: Session, *, key: str) -> None:
+        record = db_session.execute(
+            select(PairingAttachByCodeFailure).where(PairingAttachByCodeFailure.key == key)
+        ).scalar_one_or_none()
+        if record is None:
+            return
+        db_session.delete(record)
+        db_session.commit()

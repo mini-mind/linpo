@@ -53,4 +53,4 @@ jobs:
 
       - name: Run deployed core-path smoke
         run: |
-          PLAYWRIGHT_BASE_URL="${TARGET_BASE_URL}" npm run e2e -- e2e/deployed-core-path.smoke.spec.ts
+          PLAYWRIGHT_BASE_URL="${TARGET_BASE_URL}" npm run e2e -- e2e/deployed/core-path.deployed.spec.ts

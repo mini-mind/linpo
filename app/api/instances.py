@@ -74,6 +74,7 @@ from app.services.pairing_receipt_service import (
 )
 from app.services.instance_validator import InstanceValidationErrorCode
 from app.services.pairing_session_service import (
+    PairingSessionAttachRateLimitError,
     PairingSessionExpiredError,
     PairingSessionNotFoundError,
     PairingSessionService,
@@ -917,18 +918,28 @@ def attach_pairing_session(
     responses={400: {"model": InstanceValidationErrorResponse}},
 )
 def attach_pairing_session_by_code(
+    request: Request,
     payload: PairingSessionAttachByCodeRequest,
     db_session: Session = Depends(get_session),
     pairing_session_service: PairingSessionService = Depends(get_pairing_session_service),
 ) -> PairingSessionResponse | JSONResponse:
+    client_host = request.client.host if request.client is not None else ""
+    if client_host is None:
+        client_host = ""
     try:
         paired = pairing_session_service.attach_by_short_code(
             db_session,
             short_code=payload.short_code,
+            client_ip=client_host,
             endpoint=payload.endpoint,
             gateway_token=payload.gateway_token,
             name=payload.name,
         )
+    except PairingSessionAttachRateLimitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="too many failed attach attempts for this short code",
+        ) from exc
     except PairingSessionNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="pairing session not found") from exc
     except PairingSessionExpiredError as exc:

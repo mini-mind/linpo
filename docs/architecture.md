@@ -210,13 +210,15 @@
 - `GET /api/v1/instances/{instance_id}/agent-docs/download`：下载指定 Agent 文档内容。
 - `GET /api/v1/summary/topology`：实例列表详情态用于构建关系树（实例节点、Agent 节点、Session 节点），前端按选中实例筛选并渲染。
 - `GET /api/v1/summary/overview`：摘要页与看板页的聚合入口，返回实例诊断、事件流、总 token 与按实例分组的 token 曲线样本。
-- `GET /api/v1/ops/setup`：私有化部署配置检查入口；返回必填运行配置检查结果（仅状态，不回传明文敏感值）、实例接入状态与可执行修复建议。
-- `GET /api/v1/ops/diagnostics`：私有化部署诊断导出入口；返回可复制的脱敏诊断信息（版本、配置检查摘要、实例连通性、最近错误上下文与 requestId），用于工单/群内协同排障。
+- `GET /api/v1/agents*`：Observer 只读查询接口；必须登录后访问，且必须显式携带 `instanceId`（归属当前用户）；缺失直接返回 `400`。
+- `GET/POST/PATCH/DELETE /api/v1/chat/**`：会话读写与控制接口；必须登录后访问，且必须显式携带 `instanceId`（归属当前用户）；缺失直接返回 `400`。
+- `GET /api/v1/ops/setup`：私有化部署配置检查入口；返回必填运行配置检查结果（仅状态，不回传明文敏感值）、实例接入状态与可执行修复建议。必查项至少包含：`LINPO_DATABASE_URL`、`LINPO_SECRET_ENCRYPTION_KEY`、`OPENCLAW_BASE_URL/OPENCLAW_GATEWAY_TOKEN/OPENCLAW_ORIGIN`、`FLOW_DECOMPOSITION_OPENCLAW_*`、`LINPO_TASK_EVENT_CALLBACK_BASE_URL` 与实例绑定状态。
+- `GET /api/v1/ops/diagnostics`：私有化部署诊断导出入口；返回可复制的脱敏诊断信息（版本、配置检查摘要、实例连通性、最近错误上下文与 requestId），用于工单/群内协同排障。`latestErrorContext` 仅表达配置检查失败首项；当配置检查均通过但实例状态/连通性异常时，`recentErrorContext` 返回 `instance_connectivity_degraded` 告警，提示优先排查 endpoint 与网关令牌。
 - `POST /api/v1/instances/pairing-sessions`：登录用户创建配对会话，返回 `session_id + short_code + pairing_url + expires_at`。
 - `pairing_url` 统一返回协议短链 `linpo://pair?code=...`，用于复制转发给 OpenClaw；前端不再提供扫码页面入口。
 - `GET /api/v1/instances/pairing-sessions/{session_id}`：登录用户查询配对会话状态（`pending/attached/bound/expired/failed`）与已绑定实例摘要。
 - `POST /api/v1/instances/pairing-sessions/{session_id}/attach`：免登录 attach 入口，OpenClaw 侧提交 `endpoint + gatewayToken (+instanceName)` 绑定到会话；后端完成校验并落库实例，状态推进为 `bound`。
-- `POST /api/v1/instances/pairing-sessions/attach-by-code`：免登录短码 attach 入口，OpenClaw 侧仅持有 `short_code` 时也可提交 `endpoint + gatewayToken (+instanceName)` 完成绑定，避免用户暴露 `session_id`。
+- `POST /api/v1/instances/pairing-sessions/attach-by-code`：免登录短码 attach 入口，OpenClaw 侧仅持有 `short_code` 时也可提交 `endpoint + gatewayToken (+instanceName)` 完成绑定，避免用户暴露 `session_id`；该入口按 `client_ip + short_code` 执行失败次数限流，限流状态持久化在数据库中（支持多进程/多实例共享），命中返回 `429`。
 - `POST /api/v1/auth/register`：注册请求需包含 `username + email + password`，邮箱全局唯一。
 - `POST /api/v1/auth/login`：登录请求支持 `identifier(用户名或邮箱) + password`。
 - 兼容输入分支已清理：`identifier-only`、`requirement_title-only`、`depends_on-only` 均不再作为可接受输入；请求必须满足当前主契约字段要求，缺失或别名输入按校验失败处理（4xx）。
@@ -319,6 +321,8 @@ flowchart LR
 ### 8.3 Agent 自助挂载回执配置
 
 - `LINPO_PAIRING_RECEIPT_TTL_SECONDS`：挂载/卸载回执有效期（默认 `1800` 秒）。
+- `LINPO_PAIRING_ATTACH_BY_CODE_RATE_LIMIT_WINDOW_SECONDS`：`attach-by-code` 失败计数窗口（默认 `60` 秒）。
+- `LINPO_PAIRING_ATTACH_BY_CODE_RATE_LIMIT_MAX_FAILURES`：窗口内最大失败次数（默认 `8` 次）；超过后返回 `429`。
 - 回执 token 必须一次性消费，确认成功后立即失效。
 - 回执确认必须要求登录态；登录用户邮箱与回执目标邮箱不一致时必须拒绝确认。
 
@@ -333,6 +337,7 @@ flowchart LR
 - 多页 IA 相关入口在 v0.7 迁移后不再作为主路径维护。
 - 旧页面能力如需保留，仅作为过渡代码，不作为产品契约。
 - 文档与实现不一致时先修文档或修实现，禁止长期漂移。
+- `instanceId` 约束已收敛为单一严格模式：前后端统一要求 `agents/chat` 请求必须携带 `instanceId`，不再保留观测阶段或兼容分支。
 
 ## 11. 后端重构终局设计（2026-04）
 

@@ -26,7 +26,10 @@ jobs:
       - name: Backend syntax gate
         run: |
           python -m py_compile \
-            app/api/tasks.py \
+            app/api/tasks_runtime.py \
+            app/api/tasks_flow_task.py \
+            app/api/tasks_flow_planner.py \
+            app/api/tasks_flow_draft.py \
             app/api/instances.py \
             app/api/task_output_helpers.py \
             app/api/flow_planner_helpers.py \
@@ -76,7 +79,7 @@ jobs:
             src/components/CollabPage.test.tsx \
             src/components/FlowPage.test.tsx \
             src/components/InstanceFilesPage.test.tsx \
-            src/components/PairingPage.test.tsx \
+            src/components/InstanceListModal.test.tsx \
             src/components/flowPageUtils.test.ts \
             src/components/flowCanvasGeometryUtils.test.ts
 
@@ -121,4 +124,4 @@ jobs:
             sleep 1
           done
 
-          PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173 npm run e2e -- e2e/flow-page.smoke.spec.ts
+          PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173 npm run e2e -- e2e/local/flow-page.local.spec.ts

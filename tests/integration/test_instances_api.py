@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import session as db_session
-from app.db.models import Instance, PairingReceipt, Task, User
+from app.db.models import Instance, PairingAttachByCodeFailure, PairingReceipt, Task, User
 from app.main import app
 from app.services.crypto import decrypt_secret, encrypt_secret
 from app.services.instance_service import InstanceService, InstanceValidationFailedError
@@ -1016,6 +1016,166 @@ def test_pairing_session_attach_by_short_code_binds_instance(
     instance = cast(dict[str, Any], attach_payload["instance"])
     assert instance["name"] == "claw1-by-short-code"
     assert instance["endpoint"] == "http://127.0.0.1:18789"
+
+
+def test_pairing_session_attach_by_short_code_rate_limited_after_repeated_failures(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    monkeypatch.setenv("LINPO_PAIRING_ATTACH_BY_CODE_RATE_LIMIT_WINDOW_SECONDS", "300")
+    monkeypatch.setenv("LINPO_PAIRING_ATTACH_BY_CODE_RATE_LIMIT_MAX_FAILURES", "2")
+
+    payload = {
+        "shortCode": "NOTFOUND1",
+        "endpoint": "http://127.0.0.1:18789",
+        "gatewayToken": "short-code-token-1",
+        "name": "claw1-by-short-code",
+    }
+
+    status_code_1, _, payload_1 = _request_json(
+        "POST",
+        "/api/v1/instances/pairing-sessions/attach-by-code",
+        payload,
+    )
+    status_code_2, _, payload_2 = _request_json(
+        "POST",
+        "/api/v1/instances/pairing-sessions/attach-by-code",
+        payload,
+    )
+    status_code_3, _, payload_3 = _request_json(
+        "POST",
+        "/api/v1/instances/pairing-sessions/attach-by-code",
+        payload,
+    )
+
+    assert status_code_1 == 404
+    assert payload_1 == {"detail": "pairing session not found"}
+    assert status_code_2 == 404
+    assert payload_2 == {"detail": "pairing session not found"}
+    assert status_code_3 == 429
+    assert payload_3 == {
+        "detail": "too many failed attach attempts for this short code"
+    }
+
+
+def test_pairing_session_attach_by_short_code_rate_limit_window_expiry_recovers(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    monkeypatch.setenv("LINPO_PAIRING_ATTACH_BY_CODE_RATE_LIMIT_WINDOW_SECONDS", "60")
+    monkeypatch.setenv("LINPO_PAIRING_ATTACH_BY_CODE_RATE_LIMIT_MAX_FAILURES", "1")
+
+    from app.services import pairing_session_service as pairing_module
+
+    current_now = {"value": datetime(2026, 4, 8, 10, 0, 0, tzinfo=UTC)}
+    monkeypatch.setattr(pairing_module, "_utc_now", lambda: current_now["value"])
+
+    payload = {
+        "shortCode": "MISWIN01",
+        "endpoint": "http://127.0.0.1:18789",
+        "gatewayToken": "short-code-token-1",
+        "name": "claw1-by-short-code",
+    }
+    status_code_1, _, payload_1 = _request_json(
+        "POST",
+        "/api/v1/instances/pairing-sessions/attach-by-code",
+        payload,
+    )
+    status_code_2, _, payload_2 = _request_json(
+        "POST",
+        "/api/v1/instances/pairing-sessions/attach-by-code",
+        payload,
+    )
+    current_now["value"] = current_now["value"] + timedelta(seconds=61)
+    status_code_3, _, payload_3 = _request_json(
+        "POST",
+        "/api/v1/instances/pairing-sessions/attach-by-code",
+        payload,
+    )
+
+    assert status_code_1 == 404
+    assert payload_1 == {"detail": "pairing session not found"}
+    assert status_code_2 == 429
+    assert payload_2 == {"detail": "too many failed attach attempts for this short code"}
+    assert status_code_3 == 404
+    assert payload_3 == {"detail": "pairing session not found"}
+
+
+def test_pairing_session_attach_by_short_code_success_clears_failure_counter(
+    isolated_database_url: str,
+    auth_cookie: str,
+    monkeypatch: pytest.MonkeyPatch,
+    db_handle: Session,
+) -> None:
+    del isolated_database_url
+    monkeypatch.setenv("LINPO_PAIRING_ATTACH_BY_CODE_RATE_LIMIT_WINDOW_SECONDS", "300")
+    monkeypatch.setenv("LINPO_PAIRING_ATTACH_BY_CODE_RATE_LIMIT_MAX_FAILURES", "2")
+
+    create_status, _, create_payload = _request_json(
+        "POST",
+        "/api/v1/instances/pairing-sessions",
+        {
+            "name": "claw-by-short-code-clear",
+            "expSeconds": 600,
+        },
+        auth_cookie,
+    )
+    assert create_status == 201
+    short_code = cast(str, create_payload["shortCode"])
+
+    monkeypatch.setattr(
+        "app.services.instance_validator.InstanceValidatorService.validate",
+        lambda self, validation_request: InstanceValidationResult(
+            ok=False,
+            status="failed",
+            message="validation failed",
+        ),
+    )
+    fail_status, _, _ = _request_json(
+        "POST",
+        "/api/v1/instances/pairing-sessions/attach-by-code",
+        {
+            "shortCode": short_code,
+            "endpoint": "http://127.0.0.1:18789",
+            "gatewayToken": "short-code-token-1",
+            "name": "claw-by-short-code-clear",
+        },
+    )
+    assert fail_status == 400
+
+    failure_row = db_handle.execute(
+        select(PairingAttachByCodeFailure).where(PairingAttachByCodeFailure.short_code == short_code)
+    ).scalar_one_or_none()
+    assert failure_row is not None
+    assert failure_row.failure_count == 1
+
+    monkeypatch.setattr(
+        "app.services.instance_validator.InstanceValidatorService.validate",
+        lambda self, validation_request: InstanceValidationResult(
+            ok=True,
+            status="active",
+            message=f"validated:{validation_request.endpoint}",
+        ),
+    )
+    success_status, _, success_payload = _request_json(
+        "POST",
+        "/api/v1/instances/pairing-sessions/attach-by-code",
+        {
+            "shortCode": short_code,
+            "endpoint": "http://127.0.0.1:18789",
+            "gatewayToken": "short-code-token-1",
+            "name": "claw-by-short-code-clear",
+        },
+    )
+    assert success_status == 200
+    assert success_payload["status"] == "bound"
+
+    cleared_row = db_handle.execute(
+        select(PairingAttachByCodeFailure).where(PairingAttachByCodeFailure.short_code == short_code)
+    ).scalar_one_or_none()
+    assert cleared_row is None
 
 def test_agent_mount_request_returns_confirmation_url_and_writes_message(
     isolated_database_url: str,

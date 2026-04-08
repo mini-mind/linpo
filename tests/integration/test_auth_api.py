@@ -219,7 +219,7 @@ def test_cors_preflight_allows_patch_for_auth_profile(
     assert "PATCH" in allowed_methods
 
 
-def test_cors_preflight_allows_same_host_origin_even_if_not_in_static_allow_list(
+def test_cors_preflight_does_not_allow_same_host_origin_when_not_in_allow_list(
     isolated_database_url: str,
 ) -> None:
     del isolated_database_url
@@ -235,9 +235,9 @@ def test_cors_preflight_allows_same_host_origin_even_if_not_in_static_allow_list
         },
     )
 
-    assert status_code == 200
-    assert headers["access-control-allow-origin"] == "http://175.178.213.10:5173"
-    assert headers["access-control-allow-credentials"] == "true"
+    assert status_code == 405
+    assert "access-control-allow-origin" not in headers
+    assert "access-control-allow-credentials" not in headers
 
 
 def test_encrypt_secret_round_trips_without_plaintext_leak(

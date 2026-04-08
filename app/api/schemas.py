@@ -277,9 +277,28 @@ class OpsDiagnosticsSummary(_CommonCamelResponseModel):
     instances_active: int
 
 
+class OpsInstanceConnectivityItem(_CommonCamelResponseModel):
+    instance_id: str
+    instance_name: str
+    status: str
+    endpoint_host: str
+    last_check_at: str | None = None
+
+
+class OpsLatestErrorContext(_CommonCamelResponseModel):
+    request_id: str
+    check_key: str
+    message: str
+
+
 class OpsDiagnosticsResponse(_CommonCamelResponseModel):
+    version: str
+    request_id: str
     summary: OpsDiagnosticsSummary
     checks: list[OpsCheckItem]
+    instance_connectivity: list[OpsInstanceConnectivityItem]
+    latest_error_context: OpsLatestErrorContext | None = None
+    recent_error_context: OpsLatestErrorContext | None = None
     copy_text: str
 
 

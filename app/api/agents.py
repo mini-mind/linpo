@@ -30,6 +30,7 @@ from app.api.schemas import (
     SessionsListResponse,
     TopologyNodeItem,
 )
+from app.db.models import User
 from app.db.session import get_session
 from app.services.auth_service import get_authenticated_user
 from app.services.instance_service import (
@@ -41,7 +42,19 @@ from app.services.provider_application_service import (
     ProviderExecutionContext,
 )
 
-router = APIRouter()
+def get_current_user(
+    request: Request,
+    db_session: Session = Depends(get_session),
+) -> User:
+    user = get_authenticated_user(db_session, request)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+    return user
+
+
+router = APIRouter(dependencies=[Depends(get_current_user)])
+
+
 def get_instance_service() -> InstanceService:
     return InstanceService()
 
@@ -132,7 +145,10 @@ def get_request_openclaw_context(
     provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
 ) -> RequestOpenClawContext | None:
     if instance_id is None:
-        return None
+        current_user = get_authenticated_user(db_session, request)
+        if current_user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="instanceId is required")
 
     current_user = get_authenticated_user(db_session, request)
     if current_user is None:

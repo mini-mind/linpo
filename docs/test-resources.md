@@ -2,16 +2,16 @@
 
 ## ravin 测试服务域名
 
-- `linpo.duckdns.org`
+- 不在仓库固定记录公网验收域名，按部署环境注入。
 
 ## 机器与访问
 
 | 机器 | 地址 | 用途 |
 |---|---|---|
-| 本机 | `175.178.213.10` | Linpo 服务端（前端 5173，后端 8000） |
-| ravin | `68.64.179.125` | 远程客户端联调与浏览器验收发起端 |
+| 本机 | `127.0.0.1`（或内网地址） | Linpo 服务端（前端 5173，后端 8000） |
+| ravin | 按实际环境配置 | 远程客户端联调与浏览器验收发起端 |
 
-- `ravin` SSH：`ravin@68.64.179.125`
+- `ravin` SSH 地址按环境私有配置，不在仓库公开记录。
 
 ## 部署形态
 
@@ -32,23 +32,23 @@
 - `npm --prefix frontend run test`：前端单元/集成测试。
 - `npm --prefix frontend run build`：前端构建产物。
 - `make quality`：统一质量门（聚合后端测试、类型检查与前端构建）。
-- `curl -i http://175.178.213.10:8000/api/v1/health`：后端健康检查。
+- `curl -i http://127.0.0.1:8000/api/v1/health`：后端健康检查。
 
 ## CI/CD 门禁（GitHub Actions）
 
 - `CI Gate`：`.github/workflows/ci.yml`
   - Backend：`py_compile + pytest(关键风险套件)`
   - Frontend：`vitest(FlowPage/flowPageUtils/geometry) + build`
-  - Playwright：本地 dev server 下执行 `e2e/flow-page.smoke.spec.ts`
+  - Playwright：本地 dev server 下执行 `e2e/local/flow-page.local.spec.ts`
 - `CD Delivery Gate`：`.github/workflows/cd-delivery-gate.yml`
-  - 在部署环境运行 `flow-page.smoke.spec.ts`
+  - 在部署环境运行 `e2e/deployed/core-path.deployed.spec.ts`
   - `push main/master` 触发时读取仓库密钥 `PLAYWRIGHT_BASE_URL`
   - 手动触发 `workflow_dispatch` 时使用输入参数 `base_url`
 
 ## 验收流程
 
 1. 本地完成改动并运行对应测试命令，确认无回归。
-2. 将构建产物/服务发布到联调环境（`175.178.213.10` 前端与后端端口）。
+2. 将构建产物/服务发布到联调环境（按环境配置的前端与后端地址）。
 3. 由 `ravin` 发起 Playwright 验收，覆盖核心数据链路与页面行为。
 4. 若验收失败，记录失败场景与诊断路径，修复后重新验证。
 
@@ -73,8 +73,8 @@
 | `LINPO_DATABASE_URL` | PostgreSQL 连接，用于用户与实例配置持久化 |
 | `LINPO_SECRET_ENCRYPTION_KEY` | Gateway Token 加密存储 |
 | `LINPO_CORS_ALLOW_ORIGINS` | 公网前端联调时的 CORS 白名单 |
-| `LINPO_SESSION_COOKIE_SECURE` | 会话 Cookie `Secure` 开关；不显式配置时，若 `LINPO_CORS_ALLOW_ORIGINS` 含非本地域名则自动启用 |
-| `VITE_API_BASE_URL` | 前端 API 地址（如 `http://175.178.213.10:8000`）；由 `frontend/.env(.local)` 注入 |
+| `LINPO_SESSION_COOKIE_SECURE` | 会话 Cookie `Secure` 开关；不显式配置时默认启用（`true`） |
+| `VITE_API_BASE_URL` | 前端 API 地址（如 `http://127.0.0.1:8000`）；由 `frontend/.env(.local)` 注入 |
 | `OPENCLAW_BASE_URL` | OpenClaw 网关地址（按部署环境显式配置） |
 | `OPENCLAW_GATEWAY_TOKEN` | OpenClaw 网关令牌 |
 | `OPENCLAW_ORIGIN` | OpenClaw 请求来源标识 |

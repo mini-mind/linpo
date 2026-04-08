@@ -136,6 +136,24 @@ class PairingSession(Base):
     bound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class PairingAttachByCodeFailure(Base):
+    __tablename__ = "pairing_attach_by_code_failures"
+
+    key: Mapped[str] = mapped_column(String(256), primary_key=True)
+    client_ip: Mapped[str] = mapped_column(String(128), index=True)
+    short_code: Mapped[str] = mapped_column(String(16), index=True)
+    failure_count: Mapped[int] = mapped_column(Integer, default=0)
+    window_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    last_failed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=_utc_now,
+        onupdate=_utc_now,
+        index=True,
+    )
+
+
 class UserMessage(Base):
     __tablename__ = "user_messages"
 

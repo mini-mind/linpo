@@ -2,7 +2,6 @@ import os
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request, Response
 from fastapi.openapi.utils import get_openapi
@@ -184,26 +183,10 @@ def _get_cors_allow_headers(request: Request) -> str:
 
 
 def _is_origin_allowed(request: Request, origin: str | None) -> bool:
+    del request
     if origin is None:
         return False
-    if origin in _ALLOWED_CORS_ORIGINS:
-        return True
-
-    parsed = urlparse(origin)
-    origin_host = (parsed.hostname or "").strip().lower()
-    if origin_host == "":
-        return False
-    if parsed.scheme not in {"http", "https"}:
-        return False
-
-    request_host_header = request.headers.get("host", "")
-    request_host = request_host_header.split(":", 1)[0].strip().lower()
-    if request_host == "":
-        request_host = (request.url.hostname or "").strip().lower()
-    if request_host == "":
-        return False
-
-    return origin_host == request_host
+    return origin in _ALLOWED_CORS_ORIGINS
 
 
 @app.middleware("http")
