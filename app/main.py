@@ -1,45 +1,9 @@
 import os
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
 from fastapi.openapi.utils import get_openapi
-
-
-def _load_local_env_file() -> None:
-    env_path = Path(__file__).resolve().parent.parent / ".env"
-    if not env_path.is_file():
-        return
-
-    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if line == "" or line.startswith("#"):
-            continue
-
-        if line.startswith("export "):
-            line = line[7:].strip()
-
-        if "=" not in line:
-            continue
-
-        key, value = line.split("=", 1)
-        normalized_key = key.strip()
-        if normalized_key == "" or normalized_key in os.environ:
-            continue
-
-        normalized_value = value.strip()
-        if (
-            len(normalized_value) >= 2
-            and normalized_value[0] == normalized_value[-1]
-            and normalized_value[0] in {'"', "'"}
-        ):
-            normalized_value = normalized_value[1:-1]
-
-        os.environ[normalized_key] = normalized_value
-
-
-_load_local_env_file()
 
 from app.adapters.provider_registry import build_default_provider_registry
 from app.api.aggregate import router as aggregate_router

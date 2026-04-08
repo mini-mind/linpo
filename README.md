@@ -22,6 +22,7 @@ Linpo 是位于 OpenClaw 与用户之间的人机协作编排交互层。
 python -m venv .venv
 source .venv/bin/activate
 cp .env.example .env
+set -a; source .env; set +a
 pip install -e .
 fastapi dev app/main.py
 ```

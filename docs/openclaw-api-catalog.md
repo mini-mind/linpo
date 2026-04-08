@@ -4,7 +4,7 @@
 > 口径日期：2026-03-27。  
 > 判定依据：`app/adapters/openclaw_adapter.py`、`app/services/openclaw_client.py`、`app/services/provider_application_service.py`、`app/api/agents.py`、`app/services/observer_data.py`。
 
-本文档整理 OpenClaw Gateway 的 WebSocket RPC 与事件，并按 当前版本 实现状态标注，避免把“历史规划状态”误当作现状。
+本文档整理 OpenClaw Gateway 的 WebSocket RPC 与事件，并按当前版本实现状态标注。
 
 ## 状态标记
 
@@ -37,8 +37,6 @@
 | `chat.abort` | 中断/停止 agent 运行 | ✅ 已接入（Adapter+HTTP） | 适配层以 `chat_pause` 暴露并映射到 RPC `chat.abort`；HTTP：`POST /chat/agents/{agent_id}/pause` |
 | `chat.history` | 获取会话历史消息 | ✅ 已接入（Adapter+HTTP） | 适配层已封装；HTTP：`GET /chat/sessions/{key}/history` |
 | `chat.inject` | 注入消息到会话（不触发 agent） | ❌ 未接入 | 无对应实现 |
-
-兼容性说明：当前版本 未暴露 legacy 路由 `/chat/send`、`/chat/abort`，统一使用 `/chat/agents/{agent_id}/send|pause`。
 
 ## 2. Session 管理
 

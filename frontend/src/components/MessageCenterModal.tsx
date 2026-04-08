@@ -2,7 +2,7 @@ import type React from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { listUserMessages, readUserMessage } from '../api/messageClient';
-import type { UserMessageItem, UserMessageLinkItem } from '../api/types';
+import type { UserMessageItem } from '../api/types';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
 
@@ -17,7 +17,7 @@ type MessageViewItem = {
   body: string;
   createdAt: string;
   status: 'unread' | 'read';
-  links: UserMessageLinkItem[];
+  confirmationUrl: string | null;
 };
 
 export function MessageCenterModal({ open, onClose }: MessageCenterModalProps): JSX.Element | null {
@@ -171,13 +171,11 @@ export function MessageCenterModal({ open, onClose }: MessageCenterModalProps): 
                   {formatMessageTime(selectedMessage.createdAt)} · {selectedMessage.status === 'unread' ? '未读' : '已读'}
                 </p>
                 <p style={detailBodyStyle}>{selectedMessage.body}</p>
-                {selectedMessage.links.length > 0 ? (
+                {selectedMessage.confirmationUrl ? (
                   <div style={linkGroupStyle}>
-                    {selectedMessage.links.map((link, index) => (
-                      <a key={`${link.href}-${index}`} href={link.href} style={linkStyle}>
-                        {link.label?.trim() || '打开链接'}
-                      </a>
-                    ))}
+                    <a href={selectedMessage.confirmationUrl} style={linkStyle}>
+                      打开回执链接
+                    </a>
                   </div>
                 ) : null}
               </>
@@ -198,27 +196,20 @@ export function MessageCenterModal({ open, onClose }: MessageCenterModalProps): 
 }
 
 function normalizeMessage(raw: UserMessageItem): MessageViewItem {
-  const title = String(raw.title ?? '').trim() || '系统消息';
-  const body = String(raw.body ?? '').trim() || '暂无正文';
-  const createdAt = String(raw.created_at ?? '').trim() || new Date().toISOString();
+  const title = raw.title.trim();
+  const body = raw.body.trim();
+  const createdAt = raw.created_at;
   const status = raw.is_read === true ? 'read' : 'unread';
 
-  const links = new Map<string, UserMessageLinkItem>();
-  const confirmationUrl = String(raw.confirmation_url ?? '').trim();
-  if (confirmationUrl) {
-    links.set(confirmationUrl, {
-      href: confirmationUrl,
-      label: '打开回执链接',
-    });
-  }
+  const confirmationUrl = raw.confirmation_url.trim();
 
   return {
-    id: String(raw.id ?? ''),
+    id: raw.id,
     title,
     body,
     createdAt,
     status,
-    links: [...links.values()],
+    confirmationUrl: confirmationUrl || null,
   };
 }
 

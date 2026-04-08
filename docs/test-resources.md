@@ -89,8 +89,6 @@
 
 补充说明：任务事件回调当前采用 `callbackToken` + `occurredAt` 时间窗 + `callbackSignature(HMAC-SHA256)` 三层校验；签名 key 直接使用该次运行下发的 `callbackToken`。
 
-补充说明：本地使用 `fastapi dev app/main.py` 启动时，后端会自动从仓库根目录 `.env` 读取并注入未显式设置的环境变量（显式导出的环境变量优先级更高）。
-
 ## OpenClaw 参考
 
 本节仅作为引用型参考，不代表 Linpo 产品契约，正式约束仍以 `docs/prd.md` / `docs/architecture.md` 为准。

@@ -213,9 +213,8 @@ describe('InstanceListModal', () => {
     });
   });
 
-  it('falls back to execCommand copy when clipboard API is unavailable', async () => {
+  it('shows copy failure when clipboard API rejects', async () => {
     const writeText = vi.fn().mockRejectedValue(new Error('clipboard blocked'));
-    const execCommandMock = vi.fn().mockReturnValue(true);
     mockGetPairingSession.mockResolvedValue({
       sessionId: 'session-1',
       name: 'claw2',
@@ -225,11 +224,6 @@ describe('InstanceListModal', () => {
       expiresAt: '2026-04-04T02:00:00Z',
       instanceId: null,
       instance: null,
-    });
-    Object.defineProperty(document, 'execCommand', {
-      value: execCommandMock,
-      configurable: true,
-      writable: true,
     });
     Object.defineProperty(navigator, 'clipboard', {
       value: { writeText },
@@ -259,10 +253,9 @@ describe('InstanceListModal', () => {
 
     await waitFor(() => {
       expect(writeText).toHaveBeenCalled();
-      expect(execCommandMock).toHaveBeenCalledWith('copy');
-      expect(mockAddToast).toHaveBeenCalledWith('一键指令已复制', 'success');
+      expect(mockAddToast).toHaveBeenCalledWith('复制失败，请手动复制', 'error');
     });
-    expect(mockAddToast).not.toHaveBeenCalledWith('复制失败，请手动复制', 'error');
+    expect(mockAddToast).not.toHaveBeenCalledWith('一键指令已复制', 'success');
   });
 
   it('creates claw2 instance from token tab', async () => {

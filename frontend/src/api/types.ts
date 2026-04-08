@@ -109,26 +109,17 @@ export interface InstanceAgentDocListResponse {
   existing_count: number;
 }
 
-export interface UserMessageLinkItem {
-  label?: string | null;
-  href: string;
-}
-
 export interface UserMessageItem {
   id: string;
-  target_email?: string;
-  action?: string;
-  payload?: Record<string, string> | null;
+  target_email: string;
+  action: string;
+  payload: Record<string, string>;
   title: string;
   body: string;
   created_at: string;
-  is_read?: boolean;
-  read_at?: string | null;
-  confirmation_url?: string | null;
-}
-
-export interface UserMessageListResponse {
-  messages: UserMessageItem[];
+  is_read: boolean;
+  read_at: string | null;
+  confirmation_url: string;
 }
 
 export interface UserMessageReadResponse {
