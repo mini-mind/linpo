@@ -44,7 +44,7 @@ from app.services.provider_application_service import ProviderApplicationService
 from app.services.task_dispatch_service import TaskDispatchService
 from app.services.task_service import TaskCreateInput, TaskService
 
-router = APIRouter(prefix="/api/v1/boards/{board_id}/tasks")
+router = APIRouter(prefix="/boards/{board_id}/tasks")
 
 
 @dataclass(frozen=True)

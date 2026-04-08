@@ -18,7 +18,7 @@ from app.db.models import FlowDraft, User
 from app.db.session import get_session
 from app.services.flow_draft_service import FlowDraftService, get_flow_draft_service
 
-router = APIRouter(prefix="/api/v1/boards/{board_id}/tasks")
+router = APIRouter(prefix="/boards/{board_id}/tasks")
 
 
 def _normalize_flow_draft_nodes(

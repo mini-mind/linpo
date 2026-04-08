@@ -52,9 +52,8 @@ from app.services.task_callback_security import (
 from app.services.task_dispatch_service import TaskDispatchService
 from app.services.task_service import TaskCreateInput, TaskService
 
-router = APIRouter(prefix="/api/v1/boards/{board_id}/tasks")
+router = APIRouter(prefix="/boards/{board_id}/tasks")
 
-_DEFAULT_STALE_RUNNING_SECONDS = 900
 _EVENT_KEY_MAX = 80
 _TASK_TERMINAL_STATUSES: set[TaskStatus] = {"completed", "failed", "blocked_by_approval"}
 _TASK_RUN_CALLBACK_ALLOWED_SKEW_SECONDS = 900
@@ -192,17 +191,6 @@ def _validate_task_callback_signature(
         )
     except CallbackSignatureValidationError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
-
-
-def _stale_running_seconds() -> int:
-    raw = os.getenv("LINPO_TASK_RUN_STALE_SECONDS", "").strip()
-    if raw == "":
-        return _DEFAULT_STALE_RUNNING_SECONDS
-    try:
-        parsed = int(raw)
-    except ValueError:
-        return _DEFAULT_STALE_RUNNING_SECONDS
-    return max(60, parsed)
 
 
 def _sorted_board_tasks(

@@ -1,5 +1,6 @@
 import '@testing-library/jest-dom';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { userEvent } from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockListInstances = vi.fn();
@@ -40,7 +41,15 @@ async function waitForInstanceListReady(): Promise<void> {
 
 describe('InstanceListModal', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    mockListInstances.mockReset();
+    mockCreateInstance.mockReset();
+    mockCreatePairingSession.mockReset();
+    mockGetPairingSession.mockReset();
+    mockValidateInstance.mockReset();
+    mockGetAggregateTopology.mockReset();
+    mockAddToast.mockReset();
+    window.localStorage.clear();
+    window.sessionStorage.clear();
     mockListInstances
       .mockResolvedValueOnce([
         {
@@ -98,6 +107,19 @@ describe('InstanceListModal', () => {
       instanceId: null,
       instance: null,
     });
+    mockGetPairingSession.mockResolvedValue({
+      sessionId: 'session-1',
+      name: 'claw2',
+      shortCode: 'ABCD-1234',
+      pairingUrl: 'linpo://pair?code=ABCD-1234',
+      status: 'pending',
+      expiresAt: '2026-04-04T02:00:00Z',
+      instanceId: null,
+      instance: null,
+    });
+  });
+
+  it('creates pairing session by default and switches to bound instance automatically', async () => {
     mockGetPairingSession
       .mockResolvedValueOnce({
         sessionId: 'session-1',
@@ -145,9 +167,7 @@ describe('InstanceListModal', () => {
           created_at: '2026-04-03T00:00:00Z',
         },
       });
-  });
 
-  it('creates pairing session by default and switches to bound instance automatically', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', {
       value: { writeText },
@@ -220,7 +240,11 @@ describe('InstanceListModal', () => {
 
     await screen.findByRole('dialog', { name: '实例列表' });
     await waitForInstanceListReady();
-    fireEvent.click(screen.getByRole('button', { name: '添加实例' }));
+    await userEvent.click(screen.getByRole('button', { name: '添加实例' }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '创建配对会话' })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole('tab', { name: '配对会话' }));
     fireEvent.change(screen.getByLabelText('实例名称'), { target: { value: 'claw2' } });
     fireEvent.click(screen.getByRole('button', { name: '创建配对会话' }));
 
@@ -228,6 +252,9 @@ describe('InstanceListModal', () => {
       expect(screen.getByLabelText('给 OpenClaw 的一键指令')).toBeInTheDocument();
     });
 
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '复制一键指令' })).toBeInTheDocument();
+    });
     fireEvent.click(screen.getByRole('button', { name: '复制一键指令' }));
 
     await waitFor(() => {

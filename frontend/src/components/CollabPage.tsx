@@ -2,13 +2,11 @@ import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildKanbanTaskOutputFileUrl,
-  buildKanbanTaskOutputDownloadUrl,
   confirmFlowToKanban,
   continueKanbanTask,
   continueFlowRequirement,
   createKanbanTask,
   deleteKanbanTask,
-  getDefaultObserverDataSource,
   getSessionHistory,
   getAggregateOverview,
   interruptKanbanTask,
@@ -19,9 +17,7 @@ import {
 import { listInstances } from '../api/instanceClient';
 import {
   createBoardTasksSseClient,
-  createObserverRealtimeClient,
   type BoardRealtimeMessage,
-  type ObserverRealtimeClient,
 } from '../api/realtimeClient';
 import type {
   AggregateOverviewResponse,
@@ -35,13 +31,33 @@ import type {
   SessionMessagesUpdatedPayload,
   TaskOutputPreviewResponse,
 } from '../api/types';
-import { buildSessionMessagesChannel } from '../api/types';
 import type { BoardTask, BoardViewMode, TaskStatus } from './kanbanTypes';
-import { MarkdownMessage } from './MarkdownMessage';
+import {
+  buildKanbanColumns,
+  getRequirementId,
+  getRequirementTitle,
+  resolveFlowColumnState,
+  resolveStatusColumnKey,
+  type BoardColumn,
+  type FlowColumnState,
+} from './collabKanbanColumnsUtils';
+import {
+  arePreviewItemsEqual,
+  getCompactLabel,
+  mergePreviewItemsFromRealtime,
+} from './collabTaskPreviewUtils';
+import {
+  CollabTaskDetailModal,
+  type CollabTaskDetailModalStyles,
+  type TaskDependencyEntry,
+  type TaskDetailTab,
+  type TaskOutputEntry,
+} from './collabTaskDetailModal';
 import { useCurrentInstanceId } from '../hooks/useCurrentInstance';
 import { useDraggableFab } from '../hooks/useDraggableFab';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
+import { getTaskExecutionSessionKey, useCollabTaskSessionRuntime } from '../hooks/useCollabTaskSessionRuntime';
 import {
   WORKSPACE_NARROW_MOBILE_BREAKPOINT_PX,
 } from './workspaceLayout';
@@ -65,31 +81,6 @@ type AssignableAgent = {
   instanceName: string;
 };
 
-type BoardColumn = {
-  id: string;
-  title: string;
-  tasks: BoardTask[];
-  flowId?: string;
-  flowState?: FlowColumnState;
-};
-
-type FlowColumnState = 'running' | 'blocked' | 'approval' | 'idle';
-
-type TaskOutputEntry = {
-  id: string;
-  title: string;
-  value: string;
-};
-
-type TaskDependencyEntry = {
-  nodeId: string;
-  title: string;
-  statusLabel: string;
-};
-
-type TaskDetailTab = 'info' | 'stream' | 'output';
-
-const TASK_SESSION_REALTIME_DATA_SOURCE = getDefaultObserverDataSource();
 const KANBAN_BOARD_REALTIME_ID = 'default';
 
 export default function CollabPage(): JSX.Element {
@@ -118,8 +109,6 @@ export default function CollabPage(): JSX.Element {
   const [isTaskSessionLoading, setIsTaskSessionLoading] = useState(false);
   const [taskSessionError, setTaskSessionError] = useState<string | null>(null);
   const [taskDetailTab, setTaskDetailTab] = useState<TaskDetailTab>('info');
-  const taskSessionRealtimeRef = useRef<ObserverRealtimeClient | null>(null);
-  const taskSessionFallbackPollRef = useRef<number | null>(null);
   const boardRealtimeRef = useRef<ReturnType<typeof createBoardTasksSseClient> | null>(null);
   const taskSessionListRef = useRef<HTMLDivElement | null>(null);
   const [selectedOutputEntryId, setSelectedOutputEntryId] = useState<string | null>(null);
@@ -399,50 +388,12 @@ export default function CollabPage(): JSX.Element {
   }, [selectedTask, taskRecords]);
 
   const columns = useMemo<BoardColumn[]>(() => {
-    if (viewMode === 'status') {
-      return STATUS_COLUMNS.map((column) => ({
-        id: `status:${column.key}`,
-        title: column.title,
-        tasks: allTasks.filter((task) => resolveStatusColumnKey(task) === column.key),
-      }));
-    }
-
-    if (viewMode === 'flow') {
-      const grouped = new Map<string, BoardColumn>();
-      for (const task of allTasks) {
-        const requirementId = getRequirementId(task);
-        if (!grouped.has(requirementId)) {
-          grouped.set(requirementId, {
-            id: `flow:${requirementId}`,
-            title: getRequirementTitle(task, requirementId),
-            flowId: requirementId,
-            tasks: [],
-          });
-        }
-        grouped.get(requirementId)?.tasks.push(task);
-      }
-      for (const column of grouped.values()) {
-        column.flowState = resolveFlowColumnState(column.tasks);
-      }
-      return Array.from(grouped.values());
-    }
-
-    const grouped = new Map<string, BoardTask[]>();
-    for (const agentName of allAgentNames) {
-      grouped.set(agentName, []);
-    }
-    for (const task of allTasks) {
-      const key = task.agentName || '待分配';
-      if (!grouped.has(key)) {
-        grouped.set(key, []);
-      }
-      grouped.get(key)?.push(task);
-    }
-    return Array.from(grouped.entries()).map(([agentName, tasks]) => ({
-      id: `agent:${agentName}`,
-      title: agentName,
-      tasks,
-    }));
+    return buildKanbanColumns({
+      viewMode,
+      allTasks,
+      allAgentNames,
+      statusColumns: STATUS_COLUMNS,
+    });
   }, [allAgentNames, allTasks, viewMode]);
 
   const isNarrowMobileBoard = viewportWidth < WORKSPACE_NARROW_MOBILE_BREAKPOINT_PX;
@@ -703,14 +654,11 @@ export default function CollabPage(): JSX.Element {
     setTaskSessionError(null);
   }, []);
 
-  const loadTaskSessionMessages = useCallback(async (task: BoardTask, mode: 'replace' | 'resync' = 'replace') => {
-    const sessionKey = getTaskExecutionSessionKey(task);
-    if (!sessionKey) {
-      setTaskSessionItems([]);
-      setTaskSessionError('当前节点未绑定 execution_session_key');
-      setIsTaskSessionLoading(false);
-      return;
-    }
+  const loadTaskSessionMessages = useCallback(async (
+    task: BoardTask,
+    sessionKey: string,
+    mode: 'replace' | 'resync' = 'replace'
+  ) => {
     if (mode === 'replace') {
       setIsTaskSessionLoading(true);
     }
@@ -732,107 +680,23 @@ export default function CollabPage(): JSX.Element {
     }
   }, []);
 
-  useEffect(() => {
-    if (!selectedTask) {
-      taskSessionRealtimeRef.current?.close();
-      taskSessionRealtimeRef.current = null;
-      if (taskSessionFallbackPollRef.current !== null) {
-        window.clearInterval(taskSessionFallbackPollRef.current);
-        taskSessionFallbackPollRef.current = null;
-      }
-      return;
-    }
+  const handleMissingTaskSessionBinding = useCallback(() => {
+    setTaskSessionItems([]);
+    setTaskSessionError('当前节点未绑定 execution_session_key');
+    setIsTaskSessionLoading(false);
+  }, []);
 
-    const sessionKey = getTaskExecutionSessionKey(selectedTask);
-    if (!sessionKey) {
-      taskSessionRealtimeRef.current?.close();
-      taskSessionRealtimeRef.current = null;
-      setTaskSessionItems([]);
-      setTaskSessionError('当前节点未绑定 execution_session_key');
-      setIsTaskSessionLoading(false);
-      return;
-    }
+  const handleTaskSessionRealtimeDisconnected = useCallback(() => {
+    setTaskSessionError('消息流连接已断开，正在重连...');
+  }, []);
 
-    let cancelled = false;
-    let reconnectAttempts = 0;
-    let reconnectTimerId: number | null = null;
-    const clearReconnectTimer = () => {
-      if (reconnectTimerId !== null) {
-        window.clearTimeout(reconnectTimerId);
-        reconnectTimerId = null;
-      }
-    };
-
-    void loadTaskSessionMessages(selectedTask, 'replace');
-
-    taskSessionRealtimeRef.current?.close();
-    taskSessionRealtimeRef.current = null;
-    if (taskSessionFallbackPollRef.current !== null) {
-      window.clearInterval(taskSessionFallbackPollRef.current);
-      taskSessionFallbackPollRef.current = null;
-    }
-
-    const connectRealtime = () => {
-      if (cancelled) {
-        return;
-      }
-      const client = createObserverRealtimeClient({
-        dataSource: TASK_SESSION_REALTIME_DATA_SOURCE,
-        instanceId: selectedTask.instanceId,
-        channel: buildSessionMessagesChannel(sessionKey),
-        onMessage: (message) => {
-          if (cancelled) {
-            return;
-          }
-          reconnectAttempts = 0;
-          applySessionRealtimeUpdate(message, sessionKey);
-        },
-        onResyncRequired: () => {
-          if (cancelled) {
-            return;
-          }
-          void loadTaskSessionMessages(selectedTask, 'resync');
-        },
-        onDisconnected: () => {
-          if (cancelled) {
-            return;
-          }
-          setTaskSessionError('消息流连接已断开，正在重连...');
-          if (reconnectTimerId !== null) {
-            return;
-          }
-          const delay = Math.min(4000, 400 * Math.max(1, 2 ** reconnectAttempts));
-          reconnectAttempts += 1;
-          reconnectTimerId = window.setTimeout(() => {
-            reconnectTimerId = null;
-            void loadTaskSessionMessages(selectedTask, 'resync');
-            connectRealtime();
-          }, delay);
-        },
-      });
-      client.connect();
-      taskSessionRealtimeRef.current = client;
-    };
-
-    connectRealtime();
-    taskSessionFallbackPollRef.current = window.setInterval(() => {
-      if (cancelled) {
-        return;
-      }
-      void loadTaskSessionMessages(selectedTask, 'resync');
-    }, 8000);
-
-    return () => {
-      cancelled = true;
-      clearReconnectTimer();
-      taskSessionRealtimeRef.current?.close();
-      taskSessionRealtimeRef.current = null;
-      if (taskSessionFallbackPollRef.current !== null) {
-        window.clearInterval(taskSessionFallbackPollRef.current);
-        taskSessionFallbackPollRef.current = null;
-      }
-    };
-  }, [applySessionRealtimeUpdate, loadTaskSessionMessages, selectedTask]);
+  useCollabTaskSessionRuntime({
+    selectedTask,
+    loadTaskSessionMessages,
+    applySessionRealtimeUpdate,
+    onMissingSessionBinding: handleMissingTaskSessionBinding,
+    onRealtimeDisconnected: handleTaskSessionRealtimeDisconnected,
+  });
 
   useEffect(() => {
     if (!selectedTask) {
@@ -1158,256 +1022,42 @@ export default function CollabPage(): JSX.Element {
       ) : null}
 
       {selectedTask ? (
-        <div style={isMobile ? { ...modalOverlayStyle, ...modalOverlayMobileStyle } : modalOverlayStyle} role="dialog" aria-modal="true" aria-label="任务详情">
-          <div style={isMobile ? { ...taskDetailCardStyle, ...taskDetailCardMobileStyle } : taskDetailCardStyle}>
-            <div style={isMobile ? { ...taskDetailTopRowStyle, ...taskDetailTopRowMobileStyle } : taskDetailTopRowStyle}>
-              <div style={taskDetailTopTitleBlockStyle}>
-                <h3 style={modalTitleStyle}>任务详情</h3>
-                <p style={taskDetailTitleStyle}>{selectedTask.title}</p>
-              </div>
-              <button type="button" style={isMobile ? { ...flatActionButtonStyle, ...flatActionButtonMobileStyle } : flatActionButtonStyle} onClick={() => setSelectedTask(null)}>
-                关闭
-              </button>
-            </div>
-
-            <div style={isMobile ? { ...taskDetailTabsStyle, ...taskDetailTabsMobileStyle } : taskDetailTabsStyle} role="tablist" aria-label="任务详情标签">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={taskDetailTab === 'info'}
-                style={{
-                  ...taskDetailTabButtonStyle,
-                  ...(taskDetailTab === 'info' ? taskDetailTabButtonActiveStyle : {}),
-                }}
-                onClick={() => setTaskDetailTab('info')}
-              >
-                基本信息
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={taskDetailTab === 'stream'}
-                style={{
-                  ...taskDetailTabButtonStyle,
-                  ...(taskDetailTab === 'stream' ? taskDetailTabButtonActiveStyle : {}),
-                }}
-                onClick={() => setTaskDetailTab('stream')}
-              >
-                执行流程
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={taskDetailTab === 'output'}
-                style={{
-                  ...taskDetailTabButtonStyle,
-                  ...(taskDetailTab === 'output' ? taskDetailTabButtonActiveStyle : {}),
-                }}
-                onClick={() => setTaskDetailTab('output')}
-              >
-                任务产出
-              </button>
-            </div>
-
-            <div style={taskDetailBodyStyle}>
-              {taskDetailTab === 'info' ? (
-                <section style={taskInfoPanelStyle} aria-label="基本信息">
-                  <div style={taskDetailDescriptionWrapStyle}>
-                    <p style={taskDetailSectionTitleStyle}>任务描述</p>
-                    <p style={taskDetailSummaryStyle}>{selectedTask.summary || '暂无描述'}</p>
-                  </div>
-
-                  <section style={taskKeyFieldsCardStyle} aria-label="关键字段">
-                    <p style={taskDetailSectionTitleStyle}>关键字段</p>
-                    <div style={taskDetailMetaGridStyle}>
-                      <article style={taskMetaFieldItemStyle}>
-                        <p style={taskMetaFieldLabelStyle}>状态</p>
-                        <p style={taskMetaFieldValueStyle}>{selectedTask.status}</p>
-                      </article>
-                      <article style={taskMetaFieldItemStyle}>
-                        <p style={taskMetaFieldLabelStyle}>来源</p>
-                        <p style={taskMetaFieldValueStyle}>{selectedTask.source === 'flow' ? 'Flow' : 'Provider'}</p>
-                      </article>
-                      <article style={taskMetaFieldItemStyle}>
-                        <p style={taskMetaFieldLabelStyle}>Agent</p>
-                        <p style={taskMetaFieldValueStyle}>{formatTaskAgentLabel(selectedTask)}</p>
-                      </article>
-                      <article style={taskMetaFieldItemStyle}>
-                        <p style={taskMetaFieldLabelStyle}>Agent ID</p>
-                        <p style={taskMetaFieldValueStyle}>{selectedTask.agentId ?? 'n/a'}</p>
-                      </article>
-                      <article style={taskMetaFieldItemStyle}>
-                        <p style={taskMetaFieldLabelStyle}>会话</p>
-                        <p style={taskMetaFieldValueStyle}>
-                          {getTaskExecutionSessionKey(selectedTask) ?? '当前节点未绑定 execution_session_key'}
-                        </p>
-                      </article>
-                    </div>
-                  <div style={taskControlActionsStyle}>
-                    {selectedTask.status === 'running' ? (
-                      <button
-                        type="button"
-                        style={taskControlDangerButtonStyle}
-                        onClick={() => void handleInterruptSelectedTask()}
-                        disabled={!canInterruptSelectedTask || isInterruptingTaskId === selectedTask.id}
-                      >
-                        {isInterruptingTaskId === selectedTask.id ? '中断中...' : '中断'}
-                      </button>
-                    ) : null}
-                    {selectedTask.status === 'blocked_by_approval' ? (
-                      <button
-                        type="button"
-                        style={taskControlPrimaryButtonStyle}
-                        onClick={() => void handleContinueSelectedTask()}
-                        disabled={!canContinueSelectedTask || isContinuingTaskId === selectedTask.id}
-                      >
-                        {isContinuingTaskId === selectedTask.id ? '继续中...' : '继续'}
-                      </button>
-                    ) : null}
-                    {selectedTask.status === 'queued' ? (
-                      <button
-                        type="button"
-                        style={flatActionButtonStyle}
-                        onClick={() => void handleDeleteTaskNode(selectedTask)}
-                      >
-                        删除节点
-                      </button>
-                    ) : null}
-                    {selectedTask.status !== 'running'
-                    && selectedTask.status !== 'queued'
-                    && selectedTask.status !== 'blocked_by_approval' ? (
-                      <p style={taskControlHintStyle}>当前状态无可执行控制动作</p>
-                    ) : null}
-                  </div>
-                  </section>
-
-                  <div style={taskDetailDescriptionWrapStyle}>
-                    <p style={taskDetailSectionTitleStyle}>依赖节点</p>
-                    {dependencyEntries.length === 0 ? (
-                      <p style={taskDetailSummaryStyle}>无</p>
-                    ) : (
-                      <ul style={dependencyListStyle}>
-                        {dependencyEntries.map((item) => (
-                          <li key={item.nodeId} style={dependencyItemStyle}>
-                            <span style={dependencyNameStyle}>{item.title}</span>
-                            <span style={dependencyStatusStyle}>{item.statusLabel}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </section>
-              ) : null}
-
-              {taskDetailTab === 'output' ? (
-                <section style={taskOutputPanelStyle} aria-label="任务产出">
-                <div style={taskOutputHeaderStyle}>
-                  <p style={taskDetailSectionTitleStyle}>任务产出</p>
-                </div>
-                {outputEntries.length === 0 ? (
-                  <p style={taskDetailSummaryStyle}>暂无任务产出。请由 Agent 在完成回调中显式上报 artifact 文件路径。</p>
-                ) : (
-                  <div style={isMobile ? taskOutputLayoutMobileStyle : taskOutputLayoutStyle}>
-                    <aside style={isMobile ? taskOutputListMobileStyle : taskOutputListStyle}>
-                      {outputEntries.map((entry) => (
-                        <button
-                          key={entry.id}
-                          type="button"
-                          style={{
-                            ...taskOutputItemButtonStyle,
-                            ...(selectedOutputEntry?.id === entry.id ? taskOutputItemActiveStyle : {}),
-                          }}
-                          onClick={() => setSelectedOutputEntryId(entry.id)}
-                        >
-                          <span style={taskOutputItemTypeStyle}>文件</span>
-                          <span style={taskOutputItemTitleStyle}>{entry.title}</span>
-                        </button>
-                      ))}
-                    </aside>
-                    <div style={taskOutputPreviewStyle}>
-                      {selectedOutputEntry ? (
-                        <div style={taskOutputMetaStyle}>
-                          <span style={taskDetailSummaryStyle}>{selectedOutputEntry.value}</span>
-                          <a
-                            href={buildKanbanTaskOutputDownloadUrl(
-                              selectedTask.id,
-                              selectedOutputEntry.value,
-                              selectedTask.instanceId ? { instanceId: selectedTask.instanceId } : undefined,
-                              KANBAN_BOARD_REALTIME_ID
-                            )}
-                            style={taskOutputDownloadLinkStyle}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            下载
-                          </a>
-                        </div>
-                      ) : null}
-                      {isOutputPreviewLoading ? <p style={taskDetailSummaryStyle}>加载预览...</p> : null}
-                      {outputPreviewError ? <p style={taskSessionErrorTextStyle}>{outputPreviewError}</p> : null}
-                      {!isOutputPreviewLoading && !outputPreviewError && outputPreview ? (
-                        outputPreview.kind === 'json' ? (
-                          <div style={taskOutputMarkdownWrapStyle}>
-                            <JsonPreview content={outputPreview.content ?? ''} />
-                          </div>
-                        ) : outputPreview.kind === 'text' ? (
-                          <div style={taskOutputMarkdownWrapStyle}>
-                            <MarkdownMessage
-                              text={outputPreview.content ?? ''}
-                              style={taskSessionTextStyle}
-                            />
-                          </div>
-                        ) : (
-                          <BinaryFilePreview
-                            mimeType={outputPreview.mime_type}
-                            fileUrl={selectedOutputFileInlineUrl}
-                          />
-                        )
-                      ) : null}
-                    </div>
-                  </div>
-                )}
-                </section>
-              ) : null}
-
-              {taskDetailTab === 'stream' ? (
-                <section style={taskSessionPanelStyle} aria-label="执行消息流">
-                <div style={taskSessionHeaderStyle}>
-                  <p style={taskDetailSectionTitleStyle}>执行消息流</p>
-                </div>
-                {isTaskSessionLoading && taskSessionItems.length === 0 ? (
-                  <p style={taskDetailSummaryStyle}>加载消息...</p>
-                ) : null}
-                {taskSessionError ? <p style={taskSessionErrorTextStyle}>{taskSessionError}</p> : null}
-                {!taskSessionError && taskSessionItems.length === 0 && !isTaskSessionLoading ? (
-                  <p style={taskDetailSummaryStyle}>暂无消息</p>
-                ) : null}
-                {!taskSessionError && taskSessionItems.length > 0 ? (
-                  <div ref={taskSessionListRef} style={taskSessionListStyle}>
-                    {taskSessionItems.map((item, index) => (
-                      <article
-                        key={`${selectedTask.id}-msg-${index}-${item.role}`}
-                        style={getTaskSessionItemStyle(item.role, item.text)}
-                      >
-                        <span style={taskSessionRoleStyle}>{getRoleLabel(item.role, item.text)}</span>
-                        {shouldRenderCollapsibleMessage(item.role, item.text) ? (
-                          <CollapsibleMessage
-                            text={item.text}
-                            summary={buildMessageSummary(item.role, item.text)}
-                            hint={getMessageHint(item.role, item.text)}
-                          />
-                        ) : (
-                          <MarkdownMessage text={item.text} style={taskSessionTextStyle} />
-                        )}
-                      </article>
-                    ))}
-                  </div>
-                ) : null}
-                </section>
-              ) : null}
-            </div>
-          </div>
-        </div>
+        <CollabTaskDetailModal
+          isMobile={isMobile}
+          boardRealtimeId={KANBAN_BOARD_REALTIME_ID}
+          selectedTask={selectedTask}
+          taskDetailTab={taskDetailTab}
+          onTaskDetailTabChange={setTaskDetailTab}
+          onClose={() => setSelectedTask(null)}
+          dependencyEntries={dependencyEntries}
+          canInterruptSelectedTask={Boolean(canInterruptSelectedTask)}
+          canContinueSelectedTask={Boolean(canContinueSelectedTask)}
+          isInterruptingTaskId={isInterruptingTaskId}
+          isContinuingTaskId={isContinuingTaskId}
+          onInterruptSelectedTask={() => {
+            void handleInterruptSelectedTask();
+          }}
+          onContinueSelectedTask={() => {
+            void handleContinueSelectedTask();
+          }}
+          onDeleteTaskNode={(task) => {
+            void handleDeleteTaskNode(task);
+          }}
+          formatTaskAgentLabel={formatTaskAgentLabel}
+          getTaskExecutionSessionKey={getTaskExecutionSessionKey}
+          outputEntries={outputEntries}
+          selectedOutputEntry={selectedOutputEntry}
+          onSelectOutputEntryId={setSelectedOutputEntryId}
+          selectedOutputFileInlineUrl={selectedOutputFileInlineUrl}
+          isOutputPreviewLoading={isOutputPreviewLoading}
+          outputPreviewError={outputPreviewError}
+          outputPreview={outputPreview}
+          isTaskSessionLoading={isTaskSessionLoading}
+          taskSessionError={taskSessionError}
+          taskSessionItems={taskSessionItems}
+          taskSessionListRef={taskSessionListRef}
+          styles={collabTaskDetailModalStyles}
+        />
       ) : null}
 
       <div style={isMobile ? boardFrameMobileStyle : boardFrameStyle} data-testid="kanban-frame">
@@ -1756,39 +1406,10 @@ function buildFlowConfirmPayloadFromBoardTasks({
   };
 }
 
-function resolveStatusColumnKey(task: BoardTask): StatusColumnKey {
-  const dispatchStatus = String(task.extras.dispatch_status ?? '').trim().toLowerCase();
-  if (dispatchStatus === 'interrupted' || dispatchStatus === 'stopped' || dispatchStatus === 'blocked') {
-    return 'blocked';
-  }
-  return task.status;
-}
-
 function getTaskStatusLabelForDetail(task: BoardTask): string {
   const key = resolveStatusColumnKey(task);
   const matched = STATUS_COLUMNS.find((item) => item.key === key);
   return matched?.title ?? task.status;
-}
-
-function isInterruptedBlockedFlowTask(task: BoardTask): boolean {
-  if (task.status !== 'blocked_by_approval') {
-    return false;
-  }
-  const dispatchStatus = String(task.extras.dispatch_status ?? '').trim().toLowerCase();
-  return dispatchStatus === 'interrupted' || dispatchStatus === 'stopped' || dispatchStatus === 'blocked';
-}
-
-function resolveFlowColumnState(tasks: BoardTask[]): FlowColumnState {
-  if (tasks.some((task) => task.status === 'running' || task.status === 'queued')) {
-    return 'running';
-  }
-  if (tasks.some((task) => isInterruptedBlockedFlowTask(task))) {
-    return 'blocked';
-  }
-  if (tasks.some((task) => task.status === 'blocked_by_approval')) {
-    return 'approval';
-  }
-  return 'idle';
 }
 
 function getFlowColumnStateLabel(state: FlowColumnState): string {
@@ -1798,45 +1419,6 @@ function getFlowColumnStateLabel(state: FlowColumnState): string {
   return '已结束';
 }
 
-function getRequirementId(task: BoardTask): string {
-  const requirementId = task.extras.requirement_id?.trim();
-  if (requirementId) {
-    return requirementId;
-  }
-  const flowId = task.extras.flow_id?.trim();
-  if (flowId) {
-    return flowId;
-  }
-  const plannerSessionKey = task.extras.planner_session_key?.trim();
-  if (plannerSessionKey) {
-    return plannerSessionKey;
-  }
-  const managerSessionKey = task.extras.manager_session_key?.trim();
-  if (managerSessionKey) {
-    return managerSessionKey;
-  }
-  return task.id;
-}
-
-function getRequirementTitle(task: BoardTask, requirementId: string): string {
-  const requirementTitle = task.extras.requirement_title?.trim();
-  if (requirementTitle) {
-    return requirementTitle;
-  }
-  const requirementText = task.extras.requirement?.trim();
-  if (requirementText) {
-    return requirementText;
-  }
-  if (task.extras.flow_id) {
-    return `需求 ${requirementId.slice(0, 8)}`;
-  }
-  return task.title;
-}
-
-function getTaskExecutionSessionKey(task: BoardTask): string | null {
-  const execution = task.extras.execution_session_key?.trim();
-  return execution || null;
-}
 
 function extractOutputPathFromArtifact(text: string): string | null {
   const normalized = text.trim();
@@ -1867,524 +1449,6 @@ function buildTaskOutputEntries(task: BoardTask): TaskOutputEntry[] {
   });
 
   return entries;
-}
-
-function getCompactLabel(text: string, maxLength: number): string {
-  const normalized = text.replace(/\s+/g, ' ').trim();
-  if (normalized.length <= maxLength) {
-    return normalized;
-  }
-  return `${normalized.slice(0, maxLength)}...`;
-}
-
-function mergeStreamingAssistantText(previousText: string, incomingText: string): string {
-  if (!incomingText) return previousText;
-  if (!previousText) return incomingText;
-  if (incomingText.startsWith(previousText)) return incomingText;
-  if (previousText.startsWith(incomingText)) return previousText;
-  if (previousText.endsWith(incomingText)) return previousText;
-  return `${previousText}${incomingText}`;
-}
-
-function mergePreviewItemsFromRealtime(
-  previousItems: SessionPreviewItem[],
-  incomingItems: SessionPreviewItem[]
-): SessionPreviewItem[] {
-  if (incomingItems.length === 0) return previousItems;
-  if (!(incomingItems.length === 1 && incomingItems[0].role === 'assistant')) {
-    return incomingItems;
-  }
-  if (previousItems.length === 0) return incomingItems;
-
-  const lastIndex = previousItems.length - 1;
-  const lastItem = previousItems[lastIndex];
-  const incomingAssistantItem = incomingItems[0];
-  if (lastItem.role !== 'assistant') {
-    return [...previousItems, incomingAssistantItem];
-  }
-
-  const mergedText = mergeStreamingAssistantText(lastItem.text, incomingAssistantItem.text);
-  if (mergedText === lastItem.text) {
-    return previousItems;
-  }
-  return [
-    ...previousItems.slice(0, lastIndex),
-    { ...lastItem, text: mergedText },
-  ];
-}
-
-function arePreviewItemsEqual(
-  previousItems: SessionPreviewItem[],
-  nextItems: SessionPreviewItem[]
-): boolean {
-  if (previousItems === nextItems) return true;
-  if (previousItems.length !== nextItems.length) return false;
-  for (let index = 0; index < previousItems.length; index += 1) {
-    const previous = previousItems[index];
-    const next = nextItems[index];
-    if (previous.role !== next.role || previous.text !== next.text) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function CollapsibleMessage({
-  text,
-  summary,
-  hint,
-}: {
-  text: string;
-  summary: string;
-  hint: string;
-}): JSX.Element {
-  return (
-    <details style={toolCallDetailsStyle}>
-      <summary style={toolCallSummaryStyle}>{summary}</summary>
-      <div style={toolCallDetailBodyStyle}>
-        <p style={toolCallDetailHintStyle}>{hint}</p>
-        <MarkdownMessage text={text} style={taskSessionTextStyle} />
-      </div>
-    </details>
-  );
-}
-
-function JsonPreview({ content }: { content: string }): JSX.Element {
-  const parsed = tryParseJsonValue(content);
-  if (parsed === null) {
-    return <MarkdownMessage text={content} style={taskSessionTextStyle} />;
-  }
-  return (
-    <div style={jsonPreviewContainerStyle}>
-      <JsonTreeNode value={parsed} depth={0} label="root" />
-    </div>
-  );
-}
-
-function JsonTreeNode({
-  value,
-  depth,
-  label,
-}: {
-  value: unknown;
-  depth: number;
-  label?: string;
-}): JSX.Element {
-  const labelPrefix = label ? <span style={jsonKeyStyle}>{label}: </span> : null;
-  if (value === null || typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string') {
-    return (
-      <div style={jsonLeafRowStyle}>
-        {labelPrefix}
-        <span style={jsonPrimitiveStyle}>{formatJsonPrimitive(value)}</span>
-      </div>
-    );
-  }
-
-  if (Array.isArray(value)) {
-    if (value.length === 0) {
-      return (
-        <div style={jsonLeafRowStyle}>
-          {labelPrefix}
-          <span style={jsonPrimitiveStyle}>[]</span>
-        </div>
-      );
-    }
-    return (
-      <details style={jsonDetailsStyle} open={depth < 1}>
-        <summary style={jsonSummaryStyle}>
-          {labelPrefix}
-          <span style={jsonSummaryTextStyle}>Array({value.length})</span>
-        </summary>
-        <div style={jsonChildrenStyle}>
-          {value.map((item, index) => (
-            <JsonTreeNode key={`arr-${depth}-${index}`} value={item} depth={depth + 1} label={`${index}`} />
-          ))}
-        </div>
-      </details>
-    );
-  }
-
-  if (typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>);
-    if (entries.length === 0) {
-      return (
-        <div style={jsonLeafRowStyle}>
-          {labelPrefix}
-          <span style={jsonPrimitiveStyle}>{'{}'}</span>
-        </div>
-      );
-    }
-    return (
-      <details style={jsonDetailsStyle} open={depth < 1}>
-        <summary style={jsonSummaryStyle}>
-          {labelPrefix}
-          <span style={jsonSummaryTextStyle}>Object({entries.length})</span>
-        </summary>
-        <div style={jsonChildrenStyle}>
-          {entries.map(([key, item]) => (
-            <JsonTreeNode key={`obj-${depth}-${key}`} value={item} depth={depth + 1} label={key} />
-          ))}
-        </div>
-      </details>
-    );
-  }
-
-  return (
-    <div style={jsonLeafRowStyle}>
-      {labelPrefix}
-      <span style={jsonPrimitiveStyle}>{String(value)}</span>
-    </div>
-  );
-}
-
-function BinaryFilePreview({
-  mimeType,
-  fileUrl,
-}: {
-  mimeType: string;
-  fileUrl: string | null;
-}): JSX.Element {
-  if (!fileUrl) {
-    return <p style={taskDetailSummaryStyle}>该文件类型暂不支持内嵌预览，请下载查看。</p>;
-  }
-  if (isImageMimeType(mimeType)) {
-    return (
-      <div style={binaryPreviewWrapStyle}>
-        <img src={fileUrl} alt="任务产出预览" style={binaryImageStyle} />
-      </div>
-    );
-  }
-  if (isPdfMimeType(mimeType)) {
-    return (
-      <div style={binaryPreviewWrapStyle}>
-        <iframe title="任务产出 PDF 预览" src={fileUrl} style={binaryIframeStyle} />
-      </div>
-    );
-  }
-  if (isVideoMimeType(mimeType)) {
-    return (
-      <div style={binaryPreviewWrapStyle}>
-        <video controls style={binaryVideoStyle} src={fileUrl} />
-      </div>
-    );
-  }
-  if (isAudioMimeType(mimeType)) {
-    return (
-      <div style={binaryPreviewWrapStyle}>
-        <audio controls style={binaryAudioStyle} src={fileUrl} />
-      </div>
-    );
-  }
-  return <p style={taskDetailSummaryStyle}>该文件类型暂不支持内嵌预览，请下载查看。</p>;
-}
-
-function tryParseJsonValue(text: string): unknown | null {
-  const normalized = text.trim();
-  if (!normalized) {
-    return null;
-  }
-  try {
-    return JSON.parse(normalized) as unknown;
-  } catch {
-    return null;
-  }
-}
-
-function formatJsonPrimitive(value: string | number | boolean | null): string {
-  if (value === null) {
-    return 'null';
-  }
-  if (typeof value === 'string') {
-    return JSON.stringify(value);
-  }
-  return String(value);
-}
-
-function isImageMimeType(mimeType: string): boolean {
-  return mimeType.toLowerCase().startsWith('image/');
-}
-
-function isPdfMimeType(mimeType: string): boolean {
-  return mimeType.toLowerCase() === 'application/pdf';
-}
-
-function isVideoMimeType(mimeType: string): boolean {
-  return mimeType.toLowerCase().startsWith('video/');
-}
-
-function isAudioMimeType(mimeType: string): boolean {
-  return mimeType.toLowerCase().startsWith('audio/');
-}
-
-function extractToolCallName(text: string): string | null {
-  const fromToolCall = text.match(/tool\.call\(([^)\s]+)\)/i)?.[1]?.trim();
-  if (fromToolCall) {
-    return fromToolCall;
-  }
-  const fromToolNameField = text.match(/"tool[_-]?name"\s*:\s*"([^"]+)"/i)?.[1]?.trim();
-  if (fromToolNameField) {
-    return fromToolNameField;
-  }
-  const fromNameField = text.match(/"name"\s*:\s*"([^"]+)"/i)?.[1]?.trim();
-  if (fromNameField) {
-    return fromNameField;
-  }
-  return null;
-}
-
-function unwrapMarkdownCodeFence(text: string): string {
-  const normalized = text.trim();
-  const fencedMatch = normalized.match(/^```[a-zA-Z0-9_-]*\s*\n([\s\S]*?)\n```$/);
-  if (fencedMatch?.[1]) {
-    return fencedMatch[1].trim();
-  }
-  return normalized;
-}
-
-function tryParseJsonAny(text: string): unknown | null {
-  const normalized = unwrapMarkdownCodeFence(text);
-  if (normalized === '') {
-    return null;
-  }
-  try {
-    return JSON.parse(normalized) as unknown;
-  } catch {
-    return null;
-  }
-}
-
-function tryParseJsonObject(text: string): Record<string, unknown> | null {
-  const parsed = tryParseJsonAny(text);
-  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-    return parsed as Record<string, unknown>;
-  }
-  return null;
-}
-
-function tryParseJsonArray(text: string): unknown[] | null {
-  const parsed = tryParseJsonAny(text);
-  if (Array.isArray(parsed)) {
-    return parsed;
-  }
-  return null;
-}
-
-function resolveStructuredMessageKind(
-  text: string
-): 'callback' | 'tool_error' | 'tool_feedback' | 'data_output' | 'other' {
-  const payload = tryParseJsonObject(text);
-  if (payload) {
-    const hasAccepted = typeof payload.accepted === 'boolean';
-    const hasTaskId = typeof payload.task_id === 'string';
-    const hasRunId = typeof payload.run_id === 'string';
-    if (hasAccepted && hasTaskId && hasRunId) {
-      return 'callback';
-    }
-
-    const status = String(payload.status ?? '').trim().toLowerCase();
-    const hasTool = isExplicitToolPayload(payload);
-    const hasError = typeof payload.error === 'string';
-    const hasResult =
-      Object.prototype.hasOwnProperty.call(payload, 'result') ||
-      Object.prototype.hasOwnProperty.call(payload, 'response') ||
-      Object.prototype.hasOwnProperty.call(payload, 'output') ||
-      Object.prototype.hasOwnProperty.call(payload, 'message') ||
-      status !== '';
-    if (hasTool && (hasError || status === 'error' || status === 'failed')) {
-      return 'tool_error';
-    }
-    if (hasTool && hasResult) {
-      return 'tool_feedback';
-    }
-
-    if (
-      typeof payload.output_file_path === 'string' ||
-      typeof payload.data_type === 'string' ||
-      typeof payload.market_summary === 'object' ||
-      typeof payload.gold_etf_data === 'object' ||
-      typeof payload.etf_details === 'object'
-    ) {
-      return 'data_output';
-    }
-  }
-  const payloadArray = tryParseJsonArray(text);
-  if (payloadArray && payloadArray.length > 0) {
-    const hasToolItem = payloadArray.some((item) => {
-      if (!item || typeof item !== 'object' || Array.isArray(item)) {
-        return false;
-      }
-      const candidate = item as Record<string, unknown>;
-      return isExplicitToolPayload(candidate);
-    });
-    if (hasToolItem) {
-      const hasToolError = payloadArray.some((item) => {
-        if (!item || typeof item !== 'object' || Array.isArray(item)) {
-          return false;
-        }
-        const candidate = item as Record<string, unknown>;
-        const status = String(candidate.status ?? '').trim().toLowerCase();
-        return typeof candidate.error === 'string' || status === 'error' || status === 'failed';
-      });
-      if (hasToolError) {
-        return 'tool_error';
-      }
-      return 'tool_feedback';
-    }
-  }
-  return 'other';
-}
-
-function isExplicitToolPayload(payload: Record<string, unknown>): boolean {
-  const toolName = String(payload.tool ?? payload.tool_name ?? payload.name ?? '').trim();
-  const toolCallId = String(payload.tool_call_id ?? '').trim();
-  const type = String(payload.type ?? '').trim().toLowerCase();
-  const explicitType =
-    type === 'tool_call' ||
-    type === 'function_call' ||
-    type === 'tool_result' ||
-    type === 'function_result';
-  return toolName !== '' || toolCallId !== '' || explicitType;
-}
-
-function isLongInstructionText(text: string): boolean {
-  return text.trim().length >= 360;
-}
-
-function isLikelyStructuredBlob(text: string): boolean {
-  const normalized = text.trim();
-  if (normalized.length < 240) {
-    return false;
-  }
-  return (
-    (normalized.startsWith('{') && normalized.endsWith('}')) ||
-    (normalized.startsWith('[') && normalized.endsWith(']'))
-  );
-}
-
-function shouldRenderCollapsibleMessage(role: SessionPreviewItem['role'] | string, text: string): boolean {
-  const normalizedRole = String(role).toLowerCase();
-  if (normalizedRole === 'tool') {
-    return true;
-  }
-  if (normalizedRole === 'user' && isLongInstructionText(text)) {
-    return true;
-  }
-  if (resolveStructuredMessageKind(text) !== 'other') {
-    return true;
-  }
-  return isLikelyStructuredBlob(text);
-}
-
-function buildMessageSummary(role: SessionPreviewItem['role'] | string, text: string): string {
-  const normalizedRole = String(role).toLowerCase();
-  if (normalizedRole === 'user') {
-    return '任务指令（已折叠）';
-  }
-  if (normalizedRole === 'tool') {
-    return buildToolCallSummary(text);
-  }
-  return buildCollapsibleSummary(text);
-}
-
-function getMessageHint(role: SessionPreviewItem['role'] | string, text: string): string {
-  const normalizedRole = String(role).toLowerCase();
-  if (normalizedRole === 'user') {
-    return '任务下发内容';
-  }
-  if (normalizedRole === 'other') {
-    const kind = resolveStructuredMessageKind(text);
-    if (kind === 'callback') {
-      return '回调响应详情';
-    }
-    if (kind === 'data_output') {
-      return '结构化数据内容';
-    }
-  }
-  return '反馈/错误信息';
-}
-
-function buildToolCallSummary(text: string): string {
-  const toolName = extractToolCallName(text);
-  if (toolName) {
-    return `工具调用：${toolName}`;
-  }
-  return '工具调用';
-}
-
-function getToolNameFromPayload(payload: Record<string, unknown> | null): string {
-  if (!payload) {
-    return '';
-  }
-  const toolName = String(payload.tool ?? payload.tool_name ?? payload.name ?? '').trim();
-  return toolName;
-}
-
-function buildCollapsibleSummary(text: string): string {
-  const kind = resolveStructuredMessageKind(text);
-  if (kind === 'callback') {
-    const payload = tryParseJsonObject(text);
-    const status = String(payload?.status ?? '').trim() || 'unknown';
-    return `回调响应：状态 ${status}`;
-  }
-  if (kind === 'tool_error') {
-    const payload = tryParseJsonObject(text);
-    const tool = getToolNameFromPayload(payload);
-    return tool ? `工具反馈：${tool} 执行失败` : '工具反馈：执行失败';
-  }
-  if (kind === 'tool_feedback') {
-    const payload = tryParseJsonObject(text);
-    const tool = getToolNameFromPayload(payload);
-    return tool ? `工具反馈：${tool}` : '工具反馈';
-  }
-  if (kind === 'data_output') {
-    const payload = tryParseJsonObject(text);
-    const dataType = String(payload?.data_type ?? payload?.report_type ?? '').trim();
-    return dataType ? `数据输出：${dataType}` : '数据输出';
-  }
-  return buildToolCallSummary(text);
-}
-
-function getRoleLabel(role: SessionPreviewItem['role'] | string, text: string): string {
-  const normalizedRole = String(role).toLowerCase();
-  if (normalizedRole === 'user') return '用户';
-  if (normalizedRole === 'assistant') return 'Agent';
-  if (normalizedRole === 'tool') return '工具调用';
-  if (normalizedRole === 'system') return '系统';
-  const kind = resolveStructuredMessageKind(text);
-  if (kind === 'callback') return '回调响应';
-  if (kind === 'tool_error' || kind === 'tool_feedback') return '工具反馈';
-  if (kind === 'data_output') return '数据输出';
-  if (isLikelyStructuredBlob(text)) return '结构化消息';
-  return '其他';
-}
-
-function getTaskSessionItemStyle(role: SessionPreviewItem['role'] | string, text: string): React.CSSProperties {
-  const normalizedRole = String(role).toLowerCase();
-  const isAssistant = normalizedRole === 'assistant';
-  const isUser = normalizedRole === 'user';
-  const structuredKind =
-    normalizedRole === 'other' || normalizedRole === 'tool' ? resolveStructuredMessageKind(text) : 'other';
-  return {
-    border: '1px solid rgba(148, 163, 184, 0.24)',
-    background: isAssistant
-      ? 'rgba(236, 253, 245, 0.9)'
-      : isUser
-        ? 'rgba(239, 246, 255, 0.9)'
-        : structuredKind === 'callback'
-          ? 'rgba(255, 251, 235, 0.9)'
-          : structuredKind === 'tool_error'
-            ? 'rgba(254, 242, 242, 0.9)'
-            : structuredKind === 'tool_feedback'
-              ? 'rgba(240, 249, 255, 0.9)'
-              : structuredKind === 'data_output'
-                ? 'rgba(245, 243, 255, 0.9)'
-        : 'rgba(248, 250, 252, 0.92)',
-    borderRadius: '0.5rem',
-    padding: '0.5rem 0.58rem',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.28rem',
-  };
 }
 
 const pageStyle: React.CSSProperties = {
@@ -3027,92 +2091,6 @@ const taskOutputMarkdownWrapStyle: React.CSSProperties = {
   paddingRight: '0.12rem',
 };
 
-const jsonPreviewContainerStyle: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '0.2rem',
-  paddingRight: '0.1rem',
-};
-
-const jsonDetailsStyle: React.CSSProperties = {
-  borderLeft: '1px solid rgba(148, 163, 184, 0.24)',
-  marginLeft: '0.3rem',
-  paddingLeft: '0.35rem',
-};
-
-const jsonSummaryStyle: React.CSSProperties = {
-  cursor: 'pointer',
-  fontSize: '0.75rem',
-  color: '#1f2937',
-  userSelect: 'none',
-};
-
-const jsonSummaryTextStyle: React.CSSProperties = {
-  color: '#475569',
-};
-
-const jsonChildrenStyle: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '0.16rem',
-  marginTop: '0.2rem',
-};
-
-const jsonLeafRowStyle: React.CSSProperties = {
-  fontSize: '0.75rem',
-  lineHeight: 1.4,
-  color: '#334155',
-};
-
-const jsonKeyStyle: React.CSSProperties = {
-  color: '#0f766e',
-  fontWeight: 700,
-};
-
-const jsonPrimitiveStyle: React.CSSProperties = {
-  color: '#1e293b',
-  fontFamily: 'ui-monospace, SFMono-Regular, "SFMono-Regular", Consolas, monospace',
-};
-
-const binaryPreviewWrapStyle: React.CSSProperties = {
-  flex: 1,
-  minHeight: 0,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  borderRadius: '0.4rem',
-  border: '1px dashed rgba(148, 163, 184, 0.35)',
-  background: 'rgba(248, 250, 252, 0.72)',
-  padding: '0.45rem',
-};
-
-const binaryImageStyle: React.CSSProperties = {
-  maxWidth: '100%',
-  maxHeight: '100%',
-  objectFit: 'contain',
-  borderRadius: '0.25rem',
-};
-
-const binaryIframeStyle: React.CSSProperties = {
-  width: '100%',
-  height: '100%',
-  minHeight: '260px',
-  border: 'none',
-  borderRadius: '0.3rem',
-  background: '#fff',
-};
-
-const binaryVideoStyle: React.CSSProperties = {
-  width: '100%',
-  maxHeight: '100%',
-  borderRadius: '0.25rem',
-  background: '#000',
-};
-
-const binaryAudioStyle: React.CSSProperties = {
-  width: '100%',
-};
-
 const taskSessionHeaderStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
@@ -3192,6 +2170,66 @@ const toolCallDetailHintStyle: React.CSSProperties = {
   margin: '0 0 0.26rem 0',
   fontSize: '0.7rem',
   color: '#64748b',
+};
+
+const collabTaskDetailModalStyles: CollabTaskDetailModalStyles = {
+  modalOverlayStyle,
+  modalOverlayMobileStyle,
+  taskDetailCardStyle,
+  taskDetailCardMobileStyle,
+  taskDetailTopRowStyle,
+  taskDetailTopRowMobileStyle,
+  taskDetailTopTitleBlockStyle,
+  modalTitleStyle,
+  taskDetailTitleStyle,
+  flatActionButtonStyle,
+  flatActionButtonMobileStyle,
+  taskDetailTabsStyle,
+  taskDetailTabsMobileStyle,
+  taskDetailTabButtonStyle,
+  taskDetailTabButtonActiveStyle,
+  taskDetailBodyStyle,
+  taskInfoPanelStyle,
+  taskDetailDescriptionWrapStyle,
+  taskDetailSectionTitleStyle,
+  taskDetailSummaryStyle,
+  taskKeyFieldsCardStyle,
+  taskDetailMetaGridStyle,
+  taskMetaFieldItemStyle,
+  taskMetaFieldLabelStyle,
+  taskMetaFieldValueStyle,
+  taskControlActionsStyle,
+  taskControlDangerButtonStyle,
+  taskControlPrimaryButtonStyle,
+  taskControlHintStyle,
+  dependencyListStyle,
+  dependencyItemStyle,
+  dependencyNameStyle,
+  dependencyStatusStyle,
+  taskOutputPanelStyle,
+  taskOutputHeaderStyle,
+  taskOutputLayoutStyle,
+  taskOutputLayoutMobileStyle,
+  taskOutputListStyle,
+  taskOutputListMobileStyle,
+  taskOutputItemButtonStyle,
+  taskOutputItemActiveStyle,
+  taskOutputItemTypeStyle,
+  taskOutputItemTitleStyle,
+  taskOutputPreviewStyle,
+  taskOutputMetaStyle,
+  taskOutputDownloadLinkStyle,
+  taskOutputMarkdownWrapStyle,
+  taskSessionErrorTextStyle,
+  taskSessionTextStyle,
+  taskSessionPanelStyle,
+  taskSessionHeaderStyle,
+  taskSessionListStyle,
+  taskSessionRoleStyle,
+  toolCallDetailsStyle,
+  toolCallSummaryStyle,
+  toolCallDetailBodyStyle,
+  toolCallDetailHintStyle,
 };
 
 const boardViewportStyle: React.CSSProperties = {

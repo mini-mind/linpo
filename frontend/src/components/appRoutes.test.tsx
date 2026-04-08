@@ -18,7 +18,7 @@ vi.mock('../routes', () => ({
 
 vi.mock('./Layout', () => ({
   Layout: () => <Outlet />,
-  RedirectToOverview: () => <Navigate to="/summary" replace />,
+  RedirectToSummary: () => <Navigate to="/summary" replace />,
 }));
 
 vi.mock('./CollabPage', () => ({

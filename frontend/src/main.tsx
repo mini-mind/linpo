@@ -1,7 +1,7 @@
 import React, { Suspense, lazy } from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
-import { Layout, RedirectToOverview } from './components/Layout';
+import { Layout, RedirectToSummary } from './components/Layout';
 import { AuthProvider } from './hooks/useAuth';
 import { ToastProvider } from './hooks/useToast';
 import { ProtectedRoute, PublicRoute } from './routes';
@@ -49,7 +49,7 @@ function App(): JSX.Element {
               <Route element={<ProtectedRoute />}>
                 <Route path="/pairing/receipt/:token" element={<PairingReceiptConfirmPage />} />
                 <Route path="/" element={<Layout />}>
-                  <Route index element={<RedirectToOverview />} />
+                  <Route index element={<RedirectToSummary />} />
                   <Route path="summary" element={<SummaryPage />} />
                   <Route path="kanban" element={<CollabPage />} />
                   <Route path="flow" element={<Navigate to="/flow/edit/new" replace />} />

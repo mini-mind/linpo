@@ -1,0 +1,48 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+
+import {
+  areFlowIdOrdersEqual,
+  dedupeFlowIds,
+  loadFlowSidebarOrder,
+  moveFlowIdInOrder,
+  saveFlowSidebarOrder,
+} from './flowSidebarOrderStore';
+
+describe('flowSidebarOrderStore', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it('dedupes flow ids with trim and stable order', () => {
+    expect(dedupeFlowIds([' flow-a ', 'flow-b', 'flow-a', '', 'flow-b', 'flow-c'])).toEqual([
+      'flow-a',
+      'flow-b',
+      'flow-c',
+    ]);
+  });
+
+  it('loads and saves deduped order from localStorage', () => {
+    saveFlowSidebarOrder(['flow-a', 'flow-a', ' flow-b ']);
+    expect(loadFlowSidebarOrder()).toEqual(['flow-a', 'flow-b']);
+  });
+
+  it('returns empty order for malformed persisted payload', () => {
+    window.localStorage.setItem('linpo.flow_sidebar_order_v1', '{"oops":1}');
+    expect(loadFlowSidebarOrder()).toEqual([]);
+
+    window.localStorage.setItem('linpo.flow_sidebar_order_v1', 'not-json');
+    expect(loadFlowSidebarOrder()).toEqual([]);
+  });
+
+  it('checks order equality by exact sequence', () => {
+    expect(areFlowIdOrdersEqual(['a', 'b'], ['a', 'b'])).toBe(true);
+    expect(areFlowIdOrdersEqual(['a', 'b'], ['b', 'a'])).toBe(false);
+    expect(areFlowIdOrdersEqual(['a'], ['a', 'b'])).toBe(false);
+  });
+
+  it('moves a source flow id before target id and keeps deduped order', () => {
+    expect(moveFlowIdInOrder(['a', 'b', 'c'], 'c', 'a')).toEqual(['c', 'a', 'b']);
+    expect(moveFlowIdInOrder(['a', 'a', 'b', 'c'], 'b', 'c')).toEqual(['a', 'b', 'c']);
+    expect(moveFlowIdInOrder(['a', 'b', 'c'], 'x', 'a')).toEqual(['a', 'b', 'c']);
+  });
+});

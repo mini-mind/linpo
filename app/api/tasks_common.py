@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Iterable, cast
 
+from fastapi import HTTPException, status
+
 from app.api.schemas import FlowCanvasEdge, TaskStatus
 from app.db.models import Task
 
@@ -17,16 +19,10 @@ def task_requirement_id(task: Task) -> str:
     requirement_id = str(extras.get("requirement_id", "")).strip()
     if requirement_id:
         return requirement_id
-    flow_id = str(extras.get("flow_id", "")).strip()
-    if flow_id:
-        return flow_id
-    planner_session_key = str(extras.get("planner_session_key", "")).strip()
-    if planner_session_key:
-        return planner_session_key
-    manager_session_key = str(extras.get("manager_session_key", "")).strip()
-    if manager_session_key:
-        return manager_session_key
-    return str(task.id)
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=f"Task {task.id} is missing required extras.requirement_id",
+    )
 
 
 def build_canvas_edges(

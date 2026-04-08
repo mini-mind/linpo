@@ -161,13 +161,8 @@ export function Layout(): JSX.Element {
   );
 }
 
-function RedirectToSummary(): JSX.Element {
+export function RedirectToSummary(): JSX.Element {
   return <Navigate to="/summary" replace />;
-}
-
-// Kept for backward compatibility in existing test imports.
-export function RedirectToOverview(): JSX.Element {
-  return <RedirectToSummary />;
 }
 
 const FLOW_ENTRY_STORAGE_KEY = 'linpo.lastFlowEntryPath';

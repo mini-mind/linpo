@@ -262,6 +262,23 @@ def test_tasks_flow_task_module_does_not_import_tasks_module() -> None:
     )
 
 
+def test_tasks_runtime_module_does_not_duplicate_stale_timeout_logic() -> None:
+    module_path = Path(__file__).resolve().parent.parent / "app" / "api" / "tasks_runtime.py"
+    source = module_path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(module_path))
+
+    stale_helper_names = sorted(
+        node.name
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_stale_running_seconds"
+    )
+
+    assert stale_helper_names == [], (
+        "app/api/tasks_runtime.py must not define stale-timeout parsing helpers; "
+        "stale-running reconciliation window belongs to app/services/task_dispatch_service.py"
+    )
+
+
 def test_tasks_flow_draft_module_does_not_import_tasks_module() -> None:
     module_path = Path(__file__).resolve().parent.parent / "app" / "api" / "tasks_flow_draft.py"
     assert module_path.exists(), "app/api/tasks_flow_draft.py must exist"
@@ -319,6 +336,107 @@ def test_tasks_runtime_module_does_not_import_tasks_module() -> None:
     assert forbidden_imports == [], (
         "app/api/tasks_runtime.py must not import app.api.tasks; "
         f"found forbidden imports: {forbidden_imports}"
+    )
+
+
+def test_tasks_router_prefix_strategy_is_centralized_in_main() -> None:
+    repo_root = Path(__file__).resolve().parent.parent
+    task_router_modules = {
+        "tasks_flow_planner.py": "tasks_flow_planner_router",
+        "tasks_flow_task.py": "tasks_flow_task_router",
+        "tasks_flow_draft.py": "tasks_flow_draft_router",
+        "tasks_runtime.py": "tasks_runtime_router",
+    }
+
+    for module_name in task_router_modules:
+        module_path = repo_root / "app" / "api" / module_name
+        source = module_path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(module_path))
+        router_prefixes = [
+            keyword.value.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "router" for target in node.targets)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "APIRouter"
+            for keyword in node.value.keywords
+            if keyword.arg == "prefix" and isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str)
+        ]
+        assert router_prefixes == ["/boards/{board_id}/tasks"], (
+            f"app/api/{module_name} router prefix must stay resource-scoped and must not include API version; "
+            f"found: {router_prefixes}"
+        )
+
+    main_path = repo_root / "app" / "main.py"
+    main_source = main_path.read_text(encoding="utf-8")
+    main_tree = ast.parse(main_source, filename=str(main_path))
+    task_router_names = set(task_router_modules.values())
+
+    prefixed_routers: set[str] = set()
+    for node in ast.walk(main_tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not (
+            isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "app"
+            and node.func.attr == "include_router"
+        ):
+            continue
+        if len(node.args) != 1 or not isinstance(node.args[0], ast.Name):
+            continue
+        router_name = node.args[0].id
+        if router_name not in task_router_names:
+            continue
+        has_api_v1_prefix = any(
+            keyword.arg == "prefix"
+            and isinstance(keyword.value, ast.Name)
+            and keyword.value.id == "_API_V1_PREFIX"
+            for keyword in node.keywords
+        )
+        if has_api_v1_prefix:
+            prefixed_routers.add(router_name)
+
+    for node in ast.walk(main_tree):
+        if not isinstance(node, ast.For):
+            continue
+        if not isinstance(node.target, ast.Name):
+            continue
+        if not isinstance(node.iter, (ast.Tuple, ast.List)):
+            continue
+        loop_router_names = {
+            element.id for element in node.iter.elts if isinstance(element, ast.Name) and element.id in task_router_names
+        }
+        if not loop_router_names:
+            continue
+        for statement in node.body:
+            if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+                continue
+            call = statement.value
+            if not (
+                isinstance(call.func, ast.Attribute)
+                and isinstance(call.func.value, ast.Name)
+                and call.func.value.id == "app"
+                and call.func.attr == "include_router"
+            ):
+                continue
+            if len(call.args) != 1 or not isinstance(call.args[0], ast.Name):
+                continue
+            if call.args[0].id != node.target.id:
+                continue
+            has_api_v1_prefix = any(
+                keyword.arg == "prefix"
+                and isinstance(keyword.value, ast.Name)
+                and keyword.value.id == "_API_V1_PREFIX"
+                for keyword in call.keywords
+            )
+            if has_api_v1_prefix:
+                prefixed_routers.update(loop_router_names)
+
+    assert prefixed_routers == task_router_names, (
+        "app/main.py must inject _API_V1_PREFIX when including all tasks routers; "
+        f"missing: {sorted(task_router_names - prefixed_routers)}"
     )
 
 
@@ -381,4 +499,39 @@ def test_flow_planner_mutation_methods_require_non_optional_db_session() -> None
         "FlowPlannerSessionService mutation methods must require non-optional db_session "
         "and must not default db_session to None; "
         f"found: {violations}"
+    )
+
+
+def test_task_requirement_id_uses_requirement_id_only() -> None:
+    module_path = Path(__file__).resolve().parent.parent / "app" / "api" / "tasks_common.py"
+    source = module_path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(module_path))
+
+    target_node = next(
+        (
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "task_requirement_id"
+        ),
+        None,
+    )
+    assert target_node is not None, "task_requirement_id must exist in app/api/tasks_common.py"
+
+    function_source = ast.get_source_segment(source, target_node)
+    assert isinstance(function_source, str) and function_source.strip() != ""
+    assert "requirement_id" in function_source, "task_requirement_id must read extras.requirement_id"
+
+    forbidden_fallback_keys = {
+        "flow_id",
+        "planner_session_key",
+        "manager_session_key",
+    }
+    for key in sorted(forbidden_fallback_keys):
+        assert key not in function_source, (
+            "task_requirement_id must not include legacy fallback keys; "
+            f"found forbidden key: {key}"
+        )
+
+    assert "str(task.id)" not in function_source, (
+        "task_requirement_id must not fallback to task.id when requirement_id is missing"
     )

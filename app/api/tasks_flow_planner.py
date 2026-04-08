@@ -54,11 +54,12 @@ from app.services.flow_planner_session_service import (
 )
 from app.services.provider_application_service import ProviderApplicationService
 
-router = APIRouter(prefix="/api/v1/boards/{board_id}/tasks")
+router = APIRouter(prefix="/boards/{board_id}/tasks")
 
 _FLOW_PLANNER_AGENT_ID = "claw3"
 _FLOW_PLANNER_SSE_POLL_INTERVAL_SECONDS = 0.6
 _FLOW_PLANNER_SSE_KEEPALIVE_SECONDS = 12.0
+_MISSING = object()
 
 
 @dataclass(frozen=True)
@@ -81,6 +82,56 @@ def _normalize_depends_on(value: object) -> list[str]:
         if normalized:
             output.append(normalized)
     return output
+
+
+def _require_snapshot_nodes(snapshot: object) -> list[dict[str, object]]:
+    raw_nodes = getattr(snapshot, "nodes", _MISSING)
+    if raw_nodes is _MISSING:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="planner snapshot missing required field: nodes",
+        )
+    if not isinstance(raw_nodes, list):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="planner snapshot field nodes must be a list",
+        )
+    for index, item in enumerate(raw_nodes):
+        if not isinstance(item, dict):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"planner snapshot nodes[{index}] must be an object",
+            )
+    return cast(list[dict[str, object]], raw_nodes)
+
+
+def _require_node_field(
+    node: dict[str, object],
+    *,
+    index: int,
+    field: str,
+) -> object:
+    value = node.get(field, _MISSING)
+    if value is _MISSING:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"planner snapshot nodes[{index}] missing required field: {field}",
+        )
+    return value
+
+
+def _require_node_depends_on(
+    node: dict[str, object],
+    *,
+    index: int,
+) -> list[str]:
+    raw_depends_on = _require_node_field(node, index=index, field="depends_on")
+    if not isinstance(raw_depends_on, list):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"planner snapshot nodes[{index}] field depends_on must be a list",
+        )
+    return _normalize_depends_on(raw_depends_on)
 
 
 def _resolve_flow_planner_agent_id(raw: str | None) -> str:
@@ -155,47 +206,39 @@ def _planner_snapshot_to_messages(snapshot: object) -> list[FlowChatMessageItem]
 
 
 def _planner_snapshot_to_canvas_nodes(snapshot: object) -> list[FlowCanvasNode]:
-    raw_nodes = getattr(snapshot, "current_nodes", getattr(snapshot, "nodes", []))
-    if not isinstance(raw_nodes, list):
-        return []
+    raw_nodes = _require_snapshot_nodes(snapshot)
     planner_agent_id = None
     if isinstance(getattr(snapshot, "planner_agent_id", None), str):
         planner_agent_id = cast(str, getattr(snapshot, "planner_agent_id")).strip() or None
     canvas_nodes: list[FlowCanvasNode] = []
     drafts: list[_FlowNodeDraft] = []
-    for item in raw_nodes:
-        if not isinstance(item, dict):
-            continue
-        node_id = str(item.get("id", "")).strip()
+    for index, item in enumerate(raw_nodes):
+        node_id = str(_require_node_field(item, index=index, field="id")).strip()
         if node_id == "":
-            continue
-        title = str(item.get("title", "未命名节点")).strip() or "未命名节点"
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"planner snapshot nodes[{index}] field id must be non-empty",
+            )
+        title = str(_require_node_field(item, index=index, field="title")).strip() or "未命名节点"
+        depends_on = _require_node_depends_on(item, index=index)
+        description = str(_require_node_field(item, index=index, field="description")).strip()
+        sensitive = bool(_require_node_field(item, index=index, field="sensitive"))
         if all(key in item for key in ("x", "y", "layer", "status")):
             canvas_nodes.append(
                 FlowCanvasNode(
                     id=node_id,
                     title=title,
-                    description=str(item.get("description", "")).strip(),
-                    depends_on=_normalize_depends_on(item.get("depends_on")),
+                    description=description,
+                    depends_on=depends_on,
                     x=float(item.get("x", 160.0)),
                     y=float(item.get("y", 120.0)),
                     layer=int(item.get("layer", 1)),
-                    sensitive=bool(item.get("sensitive", False)),
+                    sensitive=sensitive,
                     status=str(item.get("status", "queued")).strip() or "queued",
                     agent_id=str(item.get("agent_id", "")).strip() or planner_agent_id or _FLOW_PLANNER_AGENT_ID,
                 )
             )
             continue
-        description = str(item.get("description", "")).strip()
-        sensitive = bool(item.get("sensitive", False))
-        depends_on = _normalize_depends_on(item.get("depends_on"))
-        if not depends_on and isinstance(item.get("dependencies"), list):
-            for dependency in cast(list[object], item["dependencies"]):
-                if not isinstance(dependency, str):
-                    continue
-                dep = dependency.strip()
-                if dep != "":
-                    depends_on.append(dep)
         drafts.append(
             _FlowNodeDraft(
                 id=node_id,

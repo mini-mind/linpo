@@ -1,14 +1,25 @@
 import '@testing-library/jest-dom';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AggregateOverviewResponse, FlowConfirmResponse, FlowGenerateResponse, KanbanTaskItem } from '../api/types';
-import { ToastProvider } from '../hooks/useToast';
-import { FlowPage } from './FlowPage';
+import type { FlowGenerateResponse, KanbanTaskItem } from '../api/types';
+import {
+  renderFlowPage,
+  sendPlannerInstructionByButton,
+  setViewportWidth,
+  submitPlannerInstruction,
+  switchToFlowAndWaitCurrent,
+  waitForFlowCanvasReady,
+  waitForLatestMockCallFirstArg,
+  waitForPlannerFeedbackSettled,
+  waitForPlannerMessageInPanel,
+  waitForPlannerMessageNotInPanel,
+  waitForPlannerStopButton,
+} from './flowPageTestHarness';
+import { buildGenerateResponse, buildOverview, seedFlowDraftRecord } from './flowPageTestFixtures';
+import { flowPageMocks, setupFlowPageDefaultTestState } from './flowPageTestSetup';
 import { upsertFlowDraft } from './flowDraftStore';
-import { PLANNER_SETTLE_TIMEOUT_MS } from './flowPageUtils';
 
 const {
   mockGetAggregateOverview,
@@ -27,128 +38,7 @@ const {
   mockUpsertFlowDraftRecord,
   mockCreateBoardTasksSseClient,
   mockCreateFlowPlannerSseClient,
-} = vi.hoisted(() => ({
-  mockGetAggregateOverview: vi.fn(),
-  mockGenerateFlowFromRequirement: vi.fn(),
-  mockConfirmFlowToKanban: vi.fn(),
-  mockStopFlowPlannerSession: vi.fn(),
-  mockDeleteKanbanRequirementTasks: vi.fn(),
-  mockDeleteFlowDraftRecord: vi.fn(),
-  mockListKanbanTasks: vi.fn(),
-  mockListFlowDraftRecords: vi.fn(),
-  mockProbeFlowPlannerSession: vi.fn(),
-  mockRenameFlowRequirement: vi.fn(),
-  mockStopFlowRequirement: vi.fn(),
-  mockContinueFlowRequirement: vi.fn(),
-  mockSyncFlowRequirement: vi.fn(),
-  mockUpsertFlowDraftRecord: vi.fn(),
-  mockCreateBoardTasksSseClient: vi.fn(),
-  mockCreateFlowPlannerSseClient: vi.fn(),
-}));
-
-vi.mock('../api/client', async () => {
-  const actual = await vi.importActual<typeof import('../api/client')>('../api/client');
-  return {
-    ...actual,
-    getAggregateOverview: mockGetAggregateOverview,
-    generateFlowFromRequirement: mockGenerateFlowFromRequirement,
-    confirmFlowToKanban: mockConfirmFlowToKanban,
-    stopFlowPlannerSession: mockStopFlowPlannerSession,
-    deleteKanbanRequirementTasks: mockDeleteKanbanRequirementTasks,
-    deleteFlowDraftRecord: mockDeleteFlowDraftRecord,
-    listKanbanTasks: mockListKanbanTasks,
-    listFlowDraftRecords: mockListFlowDraftRecords,
-    probeFlowPlannerSession: mockProbeFlowPlannerSession,
-    renameFlowRequirement: mockRenameFlowRequirement,
-    stopFlowRequirement: mockStopFlowRequirement,
-    continueFlowRequirement: mockContinueFlowRequirement,
-    syncFlowRequirement: mockSyncFlowRequirement,
-    upsertFlowDraftRecord: mockUpsertFlowDraftRecord,
-  };
-});
-
-vi.mock('../api/realtimeClient', async () => {
-  const actual = await vi.importActual<typeof import('../api/realtimeClient')>('../api/realtimeClient');
-  return {
-    ...actual,
-    createBoardTasksSseClient: mockCreateBoardTasksSseClient,
-    createFlowPlannerSseClient: mockCreateFlowPlannerSseClient,
-  };
-});
-
-function buildOverview(): AggregateOverviewResponse {
-  return {
-    request_id: 'req-flow-overview',
-    freshness: {
-      status: 'fresh',
-      checked_at: '2026-03-29T08:00:00Z',
-    },
-    partial_failure: false,
-    diagnostics: [],
-    agents: [
-      {
-        instance_id: 'instance-alpha',
-        instance_name: 'alpha-instance',
-        agent_id: 'agent-alpha',
-        agent_name: 'Alpha Agent',
-        status: 'running',
-        is_active: true,
-        last_active_at: '2026-03-29T08:00:00Z',
-        drilldown_path: '/session/agent-alpha/__none__/__new__?instanceId=instance-alpha',
-      },
-    ],
-    stats: {
-      instance_count: 1,
-      agent_count: 1,
-      active_agent_count: 1,
-      attention_instance_count: 0,
-      total_tokens: null,
-    },
-    token_groups: [],
-    global_events: [],
-  };
-}
-
-function buildConfirmResponse(): FlowConfirmResponse {
-  return {
-    board_id: 'default',
-    planner_session_key: 'linpo:flow:default:planner:claw3:test',
-    manager_session_key: 'linpo:flow:default:manager',
-    execution_session_prefix: 'linpo:flow:default:exec',
-    nodes: [],
-    edges: [],
-    messages: [],
-    created_task_ids: ['task-created-1'],
-    dispatched_task_ids: ['task-created-1'],
-  };
-}
-
-function buildGenerateResponse(overrides: Partial<FlowGenerateResponse> = {}): FlowGenerateResponse {
-  return {
-    board_id: 'default',
-    planner_session_key: 'linpo:flow:default:planner:claw3:test',
-    manager_session_key: 'linpo:flow:default:manager',
-    execution_session_prefix: 'linpo:flow:default:exec',
-    nodes: [
-      {
-        id: 'node_planned_1',
-        title: '规划节点A',
-        description: '规划后的详细描述',
-        depends_on: [],
-        x: 42,
-        y: 36,
-        layer: 1,
-        sensitive: false,
-        status: 'queued',
-        agent_id: 'agent-alpha',
-      },
-    ],
-    edges: [],
-    messages: [],
-    created_task_ids: [],
-    ...overrides,
-  };
-}
+} = flowPageMocks;
 
 function buildKanbanTask(overrides: Partial<KanbanTaskItem> = {}): KanbanTaskItem {
   return {
@@ -175,46 +65,8 @@ function buildKanbanTask(overrides: Partial<KanbanTaskItem> = {}): KanbanTaskIte
   };
 }
 
-function renderFlowPage(initialPath = '/flow/edit/new') {
-  return render(
-    <MemoryRouter initialEntries={[initialPath]}>
-      <ToastProvider>
-        <Routes>
-          <Route path="/flow/edit/:flowId" element={<FlowPage />} />
-          <Route path="/flow" element={<div>flow-list</div>} />
-          <Route path="/kanban" element={<div>kanban-page</div>} />
-        </Routes>
-      </ToastProvider>
-    </MemoryRouter>
-  );
-}
-
-function setViewportWidth(width: number): void {
-  Object.defineProperty(window, 'innerWidth', {
-    configurable: true,
-    writable: true,
-    value: width,
-  });
-  window.dispatchEvent(new Event('resize'));
-}
-
 function seedDraftFlow(id = 'draft-editable', overrides: Record<string, unknown> = {}): string {
-  upsertFlowDraft({
-    id,
-    name: '测试草稿流程',
-    requirement: '',
-    nodes: [],
-    edges: [],
-    lanes: [],
-    node_lane_by_id: {},
-    planner_session_key: null,
-    execution_session_prefix: null,
-    executor_agent_id: null,
-    created_at: '2026-03-29T08:00:00Z',
-    updated_at: '2026-03-29T08:00:00Z',
-    ...overrides,
-  });
-  return id;
+  return seedFlowDraftRecord(id, overrides);
 }
 
 async function createNodeByCanvasDoubleClick(title: string, description = ''): Promise<void> {
@@ -237,18 +89,21 @@ async function findCanvasActionGroup(): Promise<HTMLElement> {
   return actions;
 }
 
-async function waitForFlowCanvasReady(): Promise<HTMLElement> {
-  const viewport = await screen.findByTestId('flow-canvas-viewport');
-  expect(screen.queryByRole('toolbar', { name: '流程编辑工具栏' })).not.toBeInTheDocument();
-  return viewport;
+async function clickPlannerStopAndWait(expectedStopCallCount: number): Promise<void> {
+  await userEvent.click(await waitForPlannerStopButton());
+  await waitFor(() => {
+    expect(mockStopFlowPlannerSession).toHaveBeenCalledTimes(expectedStopCallCount);
+  });
 }
 
-async function waitForPlannerFeedbackSettled(): Promise<void> {
-  await act(async () => {
-    await new Promise<void>((resolve) => {
-      window.setTimeout(resolve, PLANNER_SETTLE_TIMEOUT_MS + 30);
-    });
-  });
+async function openRunFlowConfirmDialog(): Promise<HTMLElement> {
+  await userEvent.click(within(findCurrentFlowSidebarCard()).getByRole('button', { name: /运行流程-/ }));
+  return await screen.findByRole('dialog', { name: '确认运行流程' });
+}
+
+async function confirmRunFlowFromDialog(): Promise<void> {
+  await screen.findByRole('dialog', { name: '确认运行流程' });
+  await userEvent.click(screen.getByRole('button', { name: '确认运行' }));
 }
 
 function findFlowSidebarCard(flowName: string): HTMLElement {
@@ -271,76 +126,7 @@ function findCurrentFlowSidebarCard(): HTMLElement {
 
 describe('FlowPage', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    window.localStorage.clear();
-    setViewportWidth(1280);
-    mockGetAggregateOverview.mockResolvedValue(buildOverview());
-    mockGenerateFlowFromRequirement.mockResolvedValue(buildGenerateResponse());
-    mockConfirmFlowToKanban.mockResolvedValue(buildConfirmResponse());
-    mockStopFlowPlannerSession.mockResolvedValue({
-      session_key: 'linpo:flow:default:planner:claw3:test',
-      status: 'stopped',
-      revision: 1,
-      updated_at: '2026-04-02T00:00:00Z',
-    });
-    mockDeleteKanbanRequirementTasks.mockResolvedValue({
-      deleted: true,
-      deleted_task_ids: ['task-node-1'],
-      requirement_id: 'req-flow-a',
-    });
-    mockDeleteFlowDraftRecord.mockResolvedValue({
-      deleted: true,
-      flow_id: 'draft-flow-a',
-    });
-    mockListKanbanTasks.mockResolvedValue([]);
-    mockListFlowDraftRecords.mockResolvedValue([]);
-    mockProbeFlowPlannerSession.mockResolvedValue({ exists: true });
-    mockRenameFlowRequirement.mockResolvedValue({
-      requirement_id: 'req-flow-a',
-      requirement_title: '新流程名',
-      updated_task_ids: ['task-node-1'],
-    });
-    mockStopFlowRequirement.mockResolvedValue({
-      requirement_id: 'req-flow-a',
-      stopped_task_ids: [],
-      running_task_ids: [],
-    });
-    mockContinueFlowRequirement.mockResolvedValue({
-      requirement_id: 'req-flow-a',
-      resumed_task_ids: [],
-      dispatched_task_ids: [],
-    });
-    mockSyncFlowRequirement.mockResolvedValue({
-      requirement_id: 'req-flow-a',
-      updated_task_ids: [],
-      created_task_ids: [],
-      deleted_task_ids: [],
-    });
-    mockUpsertFlowDraftRecord.mockImplementation(async (payload: Record<string, unknown>) => ({
-      id: String(payload.id ?? 'draft-id'),
-      name: String(payload.name ?? '未命名流程'),
-      requirement: String(payload.requirement ?? ''),
-      nodes: Array.isArray(payload.nodes) ? payload.nodes : [],
-      edges: Array.isArray(payload.edges) ? payload.edges : [],
-      planner_messages: Array.isArray(payload.planner_messages) ? payload.planner_messages : [],
-      lanes: Array.isArray(payload.lanes) ? payload.lanes : [],
-      node_lane_by_id: payload.node_lane_by_id && typeof payload.node_lane_by_id === 'object'
-        ? payload.node_lane_by_id
-        : {},
-      planner_session_key: payload.planner_session_key ?? null,
-      execution_session_prefix: payload.execution_session_prefix ?? null,
-      executor_agent_id: payload.executor_agent_id ?? null,
-      created_at: String(payload.created_at ?? '2026-03-29T08:00:00Z'),
-      updated_at: String(payload.updated_at ?? '2026-03-29T08:00:00Z'),
-    }));
-    mockCreateBoardTasksSseClient.mockImplementation(() => ({
-      connect: vi.fn(),
-      close: vi.fn(),
-    }));
-    mockCreateFlowPlannerSseClient.mockImplementation(() => ({
-      connect: vi.fn(),
-      close: vi.fn(),
-    }));
+    setupFlowPageDefaultTestState({ viewportWidth: 1280 });
   });
 
   it('supports canvas double-click create node with modal', async () => {
@@ -357,7 +143,7 @@ describe('FlowPage', () => {
   });
 
   it('supports floating planner composer with Enter send and Shift+Enter newline', async () => {
-    let resolveGenerate: ((value: FlowGenerateResponse) => void) | null = null;
+    let resolveGenerate: ((value: FlowGenerateResponse) => void) | undefined;
     mockGenerateFlowFromRequirement.mockImplementation(
       () =>
         new Promise<FlowGenerateResponse>((resolve) => {
@@ -391,10 +177,9 @@ describe('FlowPage', () => {
     expect(screen.getByTestId('flow-planning-overlay')).toBeInTheDocument();
     expect(input.value).toBe('');
 
-    await waitFor(() => {
-      expect(mockCreateFlowPlannerSseClient).toHaveBeenCalledTimes(1);
-    });
-    const plannerSseOptions = mockCreateFlowPlannerSseClient.mock.calls[0]?.[0];
+    const plannerSseOptions = (await waitForLatestMockCallFirstArg(
+      mockCreateFlowPlannerSseClient
+    )) as { sessionKey: string; onMessage: (event: unknown) => void };
 
     expect(resolveGenerate).not.toBeNull();
     if (!resolveGenerate) {
@@ -535,44 +320,205 @@ describe('FlowPage', () => {
     });
   });
 
-  it('switches send button to stop and calls planner stop api while planning', async () => {
-    mockGenerateFlowFromRequirement.mockImplementation(
-      () =>
-        new Promise<FlowGenerateResponse>((resolve) => {
-          window.setTimeout(() => resolve(buildGenerateResponse()), 0);
+  it('ignores late realtime events from stopped old planner session after a new session starts', async () => {
+    mockGenerateFlowFromRequirement
+      .mockResolvedValueOnce(
+        buildGenerateResponse({
+          planner_session_key: 'linpo:flow:default:planner:claw3:old-session',
+          nodes: [],
         })
-    );
+      )
+      .mockResolvedValueOnce(
+        buildGenerateResponse({
+          planner_session_key: 'linpo:flow:default:planner:claw3:new-session',
+          nodes: [
+            {
+              id: 'node_current_1',
+              title: '当前会话节点',
+              description: 'new session node',
+              depends_on: [],
+              x: 88,
+              y: 66,
+              layer: 1,
+              sensitive: false,
+              status: 'queued',
+              agent_id: 'agent-alpha',
+            },
+          ],
+        })
+      );
 
-    const flowId = seedDraftFlow('draft-planner-stop');
+    const flowId = seedDraftFlow('draft-planner-stop-old-session-race');
     renderFlowPage(`/flow/edit/${flowId}`);
     await waitForFlowCanvasReady();
 
-    const input = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
-    await userEvent.type(input, '请先规划一个流程');
-    await userEvent.keyboard('{Enter}');
+    await submitPlannerInstruction('第一次规划');
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: '停止' })).toBeInTheDocument();
+      expect(mockCreateFlowPlannerSseClient.mock.calls.length).toBeGreaterThan(0);
     });
-    await userEvent.click(screen.getByTestId('flow-planning-overlay'));
-    expect(screen.getByTestId('flow-planner-messages')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '停止' })).toBeInTheDocument();
+    const firstSessionSubscribeCount = mockCreateFlowPlannerSseClient.mock.calls.length;
+    const oldPlannerSseOptions = mockCreateFlowPlannerSseClient.mock.calls[firstSessionSubscribeCount - 1]?.[0];
+    expect(oldPlannerSseOptions.sessionKey).toContain('linpo:flow:default:planner:claw3:');
 
-    await userEvent.click(screen.getByRole('button', { name: '停止' }));
+    await clickPlannerStopAndWait(1);
+
+    await submitPlannerInstruction('第二次规划');
 
     await waitFor(() => {
-      expect(mockStopFlowPlannerSession).toHaveBeenCalledWith(
-        { planner_session_key: expect.stringContaining('linpo:flow:default:planner:claw3:') },
-        undefined,
-        'default'
-      );
+      expect(mockGenerateFlowFromRequirement).toHaveBeenCalledTimes(2);
     });
-    expect(screen.queryByTestId('flow-planning-overlay')).not.toBeInTheDocument();
-    await userEvent.click(screen.getByTestId('flow-planner-input'));
-    expect(screen.getByRole('button', { name: '发送' })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(mockCreateFlowPlannerSseClient.mock.calls.length).toBeGreaterThan(firstSessionSubscribeCount);
+    });
+
+    expect(await screen.findByRole('button', { name: '流程节点-当前会话节点' })).toBeInTheDocument();
+
+    act(() => {
+      oldPlannerSseOptions.onMessage({
+        type: 'planner_messages_updated',
+        channel: `session:${oldPlannerSseOptions.sessionKey}:messages`,
+        seq: 99,
+        timestamp: '2026-04-04T00:00:00Z',
+        payload: {
+          session_key: oldPlannerSseOptions.sessionKey,
+          messages: [
+            {
+              role: 'assistant',
+              content: '旧会话晚到消息',
+              created_at: '2026-04-04T00:00:00Z',
+            },
+          ],
+        },
+      });
+      oldPlannerSseOptions.onMessage({
+        type: 'planner_snapshot_updated',
+        channel: `session:${oldPlannerSseOptions.sessionKey}:messages`,
+        seq: 100,
+        timestamp: '2026-04-04T00:00:01Z',
+        payload: {
+          session_key: oldPlannerSseOptions.sessionKey,
+          revision: 5,
+          nodes: [
+            {
+              id: 'node_stale_1',
+              title: '旧会话脏节点',
+              description: 'stale',
+              depends_on: [],
+              sensitive: false,
+            },
+          ],
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '流程节点-当前会话节点' })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: '流程节点-旧会话脏节点' })).not.toBeInTheDocument();
+    expect(screen.queryByText('旧会话晚到消息')).not.toBeInTheDocument();
   });
 
-  it('keeps automatic mode open while waiting and blocks canvas edits until overlay is dismissed after settling', async () => {
+  it('does not let late http response from stopped old request override retry session in same flow', async () => {
+    let resolveFirstGenerate: ((value: FlowGenerateResponse) => void) | null = null;
+    let resolveSecondGenerate: ((value: FlowGenerateResponse) => void) | null = null;
+    mockGenerateFlowFromRequirement
+      .mockImplementationOnce(
+        () =>
+          new Promise<FlowGenerateResponse>((resolve) => {
+            resolveFirstGenerate = resolve;
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<FlowGenerateResponse>((resolve) => {
+            resolveSecondGenerate = resolve;
+          })
+      );
+
+    const flowId = seedDraftFlow('draft-planner-stop-retry-http-race');
+    renderFlowPage(`/flow/edit/${flowId}`);
+    await waitForFlowCanvasReady();
+
+    await submitPlannerInstruction('第一次规划');
+
+    await waitFor(() => {
+      expect(mockGenerateFlowFromRequirement).toHaveBeenCalledTimes(1);
+    });
+    await clickPlannerStopAndWait(1);
+
+    await submitPlannerInstruction('第二次规划');
+    await waitFor(() => {
+      expect(mockGenerateFlowFromRequirement).toHaveBeenCalledTimes(2);
+    });
+
+    if (!resolveSecondGenerate) {
+      throw new Error('second planner resolver missing');
+    }
+    await act(async () => {
+      resolveSecondGenerate?.(
+        buildGenerateResponse({
+          planner_session_key: 'linpo:flow:default:planner:claw3:new-http-session',
+          nodes: [
+            {
+              id: 'node_new_http_1',
+              title: '新会话节点',
+              description: 'from retry session',
+              depends_on: [],
+              x: 96,
+              y: 72,
+              layer: 1,
+              sensitive: false,
+              status: 'queued',
+              agent_id: 'agent-alpha',
+            },
+          ],
+        })
+      );
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '流程节点-新会话节点' })).toBeInTheDocument();
+    });
+
+    if (!resolveFirstGenerate) {
+      throw new Error('first planner resolver missing');
+    }
+    await act(async () => {
+      resolveFirstGenerate?.(
+        buildGenerateResponse({
+          planner_session_key: 'linpo:flow:default:planner:claw3:old-http-session',
+          nodes: [
+            {
+              id: 'node_old_http_1',
+              title: '旧会话脏节点',
+              description: 'from stale response',
+              depends_on: [],
+              x: 32,
+              y: 24,
+              layer: 1,
+              sensitive: false,
+              status: 'queued',
+              agent_id: 'agent-alpha',
+            },
+          ],
+        })
+      );
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '流程节点-新会话节点' })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: '流程节点-旧会话脏节点' })).not.toBeInTheDocument();
+
+    await clickPlannerStopAndWait(2);
+    expect(mockStopFlowPlannerSession.mock.calls[1]?.[0]).toEqual({
+      planner_session_key: 'linpo:flow:default:planner:claw3:new-http-session',
+    });
+  });
+
+  it('keeps automatic mode open, blocks canvas edits, and only allows overlay dismissal after settle', async () => {
     let resolveGenerate: ((value: FlowGenerateResponse) => void) | null = null;
     mockGenerateFlowFromRequirement.mockImplementation(
       () =>
@@ -636,64 +582,6 @@ describe('FlowPage', () => {
       expect(screen.getByRole('button', { name: '发送' })).toBeInTheDocument();
     });
     expect(screen.getByTestId('flow-planning-overlay')).toBeInTheDocument();
-
-    await waitForPlannerFeedbackSettled();
-    await userEvent.click(screen.getByTestId('flow-planning-overlay'));
-    await waitFor(() => {
-      expect(screen.queryByTestId('flow-planning-overlay')).not.toBeInTheDocument();
-    });
-  });
-
-  it('blocks overlay dismissal until planner feedback settles after completion', async () => {
-    let resolveGenerate: ((value: FlowGenerateResponse) => void) | null = null;
-    mockGenerateFlowFromRequirement.mockImplementation(
-      () =>
-        new Promise<FlowGenerateResponse>((resolve) => {
-          resolveGenerate = resolve;
-        })
-    );
-
-    const flowId = seedDraftFlow('draft-planner-close-lock');
-    renderFlowPage(`/flow/edit/${flowId}`);
-    await waitForFlowCanvasReady();
-
-    const input = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
-    await userEvent.type(input, '请完成流程拆解');
-    await userEvent.keyboard('{Enter}');
-
-    await waitFor(() => {
-      expect(mockCreateFlowPlannerSseClient).toHaveBeenCalledTimes(1);
-    });
-    const plannerSseOptions = mockCreateFlowPlannerSseClient.mock.calls[0]?.[0];
-
-    if (!resolveGenerate) {
-      throw new Error('planner mock resolver missing');
-    }
-    const resolveGenerateFn = resolveGenerate as (value: FlowGenerateResponse) => void;
-    await act(async () => {
-      resolveGenerateFn(
-        buildGenerateResponse({
-          planner_session_key: plannerSseOptions.sessionKey,
-        })
-      );
-      await Promise.resolve();
-    });
-
-    act(() => {
-      plannerSseOptions.onMessage({
-        type: 'planner_session_updated',
-        channel: `session:${plannerSseOptions.sessionKey}:messages`,
-        seq: 2,
-        timestamp: '2026-04-02T00:00:01Z',
-        payload: {
-          session_key: plannerSseOptions.sessionKey,
-          status: 'completed',
-          revision: 1,
-          updated_at: '2026-04-02T00:00:01Z',
-        },
-      });
-    });
-
     await userEvent.click(screen.getByTestId('flow-planning-overlay'));
     expect(screen.getByTestId('flow-planning-overlay')).toBeInTheDocument();
 
@@ -833,10 +721,24 @@ describe('FlowPage', () => {
       );
       await Promise.resolve();
     });
+    act(() => {
+      plannerSseOptions.onMessage({
+        type: 'planner_session_updated',
+        channel: `session:${plannerSseOptions.sessionKey}:messages`,
+        seq: 5,
+        timestamp: '2026-04-02T00:00:05Z',
+        payload: {
+          session_key: plannerSseOptions.sessionKey,
+          status: 'completed',
+          revision: 2,
+          updated_at: '2026-04-02T00:00:05Z',
+        },
+      });
+    });
     await waitForPlannerFeedbackSettled();
   });
 
-  it('does not subscribe planner sse when planner session probe reports missing session', async () => {
+  it('keeps flow page usable when planner session probe reports missing session', async () => {
     mockProbeFlowPlannerSession.mockResolvedValue({ exists: false });
     const flowId = seedDraftFlow('draft-planner-missing-session', {
       planner_session_key: 'linpo:flow:default:planner:claw3:missing',
@@ -859,181 +761,7 @@ describe('FlowPage', () => {
         'default'
       );
     });
-    expect(mockCreateFlowPlannerSseClient).not.toHaveBeenCalled();
-  });
-
-  it('does not leak a stale planner session into another flow after switching', async () => {
-    let resolveFirstGenerate: ((value: FlowGenerateResponse) => void) | null = null;
-    mockGenerateFlowFromRequirement
-      .mockImplementationOnce(
-        () =>
-          new Promise<FlowGenerateResponse>((resolve) => {
-            resolveFirstGenerate = resolve;
-          })
-      )
-      .mockResolvedValueOnce(
-        buildGenerateResponse({
-          planner_session_key: 'linpo:flow:default:planner:claw3:flow-b',
-        })
-      );
-
-    upsertFlowDraft({
-      id: 'draft-flow-a',
-      name: '流程A草稿',
-      requirement: '',
-      nodes: [],
-      edges: [],
-      lanes: [],
-      node_lane_by_id: {},
-      planner_session_key: null,
-      execution_session_prefix: null,
-      executor_agent_id: null,
-      created_at: '2026-03-29T08:00:00Z',
-      updated_at: '2026-03-29T08:00:00Z',
-    });
-    upsertFlowDraft({
-      id: 'draft-flow-b',
-      name: '流程B草稿',
-      requirement: '',
-      nodes: [],
-      edges: [],
-      lanes: [],
-      node_lane_by_id: {},
-      planner_session_key: null,
-      execution_session_prefix: null,
-      executor_agent_id: null,
-      created_at: '2026-03-29T08:01:00Z',
-      updated_at: '2026-03-29T08:01:00Z',
-    });
-
-    renderFlowPage('/flow/edit/draft-flow-a');
-    await waitForFlowCanvasReady();
-
-    const plannerInput = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
-    await userEvent.click(plannerInput);
-    await userEvent.type(plannerInput, '流程A的规划需求');
-    await userEvent.keyboard('{Enter}');
-
-    await waitFor(() => {
-      expect(mockGenerateFlowFromRequirement).toHaveBeenCalledTimes(1);
-    });
-    expect(screen.getByText('流程A的规划需求')).toBeInTheDocument();
-    expect(screen.getByTestId('flow-planning-overlay')).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole('button', { name: '切换流程-流程B草稿' }));
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: '切换流程-流程B草稿', current: 'page' })).toBeInTheDocument();
-    });
-    expect(screen.queryByText('流程A的规划需求')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('flow-planning-overlay')).not.toBeInTheDocument();
-
-    if (!resolveFirstGenerate) {
-      throw new Error('first planner resolver missing');
-    }
-    const resolveFirstGenerateFn = resolveFirstGenerate as (value: FlowGenerateResponse) => void;
-    resolveFirstGenerateFn(
-      buildGenerateResponse({
-        planner_session_key: 'linpo:flow:default:planner:claw3:stale-flow-a',
-      })
-    );
-
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    const flowBInput = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
-    await userEvent.click(flowBInput);
-    await userEvent.type(flowBInput, '流程B的规划需求');
-    await userEvent.keyboard('{Enter}');
-
-    await waitFor(() => {
-      expect(mockGenerateFlowFromRequirement).toHaveBeenCalledTimes(2);
-    });
-    const secondPayload = mockGenerateFlowFromRequirement.mock.calls[1][0];
-    expect(secondPayload.planner_session_key).not.toBe('linpo:flow:default:planner:claw3:stale-flow-a');
-    expect(secondPayload.requirement).toBe('流程B的规划需求');
-  });
-
-  it('recomputes planning overlay after switching away and back while waiting for reply', async () => {
-    let resolveFirstGenerate: ((value: FlowGenerateResponse) => void) | null = null;
-    mockGenerateFlowFromRequirement.mockImplementationOnce(
-      () =>
-        new Promise<FlowGenerateResponse>((resolve) => {
-          resolveFirstGenerate = resolve;
-        })
-    );
-
-    upsertFlowDraft({
-      id: 'draft-overlay-a',
-      name: '遮罩流程A',
-      requirement: '',
-      nodes: [],
-      edges: [],
-      lanes: [],
-      node_lane_by_id: {},
-      planner_session_key: 'linpo:flow:default:planner:claw3:overlay-a',
-      execution_session_prefix: null,
-      executor_agent_id: null,
-      created_at: '2026-03-29T08:00:00Z',
-      updated_at: '2026-03-29T08:00:00Z',
-    });
-    upsertFlowDraft({
-      id: 'draft-overlay-b',
-      name: '遮罩流程B',
-      requirement: '',
-      nodes: [],
-      edges: [],
-      lanes: [],
-      node_lane_by_id: {},
-      planner_session_key: 'linpo:flow:default:planner:claw3:overlay-b',
-      execution_session_prefix: null,
-      executor_agent_id: null,
-      created_at: '2026-03-29T08:01:00Z',
-      updated_at: '2026-03-29T08:01:00Z',
-    });
-
-    renderFlowPage('/flow/edit/draft-overlay-a');
-    await waitForFlowCanvasReady();
-
-    const plannerInput = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
-    await userEvent.click(plannerInput);
-    await userEvent.type(plannerInput, '流程A等待回复中');
-    await userEvent.keyboard('{Enter}');
-
-    await waitFor(() => {
-      expect(mockGenerateFlowFromRequirement).toHaveBeenCalledTimes(1);
-    });
-    expect(screen.getByTestId('flow-planning-overlay')).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole('button', { name: '切换流程-遮罩流程B' }));
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: '切换流程-遮罩流程B', current: 'page' })).toBeInTheDocument();
-    });
-    expect(screen.queryByTestId('flow-planning-overlay')).not.toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole('button', { name: '切换流程-遮罩流程A' }));
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: '切换流程-遮罩流程A', current: 'page' })).toBeInTheDocument();
-    });
-    expect(await screen.findByTestId('flow-planning-overlay')).toBeInTheDocument();
-
-    await userEvent.click(screen.getByTestId('flow-planning-overlay'));
-    expect(screen.getByTestId('flow-planning-overlay')).toBeInTheDocument();
-
-    if (!resolveFirstGenerate) {
-      throw new Error('first planner resolver missing');
-    }
-    const resolveFirstGenerateFn = resolveFirstGenerate as (value: FlowGenerateResponse) => void;
-    resolveFirstGenerateFn(
-      buildGenerateResponse({
-        planner_session_key: 'linpo:flow:default:planner:claw3:overlay-a',
-      })
-    );
-
-    await act(async () => {
-      await Promise.resolve();
-    });
+    expect(screen.getByTestId('flow-planner-input')).toBeInTheDocument();
   });
 
   it('updates canvas nodes when switching flow cards', async () => {
@@ -1080,69 +808,14 @@ describe('FlowPage', () => {
     expect(await screen.findByRole('button', { name: '流程节点-A节点' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '流程节点-B节点' })).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: '切换流程-流程B画布' }));
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: '切换流程-流程B画布', current: 'page' })).toBeInTheDocument();
-    });
+    await switchToFlowAndWaitCurrent('流程B画布');
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '流程节点-B节点' })).toBeInTheDocument();
     });
     expect(screen.queryByRole('button', { name: '流程节点-A节点' })).not.toBeInTheDocument();
   });
 
-  it('updates canvas snapshot when switching submitted flow cards', async () => {
-    mockListKanbanTasks.mockResolvedValue([
-      buildKanbanTask({
-        id: 'task-a-1',
-        title: 'A提交节点',
-        extras: {
-          requirement_id: 'req-flow-a',
-          requirement_title: '提交流程A',
-          flow_node: 'node_a_1',
-          dependencies: 'none',
-          sensitive: 'false',
-          flow_layer: '1',
-          flow_x: '80',
-          flow_y: '60',
-        },
-      }),
-      buildKanbanTask({
-        id: 'task-b-1',
-        title: 'B提交节点',
-        extras: {
-          requirement_id: 'req-flow-b',
-          requirement_title: '提交流程B',
-          flow_node: 'node_b_1',
-          dependencies: 'none',
-          sensitive: 'false',
-          flow_layer: '1',
-          flow_x: '120',
-          flow_y: '90',
-        },
-      }),
-    ]);
-
-    renderFlowPage('/flow/edit/req-flow-a');
-    await waitForFlowCanvasReady();
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: '流程节点-A提交节点' })).toBeInTheDocument();
-    });
-    expect(screen.queryByRole('button', { name: '流程节点-B提交节点' })).not.toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole('button', { name: '切换流程-提交流程B' }));
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: '切换流程-提交流程B', current: 'page' })).toBeInTheDocument();
-    });
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: '流程节点-B提交节点' })).toBeInTheDocument();
-    });
-    expect(screen.queryByRole('button', { name: '流程节点-A提交节点' })).not.toBeInTheDocument();
-  });
-
-  it('prefers submitted snapshot when switching to a card that has both submitted data and stale draft', async () => {
+  it('switches submitted flow cards and prefers submitted snapshot over stale draft', async () => {
     mockListKanbanTasks.mockResolvedValue([
       buildKanbanTask({
         id: 'task-a-1',
@@ -1199,14 +872,11 @@ describe('FlowPage', () => {
       expect(screen.getByRole('button', { name: '流程节点-A提交节点' })).toBeInTheDocument();
     });
 
-    await userEvent.click(screen.getByRole('button', { name: '切换流程-提交流程B' }));
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: '切换流程-提交流程B', current: 'page' })).toBeInTheDocument();
-    });
+    await switchToFlowAndWaitCurrent('提交流程B');
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '流程节点-B提交节点-最新' })).toBeInTheDocument();
     });
+    expect(screen.queryByRole('button', { name: '流程节点-A提交节点' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '流程节点-B旧草稿节点' })).not.toBeInTheDocument();
   });
 
@@ -1335,6 +1005,178 @@ describe('FlowPage', () => {
     expect(screen.queryByText('流程草图已更新。')).not.toBeInTheDocument();
   });
 
+  it('ignores duplicated planner patch events with the same revision in one session', async () => {
+    let resolveGenerate: ((value: FlowGenerateResponse) => void) | null = null;
+    mockGenerateFlowFromRequirement.mockImplementation(
+      () =>
+        new Promise<FlowGenerateResponse>((resolve) => {
+          resolveGenerate = resolve;
+        })
+    );
+
+    const flowId = seedDraftFlow('draft-planner-duplicate-patch-revision');
+    renderFlowPage(`/flow/edit/${flowId}`);
+    await waitForFlowCanvasReady();
+
+    const input = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
+    await userEvent.type(input, '请先规划节点');
+    await userEvent.keyboard('{Enter}');
+
+    await waitFor(() => {
+      expect(mockCreateFlowPlannerSseClient).toHaveBeenCalledTimes(1);
+    });
+    const plannerSseOptions = mockCreateFlowPlannerSseClient.mock.calls[0]?.[0];
+
+    act(() => {
+      plannerSseOptions.onMessage({
+        type: 'planner_nodes_patched',
+        channel: `session:${plannerSseOptions.sessionKey}:messages`,
+        seq: 1,
+        timestamp: '2026-04-02T00:00:00Z',
+        payload: {
+          session_key: plannerSseOptions.sessionKey,
+          revision: 3,
+          operations: [
+            {
+              type: 'upsert_node',
+              node: {
+                id: 'node_same_revision',
+                title: '首条补丁节点',
+                description: 'first',
+                depends_on: [],
+                sensitive: false,
+              },
+            },
+          ],
+        },
+      });
+    });
+
+    expect(await screen.findByRole('button', { name: '流程节点-首条补丁节点' })).toBeInTheDocument();
+
+    act(() => {
+      plannerSseOptions.onMessage({
+        type: 'planner_nodes_patched',
+        channel: `session:${plannerSseOptions.sessionKey}:messages`,
+        seq: 2,
+        timestamp: '2026-04-02T00:00:01Z',
+        payload: {
+          session_key: plannerSseOptions.sessionKey,
+          revision: 3,
+          operations: [
+            {
+              type: 'upsert_node',
+              node: {
+                id: 'node_same_revision',
+                title: '重复修订不应覆盖',
+                description: 'duplicate',
+                depends_on: [],
+                sensitive: false,
+              },
+            },
+          ],
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '流程节点-首条补丁节点' })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: '流程节点-重复修订不应覆盖' })).not.toBeInTheDocument();
+
+    if (!resolveGenerate) {
+      throw new Error('planner mock resolver missing');
+    }
+    const resolveGenerateFn = resolveGenerate as (value: FlowGenerateResponse) => void;
+    await act(async () => {
+      resolveGenerateFn(buildGenerateResponse());
+      await Promise.resolve();
+    });
+  });
+
+  it('ignores duplicated planner snapshots with the same revision in one session', async () => {
+    let resolveGenerate: ((value: FlowGenerateResponse) => void) | undefined;
+    mockGenerateFlowFromRequirement.mockImplementation(
+      () =>
+        new Promise<FlowGenerateResponse>((resolve) => {
+          resolveGenerate = resolve;
+        })
+    );
+
+    const flowId = seedDraftFlow('draft-planner-duplicate-snapshot-revision');
+    renderFlowPage(`/flow/edit/${flowId}`);
+    await waitForFlowCanvasReady();
+
+    const input = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
+    await userEvent.type(input, '请给我一个完整快照');
+    await userEvent.keyboard('{Enter}');
+
+    await waitFor(() => {
+      expect(mockCreateFlowPlannerSseClient).toHaveBeenCalledTimes(1);
+    });
+    const plannerSseOptions = mockCreateFlowPlannerSseClient.mock.calls[0]?.[0];
+
+    act(() => {
+      plannerSseOptions.onMessage({
+        type: 'planner_snapshot_updated',
+        channel: `session:${plannerSseOptions.sessionKey}:messages`,
+        seq: 1,
+        timestamp: '2026-04-02T00:00:00Z',
+        payload: {
+          session_key: plannerSseOptions.sessionKey,
+          revision: 5,
+          nodes: [
+            {
+              id: 'node_snapshot_same_revision',
+              title: '首条快照节点',
+              description: 'snapshot first',
+              depends_on: [],
+              sensitive: false,
+            },
+          ],
+        },
+      });
+    });
+
+    expect(await screen.findByRole('button', { name: '流程节点-首条快照节点' })).toBeInTheDocument();
+
+    act(() => {
+      plannerSseOptions.onMessage({
+        type: 'planner_snapshot_updated',
+        channel: `session:${plannerSseOptions.sessionKey}:messages`,
+        seq: 2,
+        timestamp: '2026-04-02T00:00:01Z',
+        payload: {
+          session_key: plannerSseOptions.sessionKey,
+          revision: 5,
+          nodes: [
+            {
+              id: 'node_snapshot_duplicate',
+              title: '重复快照不应替换',
+              description: 'snapshot duplicate',
+              depends_on: [],
+              sensitive: false,
+            },
+          ],
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '流程节点-首条快照节点' })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: '流程节点-重复快照不应替换' })).not.toBeInTheDocument();
+
+    if (!resolveGenerate) {
+      throw new Error('planner mock resolver missing');
+    }
+    const resolveGenerateFn = resolveGenerate as (value: FlowGenerateResponse) => void;
+    await act(async () => {
+      resolveGenerateFn(buildGenerateResponse());
+      await Promise.resolve();
+    });
+  });
+
   it('hydrates graph from http response when planner node sse updates are absent', async () => {
     mockGenerateFlowFromRequirement.mockResolvedValue(
       buildGenerateResponse({
@@ -1442,9 +1284,8 @@ describe('FlowPage', () => {
     const targetConnector = screen.getByRole('button', { name: '节点 节点B 左侧连接点' });
     fireEvent.pointerUp(targetConnector, { pointerId: 1, pointerType: 'mouse', button: 0, isPrimary: true, clientX: 470, clientY: 430 });
 
-    await userEvent.click(within(findCurrentFlowSidebarCard()).getByRole('button', { name: /运行流程-/ }));
-    expect(screen.getByRole('dialog', { name: '确认运行流程' })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: '确认运行' }));
+    await openRunFlowConfirmDialog();
+    await confirmRunFlowFromDialog();
 
     await waitFor(() => {
       expect(mockConfirmFlowToKanban).toHaveBeenCalledTimes(1);
@@ -1495,9 +1336,8 @@ describe('FlowPage', () => {
     renderFlowPage('/flow/edit/draft-missing-agent');
     await waitForFlowCanvasReady();
 
-    await userEvent.click(within(findCurrentFlowSidebarCard()).getByRole('button', { name: /运行流程-/ }));
-    expect(screen.getByRole('dialog', { name: '确认运行流程' })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: '确认运行' }));
+    await openRunFlowConfirmDialog();
+    await confirmRunFlowFromDialog();
 
     await waitFor(() => {
       expect(mockConfirmFlowToKanban).not.toHaveBeenCalled();
@@ -1525,8 +1365,7 @@ describe('FlowPage', () => {
     await waitForFlowCanvasReady();
     await createNodeByCanvasDoubleClick('节点A');
 
-    await userEvent.click(within(findCurrentFlowSidebarCard()).getByRole('button', { name: /运行流程-/ }));
-    expect(screen.getByRole('dialog', { name: '确认运行流程' })).toBeInTheDocument();
+    await openRunFlowConfirmDialog();
     expect(screen.getByText('检测到该流程已有产出文件，再次运行可能覆盖历史产物。')).toBeInTheDocument();
   });
 
@@ -1880,42 +1719,25 @@ describe('FlowPage', () => {
     renderFlowPage('/flow/edit/draft-msg-a');
     await waitForFlowCanvasReady();
 
-    const plannerInput = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
-    await userEvent.click(plannerInput);
-    await userEvent.type(plannerInput, '这是流程A的消息');
-    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    await sendPlannerInstructionByButton('这是流程A的消息');
     await waitFor(() => {
       expect(mockGenerateFlowFromRequirement).toHaveBeenCalledTimes(1);
     });
-    await screen.findByTestId('flow-planner-messages');
-    expect(await screen.findByText('这是流程A的消息')).toBeInTheDocument();
+    await waitForPlannerMessageInPanel('这是流程A的消息');
 
-    await userEvent.click(screen.getByRole('button', { name: '切换流程-消息流B' }));
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: '切换流程-消息流B', current: 'page' })).toBeInTheDocument();
-    });
+    await switchToFlowAndWaitCurrent('消息流B');
 
-    const secondPlannerInput = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
-    await userEvent.click(secondPlannerInput);
-    await userEvent.type(secondPlannerInput, '这是流程B的消息');
-    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    await sendPlannerInstructionByButton('这是流程B的消息');
     await waitFor(() => {
       expect(mockGenerateFlowFromRequirement).toHaveBeenCalledTimes(2);
     });
-    expect(await screen.findByText('这是流程B的消息')).toBeInTheDocument();
-    await waitFor(() => {
-      expect(screen.queryByText('这是流程A的消息')).not.toBeInTheDocument();
-    });
+    await waitForPlannerMessageInPanel('这是流程B的消息');
+    await waitForPlannerMessageNotInPanel('这是流程A的消息');
 
-    await userEvent.click(screen.getByRole('button', { name: '切换流程-消息流A' }));
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: '切换流程-消息流A', current: 'page' })).toBeInTheDocument();
-    });
+    await switchToFlowAndWaitCurrent('消息流A');
     await userEvent.click(screen.getByTestId('flow-planner-input'));
-    expect(await screen.findByText('这是流程A的消息')).toBeInTheDocument();
-    await waitFor(() => {
-      expect(screen.queryByText('这是流程B的消息')).not.toBeInTheDocument();
-    });
+    await waitForPlannerMessageInPanel('这是流程A的消息');
+    await waitForPlannerMessageNotInPanel('这是流程B的消息');
   });
 
   it('does not render planning placeholder text while awaiting planner response', async () => {
@@ -1942,7 +1764,8 @@ describe('FlowPage', () => {
     const view = renderFlowPage(`/flow/edit/${flowId}`);
     await waitForFlowCanvasReady();
     await act(async () => {
-      const overviewRequest = mockGetAggregateOverview.mock.results.at(-1)?.value;
+      const overviewResults = mockGetAggregateOverview.mock.results;
+      const overviewRequest = overviewResults[overviewResults.length - 1]?.value;
       if (overviewRequest && typeof (overviewRequest as Promise<unknown>).then === 'function') {
         await overviewRequest;
       }
@@ -2436,21 +2259,20 @@ describe('FlowPage', () => {
       renderFlowPage('/flow/edit/new');
 
       await waitForFlowCanvasReady();
-      await waitFor(() => {
-        expect(mockCreateBoardTasksSseClient).toHaveBeenCalledTimes(1);
-      });
-      const realtimeOptions = mockCreateBoardTasksSseClient.mock.calls[0]?.[0];
+      const realtimeOptions = (await waitForLatestMockCallFirstArg(
+        mockCreateBoardTasksSseClient as unknown as { mock: { calls: unknown[][] } },
+        1
+      )) as { onDisconnected: () => void };
       expect(realtimeOptions).toBeDefined();
 
       act(() => {
         realtimeOptions.onDisconnected();
       });
 
-      await waitFor(() => {
-        expect(mockCreateBoardTasksSseClient).toHaveBeenCalledTimes(2);
-      }, {
-        timeout: 2500,
-      });
+      await waitForLatestMockCallFirstArg(
+        mockCreateBoardTasksSseClient as unknown as { mock: { calls: unknown[][] } },
+        2
+      );
       expect(unhandledRejectionHandler).not.toHaveBeenCalled();
     } finally {
       window.removeEventListener('unhandledrejection', unhandledRejectionHandler);

@@ -1,12 +1,12 @@
 import '@testing-library/jest-dom';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AggregateOverviewAgentItem, AggregateOverviewResponse, KanbanTaskItem } from '../api/types';
-import { ToastProvider } from '../hooks/useToast';
-import CollabPage from './CollabPage';
+import type { AggregateOverviewAgentItem, KanbanTaskItem } from '../api/types';
+import { buildCollabOverview, setTestViewportWidth } from './collabPageTestFixtures';
+import { renderCollabBoard, renderCollabPage, waitForLatestMockCallFirstArg } from './collabPageTestHarness';
+import { getCollabPageMockRegistry } from './collabPageTestMockRegistry';
 
 const {
   mockGetAggregateOverview,
@@ -23,57 +23,7 @@ const {
   mockCreateBoardTasksSseClient,
   mockCreateObserverRealtimeClient,
   mockPreviewKanbanTaskOutput,
-} = vi.hoisted(() => ({
-  mockGetAggregateOverview: vi.fn(),
-  mockListInstances: vi.fn(),
-  mockListKanbanTasks: vi.fn(),
-  mockCreateKanbanTask: vi.fn(),
-  mockConfirmFlowToKanban: vi.fn(),
-  mockContinueFlowRequirement: vi.fn(),
-  mockDeleteKanbanTask: vi.fn(),
-  mockContinueKanbanTask: vi.fn(),
-  mockInterruptKanbanTask: vi.fn(),
-  mockStopFlowRequirement: vi.fn(),
-  mockGetSessionHistory: vi.fn(),
-  mockCreateBoardTasksSseClient: vi.fn(),
-  mockCreateObserverRealtimeClient: vi.fn(),
-  mockPreviewKanbanTaskOutput: vi.fn(),
-}));
-
-vi.mock('../api/instanceClient', async () => {
-  const actual = await vi.importActual<typeof import('../api/instanceClient')>('../api/instanceClient');
-  return {
-    ...actual,
-    listInstances: mockListInstances,
-  };
-});
-
-vi.mock('../api/client', async () => {
-  const actual = await vi.importActual<typeof import('../api/client')>('../api/client');
-  return {
-    ...actual,
-    getAggregateOverview: mockGetAggregateOverview,
-    listKanbanTasks: mockListKanbanTasks,
-    createKanbanTask: mockCreateKanbanTask,
-    confirmFlowToKanban: mockConfirmFlowToKanban,
-    continueFlowRequirement: mockContinueFlowRequirement,
-    deleteKanbanTask: mockDeleteKanbanTask,
-    continueKanbanTask: mockContinueKanbanTask,
-    interruptKanbanTask: mockInterruptKanbanTask,
-    stopFlowRequirement: mockStopFlowRequirement,
-    getSessionHistory: mockGetSessionHistory,
-    previewKanbanTaskOutput: mockPreviewKanbanTaskOutput,
-  };
-});
-
-vi.mock('../api/realtimeClient', async () => {
-  const actual = await vi.importActual<typeof import('../api/realtimeClient')>('../api/realtimeClient');
-  return {
-    ...actual,
-    createBoardTasksSseClient: mockCreateBoardTasksSseClient,
-    createObserverRealtimeClient: mockCreateObserverRealtimeClient,
-  };
-});
+} = getCollabPageMockRegistry();
 
 function buildKanbanTask(overrides: Partial<KanbanTaskItem> = {}): KanbanTaskItem {
   return {
@@ -112,49 +62,29 @@ function buildAgent(overrides: Partial<AggregateOverviewAgentItem> = {}): Aggreg
   };
 }
 
-function buildOverview(overrides: Partial<AggregateOverviewResponse> = {}): AggregateOverviewResponse {
-  return {
-    request_id: 'req-kanban',
-    freshness: {
-      status: 'fresh',
-      checked_at: '2026-03-22T12:10:00Z',
-    },
-    partial_failure: false,
-    diagnostics: [],
-    agents: [],
-    stats: {
-      instance_count: 0,
-      agent_count: 0,
-      active_agent_count: 0,
-      attention_instance_count: 0,
-      total_tokens: null,
-    },
-    token_groups: [],
-    global_events: [],
-    ...overrides,
-  };
+function buildOverview(overrides: Parameters<typeof buildCollabOverview>[0] = {}) {
+  return buildCollabOverview(overrides, {
+    requestId: 'req-kanban',
+    checkedAt: '2026-03-22T12:10:00Z',
+  });
 }
 
 function renderPage(initial = '/kanban') {
-  return render(
-    <MemoryRouter initialEntries={[initial]}>
-      <ToastProvider>
-        <Routes>
-          <Route path="/kanban" element={<CollabPage />} />
-          <Route path="/flow/edit/:flowId" element={<div>flow-page</div>} />
-        </Routes>
-      </ToastProvider>
-    </MemoryRouter>
-  );
+  return renderCollabPage(initial);
 }
 
-function setViewportWidth(width: number): void {
-  Object.defineProperty(window, 'innerWidth', {
-    configurable: true,
-    writable: true,
-    value: width,
-  });
-  window.dispatchEvent(new Event('resize'));
+async function renderBoard(initial = '/kanban'): Promise<HTMLElement> {
+  return await renderCollabBoard(initial);
+}
+
+async function switchColumnMode(mode: 'status' | 'flow' | 'agent'): Promise<void> {
+  await userEvent.selectOptions(screen.getByLabelText('分列方式'), mode);
+}
+
+async function openTaskDetail(taskTitle: string): Promise<HTMLElement> {
+  const openButton = await screen.findByRole('button', { name: `查看任务 ${taskTitle}` });
+  await userEvent.click(openButton);
+  return await screen.findByRole('dialog', { name: '任务详情' });
 }
 
 describe('CollabPage', () => {
@@ -162,7 +92,7 @@ describe('CollabPage', () => {
     vi.clearAllMocks();
     window.localStorage.removeItem('linpo.v07.flow_tasks');
     window.localStorage.removeItem('linpo.currentInstanceId');
-    setViewportWidth(1280);
+    setTestViewportWidth(1280);
     mockListInstances.mockResolvedValue([
       {
         id: 'instance-alpha',
@@ -245,9 +175,7 @@ describe('CollabPage', () => {
   it('renders flat toolbar with pending-confirmation column action and keeps view mode select', async () => {
     mockGetAggregateOverview.mockResolvedValue(buildOverview({ agents: [buildAgent()] }));
 
-    renderPage();
-
-    await screen.findByTestId('kanban-board');
+    await renderBoard();
 
     expect(screen.queryByRole('button', { name: '新增任务' })).not.toBeInTheDocument();
     expect(screen.getByLabelText('看板实例')).toBeInTheDocument();
@@ -266,10 +194,12 @@ describe('CollabPage', () => {
   it('switches current instance from toolbar dropdown', async () => {
     mockGetAggregateOverview.mockResolvedValue(buildOverview({ agents: [buildAgent()] }));
 
-    renderPage();
-    await screen.findByTestId('kanban-board');
+    await renderBoard();
 
     const instanceSelect = screen.getByLabelText('看板实例');
+    await waitFor(() => {
+      expect(within(instanceSelect).getByRole('option', { name: 'beta-instance' })).toBeInTheDocument();
+    });
     await userEvent.selectOptions(instanceSelect, 'instance-beta');
 
     expect(window.localStorage.getItem('linpo.currentInstanceId')).toBe('instance-beta');
@@ -289,14 +219,14 @@ describe('CollabPage', () => {
       })
     );
 
-    renderPage();
+    await renderBoard();
 
     await screen.findByRole('heading', { name: '待确认', level: 3 });
     expect(screen.getByRole('heading', { name: '进行中', level: 3 })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '失败', level: 3 })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '阻塞', level: 3 })).toBeInTheDocument();
 
-    await userEvent.selectOptions(screen.getByLabelText('分列方式'), 'agent');
+    await switchColumnMode('agent');
 
     expect(await screen.findByRole('heading', { name: 'Running Agent', level: 3 })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Failed Agent', level: 3 })).toBeInTheDocument();
@@ -347,7 +277,7 @@ describe('CollabPage', () => {
   });
 
   it('keeps the kanban track left-aligned on ultrawide screens', async () => {
-    setViewportWidth(1800);
+    setTestViewportWidth(1800);
     mockGetAggregateOverview.mockResolvedValue(buildOverview({ agents: [buildAgent()] }));
 
     renderPage();
@@ -387,10 +317,10 @@ describe('CollabPage', () => {
       }),
     ]);
 
-    renderPage();
+    await renderBoard();
 
     await screen.findByText('需求一-节点一');
-    await userEvent.selectOptions(screen.getByLabelText('分列方式'), 'flow');
+    await switchColumnMode('flow');
 
     expect(await screen.findByRole('heading', { name: '需求一', level: 3 })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '需求二', level: 3 })).toBeInTheDocument();
@@ -420,9 +350,7 @@ describe('CollabPage', () => {
     mockGetAggregateOverview.mockResolvedValue(buildOverview());
     mockListKanbanTasks.mockResolvedValue([]);
 
-    renderPage();
-
-    await screen.findByTestId('kanban-board');
+    await renderBoard();
     expect(screen.queryByText('旧缓存节点')).not.toBeInTheDocument();
   });
 
@@ -432,9 +360,7 @@ describe('CollabPage', () => {
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([buildKanbanTask({ title: '新增排队任务' })]);
 
-    renderPage();
-
-    await screen.findByTestId('kanban-board');
+    await renderBoard();
     await userEvent.click(screen.getAllByRole('button', { name: '创建任务' })[0]);
     const dialog = screen.getByRole('dialog', { name: '创建任务入口' });
     expect(dialog).toBeInTheDocument();
@@ -500,10 +426,7 @@ describe('CollabPage', () => {
 
     renderPage();
 
-    await screen.findByRole('button', { name: '查看任务 详情任务' });
-    await userEvent.click(screen.getByRole('button', { name: '查看任务 详情任务' }));
-
-    const detailDialog = screen.getByRole('dialog', { name: '任务详情' });
+    const detailDialog = await openTaskDetail('详情任务');
     expect(detailDialog).toBeInTheDocument();
     expect(within(detailDialog).getByRole('tab', { name: '基本信息' })).toBeInTheDocument();
     expect(within(detailDialog).getByRole('tab', { name: '执行流程' })).toBeInTheDocument();
@@ -543,8 +466,7 @@ describe('CollabPage', () => {
 
     renderPage();
 
-    await screen.findByRole('button', { name: '查看任务 可中断任务' });
-    await userEvent.click(screen.getByRole('button', { name: '查看任务 可中断任务' }));
+    await openTaskDetail('可中断任务');
     await userEvent.click(screen.getByRole('button', { name: '中断' }));
 
     await waitFor(() => {
@@ -569,8 +491,7 @@ describe('CollabPage', () => {
 
     renderPage();
 
-    await screen.findByRole('button', { name: '查看任务 排队任务' });
-    await userEvent.click(screen.getByRole('button', { name: '查看任务 排队任务' }));
+    await openTaskDetail('排队任务');
 
     expect(screen.queryByRole('button', { name: '中断' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '删除节点' })).toBeInTheDocument();
@@ -597,8 +518,7 @@ describe('CollabPage', () => {
 
     renderPage();
 
-    await screen.findByRole('button', { name: '查看任务 完成任务' });
-    await userEvent.click(screen.getByRole('button', { name: '查看任务 完成任务' }));
+    await openTaskDetail('完成任务');
 
     expect(screen.getByRole('tab', { name: '基本信息', selected: true })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('tab', { name: '任务产出' }));
@@ -632,8 +552,7 @@ describe('CollabPage', () => {
 
     renderPage();
 
-    await screen.findByRole('button', { name: '查看任务 阻塞任务' });
-    await userEvent.click(screen.getByRole('button', { name: '查看任务 阻塞任务' }));
+    await openTaskDetail('阻塞任务');
     await userEvent.click(screen.getByRole('button', { name: '继续' }));
 
     await waitFor(() => {
@@ -677,8 +596,7 @@ describe('CollabPage', () => {
 
     renderPage();
 
-    await screen.findByRole('button', { name: '查看任务 图片产出任务' });
-    await userEvent.click(screen.getByRole('button', { name: '查看任务 图片产出任务' }));
+    await openTaskDetail('图片产出任务');
     await userEvent.click(screen.getByRole('tab', { name: '任务产出' }));
 
     expect(await screen.findByAltText('任务产出预览')).toBeInTheDocument();
@@ -704,8 +622,7 @@ describe('CollabPage', () => {
 
     renderPage();
 
-    await screen.findByRole('button', { name: '查看任务 消息流任务' });
-    await userEvent.click(screen.getByRole('button', { name: '查看任务 消息流任务' }));
+    await openTaskDetail('消息流任务');
     await userEvent.click(screen.getByRole('tab', { name: '执行流程' }));
 
     await waitFor(() => {
@@ -717,8 +634,9 @@ describe('CollabPage', () => {
     expect(screen.getByText('工具调用：read_tmp_file')).toBeInTheDocument();
     expect(screen.getByText('工具调用')).toBeInTheDocument();
 
-    const realtimeOptions = mockCreateObserverRealtimeClient.mock.calls[0]?.[0];
-    expect(realtimeOptions).toBeDefined();
+    const realtimeOptions = (await waitForLatestMockCallFirstArg(
+      mockCreateObserverRealtimeClient
+    )) as { instanceId: string; onMessage: (event: unknown) => void };
     expect(realtimeOptions.instanceId).toBe('instance-alpha');
     act(() => {
       realtimeOptions.onMessage({
@@ -754,8 +672,12 @@ describe('CollabPage', () => {
     await screen.findByText('实时任务');
     expect(screen.getByText('queued')).toBeInTheDocument();
 
-    const realtimeOptions = mockCreateBoardTasksSseClient.mock.calls[0]?.[0];
-    expect(realtimeOptions).toBeDefined();
+    const realtimeOptions = (await waitForLatestMockCallFirstArg(
+      mockCreateBoardTasksSseClient as unknown as { mock: { calls: unknown[][] } },
+      1
+    )) as {
+      onMessage: (event: unknown) => void;
+    };
     act(() => {
       realtimeOptions.onMessage({
         type: 'tasks_changed',
@@ -800,8 +722,7 @@ describe('CollabPage', () => {
 
     renderPage();
 
-    await screen.findByRole('button', { name: '查看任务 工具消息任务' });
-    await userEvent.click(screen.getByRole('button', { name: '查看任务 工具消息任务' }));
+    await openTaskDetail('工具消息任务');
     await userEvent.click(screen.getByRole('tab', { name: '执行流程' }));
 
     const feedbackLabels = await screen.findAllByText('工具反馈');
@@ -825,8 +746,7 @@ describe('CollabPage', () => {
 
     renderPage();
 
-    await screen.findByRole('button', { name: '查看任务 无显式产出' });
-    await userEvent.click(screen.getByRole('button', { name: '查看任务 无显式产出' }));
+    await openTaskDetail('无显式产出');
     await userEvent.click(screen.getByRole('tab', { name: '任务产出' }));
     expect(screen.getByText('暂无任务产出。请由 Agent 在完成回调中显式上报 artifact 文件路径。')).toBeInTheDocument();
   });
@@ -850,7 +770,7 @@ describe('CollabPage', () => {
     renderPage();
 
     await screen.findByText('待删除节点');
-    await userEvent.click(screen.getByRole('button', { name: '查看任务 待删除节点' }));
+    await openTaskDetail('待删除节点');
     await userEvent.click(screen.getByRole('button', { name: '删除节点' }));
 
     await waitFor(() => {
@@ -891,7 +811,7 @@ describe('CollabPage', () => {
     renderPage();
 
     await screen.findByText('流程节点一');
-    await userEvent.selectOptions(screen.getByLabelText('分列方式'), 'flow');
+    await switchColumnMode('flow');
     await userEvent.click(screen.getByRole('button', { name: '中断流程 流程中断A' }));
 
     await waitFor(() => {
@@ -932,7 +852,7 @@ describe('CollabPage', () => {
     renderPage();
 
     await screen.findByText('流程阻塞节点');
-    await userEvent.selectOptions(screen.getByLabelText('分列方式'), 'flow');
+    await switchColumnMode('flow');
     await userEvent.click(screen.getByRole('button', { name: '继续流程 流程阻塞A' }));
 
     await waitFor(() => {
@@ -980,7 +900,7 @@ describe('CollabPage', () => {
     renderPage();
 
     await screen.findByText('流程节点一');
-    await userEvent.selectOptions(screen.getByLabelText('分列方式'), 'flow');
+    await switchColumnMode('flow');
     await userEvent.click(screen.getByRole('button', { name: '运行流程 流程待重跑A' }));
 
     await waitFor(() => {
@@ -1035,7 +955,7 @@ describe('CollabPage', () => {
     renderPage();
 
     await screen.findByRole('heading', { name: '待调度', level: 3 });
-    await userEvent.selectOptions(screen.getByLabelText('分列方式'), 'agent');
+    await switchColumnMode('agent');
 
     expect(await screen.findByRole('heading', { name: 'Agent One', level: 3 })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Agent Two', level: 3 })).toBeInTheDocument();
@@ -1048,7 +968,7 @@ describe('CollabPage', () => {
     renderPage();
 
     await screen.findByRole('heading', { name: '待调度', level: 3 });
-    await userEvent.selectOptions(screen.getByLabelText('分列方式'), 'agent');
+    await switchColumnMode('agent');
     await userEvent.click(screen.getByRole('button', { name: '打开新增 Agent' }));
 
     expect(screen.getByRole('dialog', { name: '新增 Agent' })).toBeInTheDocument();

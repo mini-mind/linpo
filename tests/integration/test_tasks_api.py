@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.adapters.provider_adapter import ProviderPayloadResult, ProviderSnapshotResult
 from app.services.task_callback_security import sign_task_callback_event
-from app.db.models import FlowDraft, FlowPlannerSession, User
+from app.db.models import FlowDraft, FlowPlannerSession, Task, User
 from app.db import session as db_session
 from app.domain.provider_contract import (
     DomainFreshness,
@@ -1668,6 +1668,126 @@ def test_flow_confirm_reuse_requirement_id_replaces_previous_tasks(
     assert latest_node_1["status"] == "running"
     assert latest_node_2["status"] == "queued"
     assert all("flow_instance_id" not in item["extras"] for item in latest_tasks)
+
+
+def test_delete_task_returns_explicit_error_when_requirement_id_missing(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_instance_validation(monkeypatch)
+    username = "task-delete-missing-requirement-id"
+    auth_cookie = _register_and_login(username)
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-delete-missing-requirement-id",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-delete-missing-requirement-id",
+    )
+
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
+        lambda self, **kwargs: {
+            "request_id": "req-delete-missing-requirement-id",
+            "agent_id": kwargs["agent_id"],
+            "status": "accepted",
+        },
+    )
+
+    create_status, _, create_payload = _request_json(
+        "POST",
+        DEFAULT_TASKS_PATH,
+        {
+            "requirement": "删除任务-缺失requirement_id",
+            "agent_id": "agent-delete-missing",
+            "agent_name": "Agent Delete Missing RequirementId",
+            "instance_id": instance["id"],
+        },
+        auth_cookie,
+    )
+    assert create_status == 201
+    task_id = str(create_payload["id"])
+
+    with Session(db_session.get_engine(isolated_database_url)) as session:
+        user_id = session.execute(select(User.id).where(User.username == username)).scalar_one()
+        task = session.execute(
+            select(Task).where(Task.user_id == user_id, Task.title == "删除任务-缺失requirement_id")
+        ).scalar_one()
+        extras = dict(task.extras if isinstance(task.extras, dict) else {})
+        extras.pop("requirement_id", None)
+        extras["flow_id"] = "legacy-flow-delete-missing"
+        task.extras = extras
+        session.add(task)
+        session.commit()
+
+    delete_status, _, delete_body = request(
+        "DELETE",
+        f"{DEFAULT_TASKS_PATH}/{task_id}",
+        headers={"cookie": auth_cookie},
+    )
+    assert delete_status == 500
+    delete_payload = cast(dict[str, Any], json.loads(delete_body.decode("utf-8")))
+    assert "missing" in str(delete_payload["detail"]).lower()
+    assert "requirement_id" in str(delete_payload["detail"])
+
+
+def test_requirement_rename_returns_explicit_error_when_requirement_id_missing(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_instance_validation(monkeypatch)
+    username = "task-rename-missing-requirement-id"
+    auth_cookie = _register_and_login(username)
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-rename-missing-requirement-id",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-rename-missing-requirement-id",
+    )
+
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
+        lambda self, **kwargs: {
+            "request_id": "req-rename-missing-requirement-id",
+            "agent_id": kwargs["agent_id"],
+            "status": "accepted",
+        },
+    )
+
+    create_status, _, _ = _request_json(
+        "POST",
+        DEFAULT_TASKS_PATH,
+        {
+            "requirement": "重命名任务-缺失requirement_id",
+            "agent_id": "agent-rename-missing",
+            "agent_name": "Agent Rename Missing RequirementId",
+            "instance_id": instance["id"],
+        },
+        auth_cookie,
+    )
+    assert create_status == 201
+
+    legacy_requirement_id = "legacy-flow-rename-missing"
+    with Session(db_session.get_engine(isolated_database_url)) as session:
+        user_id = session.execute(select(User.id).where(User.username == username)).scalar_one()
+        task = session.execute(
+            select(Task).where(Task.user_id == user_id, Task.title == "重命名任务-缺失requirement_id")
+        ).scalar_one()
+        extras = dict(task.extras if isinstance(task.extras, dict) else {})
+        extras.pop("requirement_id", None)
+        extras["flow_id"] = legacy_requirement_id
+        task.extras = extras
+        session.add(task)
+        session.commit()
+
+    rename_status, _, rename_payload = _request_json(
+        "POST",
+        f"/api/v1/boards/default/tasks/requirements/{legacy_requirement_id}/rename",
+        {"name": "不应成功"},
+        auth_cookie,
+    )
+    assert rename_status == 500
+    assert "missing" in str(rename_payload["detail"]).lower()
+    assert "requirement_id" in str(rename_payload["detail"])
 
 
 def test_flow_requirement_rename_updates_all_requirement_tasks(

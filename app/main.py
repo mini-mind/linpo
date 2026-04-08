@@ -231,10 +231,8 @@ async def add_http_cors_headers(
 
 for router in (aggregate_router, agents_router, auth_router, instances_router, ops_router, realtime_router):
     app.include_router(router, prefix=_API_V1_PREFIX)
-app.include_router(tasks_flow_planner_router)
-app.include_router(tasks_flow_task_router)
-app.include_router(tasks_flow_draft_router)
-app.include_router(tasks_runtime_router)
+for router in (tasks_flow_planner_router, tasks_flow_task_router, tasks_flow_draft_router, tasks_runtime_router):
+    app.include_router(router, prefix=_API_V1_PREFIX)
 
 
 @app.get(
