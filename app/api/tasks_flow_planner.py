@@ -966,27 +966,18 @@ def stop_flow_planner(
         user_id=current_user.id,
         session_key=payload.planner_session_key,
     )
-    execution_context: ProviderExecutionContext | None = None
-    if snapshot.instance_id is not None:
-        execution_context = _build_execution_context_or_404(
-            db_session=db_session,
-            current_user=current_user,
-            instance_id=snapshot.instance_id,
-            instance_service=instance_service,
-            provider_application_service=provider_application_service,
+    if snapshot.instance_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="planner session missing instance binding",
         )
-    if execution_context is None:
-        try:
-            execution_context = flow_decomposition_service.build_realtime_execution_context()
-        except HTTPException:
-            execution_context = None
-    if execution_context is None:
-        return FlowPlannerStopResponse(
-            session_key=snapshot.session_key,
-            status=cast(Any, snapshot.status),
-            revision=snapshot.revision,
-            updated_at=_serialize_iso_datetime(snapshot.updated_at),
-        )
+    execution_context: ProviderExecutionContext = _build_execution_context_or_404(
+        db_session=db_session,
+        current_user=current_user,
+        instance_id=snapshot.instance_id,
+        instance_service=instance_service,
+        provider_application_service=provider_application_service,
+    )
     try:
         provider_application_service.pause_agent_for_provider(
             data_source=flow_decomposition_service.decomposition_provider_name(),

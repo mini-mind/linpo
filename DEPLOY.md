@@ -10,6 +10,9 @@
 
 ## 2. 准备配置
 
+默认可直接使用 `.env.deploy.example` 启动。  
+生产建议复制一份独立配置文件：
+
 ```bash
 cp .env.deploy.example .env.deploy
 ```
@@ -26,14 +29,14 @@ cp .env.deploy.example .env.deploy
 
 可按需修改：
 
-- `FLOW_DECOMPOSITION_AGENT_ID`（默认 `claw3`）
+- `FLOW_DECOMPOSITION_AGENT_ID`（必须替换为实例可见 agent_id）
 - `VITE_API_BASE_URL`（前端构建时注入）
 - `LINPO_DATABASE_URL`（默认 `sqlite:////data/linpo.db`）
 
 ## 3. 启动
 
 ```bash
-docker compose --env-file .env.deploy up -d --build
+docker compose up -d --build
 ```
 
 访问地址：
@@ -53,11 +56,11 @@ curl -fsS http://localhost:8000/api/v1/ops/setup
 停止服务（保留数据卷）：
 
 ```bash
-docker compose --env-file .env.deploy down
+docker compose down
 ```
 
 停止并删除数据卷：
 
 ```bash
-docker compose --env-file .env.deploy down -v
+docker compose down -v
 ```

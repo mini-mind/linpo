@@ -4,7 +4,10 @@ services:
       context: .
       dockerfile: Dockerfile.api
     env_file:
-      - .env.deploy
+      - path: .env.deploy
+        required: false
+      - path: .env.deploy.example
+        required: false
     environment:
       LINPO_DATABASE_URL: ${LINPO_DATABASE_URL:-sqlite:////data/linpo.db}
     volumes:

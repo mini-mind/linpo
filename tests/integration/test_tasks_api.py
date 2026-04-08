@@ -1393,10 +1393,18 @@ def test_flow_planner_http_fail_endpoint_returns_serialized_updated_at(
 )
 def test_flow_planner_terminal_endpoints_reject_reentry_after_terminal_state(
     isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
     initial_action: str,
     terminal_status: str,
 ) -> None:
+    _allow_instance_validation(monkeypatch)
     auth_cookie = _register_and_login(f"flow-planner-terminal-{initial_action}-user")
+    instance = _create_instance(
+        auth_cookie,
+        name=f"claw1-flow-planner-terminal-{initial_action}",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token=f"token-flow-planner-terminal-{initial_action}",
+    )
     planner_service = get_flow_planner_session_service()
     session_key = f"linpo:flow:default:planner:claw3:terminal-{initial_action}"
     base_nodes = [
@@ -1427,6 +1435,7 @@ def test_flow_planner_terminal_endpoints_reject_reentry_after_terminal_state(
             planner_session_key=session_key,
             flow_name="终态重入保护测试",
             current_nodes=base_nodes,
+            instance_id=instance["id"],
             db_session=session,
             publish_realtime=False,
         )
@@ -1488,6 +1497,39 @@ def test_flow_planner_terminal_endpoints_reject_reentry_after_terminal_state(
     assert stop_status == 409
     stop_payload = cast(dict[str, Any], json.loads(stop_body.decode("utf-8")))
     assert stop_payload["detail"] == f"planner session is already {terminal_status}"
+
+
+def test_flow_planner_stop_rejects_session_without_instance_binding(
+    isolated_database_url: str,
+) -> None:
+    auth_cookie = _register_and_login("flow-planner-stop-no-instance-user")
+    planner_service = get_flow_planner_session_service()
+    session_key = "linpo:flow:default:planner:planner:stop-no-instance"
+
+    with Session(db_session.get_engine(isolated_database_url)) as session:
+        user_id = session.execute(
+            select(User.id).where(User.username == "flow-planner-stop-no-instance-user")
+        ).scalar_one()
+        planner_service.create_or_restore_session(
+            user_id=user_id,
+            board_id="default",
+            planner_agent_id="planner",
+            planner_session_key=session_key,
+            flow_name="无实例绑定停止测试",
+            current_nodes=[],
+            db_session=session,
+            publish_realtime=False,
+        )
+
+    stop_status, _, stop_body = request(
+        "POST",
+        f"{DEFAULT_TASKS_PATH}/flow/planner-stop",
+        headers=_json_headers(auth_cookie),
+        body=json.dumps({"plannerSessionKey": session_key}).encode("utf-8"),
+    )
+    assert stop_status == 409
+    stop_payload = cast(dict[str, Any], json.loads(stop_body.decode("utf-8")))
+    assert stop_payload["detail"] == "planner session missing instance binding"
 
 
 def test_flow_confirm_enqueues_tasks_then_dispatches_from_queue(

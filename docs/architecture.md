@@ -307,7 +307,7 @@ flowchart LR
 ### 8.1 拆解服务配置（provider + agent，可配置）
 
 - `FLOW_DECOMPOSITION_PROVIDER`：拆解服务 provider 名称（默认 `openclaw`）。
-- `FLOW_DECOMPOSITION_AGENT_ID`：默认 planner agent（默认 `claw3`，可被请求 `planner_agent_id` 覆盖）。
+- `FLOW_DECOMPOSITION_AGENT_ID`：默认 planner agent（必须配置为实例可见 agent，可被请求 `planner_agent_id` 覆盖）。
 - 当 `FLOW_DECOMPOSITION_PROVIDER=openclaw` 时，`FLOW_DECOMPOSITION_OPENCLAW_BASE_URL/FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN/FLOW_DECOMPOSITION_OPENCLAW_ORIGIN` 为必填。
 - 以上配置不提供默认公网地址或默认 token；缺失时视为配置错误并阻断拆解链路。
 

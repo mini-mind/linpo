@@ -33,7 +33,7 @@
 - `npm --prefix frontend run build`：前端构建产物。
 - `make quality`：统一质量门（聚合后端测试、类型检查与前端构建）。
 - `curl -i http://127.0.0.1:8000/api/v1/health`：后端健康检查。
-- `docker compose --env-file .env.deploy up -d --build`：最小私有化部署启动（见 `DEPLOY.md`）。
+- `docker compose up -d --build`：最小私有化部署启动（见 `DEPLOY.md`）。
 
 ## CI/CD 门禁（GitHub Actions）
 
@@ -80,7 +80,7 @@
 | `OPENCLAW_GATEWAY_TOKEN` | OpenClaw 网关令牌 |
 | `OPENCLAW_ORIGIN` | OpenClaw 请求来源标识 |
 | `FLOW_DECOMPOSITION_PROVIDER` | 流程拆解 provider（默认 `openclaw`） |
-| `FLOW_DECOMPOSITION_AGENT_ID` | 流程拆解默认 planner agent（默认 `claw3`） |
+| `FLOW_DECOMPOSITION_AGENT_ID` | 流程拆解默认 planner agent（需配置为实例可见 agent） |
 | `FLOW_DECOMPOSITION_OPENCLAW_BASE_URL` | 当 provider=`openclaw` 时必填：拆解服务网关地址 |
 | `FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN` | 当 provider=`openclaw` 时必填：拆解服务网关令牌 |
 | `FLOW_DECOMPOSITION_OPENCLAW_ORIGIN` | 当 provider=`openclaw` 时必填：拆解服务 Origin |
