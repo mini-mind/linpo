@@ -34,6 +34,10 @@ vi.mock('./UserProfileModal', () => ({
   UserProfileModal: ({ open }: { open: boolean }) => (open ? <div>用户信息弹窗</div> : null),
 }));
 
+vi.mock('./PlannerAgentModal', () => ({
+  PlannerAgentModal: ({ open }: { open: boolean }) => (open ? <div>Planner Agent弹窗</div> : null),
+}));
+
 import { AccountMenu } from './AccountMenu';
 
 function renderMenu(openInstanceListSignal?: number): void {
@@ -107,6 +111,17 @@ describe('AccountMenu avatar trigger text', () => {
       fireEvent.click(screen.getByRole('menuitem', { name: '实例' }));
     });
     expect(screen.getByText('实例列表弹窗')).toBeInTheDocument();
+  });
+
+  it('opens planner agent modal from menu item', async () => {
+    renderMenu();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '打开账户菜单' }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Planner Agent' }));
+    });
+    expect(screen.getByText('Planner Agent弹窗')).toBeInTheDocument();
   });
 
   it('opens instance list modal when auto-open signal arrives', async () => {

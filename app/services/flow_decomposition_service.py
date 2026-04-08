@@ -73,6 +73,8 @@ class FlowDecompositionService:
         prompt_history: list[dict[str, str]] | None = None,
         planner_api_base_url: str | None = None,
         planner_api_token: str | None = None,
+        execution_context: ProviderExecutionContext | None = None,
+        provider_name: str | None = None,
     ) -> FlowDecompositionResult:
         normalized_requirement = requirement.strip()
         if normalized_requirement == "":
@@ -90,10 +92,14 @@ class FlowDecompositionService:
             prompt_history=prompt_history,
             planner_api_base_url=planner_api_base_url,
             planner_api_token=planner_api_token,
+            execution_context=execution_context,
+            provider_name=provider_name,
         )
+        resolved_provider_name = provider_name or self.decomposition_provider_name()
+        resolved_context = execution_context or self.build_realtime_execution_context()
         assistant_message = self._wait_for_assistant_json(
-            provider_name=self.decomposition_provider_name(),
-            context=self.build_realtime_execution_context(),
+            provider_name=resolved_provider_name,
+            context=resolved_context,
             session_key=dispatch.planner_session_key,
             planner_agent_id=dispatch.planner_agent_id,
         )
@@ -125,6 +131,8 @@ class FlowDecompositionService:
         prompt_history: list[dict[str, str]] | None = None,
         planner_api_base_url: str | None = None,
         planner_api_token: str | None = None,
+        execution_context: ProviderExecutionContext | None = None,
+        provider_name: str | None = None,
     ) -> FlowPlannerDispatch:
         normalized_requirement = requirement.strip()
         if normalized_requirement == "":
@@ -148,10 +156,12 @@ class FlowDecompositionService:
             board_id=board_id,
         )
 
+        resolved_provider_name = provider_name or self.decomposition_provider_name()
+        resolved_execution_context = execution_context or self.build_realtime_execution_context()
         try:
             self._send_chat_message(
-                provider_name=self.decomposition_provider_name(),
-                execution_context=self.build_realtime_execution_context(),
+                provider_name=resolved_provider_name,
+                execution_context=resolved_execution_context,
                 agent_id=normalized_planner_agent_id,
                 message=prompt,
                 session_key=normalized_planner_session_key,
@@ -172,11 +182,14 @@ class FlowDecompositionService:
         planner_session_key: str,
         current_nodes: list[dict[str, Any]] | None = None,
         limit: int = _DEFAULT_HISTORY_LIMIT,
+        execution_context: ProviderExecutionContext | None = None,
+        provider_name: str | None = None,
     ) -> FlowDecompositionResult | None:
-        context = self.build_realtime_execution_context()
+        resolved_provider_name = provider_name or self.decomposition_provider_name()
+        context = execution_context or self.build_realtime_execution_context()
         try:
             history_payload = self._chat_history(
-                provider_name=self.decomposition_provider_name(),
+                provider_name=resolved_provider_name,
                 execution_context=context,
                 session_key=planner_session_key,
                 limit=limit,

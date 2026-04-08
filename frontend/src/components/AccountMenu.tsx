@@ -5,6 +5,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
 import { InstanceListModal } from './InstanceListModal';
 import { MessageCenterModal } from './MessageCenterModal';
+import { PlannerAgentModal } from './PlannerAgentModal';
 import { UserProfileModal } from './UserProfileModal';
 
 type AccountMenuProps = {
@@ -26,6 +27,7 @@ export function AccountMenu({
   const [isMessageCenterOpen, setIsMessageCenterOpen] = useState(false);
   const [isInstanceListOpen, setIsInstanceListOpen] = useState(false);
   const [isUserProfileOpen, setIsUserProfileOpen] = useState(false);
+  const [isPlannerAgentModalOpen, setIsPlannerAgentModalOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
   const messageButtonRef = useRef<HTMLButtonElement>(null);
@@ -96,6 +98,15 @@ export function AccountMenu({
     }, 0);
   }, [closeMenu]);
 
+  const handleOpenPlannerAgentModal = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    closeMenu();
+    window.setTimeout(() => {
+      setIsPlannerAgentModalOpen(true);
+    }, 0);
+  }, [closeMenu]);
+
   const handleCloseMessageCenter = useCallback(() => {
     setIsMessageCenterOpen(false);
     void refreshUnreadCount();
@@ -109,6 +120,11 @@ export function AccountMenu({
 
   const handleCloseUserProfile = useCallback(() => {
     setIsUserProfileOpen(false);
+    triggerButtonRef.current?.focus();
+  }, []);
+
+  const handleClosePlannerAgentModal = useCallback(() => {
+    setIsPlannerAgentModalOpen(false);
     triggerButtonRef.current?.focus();
   }, []);
 
@@ -248,6 +264,18 @@ export function AccountMenu({
           </button>
           <button
             type="button"
+            onClick={handleOpenPlannerAgentModal}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            style={menuActionButtonStyle}
+            role="menuitem"
+          >
+            Planner Agent
+          </button>
+          <button
+            type="button"
             onClick={handleLogout}
             style={menuLogoutButtonStyle}
             role="menuitem"
@@ -259,6 +287,7 @@ export function AccountMenu({
       <MessageCenterModal open={isMessageCenterOpen} onClose={handleCloseMessageCenter} />
       <InstanceListModal open={isInstanceListOpen} onClose={handleCloseInstanceList} />
       <UserProfileModal open={isUserProfileOpen} onClose={handleCloseUserProfile} user={user} />
+      <PlannerAgentModal open={isPlannerAgentModalOpen} onClose={handleClosePlannerAgentModal} />
     </div>
   );
 }

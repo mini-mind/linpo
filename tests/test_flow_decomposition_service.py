@@ -374,6 +374,41 @@ def test_dispatch_planner_returns_session_key_without_waiting() -> None:
     assert fake.send_calls[0]["session_key"] == session_key
 
 
+def test_dispatch_planner_uses_injected_execution_context_without_building_default() -> None:
+    class FakeProviderApplicationService:
+        def __init__(self) -> None:
+            self.send_calls: list[dict[str, Any]] = []
+
+        def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
+            self.send_calls.append(kwargs)
+            return {"request_id": "req-dispatch", "status": "accepted", "agent_id": kwargs["agent_id"]}
+
+    fake = FakeProviderApplicationService()
+    service = FlowDecompositionService(provider_application_service=cast(Any, fake))
+    sentinel_context = object()
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(
+            service,
+            "build_realtime_execution_context",
+            lambda: (_ for _ in ()).throw(AssertionError("should not build default context")),
+        )
+        dispatch = service.dispatch_planner(
+            requirement="使用注入实例上下文发送",
+            board_id="default",
+            planner_agent_id="planner-injected",
+            planner_session_key="linpo:flow:default:planner:planner-injected:test",
+            current_nodes=[],
+            current_edges=[],
+            execution_context=cast(Any, sentinel_context),
+            provider_name="openclaw",
+        )
+
+    assert dispatch.planner_agent_id == "planner-injected"
+    assert len(fake.send_calls) == 1
+    assert fake.send_calls[0]["execution_context"] is sentinel_context
+
+
 def test_snapshot_from_history_messages_returns_latest_valid_snapshot() -> None:
     service = FlowDecompositionService(provider_application_service=cast(Any, object()))
 

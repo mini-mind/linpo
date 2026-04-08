@@ -679,6 +679,138 @@ def test_flow_generate_accepts_custom_planner_agent(
     assert payload["plannerSessionKey"].startswith("linpo:flow:default:planner:planner-x")
 
 
+def test_flow_generate_rejects_foreign_instance_id(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+    owner_cookie = _register_and_login("flow-generate-owner-user")
+    owner_instance = _create_instance(
+        owner_cookie,
+        name="claw1-flow-owner",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-owner",
+    )
+    viewer_cookie = _register_and_login("flow-generate-viewer-user")
+
+    status_code, _, payload = _request_json(
+        "POST",
+        DEFAULT_FLOW_GENERATE_PATH,
+        {
+            "requirement": "尝试使用他人实例启动 planner",
+            "instance_id": owner_instance["id"],
+            "executor_agent_id": "agent-executor",
+            "planner_agent_id": "planner-x",
+            "manager_agent_id": "agent-manager",
+        },
+        viewer_cookie,
+    )
+
+    assert status_code == 404
+    assert payload["detail"] == "Instance not found"
+
+
+def test_flow_generate_persists_trimmed_planner_agent_from_request(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("flow-generate-planner-selected-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-flow-planner-selected",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-planner-selected",
+    )
+    captured_dispatch_args: list[dict[str, Any]] = []
+    from app.services.flow_decomposition_service import FlowPlannerDispatch
+
+    def fake_dispatch(self: Any, **kwargs: Any) -> FlowPlannerDispatch:
+        captured_dispatch_args.append(kwargs)
+        agent_id = cast(str, kwargs["planner_agent_id"])
+        return FlowPlannerDispatch(
+            planner_agent_id=agent_id,
+            planner_session_key=f"linpo:flow:default:planner:{agent_id}:selected",
+        )
+
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.dispatch_planner",
+        fake_dispatch,
+    )
+
+    status_code, _, payload = _request_json(
+        "POST",
+        DEFAULT_FLOW_GENERATE_PATH,
+        {
+            "requirement": "使用实例配置的 planner agent",
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor",
+            "planner_agent_id": " planner-selected ",
+            "manager_agent_id": "agent-manager",
+        },
+        auth_cookie,
+    )
+
+    assert status_code == 200
+    assert payload["plannerSessionKey"] == "linpo:flow:default:planner:planner-selected:selected"
+    assert len(captured_dispatch_args) == 1
+    assert captured_dispatch_args[0]["planner_agent_id"] == "planner-selected"
+
+    with Session(db_session.get_engine(isolated_database_url)) as session:
+        planner_session = session.get(FlowPlannerSession, payload["plannerSessionKey"])
+        assert planner_session is not None
+        assert planner_session.planner_agent_id == "planner-selected"
+
+
+def test_flow_generate_uses_default_planner_agent_when_request_does_not_provide_one(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    monkeypatch.setenv("FLOW_DECOMPOSITION_AGENT_ID", "planner-default-from-config")
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("flow-generate-planner-default-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-flow-planner-default",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-planner-default",
+    )
+    captured_dispatch_args: list[dict[str, Any]] = []
+    from app.services.flow_decomposition_service import FlowPlannerDispatch
+
+    def fake_dispatch(self: Any, **kwargs: Any) -> FlowPlannerDispatch:
+        captured_dispatch_args.append(kwargs)
+        agent_id = cast(str, kwargs["planner_agent_id"])
+        return FlowPlannerDispatch(
+            planner_agent_id=agent_id,
+            planner_session_key=f"linpo:flow:default:planner:{agent_id}:default",
+        )
+
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.dispatch_planner",
+        fake_dispatch,
+    )
+
+    status_code, _, payload = _request_json(
+        "POST",
+        DEFAULT_FLOW_GENERATE_PATH,
+        {
+            "requirement": "未指定 planner，走默认值",
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor",
+            "manager_agent_id": "agent-manager",
+        },
+        auth_cookie,
+    )
+
+    assert status_code == 200
+    assert payload["plannerSessionKey"] == "linpo:flow:default:planner:planner-default-from-config:default"
+    assert len(captured_dispatch_args) == 1
+    assert captured_dispatch_args[0]["planner_agent_id"] == "planner-default-from-config"
+
+
 def test_flow_generate_prompt_includes_history_workflow_json_and_planner_http_interface(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,

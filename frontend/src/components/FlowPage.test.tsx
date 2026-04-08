@@ -242,6 +242,29 @@ describe('FlowPage', () => {
     expect(await screen.findByRole('button', { name: '发送' })).toBeInTheDocument();
   });
 
+  it('uses configured default planner agent for current instance when present', async () => {
+    window.localStorage.setItem(
+      'linpo.flow.default_planner_agent_by_instance_v1',
+      JSON.stringify({ 'instance-alpha': 'agent-alpha' })
+    );
+    window.localStorage.setItem('linpo.currentInstanceId', 'instance-alpha');
+
+    const flowId = seedDraftFlow('draft-planner-default-agent');
+    renderFlowPage(`/flow/edit/${flowId}`);
+    await waitForFlowCanvasReady();
+
+    const input = screen.getByTestId('flow-planner-input') as HTMLTextAreaElement;
+    await userEvent.type(input, '请继续规划');
+    await userEvent.keyboard('{Enter}');
+
+    await waitFor(() => {
+      expect(mockGenerateFlowFromRequirement).toHaveBeenCalledTimes(1);
+    });
+    const payload = mockGenerateFlowFromRequirement.mock.calls[0][0];
+    expect(payload.planner_agent_id).toBe('agent-alpha');
+    expect(String(payload.planner_session_key)).toContain('linpo:flow:default:planner:agent-alpha:');
+  });
+
   it('falls back to an available executor agent when a draft stores a stale agent id', async () => {
     const flowId = seedDraftFlow('draft-stale-executor', {
       executor_agent_id: 'agent-missing',

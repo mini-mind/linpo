@@ -33,7 +33,9 @@ import type {
   KanbanTaskItem,
   TaskStatus,
 } from '../api/types';
+import { useCurrentInstanceId } from '../hooks/useCurrentInstance';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { usePlannerAgentPreference } from '../hooks/usePlannerAgentPreference';
 import { useToast } from '../hooks/useToast';
 import { useDraggableFab } from '../hooks/useDraggableFab';
 import { useBoardTasksRealtime } from '../hooks/useBoardTasksRealtime';
@@ -397,6 +399,8 @@ export function FlowPage(): JSX.Element {
   const params = useParams<{ flowId: string }>();
   const location = useLocation();
   const isMobile = useIsMobile(960);
+  const [currentInstanceId] = useCurrentInstanceId();
+  const [defaultPlannerAgentId] = usePlannerAgentPreference(currentInstanceId);
   const { addToast } = useToast();
 
   const [overview, setOverview] = useState<AggregateOverviewResponse | null>(null);
@@ -1000,9 +1004,17 @@ export function FlowPage(): JSX.Element {
       .filter((item): item is FlowSidebarItem => item !== undefined);
   }, [flowSidebarItems, flowSidebarOrder]);
 
+  const plannerAgentId = useMemo(() => {
+    const preferredPlannerAgentId = defaultPlannerAgentId?.trim() ?? '';
+    if (preferredPlannerAgentId && uniqueAgents.some((agent) => agent.agent_id.trim() === preferredPlannerAgentId)) {
+      return preferredPlannerAgentId;
+    }
+    return FIXED_FLOW_PLANNER_AGENT_ID;
+  }, [defaultPlannerAgentId, uniqueAgents]);
+
   const flowPlannerAgent = useMemo(
-    () => resolvePlannerAgent(overview?.agents, FIXED_FLOW_PLANNER_AGENT_ID),
-    [overview?.agents]
+    () => resolvePlannerAgent(overview?.agents, plannerAgentId),
+    [overview?.agents, plannerAgentId]
   );
 
   useEffect(() => {
@@ -2545,7 +2557,7 @@ export function FlowPage(): JSX.Element {
       lanes,
       plannerSessionKey,
       boardId: FLOW_BOARD_REALTIME_ID,
-      plannerAgentId: FIXED_FLOW_PLANNER_AGENT_ID,
+      plannerAgentId,
     });
     if (!context.ok) {
       if (context.warningMessage) {
@@ -2589,7 +2601,7 @@ export function FlowPage(): JSX.Element {
           instruction,
           instanceId: executor.instance_id,
           executorAgentId,
-          plannerAgentId: FIXED_FLOW_PLANNER_AGENT_ID,
+          plannerAgentId,
           plannerSessionKey: resolvedPlannerSessionKey,
           flowDisplayName,
           flowNodes,
@@ -2679,6 +2691,7 @@ export function FlowPage(): JSX.Element {
     flowRequirementScopeId,
     isPlanning,
     lanes,
+    plannerAgentId,
     plannerSessionKey,
     plannerInput,
     schedulePlannerOverlayCloseUnlock,

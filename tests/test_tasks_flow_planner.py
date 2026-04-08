@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from app.api.tasks_flow_planner import _planner_snapshot_to_canvas_nodes
+from app.api.tasks_flow_planner import _planner_snapshot_to_canvas_nodes, _resolve_flow_planner_agent_id
 
 
 def test_planner_snapshot_to_canvas_nodes_accepts_nodes_and_depends_on_contract() -> None:
@@ -94,3 +94,13 @@ def test_planner_snapshot_to_canvas_nodes_rejects_non_list_depends_on_field() ->
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "planner snapshot nodes[0] field depends_on must be a list"
+
+
+def test_resolve_flow_planner_agent_id_prefers_request_value() -> None:
+    resolved = _resolve_flow_planner_agent_id(" planner-x ", default_agent_id="planner-default")
+    assert resolved == "planner-x"
+
+
+def test_resolve_flow_planner_agent_id_falls_back_to_default_for_blank_input() -> None:
+    resolved = _resolve_flow_planner_agent_id("   ", default_agent_id="planner-default")
+    assert resolved == "planner-default"

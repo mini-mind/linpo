@@ -102,6 +102,7 @@ class PlannerSessionSnapshot:
     session_key: str
     planner_token: str
     planner_agent_id: str
+    instance_id: UUID | None
     board_id: str
     flow_name: str
     status: PlannerSessionStatus
@@ -1166,6 +1167,7 @@ class FlowPlannerSessionService:
             session_key=record.session_key,
             planner_token=record.planner_token,
             planner_agent_id=record.planner_agent_id,
+            instance_id=record.instance_id,
             board_id=record.board_id,
             flow_name=record.flow_name,
             status=record.status,

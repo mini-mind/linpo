@@ -122,6 +122,21 @@ describe('flowPlanGenerationUtils', () => {
     });
   });
 
+  it('builds flow generate payload with caller-selected planner agent id', () => {
+    const payload = buildFlowGeneratePayload({
+      instruction: '拆解跨实例流程',
+      instanceId: 'inst-2',
+      executorAgentId: 'agent-2',
+      plannerAgentId: 'planner-from-instance-config',
+      plannerSessionKey: 'session-b',
+      flowDisplayName: '跨实例流程',
+      flowNodes: [],
+      flowEdges: [],
+    });
+    expect(payload.planner_agent_id).toBe('planner-from-instance-config');
+    expect(payload.instance_id).toBe('inst-2');
+  });
+
   it('builds flow confirm payload with normalized requirement and title', () => {
     expect(buildConfirmRequestPayload({
       instanceId: 'inst-1',

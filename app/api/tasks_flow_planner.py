@@ -40,6 +40,7 @@ from app.api.schemas import (
 from app.api.tasks_dependencies import (
     get_current_user,
     get_flow_decomposition_service,
+    get_instance_service,
     get_provider_application_service,
 )
 from app.api.tasks_common import build_canvas_edges
@@ -47,11 +48,12 @@ from app.db.models import User
 from app.db.session import get_session
 from app.services.flow_decomposition_service import FlowDecompositionService
 from app.services.flow_canvas_service import resolve_layers as resolve_flow_canvas_layers
+from app.services.instance_service import InstanceNotFoundError, InstanceService
 from app.services.flow_planner_session_service import (
     FlowPlannerSessionService,
     get_flow_planner_session_service,
 )
-from app.services.provider_application_service import ProviderApplicationService
+from app.services.provider_application_service import ProviderApplicationService, ProviderExecutionContext
 
 router = APIRouter(prefix="/boards/{board_id}/tasks")
 
@@ -264,6 +266,8 @@ def _sync_planner_snapshot_from_provider_history(
     session_key: str,
     flow_decomposition_service: FlowDecompositionService,
     flow_planner_session_service: FlowPlannerSessionService,
+    execution_context: ProviderExecutionContext | None = None,
+    provider_name: str | None = None,
 ) -> None:
     snapshot = flow_planner_session_service.get_snapshot_for_user(
         db_session=db_session,
@@ -278,6 +282,8 @@ def _sync_planner_snapshot_from_provider_history(
         resolved = flow_decomposition_service.read_latest_snapshot(
             planner_session_key=session_key,
             current_nodes=current_raw_nodes,
+            execution_context=execution_context,
+            provider_name=provider_name,
         )
     except Exception:
         return
@@ -342,6 +348,25 @@ def _build_canvas_edges(nodes: list[_FlowNodeDraft]) -> list[FlowCanvasEdge]:
     )
 
 
+def _build_execution_context_or_404(
+    *,
+    db_session: Session,
+    current_user: User,
+    instance_id: UUID,
+    instance_service: InstanceService,
+    provider_application_service: ProviderApplicationService,
+) -> ProviderExecutionContext:
+    try:
+        instance_context = instance_service.get_openclaw_context(
+            db_session,
+            user_id=current_user.id,
+            instance_id=instance_id,
+        )
+    except InstanceNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found") from exc
+    return provider_application_service.build_execution_context(instance_context)
+
+
 def _build_canvas_nodes(
     nodes: list[_FlowNodeDraft],
     *,
@@ -391,6 +416,8 @@ def generate_flow(
     db_session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
     flow_decomposition_service: FlowDecompositionService = Depends(get_flow_decomposition_service),
+    instance_service: InstanceService = Depends(get_instance_service),
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
     flow_planner_session_service: FlowPlannerSessionService = Depends(get_flow_planner_session_service),
 ) -> FlowGenerateResponse:
     normalized_board_id = board_id.strip() or "default"
@@ -409,6 +436,13 @@ def generate_flow(
         instance_uuid = UUID(payload.instance_id)
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid instance_id") from exc
+    execution_context = _build_execution_context_or_404(
+        db_session=db_session,
+        current_user=current_user,
+        instance_id=instance_uuid,
+        instance_service=instance_service,
+        provider_application_service=provider_application_service,
+    )
 
     provisional_session_key = (
         payload.planner_session_key.strip()
@@ -450,6 +484,8 @@ def generate_flow(
                 db_session=db_session,
                 session_key=session_record.session_key,
             ),
+            execution_context=execution_context,
+            provider_name=flow_decomposition_service.decomposition_provider_name(),
         )
     except HTTPException as exc:
         flow_planner_session_service.fail_session(
@@ -491,6 +527,8 @@ def generate_flow(
         session_key=planner_session_key,
         flow_decomposition_service=flow_decomposition_service,
         flow_planner_session_service=flow_planner_session_service,
+        execution_context=execution_context,
+        provider_name=flow_decomposition_service.decomposition_provider_name(),
     )
     latest_snapshot = flow_planner_session_service.get_snapshot_for_user(
         db_session=db_session,
@@ -558,6 +596,9 @@ async def flow_planner_sse(
     snapshot_only: bool = Query(default=False, alias="snapshotOnly"),
     db_session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
+    flow_decomposition_service: FlowDecompositionService = Depends(get_flow_decomposition_service),
+    instance_service: InstanceService = Depends(get_instance_service),
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
     flow_planner_session_service: FlowPlannerSessionService = Depends(get_flow_planner_session_service),
 ) -> Response:
     del board_id
@@ -609,6 +650,19 @@ async def flow_planner_sse(
             }
         )
         return Response(content=payload, media_type="text/event-stream", headers=headers)
+    provider_name = flow_decomposition_service.decomposition_provider_name()
+    snapshot_execution_context: ProviderExecutionContext | None = None
+    if snapshot.instance_id is not None:
+        try:
+            snapshot_execution_context = _build_execution_context_or_404(
+                db_session=db_session,
+                current_user=current_user,
+                instance_id=snapshot.instance_id,
+                instance_service=instance_service,
+                provider_application_service=provider_application_service,
+            )
+        except HTTPException:
+            snapshot_execution_context = None
 
     def build_snapshot_events(*, seq_start: int) -> list[str]:
         seq = seq_start
@@ -735,6 +789,8 @@ async def flow_planner_sse(
                     session_key=normalized_session_key,
                     flow_decomposition_service=flow_decomposition_service,
                     flow_planner_session_service=flow_planner_session_service,
+                    execution_context=snapshot_execution_context,
+                    provider_name=provider_name,
                 )
                 next_snapshot = flow_planner_session_service.get_snapshot_for_user(
                     db_session=db_session,
