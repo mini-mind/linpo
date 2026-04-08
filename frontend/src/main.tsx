@@ -12,9 +12,6 @@ if (!rootElement) {
   throw new Error('Root element not found');
 }
 
-const LandingPage = lazy(() =>
-  import('./components/LandingPage').then((module) => ({ default: module.LandingPage }))
-);
 const LoginPage = lazy(() =>
   import('./components/LoginPage').then((module) => ({ default: module.LoginPage }))
 );
@@ -42,7 +39,6 @@ function App(): JSX.Element {
         <BrowserRouter>
           <Suspense fallback={<RouteFallback />}>
             <Routes>
-              <Route path="/landing" element={<LandingPage />} />
               <Route element={<PublicRoute />}>
                 <Route path="/login" element={<LoginPage />} />
               </Route>

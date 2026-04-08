@@ -118,7 +118,7 @@ def test_ops_endpoints_require_authentication(isolated_database_url: str) -> Non
     assert cast(dict[str, Any], json.loads(diagnostics_body.decode("utf-8"))) == {"detail": "Unauthorized"}
 
 
-def test_ops_setup_reports_missing_database_and_flow_decomposition_configuration(
+def test_ops_setup_reports_default_sqlite_and_missing_flow_decomposition_configuration(
     monkeypatch: pytest.MonkeyPatch,
     isolated_database_url: str,
     auth_cookie: str,
@@ -152,13 +152,13 @@ def test_ops_setup_reports_missing_database_and_flow_decomposition_configuration
     assert payload["ready"] is False
 
     checks = _check_by_key(payload)
-    assert checks["database_url_configured"]["status"] == "failed"
+    assert checks["database_url_configured"]["status"] == "ok"
     assert checks["secret_encryption_key_configured"]["status"] == "failed"
     assert checks["openclaw_runtime_configured"]["status"] == "failed"
     assert checks["flow_decomposition_configured"]["status"] == "failed"
     assert checks["task_callback_base_url_configured"]["status"] == "failed"
     assert checks["instance_bound"]["status"] == "failed"
-    assert "LINPO_DATABASE_URL" in checks["database_url_configured"]["nextStep"]
+    assert "SQLite" in checks["database_url_configured"]["message"]
     assert "LINPO_SECRET_ENCRYPTION_KEY" in checks["secret_encryption_key_configured"]["nextStep"]
     assert "OPENCLAW_BASE_URL" in checks["openclaw_runtime_configured"]["nextStep"]
     assert "LINPO_TASK_EVENT_CALLBACK_BASE_URL" in checks["task_callback_base_url_configured"]["nextStep"]

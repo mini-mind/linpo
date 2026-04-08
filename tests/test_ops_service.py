@@ -129,7 +129,6 @@ def test_ops_service_setup_reports_missing_env_and_unbound_instance(
     assert snapshot.ready is False
     failed_keys = {item.key for item in snapshot.checks if item.status == "failed"}
     assert failed_keys == {
-        "database_url_configured",
         "secret_encryption_key_configured",
         "openclaw_runtime_configured",
         "flow_decomposition_configured",
@@ -163,6 +162,8 @@ def test_ops_service_setup_check_keys_and_messages_are_stable(
         "task_callback_base_url_configured",
         "instance_bound",
     ]
+    assert checks_by_key["database_url_configured"].status == "ok"
+    assert "默认 SQLite" in checks_by_key["database_url_configured"].message
     assert checks_by_key["secret_encryption_key_configured"].message == "LINPO_SECRET_ENCRYPTION_KEY 未配置。"
     assert checks_by_key["openclaw_runtime_configured"].message.startswith("缺少 OPENCLAW 配置:")
     assert checks_by_key["task_callback_base_url_configured"].message == "LINPO_TASK_EVENT_CALLBACK_BASE_URL 未配置。"

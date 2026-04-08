@@ -58,6 +58,27 @@ DEFAULT_TASK_OUTPUT_PREVIEW_PATH = "/api/v1/boards/default/tasks/{task_id}/outpu
 DEFAULT_TASK_OUTPUT_FILE_PATH = "/api/v1/boards/default/tasks/{task_id}/output-file"
 
 
+def _install_planner_agent_membership(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    available_agent_ids: set[str],
+) -> None:
+    def _fake_validate(
+        *,
+        provider_application_service: object,
+        execution_context: object,
+        planner_agent_id: str,
+    ) -> None:
+        del provider_application_service, execution_context
+        if planner_agent_id not in available_agent_ids:
+            raise HTTPException(status_code=400, detail="planner_agent_id is not available in current instance")
+
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner._validate_planner_agent_membership_if_available",
+        _fake_validate,
+    )
+
+
 def _planner_request_json(
     method: str,
     path: str,
@@ -160,6 +181,7 @@ def isolated_database_url(
     database_url = f"sqlite:///{test_db_path}"
     monkeypatch.setenv("LINPO_DATABASE_URL", database_url)
     monkeypatch.setenv("LINPO_SECRET_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.setenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", "http://linpo.test:8000")
     app.state.bootstrap_database()
     return database_url
 
@@ -589,6 +611,7 @@ def test_flow_generate_starts_persistent_planner_session(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _install_planner_agent_membership(monkeypatch, available_agent_ids={"claw3"})
     _allow_instance_validation(monkeypatch)
     auth_cookie = _register_and_login("flow-generate-user")
     instance = _create_instance(
@@ -644,6 +667,7 @@ def test_flow_generate_accepts_custom_planner_agent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     del isolated_database_url
+    _install_planner_agent_membership(monkeypatch, available_agent_ids={"planner-x"})
     _allow_instance_validation(monkeypatch)
     auth_cookie = _register_and_login("flow-generate-planner-guard-user")
     instance = _create_instance(
@@ -715,6 +739,7 @@ def test_flow_generate_persists_trimmed_planner_agent_from_request(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _install_planner_agent_membership(monkeypatch, available_agent_ids={"planner-selected"})
     _allow_instance_validation(monkeypatch)
     auth_cookie = _register_and_login("flow-generate-planner-selected-user")
     instance = _create_instance(
@@ -811,10 +836,43 @@ def test_flow_generate_uses_default_planner_agent_when_request_does_not_provide_
     assert captured_dispatch_args[0]["planner_agent_id"] == "planner-default-from-config"
 
 
+def test_flow_generate_rejects_unavailable_custom_planner_agent(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _install_planner_agent_membership(monkeypatch, available_agent_ids={"planner-ok"})
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("flow-generate-planner-unavailable-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-flow-planner-unavailable",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-planner-unavailable",
+    )
+
+    status_code, _, payload = _request_json(
+        "POST",
+        DEFAULT_FLOW_GENERATE_PATH,
+        {
+            "requirement": "使用不存在的 planner",
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor",
+            "planner_agent_id": "planner-missing",
+            "manager_agent_id": "agent-manager",
+        },
+        auth_cookie,
+    )
+
+    assert status_code == 400
+    assert payload["detail"] == "planner_agent_id is not available in current instance"
+
+
 def test_flow_generate_prompt_includes_history_workflow_json_and_planner_http_interface(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _install_planner_agent_membership(monkeypatch, available_agent_ids={"claw3"})
     _allow_instance_validation(monkeypatch)
     auth_cookie = _register_and_login("flow-generate-bare-json-user")
     instance = _create_instance(
@@ -872,6 +930,7 @@ def test_flow_generate_returns_current_snapshot_from_persisted_planner_session(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _install_planner_agent_membership(monkeypatch, available_agent_ids={"claw3"})
     _allow_instance_validation(monkeypatch)
     auth_cookie = _register_and_login("flow-generate-current-snapshot-user")
     instance = _create_instance(

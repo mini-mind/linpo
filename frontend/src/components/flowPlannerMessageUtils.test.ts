@@ -19,7 +19,7 @@ function makeMessage(overrides: Partial<FlowChatMessageItem> & { role: FlowChatM
 describe('flowPlannerMessageUtils', () => {
   it('normalizes legacy planner status messages into system status labels', () => {
     const messages = sanitizePlannerMessages([
-      makeMessage({ role: 'assistant', content: '已发送规划请求，等待 claw3 逐节点编辑工作流。' }),
+      makeMessage({ role: 'assistant', content: '已发送规划请求，等待 planner 逐节点编辑工作流。' }),
       makeMessage({ role: 'assistant', content: '规划中' }),
       makeMessage({ role: 'assistant', content: '已停止当前规划会话。' }),
     ]);

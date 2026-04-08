@@ -34,7 +34,7 @@ type BuildFlowGeneratePayloadParams = {
   instruction: string;
   instanceId: string;
   executorAgentId: string;
-  plannerAgentId: string;
+  plannerAgentId: string | null;
   plannerSessionKey: string;
   flowDisplayName: string;
   flowNodes: FlowCanvasNode[];
@@ -748,11 +748,12 @@ export function buildFlowGeneratePayload({
   flowNodes,
   flowEdges,
 }: BuildFlowGeneratePayloadParams): FlowGenerateRequest {
+  const normalizedPlannerAgentId = plannerAgentId?.trim() ?? '';
   return {
     requirement: instruction,
     instance_id: instanceId,
     executor_agent_id: executorAgentId,
-    planner_agent_id: plannerAgentId,
+    planner_agent_id: normalizedPlannerAgentId || null,
     manager_agent_id: executorAgentId,
     planner_session_key: plannerSessionKey,
     flow_name: flowDisplayName.trim() || null,

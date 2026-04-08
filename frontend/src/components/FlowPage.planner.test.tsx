@@ -69,7 +69,7 @@ describe('FlowPage planner', () => {
 
     await clickPlannerStopAndWait(1);
     expect(mockStopFlowPlannerSession).toHaveBeenCalledWith(
-      { planner_session_key: expect.stringContaining('linpo:flow:default:planner:claw3:') },
+      { planner_session_key: expect.stringContaining('linpo:flow:default:planner:planner:') },
       undefined,
       'default'
     );
@@ -89,7 +89,7 @@ describe('FlowPage planner', () => {
       )
       .mockResolvedValueOnce(
         buildGenerateResponse({
-          planner_session_key: 'linpo:flow:default:planner:claw3:retry-success',
+          planner_session_key: 'linpo:flow:default:planner:planner:retry-success',
         })
       );
 

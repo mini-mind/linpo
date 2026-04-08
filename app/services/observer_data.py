@@ -1098,11 +1098,11 @@ def get_observer_data_source_name(data_source: str | None = None) -> str:
     return data_source or os.getenv("LINPO_OBSERVER_DATA_SOURCE", "stub")
 
 
-def _openclaw_data_source_config() -> tuple[str | None, str | None, str]:
+def _openclaw_data_source_config() -> tuple[str | None, str | None, str | None]:
     return (
         os.getenv("OPENCLAW_BASE_URL"),
         os.getenv("OPENCLAW_GATEWAY_TOKEN"),
-        os.getenv("OPENCLAW_ORIGIN", "http://127.0.0.1:28789"),
+        os.getenv("OPENCLAW_ORIGIN"),
     )
 
 

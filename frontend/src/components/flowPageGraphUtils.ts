@@ -8,7 +8,7 @@ import type {
   KanbanTaskItem,
 } from '../api/types';
 import {
-  FIXED_FLOW_PLANNER_AGENT_ID,
+  DEFAULT_FLOW_PLANNER_SESSION_AGENT_SEGMENT,
   NODE_DEFAULT_MARGIN,
   NODE_VERTICAL_GAP,
   buildInitialLanesFromAgent,
@@ -151,7 +151,8 @@ export function buildFlowSnapshotFromTasks(
     return toEpochMillis(task.updated_at) > toEpochMillis(latest) ? task.updated_at : latest;
   }, effectiveTasks[0]?.updated_at ?? new Date().toISOString());
 
-  const plannerSessionKey = String(effectiveTasks[0]?.extras.planner_session_key ?? '').trim() || `linpo:flow:default:planner:claw3:loaded`;
+  const plannerSessionKey = String(effectiveTasks[0]?.extras.planner_session_key ?? '').trim()
+    || `linpo:flow:default:planner:${DEFAULT_FLOW_PLANNER_SESSION_AGENT_SEGMENT}:loaded`;
   const managerSessionKey = String(effectiveTasks[0]?.extras.manager_session_key ?? '').trim() || `linpo:flow:default:manager`;
   const executionSessionKey = String(effectiveTasks[0]?.extras.execution_session_key ?? '').trim();
   const executionSessionPrefix =

@@ -38,7 +38,7 @@ export function buildOverview(): AggregateOverviewResponse {
 export function buildConfirmResponse(): FlowConfirmResponse {
   return {
     board_id: 'default',
-    planner_session_key: 'linpo:flow:default:planner:claw3:test',
+    planner_session_key: 'linpo:flow:default:planner:planner:test',
     manager_session_key: 'linpo:flow:default:manager',
     execution_session_prefix: 'linpo:flow:default:exec',
     nodes: [],
@@ -52,7 +52,7 @@ export function buildConfirmResponse(): FlowConfirmResponse {
 export function buildGenerateResponse(overrides: Partial<FlowGenerateResponse> = {}): FlowGenerateResponse {
   return {
     board_id: 'default',
-    planner_session_key: 'linpo:flow:default:planner:claw3:test',
+    planner_session_key: 'linpo:flow:default:planner:planner:test',
     manager_session_key: 'linpo:flow:default:manager',
     execution_session_prefix: 'linpo:flow:default:exec',
     nodes: [
@@ -107,7 +107,7 @@ export function applyFlowPageDefaultMocks(
   mocks.mockGenerateFlowFromRequirement?.mockResolvedValue?.(buildGenerateResponse());
   mocks.mockConfirmFlowToKanban?.mockResolvedValue?.(buildConfirmResponse());
   mocks.mockStopFlowPlannerSession?.mockResolvedValue?.({
-    session_key: 'linpo:flow:default:planner:claw3:test',
+    session_key: 'linpo:flow:default:planner:planner:test',
     status: 'stopped',
     revision: 1,
     updated_at: '2026-04-02T00:00:00Z',

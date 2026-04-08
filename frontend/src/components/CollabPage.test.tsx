@@ -117,7 +117,7 @@ describe('CollabPage', () => {
     mockCreateKanbanTask.mockResolvedValue(buildKanbanTask());
     mockConfirmFlowToKanban.mockResolvedValue({
       board_id: 'default',
-      planner_session_key: 'linpo:flow:default:planner:claw3:test',
+      planner_session_key: 'linpo:flow:default:planner:planner:test',
       manager_session_key: 'linpo:flow:default:manager',
       execution_session_prefix: 'linpo:flow:default:exec',
       nodes: [],

@@ -40,7 +40,7 @@
 - `FlowEditorPanel`：各分组内的流程项按最后编辑时间倒序排列；当前打开流程不能因为路由激活而改写排序。
 - `FlowEditorPanel`：左侧流程侧栏头部仅保留标题与同行右侧“新建”按钮，不再保留筛选器、排序器或补充说明文案。
 - `FlowEditorPanel`：移动端不依赖双击手势承载核心编辑能力；画布内需暴露显式节点动作入口，至少覆盖 `新建节点/编辑已选节点/打开流程列表`。
-- `FlowEditorPanel`：流程新建弹窗默认使用“当前实例已配置的 planner agent”；用户可在导航栏账户下拉菜单的实例弹窗中通过下拉项调整该配置。前端调用 `flow.generate` 时显式传 `planner_agent_id`，未显式配置时后端回退 `FLOW_DECOMPOSITION_AGENT_ID`。
+- `FlowEditorPanel`：流程新建弹窗默认使用“当前实例已配置的 planner agent”；用户可在导航栏账户下拉菜单中的 `Planner Agent 配置` 弹窗调整该配置（按当前实例生效）。前端调用 `flow.generate` 时优先传 `planner_agent_id`，未显式配置时由后端回退 `FLOW_DECOMPOSITION_AGENT_ID`。
 - `FlowEditorPanel`：移动端将左侧流程列表改为抽屉式侧栏，默认收起；画布内显式入口负责打开/关闭抽屉，抽屉内部继续复用桌面端的流程切换与新建动作。
 - `FlowEditorPanel`：移动端流程抽屉需处理焦点迁移：打开时聚焦当前流程项（若不存在则聚焦抽屉内首个可操作按钮），关闭时将焦点还给画布内的流程列表触发按钮。
 - `FlowEditorPanel`：底部悬浮规划窗口改为“紧凑对话框 + 按需展开消息流”模式；不再展示 title/描述文案，焦点进入浮窗或消息流时自动展开，焦点回到画布等区域时自动收起。
@@ -71,7 +71,7 @@
 - `InstanceListModal`：由账户下拉菜单“实例”触发，展示已配对实例列表、实例信息与拓扑（`实例 -> Agent -> Session`）；当用户进入`/kanban`且无实例时自动弹出。
 - `InstanceListModal`：添加实例页支持`配对会话`、`Token`两种方式；默认打开`配对会话`标签页，`Token`作为第二标签页。
 - `InstanceListModal`：配对会话页由 Linpo 创建短时会话，展示 `short_code + pairing_url` 并轮询状态；OpenClaw 侧 attach 成功后自动落库实例并切换到实例详情。
-- `InstanceListModal`：实例详情新增“planner agent 配置”下拉项；候选项来自该实例可见 agent 列表，保存后作为流程规划默认 `planner_agent_id` 值。
+- `PlannerAgentModal`：由账户下拉菜单触发，基于“当前实例”展示可选 planner agent；保存后写入实例级偏好，作为流程规划默认 `planner_agent_id` 值。
 - 两个主工作页（`KanbanShell/FlowEditorPanel`）曾共用贴顶扁平工具栏样式 token；当前仅 `KanbanShell` 继续保留顶栏，`FlowEditorPanel` 改为画布内悬浮动作。
 - `SummaryPage` 维持受限宽页面壳：`page gutter + content max-width` 共用一组 token，避免统计页在超宽屏过度拉伸。
 - `InstanceFilesPage` 不再复用 `SummaryPage` 的桌面壳宽约束；桌面端以贴边侧栏 + 自适应主内容区为主，移动端再退化为单列。
@@ -213,7 +213,7 @@
 - `GET /api/v1/summary/overview`：摘要页与看板页的聚合入口，返回实例诊断、事件流、总 token 与按实例分组的 token 曲线样本。
 - `GET /api/v1/agents*`：Observer 只读查询接口；必须登录后访问，且必须显式携带 `instanceId`（归属当前用户）；缺失直接返回 `400`。
 - `GET/POST/PATCH/DELETE /api/v1/chat/**`：会话读写与控制接口；必须登录后访问，且必须显式携带 `instanceId`（归属当前用户）；缺失直接返回 `400`。
-- `GET /api/v1/ops/setup`：私有化部署配置检查入口；返回必填运行配置检查结果（仅状态，不回传明文敏感值）、实例接入状态与可执行修复建议。必查项至少包含：`LINPO_DATABASE_URL`、`LINPO_SECRET_ENCRYPTION_KEY`、`OPENCLAW_BASE_URL/OPENCLAW_GATEWAY_TOKEN/OPENCLAW_ORIGIN`、`FLOW_DECOMPOSITION_PROVIDER/FLOW_DECOMPOSITION_AGENT_ID`、（当 provider=`openclaw` 时）`FLOW_DECOMPOSITION_OPENCLAW_*`、`LINPO_TASK_EVENT_CALLBACK_BASE_URL` 与实例绑定状态。
+- `GET /api/v1/ops/setup`：私有化部署配置检查入口；返回运行配置检查结果（仅状态，不回传明文敏感值）、实例接入状态与可执行修复建议。数据库项支持“未配置 `LINPO_DATABASE_URL` 时使用默认 SQLite（`sqlite:///./linpo.db`）”；其余必查项至少包含：`LINPO_SECRET_ENCRYPTION_KEY`、`OPENCLAW_BASE_URL/OPENCLAW_GATEWAY_TOKEN/OPENCLAW_ORIGIN`、`FLOW_DECOMPOSITION_PROVIDER/FLOW_DECOMPOSITION_AGENT_ID`、（当 provider=`openclaw` 时）`FLOW_DECOMPOSITION_OPENCLAW_*`、`LINPO_TASK_EVENT_CALLBACK_BASE_URL` 与实例绑定状态。
 - `GET /api/v1/ops/diagnostics`：私有化部署诊断导出入口；返回可复制的脱敏诊断信息（版本、配置检查摘要、实例连通性、最近错误上下文与 requestId），用于工单/群内协同排障。`latestErrorContext` 仅表达配置检查失败首项；当配置检查均通过但实例状态/连通性异常时，`recentErrorContext` 返回 `instance_connectivity_degraded` 告警，提示优先排查 endpoint 与网关令牌。
 - `POST /api/v1/instances/pairing-sessions`：登录用户创建配对会话，返回 `session_id + short_code + pairing_url + expires_at`。
 - `pairing_url` 统一返回协议短链 `linpo://pair?code=...`，用于复制转发给 OpenClaw；前端不再提供扫码页面入口。
@@ -237,7 +237,7 @@
 - 实例文件接口必须做任务作用域校验：仅允许当前用户、当前实例、当前看板下任务关联路径，不开放任意绝对路径访问。
 - Agent 文档接口必须只暴露 OpenClaw 白名单文件名：`AGENTS.md`、`SOUL.md`、`TOOLS.md`、`IDENTITY.md`、`USER.md`、`HEARTBEAT.md`、`BOOTSTRAP.md`、`MEMORY.md`、`memory.md`；Linpo 不自行接受任意路径输入。
 - `flow.generate` 为流程页面分配专用 session：`planner:{agent_id}`、`manager`、`execution` 前缀，用于流程拆解和任务调度链路。
-- 流程拆解逻辑不在前端执行，统一由后端 `FlowDecompositionService` 通过配置的 provider 发起规划会话；前端从“用户下拉 -> 实例弹窗”的 planner 配置中选择并传入 `planner_agent_id`，后端按该值执行；未传时使用 `FLOW_DECOMPOSITION_AGENT_ID` 默认值。
+- 流程拆解逻辑不在前端执行，统一由后端 `FlowDecompositionService` 通过配置的 provider 发起规划会话；前端从“用户下拉 -> Planner Agent 配置”中读取当前实例偏好并传入 `planner_agent_id`，后端按该值执行；未传时使用 `FLOW_DECOMPOSITION_AGENT_ID` 默认值。
 - 流程规划消息流与图补丁共用独立 SSE 通道：前端在发送 `flow.generate` 前确定 `planner_session_key`，随后订阅 `/api/v1/boards/{board_id}/tasks/flow/planner-sse`；后端仅以 Linpo 持久化 planner session 为真源，找不到 session 时直接返回 `404`，不再从 OpenClaw `chat.history` 回填；对外推送 `planner_messages_updated`、`planner_nodes_patched`、`planner_snapshot_updated` 与 `planner_session_updated`。
 - 流程创建入口由 `FlowEditorPanel` 左侧流程侧栏中的新建弹窗承接；`FlowEditorPanel` 底部悬浮对话框用于后续增量改图（同样调用 `flow.generate`）。
 - 配对入口支持用户自有 OpenClaw（如 `claw2`）；Linpo 不要求用户先配置多页面，只需完成一次实例配对即可进入看板与流程主链。

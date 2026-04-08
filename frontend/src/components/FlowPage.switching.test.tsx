@@ -56,7 +56,7 @@ describe('FlowPage switching', () => {
       )
       .mockResolvedValueOnce(
         buildGenerateResponse({
-          planner_session_key: 'linpo:flow:default:planner:claw3:flow-b',
+          planner_session_key: 'linpo:flow:default:planner:planner:flow-b',
         })
       );
 
@@ -84,7 +84,7 @@ describe('FlowPage switching', () => {
     }
     resolveFirstGenerateFn(
       buildGenerateResponse({
-        planner_session_key: 'linpo:flow:default:planner:claw3:stale-flow-a',
+        planner_session_key: 'linpo:flow:default:planner:planner:stale-flow-a',
       })
     );
 
@@ -96,7 +96,7 @@ describe('FlowPage switching', () => {
       expect(mockGenerateFlowFromRequirement).toHaveBeenCalledTimes(2);
     });
     const secondPayload = mockGenerateFlowFromRequirement.mock.calls[1][0];
-    expect(secondPayload.planner_session_key).not.toBe('linpo:flow:default:planner:claw3:stale-flow-a');
+    expect(secondPayload.planner_session_key).not.toBe('linpo:flow:default:planner:planner:stale-flow-a');
     expect(secondPayload.requirement).toBe('流程B的规划需求');
   });
 
@@ -117,7 +117,7 @@ describe('FlowPage switching', () => {
       edges: [],
       lanes: [],
       node_lane_by_id: {},
-      planner_session_key: 'linpo:flow:default:planner:claw3:overlay-a',
+      planner_session_key: 'linpo:flow:default:planner:planner:overlay-a',
       execution_session_prefix: null,
       executor_agent_id: null,
       created_at: '2026-03-29T08:00:00Z',
@@ -131,7 +131,7 @@ describe('FlowPage switching', () => {
       edges: [],
       lanes: [],
       node_lane_by_id: {},
-      planner_session_key: 'linpo:flow:default:planner:claw3:overlay-b',
+      planner_session_key: 'linpo:flow:default:planner:planner:overlay-b',
       execution_session_prefix: null,
       executor_agent_id: null,
       created_at: '2026-03-29T08:01:00Z',
@@ -163,7 +163,7 @@ describe('FlowPage switching', () => {
     }
     resolveFirstGenerateFn(
       buildGenerateResponse({
-        planner_session_key: 'linpo:flow:default:planner:claw3:overlay-a',
+        planner_session_key: 'linpo:flow:default:planner:planner:overlay-a',
       })
     );
 

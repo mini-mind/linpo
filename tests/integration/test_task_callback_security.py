@@ -42,6 +42,7 @@ def isolated_database_url(
     database_url = f"sqlite:///{test_db_path}"
     monkeypatch.setenv("LINPO_DATABASE_URL", database_url)
     monkeypatch.setenv("LINPO_SECRET_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.setenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", "http://linpo.test:8000")
     app.state.bootstrap_database()
     return database_url
 

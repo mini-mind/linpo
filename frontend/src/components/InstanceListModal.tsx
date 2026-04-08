@@ -1,6 +1,7 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { API_BASE_URL } from '../api/apiBaseUrl';
 import { getAggregateTopology } from '../api/client';
 import {
   createPairingSession,
@@ -100,11 +101,25 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
   const [createHintText, setCreateHintText] = useState('');
   const [tokenValidationText, setTokenValidationText] = useState('');
   const [pairingSession, setPairingSession] = useState<PairingSession | null>(null);
+  const publicBasePath = useMemo(() => {
+    const raw = String(import.meta.env.BASE_URL ?? '/').trim();
+    if (!raw || raw === '/') {
+      return '';
+    }
+    return `/${raw.replace(/^\/+|\/+$/g, '')}`;
+  }, []);
+  const pairingGuideUrl = useMemo(
+    () => `${window.location.origin}${publicBasePath}/docs/openclaw-pairing-session-guide.md`,
+    [publicBasePath]
+  );
+  const attachApiUrl = useMemo(
+    () => `${API_BASE_URL}/api/v1/instances/pairing-sessions/attach-by-code`,
+    []
+  );
   const openClawAttachInstruction = useMemo(() => {
     if (!pairingSession?.shortCode) {
       return '';
     }
-    const pairingGuideUrl = `${window.location.origin}/docs/openclaw-pairing-session-guide.md`;
     return [
       '请先完整读取以下文档，并严格按教程完成挂载：',
       pairingGuideUrl,
@@ -112,14 +127,14 @@ export function InstanceListModal({ open, onClose }: InstanceListModalProps): JS
       '执行目标参数：',
       `shortCode=${pairingSession.shortCode}`,
       `name=${createName.trim() || 'claw2'}`,
-      `attachApi=${window.location.origin}/api/v1/instances/pairing-sessions/attach-by-code`,
+      `attachApi=${attachApiUrl}`,
       '',
       '要求：',
       '1) 先按教程读取 endpoint 与 gatewayToken；',
       '2) 再调用 attachApi 完成 attach-by-code；',
       '3) 只返回最终 JSON 结果，不要追加解释文本。',
     ].join('\n');
-  }, [createName, pairingSession?.shortCode]);
+  }, [attachApiUrl, createName, pairingGuideUrl, pairingSession?.shortCode]);
 
   const clearCreateState = useCallback(() => {
     setCreateHintText('');

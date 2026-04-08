@@ -24,6 +24,7 @@ _OPENCLAW_RUNTIME_REQUIRED_KEYS = (
 )
 
 _ACTIVE_INSTANCE_STATUSES = {"active", "ok", "running"}
+_DEFAULT_SQLITE_DATABASE_URL = "sqlite:///./linpo.db"
 
 
 @dataclass(frozen=True)
@@ -167,16 +168,16 @@ class OpsService:
         checks: list[OpsCheck] = [
             OpsCheck(
                 key="database_url_configured",
-                status="ok" if db_configured else "failed",
+                status="ok",
                 message=(
                     "LINPO_DATABASE_URL 已配置。"
                     if db_configured
-                    else "LINPO_DATABASE_URL 未配置。"
+                    else f"LINPO_DATABASE_URL 未配置，使用默认 SQLite（{_DEFAULT_SQLITE_DATABASE_URL}）。"
                 ),
                 next_step=(
                     ""
                     if db_configured
-                    else "设置 LINPO_DATABASE_URL 指向可访问数据库，并重启服务。"
+                    else "如需外部数据库，请设置 LINPO_DATABASE_URL 并重启服务。"
                 ),
             ),
             OpsCheck(

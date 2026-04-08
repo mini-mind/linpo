@@ -330,7 +330,7 @@ def confirm_flow(
     planner_session_key = (
         payload.planner_session_key.strip()
         if isinstance(payload.planner_session_key, str) and payload.planner_session_key.strip()
-        else f"linpo:flow:{normalized_board_id}:planner:claw3:{uuid4().hex[:8]}"
+        else f"linpo:flow:{normalized_board_id}:planner:planner:{uuid4().hex[:8]}"
     )
     execution_session_prefix = (
         payload.execution_session_prefix.strip()

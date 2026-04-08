@@ -15,7 +15,7 @@
 
 ## 部署形态
 
-- 本地开发为前端 + 后端进程本机运行，分别监听 5173 / 8000；数据库通过 Docker（宿主机端口 40193）。
+- 本地开发为前端 + 后端进程本机运行，分别监听 5173 / 8000；数据库默认使用本地 SQLite（`./linpo.db`），如需外部数据库可显式配置 `LINPO_DATABASE_URL`。
 - OpenClaw 联调实例通常运行于 Docker 容器（如 `claw1` / `claw2` / `claw3`）。
 - v0.7 联调实例按当前配对与环境配置选择，不在文档约定默认实例。
 - v0.7 流程拆解服务由 `FLOW_DECOMPOSITION_PROVIDER + FLOW_DECOMPOSITION_*` 显式配置决定（后端服务化拆解）。
@@ -33,6 +33,7 @@
 - `npm --prefix frontend run build`：前端构建产物。
 - `make quality`：统一质量门（聚合后端测试、类型检查与前端构建）。
 - `curl -i http://127.0.0.1:8000/api/v1/health`：后端健康检查。
+- `docker compose --env-file .env.deploy up -d --build`：最小私有化部署启动（见 `DEPLOY.md`）。
 
 ## CI/CD 门禁（GitHub Actions）
 
@@ -70,7 +71,7 @@
 
 | 变量 | 用途 |
 |---|---|
-| `LINPO_DATABASE_URL` | PostgreSQL 连接，用于用户与实例配置持久化 |
+| `LINPO_DATABASE_URL` | 可选数据库连接字符串；未配置时默认使用 `sqlite:///./linpo.db` |
 | `LINPO_SECRET_ENCRYPTION_KEY` | Gateway Token 加密存储 |
 | `LINPO_CORS_ALLOW_ORIGINS` | 前端访问源的 CORS 白名单（按部署环境显式配置） |
 | `LINPO_SESSION_COOKIE_SECURE` | 会话 Cookie `Secure` 开关；不显式配置时默认启用（`true`） |

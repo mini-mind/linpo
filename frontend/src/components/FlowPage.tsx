@@ -66,8 +66,8 @@ import {
 } from './flowPlannerMessageCache';
 import {
   CONNECTOR_OFFSET,
+  DEFAULT_FLOW_PLANNER_SESSION_AGENT_SEGMENT,
   HEADER_HEIGHT,
-  FIXED_FLOW_PLANNER_AGENT_ID,
   FLOW_BOARD_REALTIME_ID,
   LANE_GAP,
   LANE_MIN_WIDTH,
@@ -1009,7 +1009,7 @@ export function FlowPage(): JSX.Element {
     if (preferredPlannerAgentId && uniqueAgents.some((agent) => agent.agent_id.trim() === preferredPlannerAgentId)) {
       return preferredPlannerAgentId;
     }
-    return FIXED_FLOW_PLANNER_AGENT_ID;
+    return '';
   }, [defaultPlannerAgentId, uniqueAgents]);
 
   const flowPlannerAgent = useMemo(
@@ -1474,7 +1474,9 @@ export function FlowPage(): JSX.Element {
       draft.planner_session_key || draft.execution_session_prefix
         ? {
             board_id: 'default',
-            planner_session_key: draft.planner_session_key ?? `linpo:flow:default:planner:claw3:loaded`,
+            planner_session_key:
+              draft.planner_session_key
+              ?? `linpo:flow:default:planner:${DEFAULT_FLOW_PLANNER_SESSION_AGENT_SEGMENT}:loaded`,
             manager_session_key: 'linpo:flow:default:manager',
             execution_session_prefix: draft.execution_session_prefix ?? 'linpo:flow:default:exec',
             nodes: normalizedNodes,

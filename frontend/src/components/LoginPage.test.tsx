@@ -389,16 +389,12 @@ describe('Route guarding', () => {
     expect(screen.getByTestId('location-display')).toHaveTextContent('/summary');
   });
 
-  it('redirects unauthenticated root access to /landing', async () => {
+  it('redirects unauthenticated root access to /login', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
       status: 401,
       json: async () => ({ detail: 'Unauthorized' }),
     });
-
-    function LandingPage() {
-      return <div>landing-page</div>;
-    }
 
     function App() {
       return (
@@ -406,7 +402,7 @@ describe('Route guarding', () => {
           <AuthProvider>
             <BrowserRouter>
               <Routes>
-                <Route path="/landing" element={<LandingPage />} />
+                <Route path="/login" element={<LoginPage />} />
                 <Route element={<ProtectedRoute />}>
                   <Route path="/" element={<div>root-protected</div>} />
                 </Route>
@@ -420,6 +416,6 @@ describe('Route guarding', () => {
     window.history.pushState({}, '', '/');
     render(<App />);
 
-    expect(await screen.findByText('landing-page')).toBeInTheDocument();
+    expect(await screen.findByText('登录到灵盘')).toBeInTheDocument();
   });
 });

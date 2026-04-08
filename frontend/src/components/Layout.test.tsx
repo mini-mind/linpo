@@ -50,7 +50,7 @@ describe('Layout', () => {
   it('renders toolbar and main shell', () => {
     renderLayout('/kanban');
 
-    expect(screen.getByRole('link', { name: '灵盘' })).toHaveAttribute('href', '/landing');
+    expect(screen.getByRole('link', { name: '灵盘' })).toHaveAttribute('href', '/summary');
     expect(screen.getByRole('link', { name: '摘要' })).toHaveAttribute('href', '/summary');
     expect(screen.getByRole('link', { name: '看板' })).toHaveAttribute('href', '/kanban');
     expect(screen.getByRole('link', { name: '流程' })).toHaveAttribute('href', '/flow/edit/new');

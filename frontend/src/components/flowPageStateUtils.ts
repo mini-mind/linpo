@@ -93,7 +93,7 @@ export const LANE_MIN_WIDTH = 360;
 export const LANE_SIDE_PADDING = 22;
 export const NODE_DEFAULT_MARGIN = 24;
 export const NODE_VERTICAL_GAP = 160;
-export const FIXED_FLOW_PLANNER_AGENT_ID = 'claw3';
+export const DEFAULT_FLOW_PLANNER_SESSION_AGENT_SEGMENT = 'planner';
 export const FLOW_BOARD_REALTIME_ID = 'default';
 export const PLANNER_STEP_APPLY_INTERVAL_MS = 120;
 export const PLANNER_SETTLE_TIMEOUT_MS = 900;
@@ -483,7 +483,7 @@ export function resolveNodeLaneId(nodeId: string, nodeLaneById: Record<string, s
 
 export function buildPlannerSessionKey(boardId: string, plannerAgentId: string): string {
   const normalizedBoardId = boardId.trim() || 'default';
-  const normalizedPlannerAgentId = plannerAgentId.trim() || FIXED_FLOW_PLANNER_AGENT_ID;
+  const normalizedPlannerAgentId = plannerAgentId.trim() || DEFAULT_FLOW_PLANNER_SESSION_AGENT_SEGMENT;
   return `linpo:flow:${normalizedBoardId}:planner:${normalizedPlannerAgentId}:${Math.random().toString(16).slice(2, 10)}`;
 }
 

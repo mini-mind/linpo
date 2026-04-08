@@ -33,10 +33,6 @@ vi.mock('./FlowPage', () => ({
   FlowPage: () => <div>flow-page</div>,
 }));
 
-vi.mock('./LandingPage', () => ({
-  LandingPage: () => <div>landing-page</div>,
-}));
-
 vi.mock('./LoginPage', () => ({
   LoginPage: () => <div>login-page</div>,
 }));
@@ -141,21 +137,6 @@ describe('app routes', () => {
     });
 
     expect(screen.getByText('flow-page')).toBeInTheDocument();
-  });
-
-  it('renders /landing as first-class app route', async () => {
-    document.body.innerHTML = '<div id="root"></div>';
-    window.history.pushState({}, '', '/landing');
-
-    await act(async () => {
-      await import('../main');
-    });
-
-    await waitFor(() => {
-      expect(window.location.pathname).toBe('/landing');
-    });
-
-    expect(screen.getByText('landing-page')).toBeInTheDocument();
   });
 
 });

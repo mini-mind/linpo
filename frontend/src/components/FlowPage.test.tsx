@@ -171,7 +171,7 @@ describe('FlowPage', () => {
     expect(payload.current_nodes[0].title).toBe('现有节点');
     expect(payload.current_nodes[0].depends_on).toEqual([]);
     expect(payload.current_edges).toEqual([]);
-    expect(payload.planner_agent_id).toBe('claw3');
+    expect(payload.planner_agent_id).toBeNull();
 
     expect(screen.getByRole('button', { name: '停止' })).toBeInTheDocument();
     expect(screen.getByTestId('flow-planning-overlay')).toBeInTheDocument();
@@ -310,7 +310,7 @@ describe('FlowPage', () => {
     const plannerSseOptions = mockCreateFlowPlannerSseClient.mock.calls[0]?.[0];
     expect(plannerSseOptions.boardId).toBe('default');
     expect(typeof plannerSseOptions.sessionKey).toBe('string');
-    expect(plannerSseOptions.sessionKey).toContain('linpo:flow:default:planner:claw3:');
+    expect(plannerSseOptions.sessionKey).toContain('linpo:flow:default:planner:planner:');
 
     act(() => {
       plannerSseOptions.onMessage({
@@ -347,13 +347,13 @@ describe('FlowPage', () => {
     mockGenerateFlowFromRequirement
       .mockResolvedValueOnce(
         buildGenerateResponse({
-          planner_session_key: 'linpo:flow:default:planner:claw3:old-session',
+          planner_session_key: 'linpo:flow:default:planner:planner:old-session',
           nodes: [],
         })
       )
       .mockResolvedValueOnce(
         buildGenerateResponse({
-          planner_session_key: 'linpo:flow:default:planner:claw3:new-session',
+          planner_session_key: 'linpo:flow:default:planner:planner:new-session',
           nodes: [
             {
               id: 'node_current_1',
@@ -382,7 +382,7 @@ describe('FlowPage', () => {
     });
     const firstSessionSubscribeCount = mockCreateFlowPlannerSseClient.mock.calls.length;
     const oldPlannerSseOptions = mockCreateFlowPlannerSseClient.mock.calls[firstSessionSubscribeCount - 1]?.[0];
-    expect(oldPlannerSseOptions.sessionKey).toContain('linpo:flow:default:planner:claw3:');
+    expect(oldPlannerSseOptions.sessionKey).toContain('linpo:flow:default:planner:planner:');
 
     await clickPlannerStopAndWait(1);
 
@@ -481,7 +481,7 @@ describe('FlowPage', () => {
     await act(async () => {
       resolveSecondGenerate?.(
         buildGenerateResponse({
-          planner_session_key: 'linpo:flow:default:planner:claw3:new-http-session',
+          planner_session_key: 'linpo:flow:default:planner:planner:new-http-session',
           nodes: [
             {
               id: 'node_new_http_1',
@@ -510,7 +510,7 @@ describe('FlowPage', () => {
     await act(async () => {
       resolveFirstGenerate?.(
         buildGenerateResponse({
-          planner_session_key: 'linpo:flow:default:planner:claw3:old-http-session',
+          planner_session_key: 'linpo:flow:default:planner:planner:old-http-session',
           nodes: [
             {
               id: 'node_old_http_1',
@@ -537,7 +537,7 @@ describe('FlowPage', () => {
 
     await clickPlannerStopAndWait(2);
     expect(mockStopFlowPlannerSession.mock.calls[1]?.[0]).toEqual({
-      planner_session_key: 'linpo:flow:default:planner:claw3:new-http-session',
+      planner_session_key: 'linpo:flow:default:planner:planner:new-http-session',
     });
   });
 
@@ -635,7 +635,7 @@ describe('FlowPage', () => {
     expect(await screen.findByText('请给出一个拆解计划')).toBeInTheDocument();
     expect(screen.getByText('⚙️ 正在规划')).toBeInTheDocument();
     expect(screen.queryByText('规划中')).not.toBeInTheDocument();
-    expect(screen.queryByText('已发送规划请求，等待 claw3 逐节点编辑工作流。')).not.toBeInTheDocument();
+    expect(screen.queryByText('已发送规划请求，等待 planner 逐节点编辑工作流。')).not.toBeInTheDocument();
 
     await waitFor(() => {
       expect(mockCreateFlowPlannerSseClient).toHaveBeenCalledTimes(1);
@@ -707,7 +707,7 @@ describe('FlowPage', () => {
           messages: [
             {
               role: 'assistant',
-              content: '已发送规划请求，等待 claw3 逐节点编辑工作流。',
+              content: '已发送规划请求，等待 planner 逐节点编辑工作流。',
               created_at: '2026-04-02T00:00:02Z',
             },
             {
@@ -728,7 +728,7 @@ describe('FlowPage', () => {
     expect(await screen.findByText('⚙️ 正在规划')).toBeInTheDocument();
     expect(screen.getByText('🧩 编辑了node_http_7')).toBeInTheDocument();
     expect(screen.getByText('⏹️ 已停止')).toBeInTheDocument();
-    expect(screen.queryByText('已发送规划请求，等待 claw3 逐节点编辑工作流。')).not.toBeInTheDocument();
+    expect(screen.queryByText('已发送规划请求，等待 planner 逐节点编辑工作流。')).not.toBeInTheDocument();
     expect(screen.queryByText('PATCH https://api.example.com/nodes/node_http_7 {"node_id":"node_http_7","code":"..."}')).not.toBeInTheDocument();
     expect(screen.queryByText('已停止当前规划会话。')).not.toBeInTheDocument();
 
@@ -764,7 +764,7 @@ describe('FlowPage', () => {
   it('keeps flow page usable when planner session probe reports missing session', async () => {
     mockProbeFlowPlannerSession.mockResolvedValue({ exists: false });
     const flowId = seedDraftFlow('draft-planner-missing-session', {
-      planner_session_key: 'linpo:flow:default:planner:claw3:missing',
+      planner_session_key: 'linpo:flow:default:planner:planner:missing',
       planner_messages: [
         {
           role: 'user',
@@ -779,7 +779,7 @@ describe('FlowPage', () => {
 
     await waitFor(() => {
       expect(mockProbeFlowPlannerSession).toHaveBeenCalledWith(
-        'linpo:flow:default:planner:claw3:missing',
+        'linpo:flow:default:planner:planner:missing',
         undefined,
         'default'
       );
@@ -1718,7 +1718,7 @@ describe('FlowPage', () => {
       edges: [],
       lanes: [],
       node_lane_by_id: {},
-      planner_session_key: 'linpo:flow:default:planner:claw3:msg-a',
+      planner_session_key: 'linpo:flow:default:planner:planner:msg-a',
       execution_session_prefix: null,
       executor_agent_id: null,
       created_at: '2026-03-29T08:00:00Z',
@@ -1732,7 +1732,7 @@ describe('FlowPage', () => {
       edges: [],
       lanes: [],
       node_lane_by_id: {},
-      planner_session_key: 'linpo:flow:default:planner:claw3:msg-b',
+      planner_session_key: 'linpo:flow:default:planner:planner:msg-b',
       execution_session_prefix: null,
       executor_agent_id: null,
       created_at: '2026-03-29T08:01:00Z',
@@ -1781,7 +1781,7 @@ describe('FlowPage', () => {
 
   it('persists planner messages in drafts and restores them after remount', async () => {
     const flowId = seedDraftFlow('draft-persisted-messages', {
-      planner_session_key: 'linpo:flow:default:planner:claw3:persisted',
+      planner_session_key: 'linpo:flow:default:planner:planner:persisted',
     });
 
     const view = renderFlowPage(`/flow/edit/${flowId}`);

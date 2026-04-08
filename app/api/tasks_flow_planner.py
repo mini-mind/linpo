@@ -142,6 +142,39 @@ def _resolve_flow_planner_agent_id(raw: str | None, *, default_agent_id: str) ->
     return value
 
 
+def _validate_planner_agent_membership_if_available(
+    *,
+    provider_application_service: ProviderApplicationService,
+    execution_context: ProviderExecutionContext,
+    planner_agent_id: str,
+) -> None:
+    try:
+        data_source = provider_application_service.resolve_observer_data_source(
+            "openclaw",
+            execution_context,
+        )
+        available_agent_ids = {
+            str(agent.id).strip()
+            for agent in data_source.list_agents()
+            if str(agent.id).strip() != ""
+        }
+    except HTTPException as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="planner_agent_id validation failed: cannot read instance agents",
+        ) from exc
+    if not available_agent_ids:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="planner_agent_id validation failed: instance agents unavailable",
+        )
+    if planner_agent_id not in available_agent_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="planner_agent_id is not available in current instance",
+        )
+
+
 def _planner_snapshot_nodes_to_canvas_nodes(nodes: list[dict[str, object]]) -> list[FlowCanvasNode]:
     drafts = [
         _FlowNodeDraft(
@@ -443,6 +476,12 @@ def generate_flow(
         instance_service=instance_service,
         provider_application_service=provider_application_service,
     )
+    if isinstance(payload.planner_agent_id, str) and payload.planner_agent_id.strip():
+        _validate_planner_agent_membership_if_available(
+            provider_application_service=provider_application_service,
+            execution_context=execution_context,
+            planner_agent_id=planner_agent_id,
+        )
 
     provisional_session_key = (
         payload.planner_session_key.strip()
@@ -919,6 +958,7 @@ def stop_flow_planner(
     flow_planner_session_service: FlowPlannerSessionService = Depends(get_flow_planner_session_service),
     flow_decomposition_service: FlowDecompositionService = Depends(get_flow_decomposition_service),
     provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
+    instance_service: InstanceService = Depends(get_instance_service),
 ) -> FlowPlannerStopResponse:
     del board_id
     snapshot = flow_planner_session_service.stop_for_user(
@@ -926,10 +966,31 @@ def stop_flow_planner(
         user_id=current_user.id,
         session_key=payload.planner_session_key,
     )
+    execution_context: ProviderExecutionContext | None = None
+    if snapshot.instance_id is not None:
+        execution_context = _build_execution_context_or_404(
+            db_session=db_session,
+            current_user=current_user,
+            instance_id=snapshot.instance_id,
+            instance_service=instance_service,
+            provider_application_service=provider_application_service,
+        )
+    if execution_context is None:
+        try:
+            execution_context = flow_decomposition_service.build_realtime_execution_context()
+        except HTTPException:
+            execution_context = None
+    if execution_context is None:
+        return FlowPlannerStopResponse(
+            session_key=snapshot.session_key,
+            status=cast(Any, snapshot.status),
+            revision=snapshot.revision,
+            updated_at=_serialize_iso_datetime(snapshot.updated_at),
+        )
     try:
         provider_application_service.pause_agent_for_provider(
             data_source=flow_decomposition_service.decomposition_provider_name(),
-            execution_context=flow_decomposition_service.build_realtime_execution_context(),
+            execution_context=execution_context,
             agent_id=snapshot.planner_agent_id,
             session_key=snapshot.session_key,
         )

@@ -9,7 +9,7 @@ function shouldForceSummary(pathname: string): boolean {
 
 export function resolvePostLoginPath(pathname: string | null | undefined): string {
   const trimmed = (pathname ?? '').trim();
-  if (trimmed === '' || trimmed === '/login' || trimmed === '/landing') {
+  if (trimmed === '' || trimmed === '/login') {
     return DEFAULT_POST_LOGIN_PATH;
   }
   if (shouldForceSummary(trimmed)) {
@@ -31,9 +31,6 @@ export function ProtectedRoute(): JSX.Element {
   }
 
   if (!user) {
-    if (location.pathname === '/') {
-      return <Navigate to="/landing" replace />;
-    }
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 

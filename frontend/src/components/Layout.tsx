@@ -93,7 +93,7 @@ export function Layout(): JSX.Element {
       <ToastContainer />
       <header style={getToolbarStyle(isMobile)}>
         <div style={getToolbarLeftStyle(isMobile)}>
-          <Link to="/landing" style={isMobile ? brandBlockMobileStyle : brandBlockStyle} aria-label="灵盘">
+          <Link to="/summary" style={isMobile ? brandBlockMobileStyle : brandBlockStyle} aria-label="灵盘">
             <img src="/assets/brand/linpo-flame-icon.svg" alt="" aria-hidden="true" style={brandIconStyle} />
             <div>
               <div style={brandTitleRowStyle}>

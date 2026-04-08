@@ -2,7 +2,7 @@ import type { FlowChatMessageItem } from '../api/types';
 
 export const PLANNER_STATUS_PLANNING_TEXT = '⚙️ 正在规划';
 export const PLANNER_STATUS_STOPPED_TEXT = '⏹️ 已停止';
-const LEGACY_PLANNER_REQUEST_TEXT = '已发送规划请求，等待 claw3 逐节点编辑工作流。';
+const LEGACY_PLANNER_REQUEST_TEXT = '已发送规划请求，等待 planner 逐节点编辑工作流。';
 const LEGACY_PLANNER_STOPPED_TEXT = '已停止当前规划会话。';
 
 export function hasPendingPlannerReply(messages: FlowChatMessageItem[]): boolean {
