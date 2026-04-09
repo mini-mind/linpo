@@ -335,9 +335,7 @@ def test_ops_diagnostics_returns_copy_text_with_summary_and_check_suggestions(
     monkeypatch.setenv("OPENCLAW_BASE_URL", "ws://ops.example:28789")
     monkeypatch.setenv("OPENCLAW_GATEWAY_TOKEN", "token-openclaw")
     monkeypatch.setenv("OPENCLAW_ORIGIN", "http://ops.example:28789")
-    monkeypatch.setenv("FLOW_DECOMPOSITION_OPENCLAW_BASE_URL", "ws://ops.example:38789")
-    monkeypatch.delenv("FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN", raising=False)
-    monkeypatch.setenv("FLOW_DECOMPOSITION_OPENCLAW_ORIGIN", "http://ops.example:38789")
+    monkeypatch.setenv("FLOW_DECOMPOSITION_PROVIDER", "unsupported-provider")
     monkeypatch.setenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", "http://ops.example:8000")
 
     user = db_handle.execute(select(User).where(User.username == "ops-user")).scalar_one()
@@ -385,5 +383,5 @@ def test_ops_diagnostics_returns_copy_text_with_summary_and_check_suggestions(
     latest_error = cast(dict[str, Any], payload["latestErrorContext"])
     recent_error = cast(dict[str, Any], payload["recentErrorContext"])
     assert latest_error["checkKey"] == "flow_decomposition_configured"
-    assert "缺少 FLOW_DECOMPOSITION 配置" in latest_error["message"]
+    assert "provider 不受支持" in latest_error["message"]
     assert recent_error["checkKey"] == "flow_decomposition_configured"

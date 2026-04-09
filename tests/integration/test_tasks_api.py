@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import quote
+from uuid import UUID
 
 import pytest
 from cryptography.fernet import Fernet
@@ -15,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.adapters.provider_adapter import ProviderPayloadResult, ProviderSnapshotResult
 from app.services.task_callback_security import sign_task_callback_event
-from app.db.models import FlowDraft, FlowPlannerSession, Task, User
+from app.db.models import FlowDraft, FlowPlannerSession, InstancePlannerPreference, Task, User
 from app.db import session as db_session
 from app.domain.provider_contract import (
     DomainFreshness,
@@ -836,6 +837,65 @@ def test_flow_generate_uses_default_planner_agent_when_request_does_not_provide_
     assert captured_dispatch_args[0]["planner_agent_id"] == "planner-default-from-config"
 
 
+def test_flow_generate_prefers_persisted_instance_planner_agent_when_request_omits_one(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_planner_agent_membership(monkeypatch, available_agent_ids={"planner-from-instance", "planner-default"})
+    monkeypatch.setenv("FLOW_DECOMPOSITION_AGENT_ID", "planner-default")
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("flow-generate-planner-persisted-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-flow-planner-persisted",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-planner-persisted",
+    )
+    with Session(db_session.get_engine(isolated_database_url)) as session:
+        user = session.execute(select(User).where(User.username == "flow-generate-planner-persisted-user")).scalar_one()
+        session.add(
+            InstancePlannerPreference(
+                user_id=user.id,
+                instance_id=UUID(instance["id"]),
+                planner_agent_id="planner-from-instance",
+            )
+        )
+        session.commit()
+
+    captured_dispatch_args: list[dict[str, Any]] = []
+    from app.services.flow_decomposition_service import FlowPlannerDispatch
+
+    def fake_dispatch(self: Any, **kwargs: Any) -> FlowPlannerDispatch:
+        captured_dispatch_args.append(kwargs)
+        agent_id = cast(str, kwargs["planner_agent_id"])
+        return FlowPlannerDispatch(
+            planner_agent_id=agent_id,
+            planner_session_key=f"linpo:flow:default:planner:{agent_id}:persisted",
+        )
+
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.dispatch_planner",
+        fake_dispatch,
+    )
+
+    status_code, _, payload = _request_json(
+        "POST",
+        DEFAULT_FLOW_GENERATE_PATH,
+        {
+            "requirement": "未指定 planner，优先使用实例持久化配置",
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor",
+            "manager_agent_id": "agent-manager",
+        },
+        auth_cookie,
+    )
+
+    assert status_code == 200
+    assert payload["plannerSessionKey"] == "linpo:flow:default:planner:planner-from-instance:persisted"
+    assert len(captured_dispatch_args) == 1
+    assert captured_dispatch_args[0]["planner_agent_id"] == "planner-from-instance"
+
+
 def test_flow_generate_rejects_unavailable_custom_planner_agent(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -1530,6 +1590,37 @@ def test_flow_planner_stop_rejects_session_without_instance_binding(
     assert stop_status == 409
     stop_payload = cast(dict[str, Any], json.loads(stop_body.decode("utf-8")))
     assert stop_payload["detail"] == "planner session missing instance binding"
+
+
+def test_flow_confirm_rejects_empty_nodes(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("flow-confirm-empty-nodes-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-flow-confirm-empty",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-confirm-empty",
+    )
+
+    status_code, _, payload = _request_json(
+        "POST",
+        DEFAULT_FLOW_CONFIRM_PATH,
+        {
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor",
+            "manager_agent_id": "agent-manager",
+            "nodes": [],
+            "edges": [],
+        },
+        auth_cookie,
+    )
+
+    assert status_code == 400
+    assert payload["detail"] == "empty_flow_nodes"
 
 
 def test_flow_confirm_enqueues_tasks_then_dispatches_from_queue(

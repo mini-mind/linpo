@@ -53,6 +53,7 @@ from app.services.flow_planner_session_service import (
     FlowPlannerSessionService,
     get_flow_planner_session_service,
 )
+from app.services.planner_agent_preference_service import PlannerAgentPreferenceService
 from app.services.provider_application_service import ProviderApplicationService, ProviderExecutionContext
 
 router = APIRouter(prefix="/boards/{board_id}/tasks")
@@ -140,6 +141,10 @@ def _resolve_flow_planner_agent_id(raw: str | None, *, default_agent_id: str) ->
     if value == "":
         return default_agent_id
     return value
+
+
+def get_planner_agent_preference_service() -> PlannerAgentPreferenceService:
+    return PlannerAgentPreferenceService()
 
 
 def _validate_planner_agent_membership_if_available(
@@ -452,15 +457,12 @@ def generate_flow(
     instance_service: InstanceService = Depends(get_instance_service),
     provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
     flow_planner_session_service: FlowPlannerSessionService = Depends(get_flow_planner_session_service),
+    planner_agent_preference_service: PlannerAgentPreferenceService = Depends(get_planner_agent_preference_service),
 ) -> FlowGenerateResponse:
     normalized_board_id = board_id.strip() or "default"
     requirement = payload.requirement.strip()
     if not requirement:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="requirement is required")
-    planner_agent_id = _resolve_flow_planner_agent_id(
-        payload.planner_agent_id,
-        default_agent_id=flow_decomposition_service.resolve_planner_agent_id(None),
-    )
     normalized_current_nodes = _normalize_canvas_nodes(
         nodes=payload.current_nodes,
         edges=payload.current_edges,
@@ -476,7 +478,20 @@ def generate_flow(
         instance_service=instance_service,
         provider_application_service=provider_application_service,
     )
-    if isinstance(payload.planner_agent_id, str) and payload.planner_agent_id.strip():
+    persisted_planner_agent_id = planner_agent_preference_service.get_for_instance(
+        db_session,
+        user_id=current_user.id,
+        instance_id=instance_uuid,
+    )
+    has_explicit_planner_agent = (
+        (isinstance(payload.planner_agent_id, str) and payload.planner_agent_id.strip() != "")
+        or (isinstance(persisted_planner_agent_id, str) and persisted_planner_agent_id.strip() != "")
+    )
+    planner_agent_id = _resolve_flow_planner_agent_id(
+        payload.planner_agent_id or persisted_planner_agent_id,
+        default_agent_id=flow_decomposition_service.resolve_planner_agent_id(None),
+    )
+    if has_explicit_planner_agent and planner_agent_id:
         _validate_planner_agent_membership_if_available(
             provider_application_service=provider_application_service,
             execution_context=execution_context,

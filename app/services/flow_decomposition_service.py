@@ -681,23 +681,40 @@ class FlowDecompositionService:
             ),
         )
 
-    def _required_flow_decomposition_env(self, env_name: str) -> str:
+    def _required_flow_decomposition_env(self, env_name: str, *fallback_env_names: str) -> str:
         value = os.getenv(env_name, "").strip()
-        if value == "":
-            raise HTTPException(
-                status_code=503,
-                detail=f"Flow decomposition service is not configured: missing {env_name}",
-            )
-        return value
+        if value != "":
+            return value
+        for fallback_env_name in fallback_env_names:
+            fallback_value = os.getenv(fallback_env_name, "").strip()
+            if fallback_value != "":
+                return fallback_value
+        fallback_hint = f" (or {', '.join(fallback_env_names)})" if fallback_env_names else ""
+        raise HTTPException(
+            status_code=503,
+            detail=f"Flow decomposition service is not configured: missing {env_name}{fallback_hint}",
+        )
 
     def _decomposition_base_url(self) -> str:
-        return self._required_flow_decomposition_env("FLOW_DECOMPOSITION_OPENCLAW_BASE_URL")
+        return self._required_flow_decomposition_env(
+            "FLOW_DECOMPOSITION_OPENCLAW_BASE_URL",
+            "OPENCLAW_BASE_URL",
+        )
 
-    def _decomposition_origin(self) -> str:
-        return self._required_flow_decomposition_env("FLOW_DECOMPOSITION_OPENCLAW_ORIGIN")
+    def _decomposition_origin(self) -> str | None:
+        primary = os.getenv("FLOW_DECOMPOSITION_OPENCLAW_ORIGIN", "").strip()
+        if primary != "":
+            return primary
+        fallback = os.getenv("OPENCLAW_ORIGIN", "").strip()
+        if fallback != "":
+            return fallback
+        return None
 
     def _decomposition_gateway_token(self) -> str:
-        return self._required_flow_decomposition_env("FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN")
+        return self._required_flow_decomposition_env(
+            "FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN",
+            "OPENCLAW_GATEWAY_TOKEN",
+        )
 
     def _decomposition_provider_name(self) -> str:
         value = os.getenv("FLOW_DECOMPOSITION_PROVIDER", "").strip().lower()

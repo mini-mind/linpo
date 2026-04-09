@@ -18,6 +18,7 @@ import type {
   InstanceValidationErrorResponse,
   InstanceDeleteResponse,
   TaskOutputPreviewResponse,
+  PlannerAgentPreferenceResponse,
 } from './types';
 import { API_BASE_URL } from './apiBaseUrl';
 import { buildApiError } from './client';
@@ -157,6 +158,37 @@ export async function updateInstance(
     body: JSON.stringify(payload),
   });
   return normalizeInstanceItem(updated);
+}
+
+function normalizePlannerAgentPreference(payload: unknown): PlannerAgentPreferenceResponse {
+  const record = (payload && typeof payload === 'object') ? (payload as Record<string, unknown>) : {};
+  return {
+    instanceId: String(record.instanceId ?? record.instance_id ?? ''),
+    plannerAgentId: (record.plannerAgentId as string | null | undefined) ?? (record.planner_agent_id as string | null | undefined) ?? null,
+  };
+}
+
+export async function getInstancePlannerAgentPreference(
+  instanceId: string
+): Promise<PlannerAgentPreferenceResponse> {
+  const detail = await fetchApi<unknown>(
+    `/api/v1/instances/${encodeURIComponent(instanceId)}/planner-agent`
+  );
+  return normalizePlannerAgentPreference(detail);
+}
+
+export async function updateInstancePlannerAgentPreference(
+  instanceId: string,
+  plannerAgentId: string | null
+): Promise<PlannerAgentPreferenceResponse> {
+  const updated = await fetchApi<unknown>(
+    `/api/v1/instances/${encodeURIComponent(instanceId)}/planner-agent`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ plannerAgentId }),
+    }
+  );
+  return normalizePlannerAgentPreference(updated);
 }
 
 export async function deleteInstance(instanceId: string): Promise<InstanceDeleteResponse> {

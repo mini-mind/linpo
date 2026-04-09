@@ -44,7 +44,8 @@ class OpenClawClient:
     ) -> None:
         self._base_url = base_url or os.getenv("OPENCLAW_BASE_URL")
         self._token = gateway_token or os.getenv("OPENCLAW_GATEWAY_TOKEN")
-        self._origin = origin or os.getenv("OPENCLAW_ORIGIN")
+        configured_origin = origin or os.getenv("OPENCLAW_ORIGIN")
+        self._origin = configured_origin or self._derive_origin(self._base_url)
 
         if not self._base_url:
             raise HTTPException(status_code=503, detail="OpenClaw data source is not configured")
@@ -52,6 +53,26 @@ class OpenClawClient:
             raise HTTPException(status_code=503, detail="OpenClaw gateway token is not configured")
         if not self._origin:
             raise HTTPException(status_code=503, detail="OpenClaw origin is not configured")
+
+    def _derive_origin(self, base_url: str | None) -> str | None:
+        if not isinstance(base_url, str) or base_url.strip() == "":
+            return None
+        parsed = urlparse(base_url.strip())
+        scheme = parsed.scheme.lower().strip()
+        if scheme == "ws":
+            origin_scheme = "http"
+        elif scheme == "wss":
+            origin_scheme = "https"
+        elif scheme in {"http", "https"}:
+            origin_scheme = scheme
+        else:
+            return None
+        if not parsed.hostname:
+            return None
+        netloc = parsed.hostname
+        if parsed.port is not None:
+            netloc = f"{netloc}:{parsed.port}"
+        return urlunparse((origin_scheme, netloc, "", "", "", ""))
 
     def config_key(self) -> tuple[str | None, str | None, str]:
         assert self._origin is not None

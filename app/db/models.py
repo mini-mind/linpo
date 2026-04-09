@@ -38,6 +38,25 @@ class Instance(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now)
 
 
+class InstancePlannerPreference(Base):
+    __tablename__ = "instance_planner_preferences"
+    __table_args__ = (
+        UniqueConstraint("user_id", "instance_id", name="uq_instance_planner_preferences_user_instance"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    instance_id: Mapped[UUID] = mapped_column(ForeignKey("instances.id"), index=True)
+    planner_agent_id: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=_utc_now,
+        onupdate=_utc_now,
+        index=True,
+    )
+
+
 class AuthSession(Base):
     __tablename__ = "auth_sessions"
 

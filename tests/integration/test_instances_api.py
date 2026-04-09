@@ -1,4 +1,5 @@
 import json
+import socket
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from http.cookies import SimpleCookie
@@ -1723,6 +1724,7 @@ def test_validate_instance_rejects_unsafe_endpoint_before_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     del isolated_database_url
+    monkeypatch.delenv("LINPO_ALLOW_LOOPBACK_ENDPOINTS", raising=False)
 
     def fail_probe(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("unsafe endpoint should not be probed")
@@ -1744,6 +1746,148 @@ def test_validate_instance_rejects_unsafe_endpoint_before_probe(
     assert status_code == 400
     assert payload["code"] == "unsafe_endpoint"
     assert payload["message"] == "endpoint 指向不安全地址"
+
+
+def test_validate_instance_allows_loopback_endpoint_when_explicitly_enabled(
+    isolated_database_url: str,
+    auth_cookie: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    monkeypatch.setenv("LINPO_ALLOW_LOOPBACK_ENDPOINTS", "true")
+
+    class FakeWs:
+        def __init__(self) -> None:
+            self._incoming = [json.dumps({"type": "event", "event": "connect.challenge"})]
+
+        async def recv(self) -> str:
+            if not self._incoming:
+                raise AssertionError("unexpected recv")
+            return self._incoming.pop(0)
+
+        async def send(self, payload: str) -> None:
+            parsed = cast(dict[str, Any], json.loads(payload))
+            assert parsed["params"]["auth"]["token"] == "valid-token"
+            self._incoming.append(
+                json.dumps(
+                    {
+                        "type": "res",
+                        "id": "connect-1",
+                        "ok": True,
+                        "payload": {"type": "hello-ok"},
+                    }
+                )
+            )
+
+    class FakeConnectContext:
+        def __init__(self, ws: FakeWs) -> None:
+            self._ws = ws
+
+        async def __aenter__(self) -> FakeWs:
+            return self._ws
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            del exc_type, exc, tb
+
+    def fake_connect(url: str, *, origin: object) -> FakeConnectContext:
+        assert url == "ws://127.0.0.1:18789"
+        assert origin == "http://127.0.0.1:18789"
+        return FakeConnectContext(FakeWs())
+
+    monkeypatch.setattr("app.services.instance_validator.websockets.connect", fake_connect)
+
+    status_code, _, payload = _request_json(
+        "POST",
+        "/api/v1/instances/validate",
+        {
+            "name": "claw-local",
+            "type": "openclaw",
+            "endpoint": "http://127.0.0.1:18789",
+            "gatewayToken": "valid-token",
+        },
+        auth_cookie,
+    )
+
+    assert status_code == 200
+    assert payload == {"ok": True, "status": "active", "message": "连接成功", "code": None}
+
+
+def test_validate_instance_allows_host_docker_internal_when_private_endpoint_enabled(
+    isolated_database_url: str,
+    auth_cookie: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    monkeypatch.setenv("LINPO_ALLOW_PRIVATE_ENDPOINTS", "true")
+
+    def fake_getaddrinfo(host: str, port: int | None, *_args: object, **_kwargs: object) -> object:
+        assert host == "host.docker.internal"
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                6,
+                "",
+                ("172.17.0.1", 28789 if port is None else port),
+            )
+        ]
+
+    monkeypatch.setattr("app.services.instance_validator.socket.getaddrinfo", fake_getaddrinfo)
+
+    class FakeWs:
+        def __init__(self) -> None:
+            self._incoming = [json.dumps({"type": "event", "event": "connect.challenge"})]
+
+        async def recv(self) -> str:
+            if not self._incoming:
+                raise AssertionError("unexpected recv")
+            return self._incoming.pop(0)
+
+        async def send(self, payload: str) -> None:
+            parsed = cast(dict[str, Any], json.loads(payload))
+            assert parsed["params"]["auth"]["token"] == "valid-token"
+            self._incoming.append(
+                json.dumps(
+                    {
+                        "type": "res",
+                        "id": "connect-1",
+                        "ok": True,
+                        "payload": {"type": "hello-ok"},
+                    }
+                )
+            )
+
+    class FakeConnectContext:
+        def __init__(self, ws: FakeWs) -> None:
+            self._ws = ws
+
+        async def __aenter__(self) -> FakeWs:
+            return self._ws
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            del exc_type, exc, tb
+
+    def fake_connect(url: str, *, origin: object) -> FakeConnectContext:
+        assert url == "ws://host.docker.internal:18789"
+        assert origin == "http://host.docker.internal:18789"
+        return FakeConnectContext(FakeWs())
+
+    monkeypatch.setattr("app.services.instance_validator.websockets.connect", fake_connect)
+
+    status_code, _, payload = _request_json(
+        "POST",
+        "/api/v1/instances/validate",
+        {
+            "name": "claw-private",
+            "type": "openclaw",
+            "endpoint": "http://host.docker.internal:18789",
+            "gatewayToken": "valid-token",
+        },
+        auth_cookie,
+    )
+
+    assert status_code == 200
+    assert payload == {"ok": True, "status": "active", "message": "连接成功", "code": None}
 
 
 def test_create_instance_requires_successful_validation_before_save(
@@ -2720,3 +2864,95 @@ def test_observer_websocket_rejects_other_users_instance_context(
             "payload": {"detail": "Instance not found"},
         }
     ]
+
+
+def test_instance_planner_agent_preference_set_and_get(
+    isolated_database_url: str,
+    auth_cookie: str,
+    db_handle: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    user = db_handle.execute(select(User).where(User.username == "alice")).scalar_one()
+    instance = Instance(
+        user_id=user.id,
+        name="claw1-planner-pref",
+        type="openclaw",
+        endpoint="http://127.0.0.1:28789",
+        gateway_token_enc="enc",
+        status="ok",
+    )
+    db_handle.add(instance)
+    db_handle.commit()
+    db_handle.refresh(instance)
+
+    monkeypatch.setattr(
+        "app.api.instances._available_agent_ids_for_instance",
+        lambda **kwargs: {"agent-alpha", "agent-beta"},
+    )
+
+    patch_status, _, patch_body = request(
+        "PATCH",
+        f"/api/v1/instances/{instance.id}/planner-agent",
+        headers=_json_headers(auth_cookie),
+        body=json.dumps({"plannerAgentId": "agent-alpha"}).encode("utf-8"),
+    )
+    assert patch_status == 200
+    patch_payload = cast(dict[str, Any], json.loads(patch_body.decode("utf-8")))
+    assert patch_payload["instanceId"] == str(instance.id)
+    assert patch_payload["plannerAgentId"] == "agent-alpha"
+
+    get_status, _, get_body = request(
+        "GET",
+        f"/api/v1/instances/{instance.id}/planner-agent",
+        headers={"cookie": auth_cookie},
+    )
+    assert get_status == 200
+    get_payload = cast(dict[str, Any], json.loads(get_body.decode("utf-8")))
+    assert get_payload["plannerAgentId"] == "agent-alpha"
+
+    clear_status, _, clear_body = request(
+        "PATCH",
+        f"/api/v1/instances/{instance.id}/planner-agent",
+        headers=_json_headers(auth_cookie),
+        body=json.dumps({"plannerAgentId": None}).encode("utf-8"),
+    )
+    assert clear_status == 200
+    clear_payload = cast(dict[str, Any], json.loads(clear_body.decode("utf-8")))
+    assert clear_payload["plannerAgentId"] is None
+
+
+def test_instance_planner_agent_preference_rejects_agent_not_in_instance(
+    isolated_database_url: str,
+    auth_cookie: str,
+    db_handle: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    user = db_handle.execute(select(User).where(User.username == "alice")).scalar_one()
+    instance = Instance(
+        user_id=user.id,
+        name="claw1-planner-pref-invalid",
+        type="openclaw",
+        endpoint="http://127.0.0.1:28789",
+        gateway_token_enc="enc",
+        status="ok",
+    )
+    db_handle.add(instance)
+    db_handle.commit()
+    db_handle.refresh(instance)
+
+    monkeypatch.setattr(
+        "app.api.instances._available_agent_ids_for_instance",
+        lambda **kwargs: {"agent-alpha"},
+    )
+
+    status_code, _, body = request(
+        "PATCH",
+        f"/api/v1/instances/{instance.id}/planner-agent",
+        headers=_json_headers(auth_cookie),
+        body=json.dumps({"plannerAgentId": "agent-missing"}).encode("utf-8"),
+    )
+    assert status_code == 400
+    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
+    assert payload["detail"] == "planner_agent_id is not available in current instance"

@@ -27,6 +27,9 @@ _CONNECT_FAILED_MESSAGE = "连接 endpoint 失败"
 _PROTOCOL_FAILED_MESSAGE = "实例握手协议失败"
 _DEFAULT_CLIENT_ID = "webchat-ui"
 _DEFAULT_DISPLAY_NAME = "linpo-observer"
+_ALLOW_LOOPBACK_ENDPOINTS_ENV = "LINPO_ALLOW_LOOPBACK_ENDPOINTS"
+_ALLOW_PRIVATE_ENDPOINTS_ENV = "LINPO_ALLOW_PRIVATE_ENDPOINTS"
+_TRUTHY_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
 
 T = TypeVar("T")
 
@@ -90,15 +93,29 @@ class UnsafeInstanceEndpointError(ValueError):
     pass
 
 
-def _is_unsafe_ip_address(ip_address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    return (
-        ip_address.is_loopback
-        or ip_address.is_private
-        or ip_address.is_link_local
-        or ip_address.is_unspecified
-        or ip_address.is_reserved
-        or ip_address.is_multicast
-    )
+def _allow_loopback_endpoints() -> bool:
+    configured = os.getenv(_ALLOW_LOOPBACK_ENDPOINTS_ENV, "").strip().lower()
+    return configured in _TRUTHY_ENV_VALUES
+
+
+def _allow_private_endpoints() -> bool:
+    configured = os.getenv(_ALLOW_PRIVATE_ENDPOINTS_ENV, "").strip().lower()
+    return configured in _TRUTHY_ENV_VALUES
+
+
+def _is_unsafe_ip_address(
+    ip_address: ipaddress.IPv4Address | ipaddress.IPv6Address,
+    *,
+    allow_loopback: bool,
+    allow_private: bool,
+) -> bool:
+    if ip_address.is_loopback:
+        return not allow_loopback
+    if ip_address.is_unspecified or ip_address.is_reserved or ip_address.is_multicast:
+        return True
+    if (ip_address.is_private or ip_address.is_link_local) and not allow_private:
+        return True
+    return False
 
 
 def _resolve_endpoint_ip_addresses(hostname: str, port: int | None) -> set[str]:
@@ -115,10 +132,14 @@ def _ensure_safe_endpoint_target(parsed_endpoint: Any) -> None:
     if not hostname:
         raise ValueError(_INVALID_ENDPOINT_MESSAGE)
 
+    allow_loopback = _allow_loopback_endpoints()
+    allow_private = _allow_private_endpoints()
     normalized_hostname = hostname.rstrip(".").lower()
-    if normalized_hostname == "localhost" or normalized_hostname.endswith(
-        (".localhost", ".local", ".internal")
-    ):
+    if normalized_hostname.endswith(".localhost"):
+        raise UnsafeInstanceEndpointError(_UNSAFE_ENDPOINT_MESSAGE)
+    if normalized_hostname.endswith((".local", ".internal")) and not allow_private:
+        raise UnsafeInstanceEndpointError(_UNSAFE_ENDPOINT_MESSAGE)
+    if normalized_hostname == "localhost" and not allow_loopback:
         raise UnsafeInstanceEndpointError(_UNSAFE_ENDPOINT_MESSAGE)
 
     try:
@@ -130,7 +151,11 @@ def _ensure_safe_endpoint_target(parsed_endpoint: Any) -> None:
             raise UnsafeInstanceEndpointError(_UNSAFE_ENDPOINT_MESSAGE) from None
 
     for candidate in candidate_addresses:
-        if _is_unsafe_ip_address(ipaddress.ip_address(candidate)):
+        if _is_unsafe_ip_address(
+            ipaddress.ip_address(candidate),
+            allow_loopback=allow_loopback,
+            allow_private=allow_private,
+        ):
             raise UnsafeInstanceEndpointError(_UNSAFE_ENDPOINT_MESSAGE)
 
 

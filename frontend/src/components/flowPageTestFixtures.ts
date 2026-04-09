@@ -169,4 +169,14 @@ export function applyFlowPageDefaultMocks(
     connect: () => undefined,
     close: () => undefined,
   }));
+  mocks.mockGetInstancePlannerAgentPreference?.mockResolvedValue?.({
+    instanceId: 'instance-alpha',
+    plannerAgentId: null,
+  });
+  mocks.mockUpdateInstancePlannerAgentPreference?.mockImplementation?.(
+    async (instanceId: string, plannerAgentId: string | null) => ({
+      instanceId,
+      plannerAgentId,
+    })
+  );
 }

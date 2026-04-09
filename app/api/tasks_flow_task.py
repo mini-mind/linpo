@@ -303,6 +303,8 @@ def confirm_flow(
     executor_agent_id = payload.executor_agent_id.strip()
     if not executor_agent_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="executor_agent_id is required")
+    if len(payload.nodes) == 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="empty_flow_nodes")
 
     requested_instance_by_node_id: dict[str, UUID] = {}
     requested_instance_ids: set[UUID] = {default_instance_uuid}

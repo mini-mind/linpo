@@ -16,6 +16,12 @@ from app.services.instance_validator import (
 )
 
 
+@pytest.fixture(autouse=True)
+def clear_loopback_endpoint_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LINPO_ALLOW_LOOPBACK_ENDPOINTS", raising=False)
+    monkeypatch.delenv("LINPO_ALLOW_PRIVATE_ENDPOINTS", raising=False)
+
+
 class FakeProbe:
     def __init__(
         self,
@@ -68,6 +74,7 @@ def test_validate_rejects_invalid_endpoint_without_probe_call() -> None:
         "http://169.254.10.20:28789",
         "http://localhost:28789",
         "http://[::1]:28789",
+        "http://host.docker.internal:28789",
     ],
 )
 def test_validate_rejects_unsafe_endpoint_target_without_probe_call(endpoint: str) -> None:
@@ -81,6 +88,94 @@ def test_validate_rejects_unsafe_endpoint_target_without_probe_call(endpoint: st
     assert result.code is InstanceValidationErrorCode.UNSAFE_ENDPOINT
     assert result.message == "endpoint 指向不安全地址"
     assert probe.calls == []
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://127.0.0.1:28789",
+        "http://localhost:28789",
+        "http://[::1]:28789",
+    ],
+)
+def test_validate_allows_loopback_endpoint_when_explicitly_enabled(
+    endpoint: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LINPO_ALLOW_LOOPBACK_ENDPOINTS", "true")
+    probe = FakeProbe()
+    service = InstanceValidatorService(probe=probe)
+
+    result = service.validate(_make_request(endpoint=endpoint))
+
+    assert result.ok is True
+    assert result.status == "active"
+    assert result.message == "连接成功"
+    assert result.code is None
+    assert probe.calls == [(endpoint, "valid-token")]
+
+
+def test_validate_still_rejects_private_endpoint_when_loopback_is_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LINPO_ALLOW_LOOPBACK_ENDPOINTS", "true")
+    probe = FakeProbe()
+    service = InstanceValidatorService(probe=probe)
+
+    result = service.validate(_make_request(endpoint="http://10.0.0.5:28789"))
+
+    assert result.ok is False
+    assert result.status == "failed"
+    assert result.code is InstanceValidationErrorCode.UNSAFE_ENDPOINT
+    assert result.message == "endpoint 指向不安全地址"
+    assert probe.calls == []
+
+
+def test_validate_allows_private_endpoint_when_explicitly_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LINPO_ALLOW_PRIVATE_ENDPOINTS", "true")
+    probe = FakeProbe()
+    service = InstanceValidatorService(probe=probe)
+
+    result = service.validate(_make_request(endpoint="http://10.0.0.5:28789"))
+
+    assert result.ok is True
+    assert result.status == "active"
+    assert result.message == "连接成功"
+    assert result.code is None
+    assert probe.calls == [("http://10.0.0.5:28789", "valid-token")]
+
+
+def test_validate_allows_host_docker_internal_when_private_endpoint_is_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LINPO_ALLOW_PRIVATE_ENDPOINTS", "true")
+    probe = FakeProbe()
+    service = InstanceValidatorService(probe=probe)
+
+    def fake_getaddrinfo(host: str, port: int | None, *_args: object, **_kwargs: object) -> object:
+        assert host == "host.docker.internal"
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                6,
+                "",
+                ("172.17.0.1", 28789 if port is None else port),
+            )
+        ]
+
+    monkeypatch.setattr(instance_validator.socket, "getaddrinfo", fake_getaddrinfo)
+
+    endpoint = "http://host.docker.internal:28789"
+    result = service.validate(_make_request(endpoint=endpoint))
+
+    assert result.ok is True
+    assert result.status == "active"
+    assert result.message == "连接成功"
+    assert result.code is None
+    assert probe.calls == [(endpoint, "valid-token")]
 
 
 def test_validate_rejects_hostname_resolving_to_private_address_without_probe_call(

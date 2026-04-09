@@ -10,17 +10,15 @@ from sqlalchemy.orm import Session
 
 from app.services.instance_service import InstanceService
 
-_FLOW_DECOMPOSITION_REQUIRED_KEYS = (
-    "FLOW_DECOMPOSITION_OPENCLAW_BASE_URL",
-    "FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN",
-    "FLOW_DECOMPOSITION_OPENCLAW_ORIGIN",
+_FLOW_DECOMPOSITION_KEY_FALLBACKS = (
+    ("FLOW_DECOMPOSITION_OPENCLAW_BASE_URL", "OPENCLAW_BASE_URL"),
+    ("FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN", "OPENCLAW_GATEWAY_TOKEN"),
 )
 _FLOW_DECOMPOSITION_PROVIDER_KEY = "FLOW_DECOMPOSITION_PROVIDER"
 _DEFAULT_FLOW_DECOMPOSITION_PROVIDER = "openclaw"
 _OPENCLAW_RUNTIME_REQUIRED_KEYS = (
     "OPENCLAW_BASE_URL",
     "OPENCLAW_GATEWAY_TOKEN",
-    "OPENCLAW_ORIGIN",
 )
 
 _ACTIVE_INSTANCE_STATUSES = {"active", "ok", "running"}
@@ -146,7 +144,7 @@ class OpsService:
         missing_openclaw_runtime_keys = [
             key for key in _OPENCLAW_RUNTIME_REQUIRED_KEYS if (os.getenv(key) or "").strip() == ""
         ]
-        openclaw_runtime_configured = len(missing_openclaw_runtime_keys) == 0
+        openclaw_runtime_configured = len(missing_openclaw_runtime_keys) == 0 or instances_total > 0
 
         flow_provider = (
             (os.getenv(_FLOW_DECOMPOSITION_PROVIDER_KEY) or "").strip().lower()
@@ -154,11 +152,15 @@ class OpsService:
         )
         flow_provider_supported = flow_provider == "openclaw"
         missing_flow_keys = (
-            [key for key in _FLOW_DECOMPOSITION_REQUIRED_KEYS if (os.getenv(key) or "").strip() == ""]
+            [
+                flow_key
+                for flow_key, fallback_key in _FLOW_DECOMPOSITION_KEY_FALLBACKS
+                if (os.getenv(flow_key) or "").strip() == "" and (os.getenv(fallback_key) or "").strip() == ""
+            ]
             if flow_provider == "openclaw"
             else []
         )
-        flow_configured = flow_provider_supported and len(missing_flow_keys) == 0
+        flow_configured = flow_provider_supported and (len(missing_flow_keys) == 0 or instances_total > 0)
 
         callback_base_url = (os.getenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL") or "").strip()
         callback_base_url_configured = callback_base_url != ""
@@ -199,25 +201,35 @@ class OpsService:
                 status="ok" if openclaw_runtime_configured else "failed",
                 message=(
                     "OPENCLAW_* 已完整配置。"
-                    if openclaw_runtime_configured
-                    else f"缺少 OPENCLAW 配置: {', '.join(missing_openclaw_runtime_keys)}"
+                    if len(missing_openclaw_runtime_keys) == 0
+                    else (
+                        "未配置默认 OPENCLAW_*，将使用已绑定实例的 UI 配置。"
+                        if instances_total > 0
+                        else f"缺少 OPENCLAW 配置: {', '.join(missing_openclaw_runtime_keys)}"
+                    )
                 ),
                 next_step=(
                     ""
                     if openclaw_runtime_configured
-                    else "补齐 OPENCLAW_BASE_URL / OPENCLAW_GATEWAY_TOKEN / OPENCLAW_ORIGIN。"
+                    else "补齐 OPENCLAW_BASE_URL / OPENCLAW_GATEWAY_TOKEN，或先在 UI 完成实例绑定。"
                 ),
             ),
             OpsCheck(
                 key="flow_decomposition_configured",
                 status="ok" if flow_configured else "failed",
                 message=(
-                    f"FLOW_DECOMPOSITION 已配置（provider={flow_provider}）。"
-                    if flow_configured
-                    else (
+                    (
                         f"FLOW_DECOMPOSITION provider 不受支持: {flow_provider}"
                         if not flow_provider_supported
-                        else f"缺少 FLOW_DECOMPOSITION 配置: {', '.join(missing_flow_keys)}"
+                        else (
+                            f"FLOW_DECOMPOSITION 已配置（provider={flow_provider}）。"
+                            if len(missing_flow_keys) == 0
+                            else (
+                                "未配置 FLOW_DECOMPOSITION_OPENCLAW_*，将回退 OPENCLAW_* 或实例配置。"
+                                if instances_total > 0
+                                else f"缺少 FLOW_DECOMPOSITION 配置: {', '.join(missing_flow_keys)}"
+                            )
+                        )
                     )
                 ),
                 next_step=(
@@ -226,7 +238,10 @@ class OpsService:
                     else (
                         "将 FLOW_DECOMPOSITION_PROVIDER 设为当前受支持 provider（openclaw）并重启服务。"
                         if not flow_provider_supported
-                        else "补齐 FLOW_DECOMPOSITION_OPENCLAW_BASE_URL / FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN / FLOW_DECOMPOSITION_OPENCLAW_ORIGIN。"
+                        else (
+                            "补齐 FLOW_DECOMPOSITION_OPENCLAW_*；"
+                            "若使用同一 OpenClaw，也可仅配置 OPENCLAW_* 并重启服务。"
+                        )
                     )
                 ),
             ),

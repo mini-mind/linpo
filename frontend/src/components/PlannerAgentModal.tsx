@@ -98,7 +98,7 @@ export function PlannerAgentModal({ open, onClose }: PlannerAgentModalProps): JS
     };
   }, [hasCurrentInstance, normalizedCurrentInstanceId, open]);
 
-  const handleSave = useCallback(() => {
+  const handleSave = useCallback(async () => {
     if (!hasCurrentInstance) {
       addToast('请先选择实例，再配置 Planner Agent', 'warning');
       return;
@@ -112,9 +112,14 @@ export function PlannerAgentModal({ open, onClose }: PlannerAgentModalProps): JS
       addToast('所选 Agent 不在当前实例可用列表中', 'warning');
       return;
     }
-    setStoredPlannerAgentId(normalizedSelectedAgentId);
-    addToast('默认 Planner Agent 已保存', 'success');
-    onClose();
+    try {
+      await setStoredPlannerAgentId(normalizedSelectedAgentId);
+      addToast('默认 Planner Agent 已保存', 'success');
+      onClose();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '保存 Planner Agent 失败';
+      addToast(message, 'error');
+    }
   }, [addToast, availableAgents, hasCurrentInstance, onClose, selectedAgentId, setStoredPlannerAgentId]);
 
   if (!open) {
@@ -167,7 +172,9 @@ export function PlannerAgentModal({ open, onClose }: PlannerAgentModalProps): JS
           <button
             type="button"
             style={primaryButtonStyle}
-            onClick={handleSave}
+            onClick={() => {
+              void handleSave();
+            }}
             disabled={!hasCurrentInstance || isLoading || sortedAgents.length === 0}
           >
             保存

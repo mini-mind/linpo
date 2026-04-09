@@ -433,7 +433,6 @@ def test_snapshot_from_history_messages_returns_latest_valid_snapshot() -> None:
     "missing_env",
     [
         "FLOW_DECOMPOSITION_OPENCLAW_BASE_URL",
-        "FLOW_DECOMPOSITION_OPENCLAW_ORIGIN",
         "FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN",
     ],
 )

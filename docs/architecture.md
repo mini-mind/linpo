@@ -203,6 +203,7 @@
 - `DELETE /api/v1/boards/{board_id}/tasks/{task_id}`：删除单个需求节点；若该节点被同需求下游节点依赖，后端移除对应依赖并重算可调度任务。
 - `DELETE /api/v1/boards/{board_id}/tasks/requirements/{requirement_id}`：删除整组需求节点（同 `requirement_id`）。
 - `GET/POST/PATCH/DELETE /api/v1/instances*`：OpenClaw 实例配对管理契约，配对成功后前端写入 `linpo.currentInstanceId` 作为默认实例上下文。
+- `GET/PATCH /api/v1/instances/{instance_id}/planner-agent`：实例级 planner agent 偏好；由前端 Planner Agent 配置弹窗读写，后端持久化到 SQL。`flow.generate` 未显式传 `planner_agent_id` 时优先读取该偏好，再回退 `FLOW_DECOMPOSITION_AGENT_ID`。
 - `GET /api/v1/instances/{instance_id}/files`：返回该实例下任务关联且位于 `/tmp/linpo/**` 的可访问产出文件列表（含存在性与大小信息）。
 - `GET /api/v1/instances/{instance_id}/files/preview`：按实例+任务上下文预览位于 `/tmp/linpo/**` 的文件内容（文本/JSON/二进制占位）。
 - `GET /api/v1/instances/{instance_id}/files/download`：按实例+任务上下文下载位于 `/tmp/linpo/**` 的文件流。
@@ -213,7 +214,7 @@
 - `GET /api/v1/summary/overview`：摘要页与看板页的聚合入口，返回实例诊断、事件流、总 token 与按实例分组的 token 曲线样本。
 - `GET /api/v1/agents*`：Observer 只读查询接口；必须登录后访问，且必须显式携带 `instanceId`（归属当前用户）；缺失直接返回 `400`。
 - `GET/POST/PATCH/DELETE /api/v1/chat/**`：会话读写与控制接口；必须登录后访问，且必须显式携带 `instanceId`（归属当前用户）；缺失直接返回 `400`。
-- `GET /api/v1/ops/setup`：私有化部署配置检查入口；返回运行配置检查结果（仅状态，不回传明文敏感值）、实例接入状态与可执行修复建议。数据库项支持“未配置 `LINPO_DATABASE_URL` 时使用默认 SQLite（`sqlite:///./linpo.db`）”；其余必查项至少包含：`LINPO_SECRET_ENCRYPTION_KEY`、`OPENCLAW_BASE_URL/OPENCLAW_GATEWAY_TOKEN/OPENCLAW_ORIGIN`、`FLOW_DECOMPOSITION_PROVIDER/FLOW_DECOMPOSITION_AGENT_ID`、（当 provider=`openclaw` 时）`FLOW_DECOMPOSITION_OPENCLAW_*`、`LINPO_TASK_EVENT_CALLBACK_BASE_URL` 与实例绑定状态。
+- `GET /api/v1/ops/setup`：私有化部署配置检查入口；返回运行配置检查结果（仅状态，不回传明文敏感值）、实例接入状态与可执行修复建议。数据库项支持“未配置 `LINPO_DATABASE_URL` 时使用默认 SQLite（`sqlite:///./linpo.db`）”；其余必查项至少包含：`LINPO_SECRET_ENCRYPTION_KEY`、`OPENCLAW_BASE_URL/OPENCLAW_GATEWAY_TOKEN`、`FLOW_DECOMPOSITION_PROVIDER/FLOW_DECOMPOSITION_AGENT_ID`、（当 provider=`openclaw` 时）`FLOW_DECOMPOSITION_OPENCLAW_*`（若缺省则回退 `OPENCLAW_*`）、`LINPO_TASK_EVENT_CALLBACK_BASE_URL` 与实例绑定状态。
 - `GET /api/v1/ops/diagnostics`：私有化部署诊断导出入口；返回可复制的脱敏诊断信息（版本、配置检查摘要、实例连通性、最近错误上下文与 requestId），用于工单/群内协同排障。`latestErrorContext` 仅表达配置检查失败首项；当配置检查均通过但实例状态/连通性异常时，`recentErrorContext` 返回 `instance_connectivity_degraded` 告警，提示优先排查 endpoint 与网关令牌。
 - `POST /api/v1/instances/pairing-sessions`：登录用户创建配对会话，返回 `session_id + short_code + pairing_url + expires_at`。
 - `pairing_url` 统一返回协议短链 `linpo://pair?code=...`，用于复制转发给 OpenClaw；前端不再提供扫码页面入口。
@@ -308,7 +309,7 @@ flowchart LR
 
 - `FLOW_DECOMPOSITION_PROVIDER`：拆解服务 provider 名称（默认 `openclaw`）。
 - `FLOW_DECOMPOSITION_AGENT_ID`：默认 planner agent（必须配置为实例可见 agent，可被请求 `planner_agent_id` 覆盖）。
-- 当 `FLOW_DECOMPOSITION_PROVIDER=openclaw` 时，`FLOW_DECOMPOSITION_OPENCLAW_BASE_URL/FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN/FLOW_DECOMPOSITION_OPENCLAW_ORIGIN` 为必填。
+- 当 `FLOW_DECOMPOSITION_PROVIDER=openclaw` 时，`FLOW_DECOMPOSITION_OPENCLAW_BASE_URL/FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN/FLOW_DECOMPOSITION_OPENCLAW_ORIGIN` 可选；未配置时回退 `OPENCLAW_BASE_URL/OPENCLAW_GATEWAY_TOKEN/OPENCLAW_ORIGIN`，若 origin 仍为空则按 base_url 自动推导。
 - 以上配置不提供默认公网地址或默认 token；缺失时视为配置错误并阻断拆解链路。
 
 ### 8.2 任务事件回调配置

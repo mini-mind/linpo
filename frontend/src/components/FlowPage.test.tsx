@@ -38,6 +38,7 @@ const {
   mockUpsertFlowDraftRecord,
   mockCreateBoardTasksSseClient,
   mockCreateFlowPlannerSseClient,
+  mockGetInstancePlannerAgentPreference,
 } = flowPageMocks;
 
 function buildKanbanTask(overrides: Partial<KanbanTaskItem> = {}): KanbanTaskItem {
@@ -243,11 +244,11 @@ describe('FlowPage', () => {
   });
 
   it('uses configured default planner agent for current instance when present', async () => {
-    window.localStorage.setItem(
-      'linpo.flow.default_planner_agent_by_instance_v1',
-      JSON.stringify({ 'instance-alpha': 'agent-alpha' })
-    );
     window.localStorage.setItem('linpo.currentInstanceId', 'instance-alpha');
+    mockGetInstancePlannerAgentPreference.mockResolvedValueOnce({
+      instanceId: 'instance-alpha',
+      plannerAgentId: 'agent-alpha',
+    });
 
     const flowId = seedDraftFlow('draft-planner-default-agent');
     renderFlowPage(`/flow/edit/${flowId}`);

@@ -200,6 +200,15 @@ class PairingSessionResponse(_CommonCamelResponseModel):
     instance: PairingSessionInstanceItem | None = None
 
 
+class PlannerAgentPreferenceResponse(_CommonCamelResponseModel):
+    instance_id: str
+    planner_agent_id: str | None = None
+
+
+class PlannerAgentPreferencePatchRequest(_CommonCamelRequestModel):
+    planner_agent_id: str | None = Field(default=None, max_length=128)
+
+
 class InstancePatchRequest(_CommonCamelRequestModel):
     name: str | None = None
     type: str | None = None

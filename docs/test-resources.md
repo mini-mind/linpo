@@ -33,7 +33,7 @@
 - `npm --prefix frontend run build`：前端构建产物。
 - `make quality`：统一质量门（聚合后端测试、类型检查与前端构建）。
 - `curl -i http://127.0.0.1:8000/api/v1/health`：后端健康检查。
-- `docker compose up -d --build`：最小私有化部署启动（见 `DEPLOY.md`）。
+- `docker compose up -d --build`：最小私有化部署启动（见 `README.md` 的 Docker 私有化部署章节）。
 
 ## CI/CD 门禁（GitHub Actions）
 
@@ -74,17 +74,19 @@
 | `LINPO_DATABASE_URL` | 可选数据库连接字符串；未配置时默认使用 `sqlite:///./linpo.db` |
 | `LINPO_SECRET_ENCRYPTION_KEY` | Gateway Token 加密存储 |
 | `LINPO_CORS_ALLOW_ORIGINS` | 前端访问源的 CORS 白名单（按部署环境显式配置） |
+| `LINPO_ALLOW_LOOPBACK_ENDPOINTS` | 实例挂载 endpoint 安全开关；默认 `false`，仅显式开启后允许 `127.0.0.1/localhost/::1` |
+| `LINPO_ALLOW_PRIVATE_ENDPOINTS` | 实例挂载 endpoint 安全开关；默认 `false`，仅显式开启后允许私网/内网地址（如 `host.docker.internal`、`10.x`、`192.168.x`） |
 | `LINPO_SESSION_COOKIE_SECURE` | 会话 Cookie `Secure` 开关；不显式配置时默认启用（`true`） |
 | `VITE_API_BASE_URL` | 前端 API 地址（如 `http://127.0.0.1:8000`）；由 `frontend/.env(.local)` 注入 |
-| `OPENCLAW_BASE_URL` | OpenClaw 网关地址（按部署环境显式配置） |
-| `OPENCLAW_GATEWAY_TOKEN` | OpenClaw 网关令牌 |
-| `OPENCLAW_ORIGIN` | OpenClaw 请求来源标识 |
+| `OPENCLAW_BASE_URL` | OpenClaw 网关地址（可选；不配时可在 UI 通过实例绑定提供） |
+| `OPENCLAW_GATEWAY_TOKEN` | OpenClaw 网关令牌（可选；不配时可在 UI 通过实例绑定提供） |
+| `OPENCLAW_ORIGIN` | OpenClaw 请求来源标识（可选；留空时按 `OPENCLAW_BASE_URL` 自动推导） |
 | `FLOW_DECOMPOSITION_PROVIDER` | 流程拆解 provider（默认 `openclaw`） |
 | `FLOW_DECOMPOSITION_AGENT_ID` | 流程拆解默认 planner agent（需配置为实例可见 agent） |
-| `FLOW_DECOMPOSITION_OPENCLAW_BASE_URL` | 当 provider=`openclaw` 时必填：拆解服务网关地址 |
-| `FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN` | 当 provider=`openclaw` 时必填：拆解服务网关令牌 |
-| `FLOW_DECOMPOSITION_OPENCLAW_ORIGIN` | 当 provider=`openclaw` 时必填：拆解服务 Origin |
-| `LINPO_TASK_EVENT_CALLBACK_BASE_URL` | 任务事件回调地址基座（必填）；留空时任务投放直接失败 |
+| `FLOW_DECOMPOSITION_OPENCLAW_BASE_URL` | 当 provider=`openclaw` 时可选：拆解服务网关地址（留空时回退 `OPENCLAW_BASE_URL`） |
+| `FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN` | 当 provider=`openclaw` 时可选：拆解服务网关令牌（留空时回退 `OPENCLAW_GATEWAY_TOKEN`） |
+| `FLOW_DECOMPOSITION_OPENCLAW_ORIGIN` | 当 provider=`openclaw` 时可选：拆解服务 Origin（留空时回退 `OPENCLAW_ORIGIN`，若仍为空则按 base_url 自动推导） |
+| `LINPO_TASK_EVENT_CALLBACK_BASE_URL` | 任务事件回调地址基座（必填，且必须从 OpenClaw 运行位置可达）；留空时任务投放直接失败 |
 | `LINPO_TASK_RUN_STALE_SECONDS` | `running` 任务无 heartbeat 的超时阈值（秒） |
 
 补充说明：任务事件回调当前采用 `callbackToken` + `occurredAt` 时间窗 + `callbackSignature(HMAC-SHA256)` 三层校验；签名 key 直接使用该次运行下发的 `callbackToken`。

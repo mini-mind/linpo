@@ -52,6 +52,11 @@ export interface InstancePatchRequest {
   gatewayToken?: string;
 }
 
+export interface PlannerAgentPreferenceResponse {
+  instanceId: string;
+  plannerAgentId: string | null;
+}
+
 export interface InstanceValidationResponse {
   ok: boolean;
   status: string;

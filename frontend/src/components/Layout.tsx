@@ -66,7 +66,13 @@ export function Layout(): JSX.Element {
   }, [location.pathname, location.search]);
 
   useEffect(() => {
-    if (!location.pathname.startsWith('/kanban')) {
+    const needsInstanceWorkspaceRoute = (
+      location.pathname.startsWith('/kanban')
+      || location.pathname.startsWith('/flow')
+      || location.pathname.startsWith('/instance-files')
+      || location.pathname.startsWith('/summary')
+    );
+    if (!needsInstanceWorkspaceRoute) {
       return;
     }
     let active = true;

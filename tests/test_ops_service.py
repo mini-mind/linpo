@@ -62,9 +62,7 @@ def test_ops_service_diagnostics_failed_checks_populate_latest_and_recent_with_f
     monkeypatch.setenv("OPENCLAW_BASE_URL", "ws://127.0.0.1:28789")
     monkeypatch.setenv("OPENCLAW_GATEWAY_TOKEN", "token")
     monkeypatch.setenv("OPENCLAW_ORIGIN", "http://127.0.0.1:28789")
-    monkeypatch.setenv("FLOW_DECOMPOSITION_OPENCLAW_BASE_URL", "http://127.0.0.1:28789")
-    monkeypatch.delenv("FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN", raising=False)
-    monkeypatch.setenv("FLOW_DECOMPOSITION_OPENCLAW_ORIGIN", "http://localhost:5173")
+    monkeypatch.setenv("FLOW_DECOMPOSITION_PROVIDER", "unsupported-provider")
     monkeypatch.setenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", "http://127.0.0.1:8000")
 
     service = OpsService(instance_service=_FakeInstanceService([_instance("instance-active", "active")]))
@@ -74,7 +72,7 @@ def test_ops_service_diagnostics_failed_checks_populate_latest_and_recent_with_f
     assert snapshot.latest_error_context is not None
     assert snapshot.recent_error_context is not None
     assert snapshot.latest_error_context.check_key == "flow_decomposition_configured"
-    assert "缺少 FLOW_DECOMPOSITION 配置" in snapshot.latest_error_context.message
+    assert "provider 不受支持" in snapshot.latest_error_context.message
     assert snapshot.recent_error_context.check_key == "flow_decomposition_configured"
     assert snapshot.recent_error_context.message == snapshot.latest_error_context.message
 

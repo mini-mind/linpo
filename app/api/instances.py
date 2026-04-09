@@ -36,6 +36,8 @@ from app.api.schemas import (
     DetailResponse,
     PairingSessionAttachRequest,
     PairingSessionAttachByCodeRequest,
+    PlannerAgentPreferencePatchRequest,
+    PlannerAgentPreferenceResponse,
     PairingSessionCreateRequest,
     PairingSessionInstanceItem,
     PairingSessionResponse,
@@ -66,6 +68,7 @@ from app.services.provider_application_service import (
     ProviderApplicationService,
     ProviderExecutionContext,
 )
+from app.services.planner_agent_preference_service import PlannerAgentPreferenceService
 from app.services.pairing_receipt_service import (
     PairingReceiptConsumedError,
     PairingReceiptEmailMismatchError,
@@ -108,6 +111,10 @@ def get_pairing_session_service() -> PairingSessionService:
 
 def get_provider_application_service(request: Request) -> ProviderApplicationService:
     return cast(ProviderApplicationService, request.app.state.provider_application_service)
+
+
+def get_planner_agent_preference_service() -> PlannerAgentPreferenceService:
+    return PlannerAgentPreferenceService()
 
 
 def get_current_user(
@@ -184,6 +191,32 @@ def _pairing_session_to_response(snapshot: PairingSessionSnapshot) -> PairingSes
         last_error=snapshot.last_error,
         instance=instance,
     )
+
+
+def _available_agent_ids_for_instance(
+    *,
+    instance_id: UUID,
+    current_user: User,
+    db_session: Session,
+    instance_service: InstanceService,
+    provider_application_service: ProviderApplicationService,
+) -> set[str]:
+    execution_context = _build_execution_context_or_404(
+        instance_service=instance_service,
+        provider_application_service=provider_application_service,
+        db_session=db_session,
+        current_user=current_user,
+        instance_id=instance_id,
+    )
+    data_source = provider_application_service.resolve_observer_data_source(
+        "openclaw",
+        execution_context,
+    )
+    return {
+        str(agent.id).strip()
+        for agent in data_source.list_agents()
+        if str(agent.id).strip() != ""
+    }
 
 
 def _to_utc_iso(value: object) -> str:
@@ -326,6 +359,77 @@ def list_instances(
 ) -> list[InstanceItem]:
     instances = instance_service.list_instances(db_session, user_id=current_user.id)
     return [_instance_to_item(instance) for instance in instances]
+
+
+@router.get("/{instance_id}/planner-agent", response_model=PlannerAgentPreferenceResponse)
+def get_instance_planner_agent(
+    instance_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db_session: Session = Depends(get_session),
+    instance_service: InstanceService = Depends(get_instance_service),
+    preference_service: PlannerAgentPreferenceService = Depends(get_planner_agent_preference_service),
+) -> PlannerAgentPreferenceResponse:
+    owned = instance_service.get_owned_instance(
+        db_session,
+        user_id=current_user.id,
+        instance_id=instance_id,
+    )
+    if owned is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found")
+    planner_agent_id = preference_service.get_for_instance(
+        db_session,
+        user_id=current_user.id,
+        instance_id=instance_id,
+    )
+    return PlannerAgentPreferenceResponse(
+        instance_id=str(instance_id),
+        planner_agent_id=planner_agent_id,
+    )
+
+
+@router.patch("/{instance_id}/planner-agent", response_model=PlannerAgentPreferenceResponse)
+def patch_instance_planner_agent(
+    instance_id: UUID,
+    payload: PlannerAgentPreferencePatchRequest,
+    current_user: User = Depends(get_current_user),
+    db_session: Session = Depends(get_session),
+    instance_service: InstanceService = Depends(get_instance_service),
+    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
+    preference_service: PlannerAgentPreferenceService = Depends(get_planner_agent_preference_service),
+) -> PlannerAgentPreferenceResponse:
+    owned = instance_service.get_owned_instance(
+        db_session,
+        user_id=current_user.id,
+        instance_id=instance_id,
+    )
+    if owned is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found")
+
+    planner_agent_id = (payload.planner_agent_id or "").strip()
+    if planner_agent_id != "":
+        available_agent_ids = _available_agent_ids_for_instance(
+            instance_id=instance_id,
+            current_user=current_user,
+            db_session=db_session,
+            instance_service=instance_service,
+            provider_application_service=provider_application_service,
+        )
+        if planner_agent_id not in available_agent_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="planner_agent_id is not available in current instance",
+            )
+
+    updated = preference_service.set_for_instance(
+        db_session,
+        user_id=current_user.id,
+        instance_id=instance_id,
+        planner_agent_id=planner_agent_id or None,
+    )
+    return PlannerAgentPreferenceResponse(
+        instance_id=str(instance_id),
+        planner_agent_id=updated,
+    )
 
 
 @router.get("/{instance_id}/files", response_model=InstanceFileListResponse)
