@@ -22,7 +22,6 @@ REQUIRED_BOOTSTRAP_TABLES = {
     "flow_planner_messages",
     "flow_planner_sessions",
     "instances",
-    "pairing_receipts",
     "tasks",
     "user_messages",
     "users",
@@ -82,6 +81,7 @@ def _reload_auth_service_bindings():
     auth.create_user = reloaded_auth_service.create_user
     auth.delete_session = reloaded_auth_service.delete_session
     auth.get_authenticated_user = reloaded_auth_service.get_authenticated_user
+    auth.get_or_create_bootstrap_user = reloaded_auth_service.get_or_create_bootstrap_user
     auth.get_session_id = reloaded_auth_service.get_session_id
     auth.set_session_cookie = reloaded_auth_service.set_session_cookie
     auth.store_session = reloaded_auth_service.store_session
@@ -139,9 +139,12 @@ def test_auth_me_route_can_boot_with_explicit_db_bootstrap(
 
     status_code, _, body = request("GET", "/api/v1/auth/me")
 
-    assert status_code == 401
+    assert status_code == 200
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    assert payload == {"detail": "Unauthorized"}
+    assert payload["id"]
+    assert payload["username"] == "local-admin"
+    assert payload["email"] is None
+    assert payload["avatar_url"] is None
 
     _assert_required_tables_exist(database_url)
 
@@ -228,8 +231,8 @@ def test_cors_preflight_does_not_allow_same_host_origin_when_not_in_allow_list(
         "OPTIONS",
         "/api/v1/auth/me",
         headers={
-            "origin": "http://175.178.213.10:5173",
-            "host": "175.178.213.10:8000",
+            "origin": "http://198.51.100.9:5173",
+            "host": "198.51.100.9:8000",
             "access-control-request-method": "GET",
             "access-control-request-headers": "content-type",
         },
@@ -721,15 +724,15 @@ def test_profile_patch_rejects_invalid_avatar(isolated_database_url: str) -> Non
     assert payload == {"detail": "Invalid avatar, only data:image/*;base64 is allowed"}
 
 
-def test_profile_patch_requires_authentication(isolated_database_url: str) -> None:
+def test_profile_patch_defaults_to_bootstrap_user_without_authentication(isolated_database_url: str) -> None:
     del isolated_database_url
     status_code, _, payload = _request_json(
         "PATCH",
         "/api/v1/auth/profile",
         {"avatar_url": None},
     )
-    assert status_code == 401
-    assert payload == {"detail": "Unauthorized"}
+    assert status_code == 200
+    assert payload["username"] == "local-admin"
 
 
 def test_profile_patch_requires_at_least_one_field(isolated_database_url: str) -> None:
@@ -885,18 +888,18 @@ def test_password_update_rejects_reusing_current_password(isolated_database_url:
     assert payload == {"detail": "new password must be different from current password"}
 
 
-def test_password_update_requires_authentication(isolated_database_url: str) -> None:
+def test_password_update_uses_bootstrap_user_without_authentication(isolated_database_url: str) -> None:
     del isolated_database_url
     status_code, _, payload = _request_json(
         "POST",
         "/api/v1/auth/password",
         {"current_password": "secret-123", "new_password": "new-secret-456"},
     )
-    assert status_code == 401
-    assert payload == {"detail": "Unauthorized"}
+    assert status_code == 400
+    assert payload == {"detail": "Current password is incorrect"}
 
 
-def test_logout_clears_session_and_me_requires_authentication(isolated_database_url: str) -> None:
+def test_logout_clears_session_and_me_recreates_bootstrap_session(isolated_database_url: str) -> None:
     del isolated_database_url
     _request_json(
         "POST",
@@ -927,5 +930,6 @@ def test_logout_clears_session_and_me_requires_authentication(isolated_database_
         headers={"cookie": cookie_header},
     )
 
-    assert me_status == 401
-    assert json.loads(me_body.decode("utf-8")) == {"detail": "Unauthorized"}
+    assert me_status == 200
+    me_payload = cast(dict[str, Any], json.loads(me_body.decode("utf-8")))
+    assert me_payload["username"] == "local-admin"

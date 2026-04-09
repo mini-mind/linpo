@@ -18,7 +18,7 @@ Linpo 是位于 OpenClaw 与用户之间的人机协作编排交互层。
 ### 1) 准备最小配置
 
 ```bash
-cp .env.deploy.example .env.deploy
+cp .env.example .env
 ```
 
 必须设置：
@@ -37,7 +37,7 @@ PY
 ### 2) 启动
 
 ```bash
-docker compose --env-file .env.deploy up -d --build
+docker compose up -d --build
 ```
 
 默认地址：
@@ -64,12 +64,21 @@ curl -i http://localhost:8000/api/v1/ops/setup
 - `OPENCLAW_BASE_URL`
 - `OPENCLAW_GATEWAY_TOKEN`
 
-可在 `.env.deploy`、容器环境变量或 `docker-compose` 覆盖项中设置。
+可在 `.env`、容器环境变量或 `docker-compose` 覆盖项中设置。
 
 其余常用覆盖项：
 
 - `LINPO_ALLOW_PRIVATE_ENDPOINTS`
 - `LINPO_ALLOW_LOOPBACK_ENDPOINTS`
+
+### 环境文件约定（精简）
+
+仅保留以下 2 个文件：
+
+- `.env.example`：唯一模板（可提交）
+- `.env`：唯一实际配置（不提交）
+
+不建议新增其它 `.env*` 变体（如临时备份文件）；需要临时值请直接用 shell 环境变量覆盖。
 
 ## 数据库策略
 
@@ -95,7 +104,9 @@ npm --prefix frontend run dev
 常见本地坑位（`8000 + npm run dev`）：
 
 - 前端开发端口固定为 `5173`；若被占用会直接报错，请先释放端口后重试。
-- 前端开发默认直接连接 `http://localhost:8000`（由 `frontend/package.json` 固定注入 `VITE_API_BASE_URL`）。
+- 前端开发默认连接 `http://localhost:8000`；可通过 `VITE_API_BASE_URL` 覆盖，例如：
+  `VITE_API_BASE_URL=http://<server-ip>:8000 npm --prefix frontend run dev`。
+- 后端 CORS 通过 `LINPO_CORS_ALLOW_ORIGINS` 控制允许来源（逗号分隔完整 Origin）。
 - 任务回调地址默认使用 `http://localhost:8000`；仅在跨机/容器网络时才需覆盖 `LINPO_TASK_EVENT_CALLBACK_BASE_URL`。
 
 一键本地验收（最小串联，需先启动后端+前端）：

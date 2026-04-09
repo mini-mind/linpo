@@ -7,7 +7,7 @@ services:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-}
         PIP_EXTRA_INDEX_URL: ${PIP_EXTRA_INDEX_URL:-}
     env_file:
-      - path: .env.deploy
+      - path: .env
         required: false
     environment:
       LINPO_DATABASE_URL: ${LINPO_DATABASE_URL:-sqlite:////data/linpo.db}
