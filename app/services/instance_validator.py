@@ -166,17 +166,6 @@ def _format_netloc(hostname: str, port: int | None) -> str:
     return f"{host}:{port}"
 
 
-def _get_origin_override() -> tuple[str, str] | None:
-    configured_origin = os.getenv("OPENCLAW_ORIGIN", "").strip()
-    if not configured_origin:
-        return None
-
-    parsed_override = urlparse(configured_origin)
-    if parsed_override.scheme not in {"http", "https"} or not parsed_override.hostname:
-        return None
-    return parsed_override.scheme, parsed_override.hostname
-
-
 def normalize_instance_endpoint(endpoint: str) -> tuple[str, str]:
     parsed = urlparse(endpoint)
     if parsed.scheme not in {"http", "https", "ws", "wss"}:
@@ -200,12 +189,8 @@ def normalize_instance_endpoint(endpoint: str) -> tuple[str, str]:
         origin_scheme = "https"
 
     websocket_url = urlunparse(parsed._replace(scheme=websocket_scheme, fragment=""))
-    origin_override = _get_origin_override()
-    if origin_override is None:
-        origin_hostname = parsed.hostname
-        resolved_origin_scheme = origin_scheme
-    else:
-        resolved_origin_scheme, origin_hostname = origin_override
+    origin_hostname = parsed.hostname
+    resolved_origin_scheme = origin_scheme
 
     origin = urlunparse(
         (
@@ -239,22 +224,6 @@ def _build_origin_candidates(*, websocket_url: str, preferred_origin: str) -> li
                 (
                     origin_scheme,
                     _format_netloc(websocket_host, websocket_port),
-                    "",
-                    "",
-                    "",
-                    "",
-                )
-            )
-        )
-
-    origin_override = _get_origin_override()
-    if origin_override is not None and websocket_port is not None:
-        override_scheme, override_host = origin_override
-        add_candidate(
-            urlunparse(
-                (
-                    override_scheme,
-                    _format_netloc(override_host, websocket_port),
                     "",
                     "",
                     "",

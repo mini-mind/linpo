@@ -262,7 +262,7 @@ def test_dispatch_next_queued_task_with_docker_internal_callback_adds_local_cand
         assert f"3) http://localhost:8000{expected_path}" in sent_message
 
 
-def test_dispatch_next_queued_task_uses_default_callback_when_env_missing(
+def test_dispatch_next_queued_task_fails_when_callback_env_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", raising=False)
@@ -304,16 +304,12 @@ def test_dispatch_next_queued_task_uses_default_callback_when_env_missing(
         assert result is not None
         assert result.task_id == str(task.id)
         assert result.run_id is not None
-        assert len(fake_provider.calls) == 1
+        assert len(fake_provider.calls) == 0
 
         db_session.refresh(task)
-        assert task.status == "running"
-        assert task.extras["dispatch_status"] == "running"
-        assert task.extras["dispatch_error"] == ""
-        sent_message = cast(str, fake_provider.calls[0]["message"])
-        expected_path = f"/api/v1/boards/default/tasks/task-runs/{result.run_id}/events"
-        assert f"1) http://host.docker.internal:8000{expected_path}" in sent_message
-        assert f"2) http://localhost:8000{expected_path}" in sent_message
+        assert task.status == "failed"
+        assert task.extras["dispatch_status"] == "failed"
+        assert task.extras["dispatch_error"] == "callback base url unavailable"
 
 
 def test_reconcile_stale_running_tasks_marks_only_stale_tasks(monkeypatch: pytest.MonkeyPatch) -> None:

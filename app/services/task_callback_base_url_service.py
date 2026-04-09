@@ -7,14 +7,13 @@ from app.services.provider_application_service import ProviderExecutionContext
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 _DOCKER_INTERNAL_HOST = "host.docker.internal"
-_DEFAULT_CALLBACK_BASE_URL = "http://localhost:8000"
 
 
 def event_callback_base_url() -> str:
     value = os.getenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", "").strip()
     if value:
         return value.rstrip("/")
-    return _DEFAULT_CALLBACK_BASE_URL
+    return ""
 
 
 def event_callback_base_url_candidates(

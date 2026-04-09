@@ -17,9 +17,8 @@ from app.services import task_callback_base_url_service
 from app.services.flow_decomposition_service import FlowDecompositionService
 from app.services.provider_application_service import ProviderApplicationService
 
-_FLOW_DECOMPOSITION_AGENT_ID_KEY = "FLOW_DECOMPOSITION_AGENT_ID"
-_DEFAULT_FLOW_DECOMPOSITION_AGENT_ID = "planner-default"
-_FLOW_DECOMPOSITION_RECOMMENDED_AGENT_PRIORITY = ("planner-default", "main")
+_DEFAULT_FLOW_DECOMPOSITION_AGENT_ID = "main"
+_FLOW_DECOMPOSITION_RECOMMENDED_AGENT_PRIORITY = ("main",)
 _OPENCLAW_RUNTIME_REQUIRED_KEYS = (
     "OPENCLAW_BASE_URL",
     "OPENCLAW_GATEWAY_TOKEN",
@@ -155,10 +154,7 @@ class OpsService:
         openclaw_runtime_configured = len(missing_openclaw_runtime_keys) == 0
 
         flow_configured = openclaw_runtime_configured
-        flow_planner_agent_id = (
-            (os.getenv(_FLOW_DECOMPOSITION_AGENT_ID_KEY) or "").strip()
-            or _DEFAULT_FLOW_DECOMPOSITION_AGENT_ID
-        )
+        flow_planner_agent_id = _DEFAULT_FLOW_DECOMPOSITION_AGENT_ID
         flow_planner_runtime_ids: list[str] | None = None
         flow_planner_runtime_error = ""
         flow_planner_agent_available = True
@@ -257,7 +253,7 @@ class OpsService:
                             if flow_planner_agent_available
                             else (
                                 "FLOW_DECOMPOSITION 已配置（runtime=openclaw），"
-                                f"但 planner agent 不可用：{flow_planner_agent_id}。"
+                                f"但默认 planner agent 不可用：{flow_planner_agent_id}。"
                                 f" 当前运行时可用 agents: {flow_runtime_agents_text or 'unknown'}。"
                                 f" 建议值: {flow_recommended_agent_id}。"
                             )
@@ -280,8 +276,8 @@ class OpsService:
                         "先补齐 OPENCLAW_BASE_URL / OPENCLAW_GATEWAY_TOKEN 并重启服务。"
                         if not openclaw_runtime_configured
                         else (
-                            "将 FLOW_DECOMPOSITION_AGENT_ID 设置为运行时可用 agent 并重启服务。"
-                            f"可直接执行: export FLOW_DECOMPOSITION_AGENT_ID={flow_recommended_agent_id}。"
+                            "确保运行时存在可用于分解的 agent（默认使用 main），并重启服务。"
+                            f" 建议使用: {flow_recommended_agent_id}。"
                             f" 当前运行时可用 agents: {flow_runtime_agents_text or 'unknown'}。"
                         )
                     )
@@ -297,7 +293,7 @@ class OpsService:
                         else f"LINPO_TASK_EVENT_CALLBACK_BASE_URL 已配置。候选地址: {callback_candidates_text}。"
                     )
                     if callback_base_url_configured
-                    else "LINPO_TASK_EVENT_CALLBACK_BASE_URL 未配置，已使用默认值。"
+                    else "LINPO_TASK_EVENT_CALLBACK_BASE_URL 未配置。"
                 ),
                 next_step=(
                     (
@@ -307,8 +303,8 @@ class OpsService:
                     )
                     if callback_base_url_configured
                     else (
-                        "设置 LINPO_TASK_EVENT_CALLBACK_BASE_URL（本地开发可用 http://localhost:8000；"
-                        "Docker 默认可用 http://<linpo-host>:8000）并重启服务。"
+                        "设置 LINPO_TASK_EVENT_CALLBACK_BASE_URL（例如 http://localhost:8000 或 "
+                        "http://<linpo-host>:8000）并重启服务。"
                     )
                 ),
             ),

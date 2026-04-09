@@ -6,10 +6,7 @@
 
 - `OPENCLAW_BASE_URL`
 - `OPENCLAW_GATEWAY_TOKEN`
-
-可选：
-
-- `OPENCLAW_ORIGIN`
+- `LINPO_TASK_EVENT_CALLBACK_BASE_URL`
 
 ## 本地启动命令
 
@@ -21,7 +18,7 @@
 - 后端默认会自动读取仓库根目录 `.env`。
 - 前端开发默认直连 `http://localhost:8000`（`npm run dev` 已固定注入）。
 - 前端开发端口固定为 `5173`；端口占用会直接报错（不自动漂移）。
-- 任务回调地址默认使用 `http://localhost:8000`；仅在跨机/容器网络时再覆盖 `LINPO_TASK_EVENT_CALLBACK_BASE_URL`。
+- `LINPO_TASK_EVENT_CALLBACK_BASE_URL` 为必填；本机联调可用 `http://localhost:8000`。
 
 ## 一键本地验收（最小串联）
 
@@ -56,7 +53,7 @@ PLAYWRIGHT_DEPLOYED_BASE_URL=http://127.0.0.1:5173 npm --prefix frontend run e2e
 
 - `health` 不通：后端未监听 `8000`。
 - `generate/confirm` 异常：检查 `.env` 的 `OPENCLAW_*`。
-- `ops/setup` 的 `flow_decomposition_configured` 若提示 planner agent 不可用：优先执行 `nextStep` 给出的 `export FLOW_DECOMPOSITION_AGENT_ID=<建议值>`，并以 message 中“当前运行时可用 agents”作为可选值来源。
+- `ops/setup` 的 `flow_decomposition_configured` 若提示默认 `main` 不可用：按 `nextStep` 使用运行时可用 agent，并以 message 中“当前运行时可用 agents”作为可选值来源。
 - `e2e:deployed` 异常：检查前端是否监听 `5173`，以及 `PLAYWRIGHT_DEPLOYED_BASE_URL` 是否正确。
 
 ## 质量命令

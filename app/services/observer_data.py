@@ -1102,7 +1102,7 @@ def _openclaw_data_source_config() -> tuple[str | None, str | None, str | None]:
     return (
         os.getenv("OPENCLAW_BASE_URL"),
         os.getenv("OPENCLAW_GATEWAY_TOKEN"),
-        os.getenv("OPENCLAW_ORIGIN"),
+        None,
     )
 
 

@@ -44,8 +44,7 @@ class OpenClawClient:
     ) -> None:
         self._base_url = base_url or os.getenv("OPENCLAW_BASE_URL")
         self._token = gateway_token or os.getenv("OPENCLAW_GATEWAY_TOKEN")
-        configured_origin = origin or os.getenv("OPENCLAW_ORIGIN")
-        self._origin = configured_origin or self._derive_origin(self._base_url)
+        self._origin = origin or self._derive_origin(self._base_url)
 
         if not self._base_url:
             raise HTTPException(status_code=503, detail="OpenClaw data source is not configured")
@@ -465,26 +464,6 @@ class OpenClawClient:
                     )
                 )
             )
-
-            configured_origin = os.getenv("OPENCLAW_ORIGIN", "").strip()
-            if configured_origin:
-                parsed_configured_origin = urlparse(configured_origin)
-                if (
-                    parsed_configured_origin.scheme in {"http", "https"}
-                    and parsed_configured_origin.hostname
-                ):
-                    add_candidate(
-                        urlunparse(
-                            (
-                                parsed_configured_origin.scheme,
-                                self._format_netloc(parsed_configured_origin.hostname, websocket_port),
-                                "",
-                                "",
-                                "",
-                                "",
-                            )
-                        )
-                    )
 
             add_candidate(
                 urlunparse(

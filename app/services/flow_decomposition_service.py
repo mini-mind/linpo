@@ -22,7 +22,7 @@ from app.services.provider_application_service import (
 
 
 _DEFAULT_DECOMPOSITION_PROVIDER = "openclaw"
-_DEFAULT_DECOMPOSITION_AGENT_ID = "planner-default"
+_DEFAULT_DECOMPOSITION_AGENT_ID = "main"
 _DEFAULT_HISTORY_LIMIT = 60
 _DEFAULT_MAX_NODES = 12
 _DEFAULT_POLL_INTERVAL_SECONDS = 0.6
@@ -238,12 +238,10 @@ class FlowDecompositionService:
         provider_name = self._decomposition_provider_name()
         base_url = self._decomposition_base_url()
         token = self._decomposition_gateway_token()
-        origin = self._decomposition_origin()
 
         client = OpenClawClient(
             base_url=base_url,
             gateway_token=token,
-            origin=origin,
         )
         adapter = OpenClawAdapter(
             client=client,
@@ -252,7 +250,7 @@ class FlowDecompositionService:
         )
         return ProviderExecutionContext(
             adapter=cast(ProviderAdapter, adapter),
-            cache_key=(f"flow-decomposer-{provider_name}", base_url, origin, self._decomposition_agent_id()),
+            cache_key=(f"flow-decomposer-{provider_name}", base_url, self._decomposition_agent_id()),
         )
 
     def _wait_for_assistant_json(
@@ -853,10 +851,6 @@ class FlowDecompositionService:
     def _decomposition_base_url(self) -> str:
         return self._required_flow_decomposition_env("OPENCLAW_BASE_URL")
 
-    def _decomposition_origin(self) -> str | None:
-        value = os.getenv("OPENCLAW_ORIGIN", "").strip()
-        return value or None
-
     def _decomposition_gateway_token(self) -> str:
         return self._required_flow_decomposition_env("OPENCLAW_GATEWAY_TOKEN")
 
@@ -864,10 +858,7 @@ class FlowDecompositionService:
         return _DEFAULT_DECOMPOSITION_PROVIDER
 
     def _decomposition_agent_id(self) -> str:
-        value = os.getenv("FLOW_DECOMPOSITION_AGENT_ID", "").strip()
-        if value == "":
-            return _DEFAULT_DECOMPOSITION_AGENT_ID
-        return value
+        return _DEFAULT_DECOMPOSITION_AGENT_ID
 
     def _resolve_planner_agent_id(self, planner_agent_id: str | None) -> str:
         candidate = (planner_agent_id or "").strip()

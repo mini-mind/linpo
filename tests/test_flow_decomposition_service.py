@@ -31,7 +31,6 @@ def _install_fast_clock(
 
 @pytest.fixture(autouse=True)
 def _set_required_flow_decomposition_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("FLOW_DECOMPOSITION_AGENT_ID", "planner-default")
     monkeypatch.setenv("OPENCLAW_BASE_URL", "ws://test-openclaw:38789")
     monkeypatch.setenv("OPENCLAW_ORIGIN", "http://test-openclaw:38789")
     monkeypatch.setenv("OPENCLAW_GATEWAY_TOKEN", "test-token")
@@ -67,13 +66,13 @@ def test_decompose_returns_nodes_from_provider_history_payload() -> None:
 
     result = service.decompose(requirement="做一个发布流程", board_id="default")
 
-    assert result.planner_session_key.startswith("linpo:flow:default:planner:planner-default:")
+    assert result.planner_session_key.startswith("linpo:flow:default:planner:main:")
     assert len(result.nodes) == 2
     assert result.nodes[0].id == "a"
     assert result.nodes[1].depends_on == ["a"]
     assert result.nodes[1].sensitive is True
     assert len(fake.send_calls) == 1
-    assert fake.send_calls[0]["agent_id"] == "planner-default"
+    assert fake.send_calls[0]["agent_id"] == "main"
     _assert_contains_keywords(
         cast(str, fake.send_calls[0]["message"]),
         ("subagent", "depends_on", "输出路径"),
@@ -141,7 +140,7 @@ def test_decompose_repairs_non_json_reply_in_same_session(
 
         def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
             self.send_calls.append(kwargs)
-            return {"request_id": f"req-{len(self.send_calls)}", "status": "accepted", "agent_id": "planner-default"}
+            return {"request_id": f"req-{len(self.send_calls)}", "status": "accepted", "agent_id": "main"}
 
         def chat_history(self, **kwargs: Any) -> dict[str, Any]:
             del kwargs
@@ -197,7 +196,7 @@ def test_decompose_retries_retryable_history_error(
 
         def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
             del kwargs
-            return {"request_id": "req-1", "status": "accepted", "agent_id": "planner-default"}
+            return {"request_id": "req-1", "status": "accepted", "agent_id": "main"}
 
         def chat_history(self, **kwargs: Any) -> dict[str, Any]:
             del kwargs
@@ -234,7 +233,7 @@ def test_decompose_waits_for_delayed_but_valid_json_reply(
 
         def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
             del kwargs
-            return {"request_id": "req-1", "status": "accepted", "agent_id": "planner-default"}
+            return {"request_id": "req-1", "status": "accepted", "agent_id": "main"}
 
         def chat_history(self, **kwargs: Any) -> dict[str, Any]:
             del kwargs
@@ -289,7 +288,7 @@ def test_decompose_supports_incremental_prompt_context_and_reuses_planner_sessio
 
     fake = FakeProviderApplicationService()
     service = FlowDecompositionService(provider_application_service=cast(Any, fake))
-    session_key = "linpo:flow:default:planner:planner-default:reuse"
+    session_key = "linpo:flow:default:planner:main:reuse"
 
     result = service.decompose(
         requirement="把验收前置并补并行分支",
@@ -321,7 +320,7 @@ def test_decompose_supports_steps_alias_payload_and_normalizes_fields() -> None:
     class FakeProviderApplicationService:
         def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
             del kwargs
-            return {"request_id": "req-1", "status": "accepted", "agent_id": "planner-default"}
+            return {"request_id": "req-1", "status": "accepted", "agent_id": "main"}
 
         def chat_history(self, **kwargs: Any) -> dict[str, Any]:
             del kwargs
@@ -358,7 +357,7 @@ def test_decompose_supports_add_nodes_alias_payload() -> None:
     class FakeProviderApplicationService:
         def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
             del kwargs
-            return {"request_id": "req-1", "status": "accepted", "agent_id": "planner-default"}
+            return {"request_id": "req-1", "status": "accepted", "agent_id": "main"}
 
         def chat_history(self, **kwargs: Any) -> dict[str, Any]:
             del kwargs
@@ -393,7 +392,7 @@ def test_decompose_supports_python_like_nodes_payload_with_single_quotes() -> No
     class FakeProviderApplicationService:
         def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
             del kwargs
-            return {"request_id": "req-1", "status": "accepted", "agent_id": "planner-default"}
+            return {"request_id": "req-1", "status": "accepted", "agent_id": "main"}
 
         def chat_history(self, **kwargs: Any) -> dict[str, Any]:
             del kwargs
@@ -427,7 +426,7 @@ def test_decompose_supports_loose_keyed_array_payload_without_outer_object() -> 
     class FakeProviderApplicationService:
         def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
             del kwargs
-            return {"request_id": "req-1", "status": "accepted", "agent_id": "planner-default"}
+            return {"request_id": "req-1", "status": "accepted", "agent_id": "main"}
 
         def chat_history(self, **kwargs: Any) -> dict[str, Any]:
             del kwargs
@@ -461,7 +460,7 @@ def test_decompose_supports_fragmented_node_objects_without_wrapping_json() -> N
     class FakeProviderApplicationService:
         def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
             del kwargs
-            return {"request_id": "req-1", "status": "accepted", "agent_id": "planner-default"}
+            return {"request_id": "req-1", "status": "accepted", "agent_id": "main"}
 
         def chat_history(self, **kwargs: Any) -> dict[str, Any]:
             del kwargs
@@ -494,7 +493,7 @@ def test_decompose_reports_payload_keys_when_nodes_missing() -> None:
     class FakeProviderApplicationService:
         def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
             del kwargs
-            return {"request_id": "req-1", "status": "accepted", "agent_id": "planner-default"}
+            return {"request_id": "req-1", "status": "accepted", "agent_id": "main"}
 
         def chat_history(self, **kwargs: Any) -> dict[str, Any]:
             del kwargs
@@ -557,7 +556,7 @@ def test_dispatch_planner_returns_session_key_without_waiting() -> None:
 
     fake = FakeProviderApplicationService()
     service = FlowDecompositionService(provider_application_service=cast(Any, fake))
-    session_key = "linpo:flow:default:planner:planner-default:fast"
+    session_key = "linpo:flow:default:planner:main:fast"
 
     dispatch = service.dispatch_planner(
         requirement="快速生成当前草图",
@@ -568,7 +567,7 @@ def test_dispatch_planner_returns_session_key_without_waiting() -> None:
     )
 
     assert dispatch.planner_session_key == session_key
-    assert dispatch.planner_agent_id == "planner-default"
+    assert dispatch.planner_agent_id == "main"
     assert len(fake.send_calls) == 1
     assert fake.send_calls[0]["session_key"] == session_key
 
@@ -619,11 +618,11 @@ def test_snapshot_from_history_messages_returns_latest_valid_snapshot() -> None:
                 "text": '{"nodes":[{"id":"n1","title":"步骤1","description":"说明","depends_on":[],"sensitive":false},{"id":"n2","title":"步骤2","description":"依赖步骤1","depends_on":["n1"],"sensitive":true}]}',
             },
         ],
-        planner_session_key="linpo:flow:default:planner:planner-default:test",
+        planner_session_key="linpo:flow:default:planner:main:test",
     )
 
     assert snapshot is not None
-    assert snapshot.planner_session_key == "linpo:flow:default:planner:planner-default:test"
+    assert snapshot.planner_session_key == "linpo:flow:default:planner:main:test"
     assert [node.id for node in snapshot.nodes] == ["n1", "n2"]
     assert snapshot.nodes[1].depends_on == ["n1"]
 
@@ -652,6 +651,5 @@ def test_build_execution_context_succeeds_with_required_envs() -> None:
     assert context.cache_key == (
         "flow-decomposer-openclaw",
         "ws://test-openclaw:38789",
-        "http://test-openclaw:38789",
-        "planner-default",
+        "main",
     )

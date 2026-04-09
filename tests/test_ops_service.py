@@ -25,7 +25,7 @@ def _stub_flow_decomposition_runtime_agents(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(
         OpsService,
         "_resolve_flow_decomposition_runtime_agent_ids",
-        lambda self, *, flow_provider: (["planner-default", "main"], ""),
+        lambda self, *, flow_provider: (["main"], ""),
     )
 
 
@@ -130,6 +130,7 @@ def test_ops_service_setup_reports_missing_env_and_unbound_instance(
         "secret_encryption_key_configured",
         "openclaw_runtime_configured",
         "flow_decomposition_configured",
+        "task_callback_base_url_configured",
     }
 
 
@@ -158,8 +159,9 @@ def test_ops_service_setup_check_keys_and_messages_are_stable(
     assert "默认 SQLite" in checks_by_key["database_url_configured"].message
     assert checks_by_key["secret_encryption_key_configured"].message == "LINPO_SECRET_ENCRYPTION_KEY 未配置。"
     assert checks_by_key["openclaw_runtime_configured"].message.startswith("缺少 OPENCLAW 配置:")
-    assert checks_by_key["task_callback_base_url_configured"].status == "ok"
-    assert "候选地址: http://host.docker.internal:8000, http://localhost:8000" in checks_by_key["task_callback_base_url_configured"].message
+    assert checks_by_key["task_callback_base_url_configured"].status == "failed"
+    assert checks_by_key["task_callback_base_url_configured"].message == "LINPO_TASK_EVENT_CALLBACK_BASE_URL 未配置。"
+    assert "设置 LINPO_TASK_EVENT_CALLBACK_BASE_URL" in checks_by_key["task_callback_base_url_configured"].next_step
 
 
 def test_ops_service_setup_reports_invalid_secret_encryption_key(
@@ -204,12 +206,11 @@ def test_ops_service_setup_reports_decomposition_planner_agent_unavailable(
     monkeypatch.setenv("LINPO_SECRET_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
     monkeypatch.setenv("OPENCLAW_BASE_URL", "ws://127.0.0.1:28789")
     monkeypatch.setenv("OPENCLAW_GATEWAY_TOKEN", "token")
-    monkeypatch.setenv("FLOW_DECOMPOSITION_AGENT_ID", "planner-default")
     monkeypatch.setenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", "http://127.0.0.1:8000")
     monkeypatch.setattr(
         OpsService,
         "_resolve_flow_decomposition_runtime_agent_ids",
-        lambda self, *, flow_provider: (["main"], ""),
+        lambda self, *, flow_provider: (["agent-x"], ""),
     )
 
     service = OpsService(instance_service=_FakeInstanceService([_instance("instance-active", "active")]))
@@ -219,8 +220,7 @@ def test_ops_service_setup_reports_decomposition_planner_agent_unavailable(
 
     assert snapshot.ready is False
     assert flow_check.status == "failed"
-    assert "planner agent 不可用" in flow_check.message
-    assert "当前运行时可用 agents: main" in flow_check.message
-    assert "建议值: main" in flow_check.message
-    assert "FLOW_DECOMPOSITION_AGENT_ID" in flow_check.next_step
-    assert "export FLOW_DECOMPOSITION_AGENT_ID=main" in flow_check.next_step
+    assert "默认 planner agent 不可用" in flow_check.message
+    assert "当前运行时可用 agents: agent-x" in flow_check.message
+    assert "建议值: agent-x" in flow_check.message
+    assert "确保运行时存在可用于分解的 agent（默认使用 main）" in flow_check.next_step

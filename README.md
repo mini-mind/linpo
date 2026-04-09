@@ -59,10 +59,11 @@ curl -i http://localhost:8000/api/v1/ops/setup
 
 ### 4) 必填 OpenClaw 配置
 
-开源版单实例模式下，以下两项必须在启动前提供：
+开源版单实例模式下，以下三项必须在启动前提供：
 
 - `OPENCLAW_BASE_URL`
 - `OPENCLAW_GATEWAY_TOKEN`
+- `LINPO_TASK_EVENT_CALLBACK_BASE_URL`
 
 可在 `.env`、容器环境变量或 `docker-compose` 覆盖项中设置。
 
@@ -107,7 +108,7 @@ npm --prefix frontend run dev
 - 前端开发默认连接 `http://localhost:8000`；可通过 `VITE_API_BASE_URL` 覆盖，例如：
   `VITE_API_BASE_URL=http://<server-ip>:8000 npm --prefix frontend run dev`。
 - 后端 CORS 通过 `LINPO_CORS_ALLOW_ORIGINS` 控制允许来源（逗号分隔完整 Origin）。
-- 任务回调地址默认使用 `http://localhost:8000`；仅在跨机/容器网络时才需覆盖 `LINPO_TASK_EVENT_CALLBACK_BASE_URL`。
+- `LINPO_TASK_EVENT_CALLBACK_BASE_URL` 为必填；建议本机联调填 `http://localhost:8000`，跨机/容器填 OpenClaw 可访问的 Linpo 地址。
 
 一键本地验收（最小串联，需先启动后端+前端）：
 
@@ -141,7 +142,7 @@ echo "local smoke passed"
 
 - `curl .../health` 失败：后端未在 `8000` 启动。
 - `flow/generate` 或 `flow/confirm` 失败：检查 `.env` 的 `OPENCLAW_*`。
-- 若 `ops/setup` 的 `flow_decomposition_configured` 报 planner agent 不可用：按 `nextStep` 直接执行推荐命令（如 `export FLOW_DECOMPOSITION_AGENT_ID=<建议值>`），并核对 message 中“当前运行时可用 agents”列表。
+- 若 `ops/setup` 的 `flow_decomposition_configured` 报默认 `main` 不可用：按 `nextStep` 使用运行时可用 agent（以 message 中 agents 列表为准）。
 - `e2e:deployed` 失败：确认前端在 `5173`，并检查 `PLAYWRIGHT_DEPLOYED_BASE_URL`。
 
 常用质量命令（精简）：

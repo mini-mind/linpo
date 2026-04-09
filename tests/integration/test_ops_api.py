@@ -84,7 +84,7 @@ def stub_flow_decomposition_runtime_agents(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(
         OpsService,
         "_resolve_flow_decomposition_runtime_agent_ids",
-        lambda self, *, flow_provider: (["planner-default", "main"], ""),
+        lambda self, *, flow_provider: (["main"], ""),
     )
 
 
@@ -164,11 +164,11 @@ def test_ops_setup_reports_default_sqlite_and_missing_flow_decomposition_configu
     assert checks["secret_encryption_key_configured"]["status"] == "failed"
     assert checks["openclaw_runtime_configured"]["status"] == "failed"
     assert checks["flow_decomposition_configured"]["status"] == "failed"
-    assert checks["task_callback_base_url_configured"]["status"] == "ok"
+    assert checks["task_callback_base_url_configured"]["status"] == "failed"
     assert "SQLite" in checks["database_url_configured"]["message"]
     assert "LINPO_SECRET_ENCRYPTION_KEY" in checks["secret_encryption_key_configured"]["nextStep"]
     assert "OPENCLAW_BASE_URL" in checks["openclaw_runtime_configured"]["nextStep"]
-    assert "host.docker.internal" in checks["task_callback_base_url_configured"]["nextStep"]
+    assert "LINPO_TASK_EVENT_CALLBACK_BASE_URL" in checks["task_callback_base_url_configured"]["nextStep"]
 
 
 def test_ops_setup_ready_when_required_configs_exist(
@@ -298,12 +298,11 @@ def test_ops_setup_reports_decomposition_planner_agent_unavailable(
     monkeypatch.setenv("OPENCLAW_BASE_URL", "ws://ops.example:28789")
     monkeypatch.setenv("OPENCLAW_GATEWAY_TOKEN", "token-openclaw")
     monkeypatch.setenv("OPENCLAW_ORIGIN", "http://ops.example:28789")
-    monkeypatch.setenv("FLOW_DECOMPOSITION_AGENT_ID", "planner-default")
     monkeypatch.setenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", "http://ops.example:8000")
     monkeypatch.setattr(
         OpsService,
         "_resolve_flow_decomposition_runtime_agent_ids",
-        lambda self, *, flow_provider: (["main"], ""),
+        lambda self, *, flow_provider: (["agent-x"], ""),
     )
 
     status_code, _, body = request("GET", "/api/v1/ops/setup", headers={"cookie": auth_cookie})
@@ -314,11 +313,10 @@ def test_ops_setup_reports_decomposition_planner_agent_unavailable(
     checks = _check_by_key(payload)
     flow_check = checks["flow_decomposition_configured"]
     assert flow_check["status"] == "failed"
-    assert "planner agent 不可用" in flow_check["message"]
-    assert "当前运行时可用 agents: main" in flow_check["message"]
-    assert "建议值: main" in flow_check["message"]
-    assert "FLOW_DECOMPOSITION_AGENT_ID" in flow_check["nextStep"]
-    assert "export FLOW_DECOMPOSITION_AGENT_ID=main" in flow_check["nextStep"]
+    assert "默认 planner agent 不可用" in flow_check["message"]
+    assert "当前运行时可用 agents: agent-x" in flow_check["message"]
+    assert "建议值: agent-x" in flow_check["message"]
+    assert "确保运行时存在可用于分解的 agent（默认使用 main）" in flow_check["nextStep"]
 
 
 def test_ops_diagnostics_ready_when_all_checks_pass(
