@@ -157,72 +157,6 @@ class SessionDeleteResponse(_CommonCamelResponseModel):
     deleted: bool
 
 
-class InstanceWriteRequest(_CommonCamelRequestModel):
-    name: str
-    type: str
-    endpoint: str
-    gateway_token: str
-
-
-class PairingSessionCreateRequest(_CommonCamelRequestModel):
-    name: str = "claw2"
-    exp_seconds: int | None = Field(default=600, ge=60, le=3600)
-
-
-class PairingSessionAttachRequest(_CommonCamelRequestModel):
-    endpoint: str
-    gateway_token: str
-    name: str | None = None
-
-
-class PairingSessionAttachByCodeRequest(_CommonCamelRequestModel):
-    short_code: str
-    endpoint: str
-    gateway_token: str
-    name: str | None = None
-
-
-class PairingSessionInstanceItem(_CommonCamelResponseModel):
-    id: str
-    name: str
-    endpoint: str
-    status: str
-
-
-class PairingSessionResponse(_CommonCamelResponseModel):
-    session_id: str
-    short_code: str
-    pairing_url: str
-    status: str
-    name: str
-    expires_at: str
-    last_error: str | None = None
-    instance: PairingSessionInstanceItem | None = None
-
-
-class PlannerAgentPreferenceResponse(_CommonCamelResponseModel):
-    instance_id: str
-    planner_agent_id: str | None = None
-
-
-class PlannerAgentPreferencePatchRequest(_CommonCamelRequestModel):
-    planner_agent_id: str | None = Field(default=None, max_length=128)
-
-
-class InstancePatchRequest(_CommonCamelRequestModel):
-    name: str | None = None
-    type: str | None = None
-    endpoint: str | None = None
-    gateway_token: str | None = Field(default=None)
-
-    @field_validator("gateway_token", mode="before")
-    @classmethod
-    def normalize_blank_gateway_token(cls, value: object) -> object:
-        if value == "":
-            return None
-        return value
-
-
 class InstanceItem(_CommonCamelResponseModel):
     id: str
     name: str
@@ -231,24 +165,6 @@ class InstanceItem(_CommonCamelResponseModel):
     status: str
     last_check_at: str | None
     created_at: str
-
-
-class InstanceValidationResponse(_CommonCamelResponseModel):
-    ok: bool
-    status: str
-    message: str
-    code: str | None = None
-
-
-class InstanceValidationErrorResponse(_CommonCamelResponseModel):
-    ok: bool
-    status: str
-    message: str
-    code: str | None = None
-
-
-class InstanceDeleteResponse(_CommonCamelResponseModel):
-    deleted: bool
 
 
 class InstanceFileItem(_CommonCamelResponseModel):
@@ -332,31 +248,6 @@ class InstanceAgentDocListResponse(_CommonCamelResponseModel):
     items: list[InstanceAgentDocItem]
     total: int
     existing_count: int
-
-
-class AgentMountRequestPayload(_CommonCamelRequestModel):
-    name: str
-    type: str
-    endpoint: str
-    gateway_token: str
-
-
-class AgentUnmountRequestPayload(_CommonCamelRequestModel):
-    instance_id: str
-
-
-class AgentPairingRequestResponse(_CommonCamelResponseModel):
-    confirmation_url: str
-    expires_at: str
-    expires_in_seconds: int
-
-
-class AgentReceiptConfirmResponse(_CommonCamelResponseModel):
-    action: str
-    mounted: bool
-    unmounted: bool
-    instance: InstanceItem | None = None
-    instance_id: str | None = None
 
 
 class UserMessageItem(_CommonCamelResponseModel):

@@ -12,7 +12,7 @@ from app.main import app
 from tests.integration._asgi import request
 
 
-def test_agents_route_requires_authentication_before_adapter_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_agents_route_surfaces_adapter_error_without_auth_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.adapters.provider_adapter import ProviderSnapshotResult
 
     class FakeAdapter:
@@ -65,6 +65,6 @@ def test_agents_route_requires_authentication_before_adapter_resolution(monkeypa
 
     status_code, _, body = request("GET", "/api/v1/agents?data_source=openclaw")
 
-    assert status_code == 401
+    assert status_code == 503
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    assert payload == {"detail": "Unauthorized"}
+    assert isinstance(payload.get("error"), dict)

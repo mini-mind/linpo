@@ -29,3 +29,5 @@ references/
 frontend/.env
 frontend/.env.*
 !frontend/.env.example
+
+linpo.db

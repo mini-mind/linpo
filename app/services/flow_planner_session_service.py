@@ -21,7 +21,7 @@ PlannerMessageKind = str
 PlannerNodePayload = dict[str, Any]
 
 _DEFAULT_BOARD_ID = "default"
-_DEFAULT_PLANNER_AGENT_ID = "planner-default"
+_DEFAULT_PLANNER_AGENT_ID = "main"
 _DEFAULT_FLOW_NAME = "未命名流程"
 _DEFAULT_MESSAGE_LIMIT = 400
 _ALLOWED_STATUSES = {"planning", "completed", "failed", "stopped"}

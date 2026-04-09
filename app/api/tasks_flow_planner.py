@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import asyncio
 import json
+import time
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -61,7 +62,15 @@ router = APIRouter(prefix="/boards/{board_id}/tasks")
 _FLOW_PLANNER_AGENT_ID = "planner"
 _FLOW_PLANNER_SSE_POLL_INTERVAL_SECONDS = 0.6
 _FLOW_PLANNER_SSE_KEEPALIVE_SECONDS = 12.0
+_FLOW_GENERATE_SYNC_WAIT_TIMEOUT_SECONDS = 12.0
+_FLOW_GENERATE_SYNC_POLL_INTERVAL_SECONDS = 0.8
 _MISSING = object()
+_PLANNER_NODES_PENDING_CODE = "planner_nodes_pending"
+_PLANNER_NODES_PENDING_TIMEOUT_CODE = "planner_nodes_pending_timeout"
+_PLANNER_EMPTY_NODES_REUSED_CURRENT_NODES_CODE = "planner_empty_nodes_reused_current_nodes"
+_PLANNER_PROVIDER_SYNC_NON_RETRYABLE_ERROR_CODE = "planner_provider_sync_non_retryable_error"
+_PLANNER_BLOCKING_RESOLVE_FAILED_CODE = "planner_blocking_resolve_failed"
+_PLANNER_FALLBACK_NODE_CREATED_CODE = "planner_fallback_node_created"
 
 
 @dataclass(frozen=True)
@@ -143,6 +152,16 @@ def _resolve_flow_planner_agent_id(raw: str | None, *, default_agent_id: str) ->
     return value
 
 
+def _is_requesting_system_default_planner_agent(
+    *,
+    request_planner_agent_id: str,
+    system_default_planner_agent_id: str,
+) -> bool:
+    if request_planner_agent_id == "":
+        return False
+    return request_planner_agent_id == system_default_planner_agent_id.strip()
+
+
 def get_planner_agent_preference_service() -> PlannerAgentPreferenceService:
     return PlannerAgentPreferenceService()
 
@@ -152,10 +171,11 @@ def _validate_planner_agent_membership_if_available(
     provider_application_service: ProviderApplicationService,
     execution_context: ProviderExecutionContext,
     planner_agent_id: str,
+    data_source_name: str = "openclaw",
 ) -> None:
     try:
         data_source = provider_application_service.resolve_observer_data_source(
-            "openclaw",
+            data_source_name,
             execution_context,
         )
         available_agent_ids = {
@@ -180,6 +200,27 @@ def _validate_planner_agent_membership_if_available(
         )
 
 
+def _list_available_planner_agent_ids(
+    *,
+    provider_application_service: ProviderApplicationService,
+    execution_context: ProviderExecutionContext,
+    data_source_name: str = "openclaw",
+) -> list[str]:
+    data_source = provider_application_service.resolve_observer_data_source(
+        data_source_name,
+        execution_context,
+    )
+    available_agent_ids: list[str] = []
+    seen_agent_ids: set[str] = set()
+    for agent in data_source.list_agents():
+        agent_id = str(agent.id).strip()
+        if agent_id == "" or agent_id in seen_agent_ids:
+            continue
+        seen_agent_ids.add(agent_id)
+        available_agent_ids.append(agent_id)
+    return available_agent_ids
+
+
 def _planner_snapshot_nodes_to_canvas_nodes(nodes: list[dict[str, object]]) -> list[FlowCanvasNode]:
     drafts = [
         _FlowNodeDraft(
@@ -193,7 +234,7 @@ def _planner_snapshot_nodes_to_canvas_nodes(nodes: list[dict[str, object]]) -> l
         if str(item.get("id", "")).strip() != ""
     ]
 
-    return _build_canvas_nodes(drafts, agent_id=_FLOW_PLANNER_AGENT_ID)
+    return _build_canvas_nodes(drafts, agent_id=None)
 
 
 def _is_retryable_flow_history_error(exc: HTTPException) -> bool:
@@ -205,6 +246,21 @@ def _is_retryable_flow_history_error(exc: HTTPException) -> bool:
         or "planner snapshot not found" in detail
         or "history not found" in detail
     )
+
+
+def _is_retryable_provider_sync_error(exc: Exception) -> bool:
+    if isinstance(exc, HTTPException):
+        if _is_retryable_flow_history_error(exc):
+            return True
+        return exc.status_code in {
+            status.HTTP_408_REQUEST_TIMEOUT,
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status.HTTP_502_BAD_GATEWAY,
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            status.HTTP_504_GATEWAY_TIMEOUT,
+        }
+    return isinstance(exc, (TimeoutError, ConnectionError))
 
 
 def _planner_snapshot_to_messages(snapshot: object) -> list[FlowChatMessageItem]:
@@ -233,9 +289,6 @@ def _planner_snapshot_to_messages(snapshot: object) -> list[FlowChatMessageItem]
 
 def _planner_snapshot_to_canvas_nodes(snapshot: object) -> list[FlowCanvasNode]:
     raw_nodes = _require_snapshot_nodes(snapshot)
-    planner_agent_id = None
-    if isinstance(getattr(snapshot, "planner_agent_id", None), str):
-        planner_agent_id = cast(str, getattr(snapshot, "planner_agent_id")).strip() or None
     canvas_nodes: list[FlowCanvasNode] = []
     drafts: list[_FlowNodeDraft] = []
     for index, item in enumerate(raw_nodes):
@@ -250,6 +303,7 @@ def _planner_snapshot_to_canvas_nodes(snapshot: object) -> list[FlowCanvasNode]:
         description = str(_require_node_field(item, index=index, field="description")).strip()
         sensitive = bool(_require_node_field(item, index=index, field="sensitive"))
         if all(key in item for key in ("x", "y", "layer", "status")):
+            explicit_agent_id = str(item.get("agent_id", "")).strip() or None
             canvas_nodes.append(
                 FlowCanvasNode(
                     id=node_id,
@@ -261,7 +315,7 @@ def _planner_snapshot_to_canvas_nodes(snapshot: object) -> list[FlowCanvasNode]:
                     layer=int(item.get("layer", 1)),
                     sensitive=sensitive,
                     status=str(item.get("status", "queued")).strip() or "queued",
-                    agent_id=str(item.get("agent_id", "")).strip() or planner_agent_id or _FLOW_PLANNER_AGENT_ID,
+                    agent_id=explicit_agent_id,
                 )
             )
             continue
@@ -276,7 +330,7 @@ def _planner_snapshot_to_canvas_nodes(snapshot: object) -> list[FlowCanvasNode]:
         )
     if canvas_nodes:
         return canvas_nodes
-    return _build_canvas_nodes(drafts, agent_id=planner_agent_id)
+    return _build_canvas_nodes(drafts, agent_id=None)
 
 
 def _planner_node_signature(nodes: list[dict[str, object]]) -> str:
@@ -323,7 +377,34 @@ def _sync_planner_snapshot_from_provider_history(
             execution_context=execution_context,
             provider_name=provider_name,
         )
-    except Exception:
+    except Exception as exc:
+        if _is_retryable_provider_sync_error(exc):
+            return
+        detail = (
+            str(exc.detail).strip()
+            if isinstance(exc, HTTPException)
+            else (str(exc).strip() or exc.__class__.__name__)
+        )
+        existing_messages = _planner_snapshot_to_messages(snapshot)
+        if not any(
+            item.content.startswith(_PLANNER_PROVIDER_SYNC_NON_RETRYABLE_ERROR_CODE)
+            for item in existing_messages
+        ):
+            flow_planner_session_service.append_message(
+                db_session=db_session,
+                session_key=session_key,
+                role="assistant",
+                kind="error",
+                content=(
+                    f"{_PLANNER_PROVIDER_SYNC_NON_RETRYABLE_ERROR_CODE}: "
+                    f"provider 历史同步失败（不可重试）: {detail}"
+                ),
+                payload={
+                    "origin": "provider_history_sync",
+                    "code": _PLANNER_PROVIDER_SYNC_NON_RETRYABLE_ERROR_CODE,
+                    "retryable": False,
+                },
+            )
         return
     if resolved is None:
         return
@@ -338,6 +419,26 @@ def _sync_planner_snapshot_from_provider_history(
         }
         for node in resolved.nodes
     ]
+    if len(next_nodes_payload) == 0:
+        if len(current_raw_nodes) > 0:
+            existing_messages = _planner_snapshot_to_messages(snapshot)
+            if not any(
+                item.content.startswith(_PLANNER_EMPTY_NODES_REUSED_CURRENT_NODES_CODE)
+                for item in existing_messages
+            ):
+                flow_planner_session_service.append_message(
+                    db_session=db_session,
+                    session_key=session_key,
+                    role="assistant",
+                    kind="status",
+                    content=(
+                        f"{_PLANNER_EMPTY_NODES_REUSED_CURRENT_NODES_CODE}: "
+                        "planner 输出空节点，已保留 current_nodes。"
+                    ),
+                    payload={"origin": "provider_history_sync"},
+                )
+        return
+
     if _planner_node_signature(current_raw_nodes) != _planner_node_signature(next_nodes_payload):
         flow_planner_session_service.replace_nodes(
             session_key=session_key,
@@ -353,6 +454,136 @@ def _sync_planner_snapshot_from_provider_history(
         db_session=db_session,
         publish_realtime=True,
     )
+
+
+def _poll_planner_canvas_nodes_with_active_sync(
+    *,
+    db_session: Session,
+    current_user: User,
+    session_key: str,
+    flow_decomposition_service: FlowDecompositionService,
+    flow_planner_session_service: FlowPlannerSessionService,
+    execution_context: ProviderExecutionContext,
+    provider_name: str,
+) -> tuple[list[FlowCanvasNode], object, bool]:
+    wait_seconds = max(0.0, float(_FLOW_GENERATE_SYNC_WAIT_TIMEOUT_SECONDS))
+    poll_interval_seconds = max(0.0, float(_FLOW_GENERATE_SYNC_POLL_INTERVAL_SECONDS))
+    deadline = time.monotonic() + wait_seconds
+    latest_snapshot: object | None = None
+    canvas_nodes: list[FlowCanvasNode] = []
+
+    while True:
+        _sync_planner_snapshot_from_provider_history(
+            db_session=db_session,
+            current_user=current_user,
+            session_key=session_key,
+            flow_decomposition_service=flow_decomposition_service,
+            flow_planner_session_service=flow_planner_session_service,
+            execution_context=execution_context,
+            provider_name=provider_name,
+        )
+        latest_snapshot = flow_planner_session_service.get_snapshot_for_user(
+            db_session=db_session,
+            user_id=current_user.id,
+            session_key=session_key,
+        )
+        canvas_nodes = _planner_snapshot_to_canvas_nodes(latest_snapshot)
+        if canvas_nodes:
+            return canvas_nodes, latest_snapshot, False
+        if time.monotonic() >= deadline:
+            return canvas_nodes, latest_snapshot, True
+        if poll_interval_seconds > 0:
+            time.sleep(min(poll_interval_seconds, max(0.0, deadline - time.monotonic())))
+
+
+def _attempt_blocking_resolve_after_pending_timeout(
+    *,
+    db_session: Session,
+    current_user: User,
+    requirement: str,
+    board_id: str,
+    planner_session_key: str,
+    planner_agent_id: str,
+    flow_name: str | None,
+    current_edges: list[FlowCanvasEdge],
+    flow_decomposition_service: FlowDecompositionService,
+    flow_planner_session_service: FlowPlannerSessionService,
+    execution_context: ProviderExecutionContext,
+    provider_name: str,
+) -> tuple[list[FlowCanvasNode], object]:
+    def _append_failure_message(detail: str) -> object:
+        flow_planner_session_service.append_message(
+            db_session=db_session,
+            session_key=planner_session_key,
+            role="assistant",
+            kind="error",
+            content=f"{_PLANNER_BLOCKING_RESOLVE_FAILED_CODE}: {detail}",
+            payload={
+                "origin": "blocking_resolve",
+                "code": _PLANNER_BLOCKING_RESOLVE_FAILED_CODE,
+            },
+        )
+        return flow_planner_session_service.get_snapshot_for_user(
+            db_session=db_session,
+            user_id=current_user.id,
+            session_key=planner_session_key,
+        )
+
+    try:
+        resolved = flow_decomposition_service.decompose(
+            requirement=requirement,
+            board_id=board_id,
+            planner_agent_id=planner_agent_id,
+            planner_session_key=planner_session_key,
+            flow_name=flow_name,
+            current_nodes=[],
+            current_edges=[edge.model_dump(mode="json") for edge in current_edges],
+            prompt_history=flow_planner_session_service.prompt_history(
+                db_session=db_session,
+                session_key=planner_session_key,
+            ),
+            execution_context=execution_context,
+            provider_name=provider_name,
+        )
+    except Exception as exc:
+        detail = (
+            str(exc.detail).strip()
+            if isinstance(exc, HTTPException)
+            else (str(exc).strip() or exc.__class__.__name__)
+        )
+        latest_snapshot = _append_failure_message(
+            f"blocking resolve 执行失败: {detail}"
+        )
+        return [], latest_snapshot
+
+    resolved_nodes_payload = [
+        {
+            "id": node.id,
+            "title": node.title,
+            "description": node.description,
+            "depends_on": list(node.depends_on),
+            "sensitive": node.sensitive,
+        }
+        for node in resolved.nodes
+    ]
+    if len(resolved_nodes_payload) == 0:
+        latest_snapshot = _append_failure_message(
+            "blocking resolve 返回空节点"
+        )
+        return [], latest_snapshot
+
+    flow_planner_session_service.replace_nodes(
+        session_key=planner_session_key,
+        nodes=resolved_nodes_payload,
+        db_session=db_session,
+        publish_realtime=True,
+    )
+    latest_snapshot = flow_planner_session_service.get_snapshot_for_user(
+        db_session=db_session,
+        user_id=current_user.id,
+        session_key=planner_session_key,
+    )
+    return _planner_snapshot_to_canvas_nodes(latest_snapshot), latest_snapshot
 
 
 def _to_sse_data(payload: dict[str, object]) -> str:
@@ -405,6 +636,35 @@ def _build_execution_context_or_404(
     return provider_application_service.build_execution_context(instance_context)
 
 
+def _resolve_requested_or_default_instance_id(
+    *,
+    raw_instance_id: str | None,
+    db_session: Session,
+    current_user: User,
+    instance_service: InstanceService,
+) -> UUID:
+    normalized = (raw_instance_id or "").strip()
+    if normalized != "":
+        try:
+            requested_instance_id = UUID(normalized)
+            instance_service.get_openclaw_context(
+                db_session,
+                user_id=current_user.id,
+                instance_id=requested_instance_id,
+            )
+            return requested_instance_id
+        except (ValueError, InstanceNotFoundError):
+            pass
+
+    instances = instance_service.list_instances(
+        db_session,
+        user_id=current_user.id,
+    )
+    if not instances:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found")
+    return instances[0].id
+
+
 def _build_canvas_nodes(
     nodes: list[_FlowNodeDraft],
     *,
@@ -441,10 +701,51 @@ def _build_canvas_nodes(
                 layer=layer,
                 sensitive=node.sensitive,
                 status="queued",
-                agent_id=agent_id or _FLOW_PLANNER_AGENT_ID,
+                agent_id=agent_id or None,
             )
         )
     return output
+
+
+def _build_structured_fallback_canvas_nodes(
+    *,
+    requirement: str,
+    executor_agent_id: str,
+) -> list[FlowCanvasNode]:
+    normalized_requirement = requirement.strip()
+    intake_id = f"node_fallback_intake_{uuid4().hex[:6]}"
+    execute_id = f"node_fallback_execute_{uuid4().hex[:6]}"
+    intake_description = (
+        "梳理需求与运行约束，明确输入/输出文件路径、验收标准与风险。"
+    )
+    execution_requirement = normalized_requirement if normalized_requirement != "" else "按已确认的需求执行"
+    execute_description = (
+        f"任务目标：{execution_requirement}。"
+        "输入：读取上游节点确认后的需求与约束。"
+        "输出：至少产出 1 个可下载结果文件（建议 markdown/json）。"
+        "验收：结果文件可预览、与目标一致。"
+        "失败条件：无法产出有效结果文件时需 failed 并说明原因。"
+    )
+    drafts = [
+        _FlowNodeDraft(
+            id=intake_id,
+            title="梳理需求与约束（自动兜底）",
+            description=intake_description,
+            depends_on=[],
+            sensitive=False,
+        ),
+        _FlowNodeDraft(
+            id=execute_id,
+            title="执行需求并产出结果（自动兜底）",
+            description=execute_description,
+            depends_on=[intake_id],
+            sensitive=True,
+        ),
+    ]
+    return _build_canvas_nodes(
+        drafts,
+        agent_id=executor_agent_id.strip() or None,
+    )
 
 
 @router.post("/flow/generate", response_model=FlowGenerateResponse, tags=["flow"])
@@ -467,10 +768,12 @@ def generate_flow(
         nodes=payload.current_nodes,
         edges=payload.current_edges,
     )
-    try:
-        instance_uuid = UUID(payload.instance_id)
-    except (ValueError, TypeError) as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid instance_id") from exc
+    instance_uuid = _resolve_requested_or_default_instance_id(
+        raw_instance_id=payload.instance_id,
+        db_session=db_session,
+        current_user=current_user,
+        instance_service=instance_service,
+    )
     execution_context = _build_execution_context_or_404(
         db_session=db_session,
         current_user=current_user,
@@ -478,25 +781,77 @@ def generate_flow(
         instance_service=instance_service,
         provider_application_service=provider_application_service,
     )
+    # Planner agent should be selected/validated against the decomposition runtime
+    # (FLOW_DECOMPOSITION_*), not the task execution instance runtime.
+    planner_selection_execution_context = execution_context
+    planner_selection_data_source_name = "openclaw"
+    try:
+        planner_selection_data_source_name = flow_decomposition_service.decomposition_provider_name().strip() or "openclaw"
+        planner_selection_execution_context = flow_decomposition_service.build_realtime_execution_context()
+    except HTTPException:
+        planner_selection_execution_context = execution_context
     persisted_planner_agent_id = planner_agent_preference_service.get_for_instance(
         db_session,
         user_id=current_user.id,
         instance_id=instance_uuid,
     )
-    has_explicit_planner_agent = (
-        (isinstance(payload.planner_agent_id, str) and payload.planner_agent_id.strip() != "")
-        or (isinstance(persisted_planner_agent_id, str) and persisted_planner_agent_id.strip() != "")
+    request_planner_agent_id = (
+        payload.planner_agent_id.strip()
+        if isinstance(payload.planner_agent_id, str)
+        else ""
     )
-    planner_agent_id = _resolve_flow_planner_agent_id(
-        payload.planner_agent_id or persisted_planner_agent_id,
-        default_agent_id=flow_decomposition_service.resolve_planner_agent_id(None),
+    has_explicit_request_planner_agent = request_planner_agent_id != ""
+    normalized_persisted_planner_agent_id = (
+        persisted_planner_agent_id.strip()
+        if isinstance(persisted_planner_agent_id, str)
+        else ""
     )
-    if has_explicit_planner_agent and planner_agent_id:
-        _validate_planner_agent_membership_if_available(
-            provider_application_service=provider_application_service,
-            execution_context=execution_context,
-            planner_agent_id=planner_agent_id,
+    system_default_planner_agent_id = flow_decomposition_service.resolve_planner_agent_id(None)
+    if has_explicit_request_planner_agent:
+        planner_agent_id = _resolve_flow_planner_agent_id(
+            request_planner_agent_id,
+            default_agent_id=system_default_planner_agent_id,
         )
+    elif normalized_persisted_planner_agent_id != "":
+        planner_agent_id = normalized_persisted_planner_agent_id
+    else:
+        # Default planner agent is `main`; fallback to available runtime agent
+        # only when implicit default selection is unavailable.
+        planner_agent_id = system_default_planner_agent_id
+    if planner_agent_id:
+        try:
+            _validate_planner_agent_membership_if_available(
+                provider_application_service=provider_application_service,
+                execution_context=planner_selection_execution_context,
+                planner_agent_id=planner_agent_id,
+                data_source_name=planner_selection_data_source_name,
+            )
+        except HTTPException as exc:
+            # Keep strict validation for explicit planner_agent_id from user request.
+            # For implicit planner selection (persisted preference or default `main`), fallback to
+            # first available planner when the chosen one is stale. Explicit request only gets
+            # this fallback when it equals the system default planner agent.
+            if (
+                exc.status_code == status.HTTP_400_BAD_REQUEST
+                and (
+                    not has_explicit_request_planner_agent
+                    or _is_requesting_system_default_planner_agent(
+                        request_planner_agent_id=request_planner_agent_id,
+                        system_default_planner_agent_id=system_default_planner_agent_id,
+                    )
+                )
+            ):
+                available_agent_ids = _list_available_planner_agent_ids(
+                    provider_application_service=provider_application_service,
+                    execution_context=planner_selection_execution_context,
+                    data_source_name=planner_selection_data_source_name,
+                )
+                if available_agent_ids:
+                    planner_agent_id = available_agent_ids[0]
+                else:
+                    raise
+            else:
+                raise
 
     provisional_session_key = (
         payload.planner_session_key.strip()
@@ -575,23 +930,134 @@ def generate_flow(
         )
     manager_session_key = f"linpo:flow:{normalized_board_id}:manager"
     execution_session_prefix = f"linpo:flow:{normalized_board_id}:exec"
-    _sync_planner_snapshot_from_provider_history(
+    provider_name = flow_decomposition_service.decomposition_provider_name()
+    canvas_nodes, latest_snapshot, poll_timed_out = _poll_planner_canvas_nodes_with_active_sync(
         db_session=db_session,
         current_user=current_user,
         session_key=planner_session_key,
         flow_decomposition_service=flow_decomposition_service,
         flow_planner_session_service=flow_planner_session_service,
         execution_context=execution_context,
-        provider_name=flow_decomposition_service.decomposition_provider_name(),
+        provider_name=provider_name,
     )
-    latest_snapshot = flow_planner_session_service.get_snapshot_for_user(
-        db_session=db_session,
-        user_id=current_user.id,
-        session_key=planner_session_key,
-    )
-    canvas_nodes = _planner_snapshot_to_canvas_nodes(latest_snapshot)
+    messages = _planner_snapshot_to_messages(latest_snapshot)
     if not canvas_nodes:
-        canvas_nodes = normalized_current_nodes
+        if normalized_current_nodes:
+            canvas_nodes = normalized_current_nodes
+            if not any(
+                item.content.startswith(_PLANNER_EMPTY_NODES_REUSED_CURRENT_NODES_CODE)
+                for item in messages
+            ):
+                messages.append(
+                    FlowChatMessageItem(
+                        role="assistant",
+                        content=(
+                            f"{_PLANNER_EMPTY_NODES_REUSED_CURRENT_NODES_CODE}: "
+                            "planner 输出空节点，已保留 current_nodes。"
+                        ),
+                        created_at=datetime.now(tz=UTC).isoformat(),
+                    )
+                )
+        elif poll_timed_out:
+            canvas_nodes, latest_snapshot = _attempt_blocking_resolve_after_pending_timeout(
+                db_session=db_session,
+                current_user=current_user,
+                requirement=requirement,
+                board_id=normalized_board_id,
+                planner_session_key=planner_session_key,
+                planner_agent_id=planner_agent_id,
+                flow_name=payload.flow_name,
+                current_edges=payload.current_edges,
+                flow_decomposition_service=flow_decomposition_service,
+                flow_planner_session_service=flow_planner_session_service,
+                execution_context=execution_context,
+                provider_name=provider_name,
+            )
+            messages = _planner_snapshot_to_messages(latest_snapshot)
+            if not canvas_nodes:
+                canvas_nodes = _build_structured_fallback_canvas_nodes(
+                    requirement=requirement,
+                    executor_agent_id=payload.executor_agent_id,
+                )
+                messages.append(
+                    FlowChatMessageItem(
+                        role="assistant",
+                        content=(
+                            f"{_PLANNER_FALLBACK_NODE_CREATED_CODE}: "
+                            "planner 长时间未返回结构化节点，已生成兜底执行流程节点；"
+                            "请确认后继续推进到看板。"
+                        ),
+                        created_at=datetime.now(tz=UTC).isoformat(),
+                    )
+                )
+            if not canvas_nodes and not any(
+                item.content.startswith(_PLANNER_NODES_PENDING_TIMEOUT_CODE)
+                for item in messages
+            ):
+                flow_planner_session_service.append_message(
+                    db_session=db_session,
+                    session_key=planner_session_key,
+                    role="assistant",
+                    kind="status",
+                    content=(
+                        f"{_PLANNER_NODES_PENDING_TIMEOUT_CODE}: "
+                        f"等待 planner 节点超时（{int(_FLOW_GENERATE_SYNC_WAIT_TIMEOUT_SECONDS)}s），请继续观察 planner 会话。"
+                    ),
+                    payload={
+                        "origin": "provider_history_sync",
+                        "code": _PLANNER_NODES_PENDING_TIMEOUT_CODE,
+                    },
+                )
+                latest_snapshot = flow_planner_session_service.get_snapshot_for_user(
+                    db_session=db_session,
+                    user_id=current_user.id,
+                    session_key=planner_session_key,
+                )
+                messages = _planner_snapshot_to_messages(latest_snapshot)
+        elif not any(
+            item.content.startswith(_PLANNER_NODES_PENDING_CODE)
+            or item.content.startswith(_PLANNER_NODES_PENDING_TIMEOUT_CODE)
+            for item in messages
+        ):
+            messages.append(
+                FlowChatMessageItem(
+                    role="assistant",
+                    content=(
+                        f"{_PLANNER_NODES_PENDING_CODE}: "
+                        "planner 节点仍在生成，请继续观察 planner 会话。"
+                    ),
+                    created_at=datetime.now(tz=UTC).isoformat(),
+                )
+            )
+    if not canvas_nodes and not normalized_current_nodes:
+        planner_failure_hints = (
+            _PLANNER_NODES_PENDING_TIMEOUT_CODE,
+            _PLANNER_BLOCKING_RESOLVE_FAILED_CODE,
+            _PLANNER_PROVIDER_SYNC_NON_RETRYABLE_ERROR_CODE,
+        )
+        should_create_fallback_node = poll_timed_out or any(
+            item.content.startswith(planner_failure_hints) for item in messages
+        )
+        if should_create_fallback_node:
+            canvas_nodes = _build_structured_fallback_canvas_nodes(
+                requirement=requirement,
+                executor_agent_id=payload.executor_agent_id,
+            )
+            if not any(
+                item.content.startswith(_PLANNER_FALLBACK_NODE_CREATED_CODE)
+                for item in messages
+            ):
+                messages.append(
+                    FlowChatMessageItem(
+                        role="assistant",
+                        content=(
+                            f"{_PLANNER_FALLBACK_NODE_CREATED_CODE}: "
+                            "planner 未返回可执行节点，已生成兜底执行流程节点；"
+                            "请确认后继续推进到看板。"
+                        ),
+                        created_at=datetime.now(tz=UTC).isoformat(),
+                    )
+                )
     canvas_edges = _build_canvas_edges(
         [
             _FlowNodeDraft(
@@ -612,7 +1078,7 @@ def generate_flow(
         execution_session_prefix=execution_session_prefix,
         nodes=canvas_nodes,
         edges=canvas_edges,
-        messages=_planner_snapshot_to_messages(latest_snapshot),
+        messages=messages,
         created_task_ids=[],
     )
 

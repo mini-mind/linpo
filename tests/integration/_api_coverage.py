@@ -68,17 +68,8 @@ _DECLARED_API_V1_PATHS: Final[tuple[str, ...]] = (
     "/api/v1/chat/sessions/{key}/reset",
     "/api/v1/health",
     "/api/v1/instances",
-    "/api/v1/instances/agent-mount/request",
-    "/api/v1/instances/agent-receipts/{token}/confirm",
-    "/api/v1/instances/agent-unmount/request",
     "/api/v1/instances/messages",
     "/api/v1/instances/messages/{message_id}/read",
-    "/api/v1/instances/pairing-sessions",
-    "/api/v1/instances/pairing-sessions/attach-by-code",
-    "/api/v1/instances/pairing-sessions/{session_id}",
-    "/api/v1/instances/pairing-sessions/{session_id}/attach",
-    "/api/v1/instances/validate",
-    "/api/v1/instances/{instance_id}",
     "/api/v1/instances/{instance_id}/agent-docs",
     "/api/v1/instances/{instance_id}/agent-docs/download",
     "/api/v1/instances/{instance_id}/agent-docs/preview",
@@ -159,6 +150,8 @@ def get_api_v1_operation_probes(payload: dict[str, Any] | None = None) -> dict[t
             normalized_method = method.upper()
             body: bytes | None = None
             headers: dict[str, str] | None = None
+            if path == "/api/v1/sse/boards/{board_id}/tasks" and normalized_method == "GET":
+                concrete_path = f"{concrete_path}?snapshotOnly=true"
             if normalized_method in {"POST", "PATCH", "PUT"}:
                 # Empty JSON body is side-effect safe and generally triggers auth/validation paths.
                 body = b"{}"

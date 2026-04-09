@@ -22,10 +22,19 @@ CookieSameSite = Literal["lax", "strict", "none"]
 _EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _MAX_AVATAR_DATA_URL_LENGTH = 4_200_000
 _MIN_PASSWORD_LENGTH = 6
+_DEFAULT_BOOTSTRAP_USERNAME = "local-admin"
 
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _auth_required() -> bool:
+    configured = os.getenv("LINPO_AUTH_REQUIRED", "")
+    if configured.strip() == "":
+        # Open-source private deployment defaults to no-login mode.
+        return False
+    return configured.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _cookie_secure() -> bool:
@@ -353,14 +362,32 @@ def delete_session(db_session: Session, session_id: str) -> None:
 def get_authenticated_user(db_session: Session, request: Request) -> User | None:
     session_id = get_session_id(request)
     if session_id is None:
-        return None
+        return None if _auth_required() else get_or_create_bootstrap_user(db_session)
 
     session_state = load_session(db_session, session_id)
     if session_state is None:
-        return None
+        return None if _auth_required() else get_or_create_bootstrap_user(db_session)
 
     user = db_session.get(User, session_state.user_id)
     if user is None:
         delete_session(db_session, session_id)
-        return None
+        return None if _auth_required() else get_or_create_bootstrap_user(db_session)
+    return user
+
+
+def get_or_create_bootstrap_user(db_session: Session) -> User:
+    username = os.getenv("LINPO_BOOTSTRAP_USERNAME", _DEFAULT_BOOTSTRAP_USERNAME).strip() or _DEFAULT_BOOTSTRAP_USERNAME
+    normalized_username = normalize_username(username)
+    existing = db_session.execute(select(User).where(User.username == normalized_username)).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    user = User(
+        username=normalized_username,
+        email=None,
+        password_hash=hash_password(token_urlsafe(24)),
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
     return user

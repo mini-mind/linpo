@@ -96,9 +96,7 @@ def _override_agents_request_context() -> None:
     original_overrides = dict(fastapi_app.dependency_overrides)
 
     def _fake_context(request: Request) -> None:
-        instance_id = (request.query_params.get("instanceId") or "").strip()
-        if instance_id == "":
-            raise HTTPException(status_code=400, detail="instanceId is required")
+        del request
         return None
 
     fastapi_app.dependency_overrides[agents_api.get_request_openclaw_context] = _fake_context
@@ -167,7 +165,7 @@ def test_legacy_control_routes_are_not_exposed_in_v0_7() -> None:
         assert payload["detail"] in {"Not Found", "Method Not Allowed"}
 
 
-def test_agents_and_chat_routes_require_authentication() -> None:
+def test_agents_and_chat_routes_are_available_without_authentication() -> None:
     routes = [
         ("GET", "/api/v1/agents"),
         ("GET", "/api/v1/chat/models?data_source=openclaw"),
@@ -176,11 +174,34 @@ def test_agents_and_chat_routes_require_authentication() -> None:
 
     for method, path in routes:
         status_code, _, body = raw_request(method, path)
-        assert status_code == 401
-        assert cast(dict[str, Any], json.loads(body.decode("utf-8"))) == {"detail": "Unauthorized"}
+        assert status_code != 401
+        payload = cast(object, json.loads(body.decode("utf-8")))
+        assert isinstance(payload, (dict, list))
 
 
-def test_agents_and_chat_routes_require_instance_id() -> None:
+def test_agents_route_returns_400_when_env_single_instance_endpoint_is_unsafe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.api import agents as agents_api
+    from app.main import app as fastapi_app
+
+    monkeypatch.setenv("OPENCLAW_BASE_URL", "ws://host.docker.internal:18789")
+    monkeypatch.setenv("OPENCLAW_GATEWAY_TOKEN", "token-unsafe-endpoint")
+    monkeypatch.delenv("LINPO_ALLOW_PRIVATE_ENDPOINTS", raising=False)
+
+    original = dict(fastapi_app.dependency_overrides)
+    fastapi_app.dependency_overrides.pop(agents_api.get_request_openclaw_context, None)
+    try:
+        status_code, _, body = raw_request("GET", "/api/v1/agents")
+    finally:
+        fastapi_app.dependency_overrides.clear()
+        fastapi_app.dependency_overrides.update(original)
+
+    assert status_code == 400
+    assert cast(dict[str, Any], json.loads(body.decode("utf-8"))) == {"detail": "endpoint 指向不安全地址"}
+
+
+def test_agents_and_chat_routes_do_not_require_instance_id() -> None:
     routes = [
         ("GET", "/api/v1/agents"),
         ("GET", "/api/v1/chat/models?data_source=openclaw"),
@@ -188,15 +209,17 @@ def test_agents_and_chat_routes_require_instance_id() -> None:
 
     for method, path in routes:
         status_code, _, body = _request(method, path, include_default_instance_id=False)
-        assert status_code == 400
-        assert cast(dict[str, Any], json.loads(body.decode("utf-8"))) == {"detail": "instanceId is required"}
+        assert status_code != 400
+        payload = cast(object, json.loads(body.decode("utf-8")))
+        assert isinstance(payload, (dict, list))
 
 
-def test_missing_instance_id_still_prioritizes_unauthorized() -> None:
+def test_missing_instance_id_no_longer_requires_authentication() -> None:
     status_code, _, body = raw_request("GET", "/api/v1/agents")
 
-    assert status_code == 401
-    assert cast(dict[str, Any], json.loads(body.decode("utf-8"))) == {"detail": "Unauthorized"}
+    assert status_code != 401
+    payload = cast(object, json.loads(body.decode("utf-8")))
+    assert isinstance(payload, (dict, list))
 
 
 def test_agents_and_chat_routes_work_when_instance_id_present() -> None:
@@ -497,6 +520,82 @@ def test_get_agents_returns_minimal_observer_list() -> None:
             "last_active_at": "2026-03-15T21:10:00Z",
         },
     ]
+
+
+def test_get_agents_defaults_to_openclaw_data_source_when_instance_context_present(monkeypatch: Any) -> None:
+    from app.api import agents as agents_api
+    from app.main import app as fastapi_app
+
+    observed: dict[str, object] = {}
+    sentinel_context = object()
+
+    class FakeObserverDataSource:
+        def list_agents(self) -> list[object]:
+            return []
+
+    class FakeProviderApplicationService:
+        def resolve_observer_data_source(self, data_source: object, request_context: object) -> FakeObserverDataSource:
+            observed["data_source"] = data_source
+            observed["request_context"] = request_context
+            return FakeObserverDataSource()
+
+    _install_provider_application_service(monkeypatch, FakeProviderApplicationService())
+
+    original_overrides = dict(fastapi_app.dependency_overrides)
+
+    def _fake_context(request: Request) -> object:
+        del request
+        return sentinel_context
+
+    fastapi_app.dependency_overrides[agents_api.get_request_openclaw_context] = _fake_context
+    try:
+        status_code, payload = _request_json("GET", "/api/v1/agents")
+    finally:
+        fastapi_app.dependency_overrides.clear()
+        fastapi_app.dependency_overrides.update(original_overrides)
+
+    assert status_code == 200
+    assert payload == []
+    assert observed["data_source"] == "openclaw"
+    assert observed["request_context"] is sentinel_context
+
+
+def test_get_agents_keeps_explicit_data_source_when_instance_context_present(monkeypatch: Any) -> None:
+    from app.api import agents as agents_api
+    from app.main import app as fastapi_app
+
+    observed: dict[str, object] = {}
+    sentinel_context = object()
+
+    class FakeObserverDataSource:
+        def list_agents(self) -> list[object]:
+            return []
+
+    class FakeProviderApplicationService:
+        def resolve_observer_data_source(self, data_source: object, request_context: object) -> FakeObserverDataSource:
+            observed["data_source"] = data_source
+            observed["request_context"] = request_context
+            return FakeObserverDataSource()
+
+    _install_provider_application_service(monkeypatch, FakeProviderApplicationService())
+
+    original_overrides = dict(fastapi_app.dependency_overrides)
+
+    def _fake_context(request: Request) -> object:
+        del request
+        return sentinel_context
+
+    fastapi_app.dependency_overrides[agents_api.get_request_openclaw_context] = _fake_context
+    try:
+        status_code, payload = _request_json("GET", "/api/v1/agents?data_source=stub")
+    finally:
+        fastapi_app.dependency_overrides.clear()
+        fastapi_app.dependency_overrides.update(original_overrides)
+
+    assert status_code == 200
+    assert payload == []
+    assert observed["data_source"] == "stub"
+    assert observed["request_context"] is sentinel_context
 
 
 def test_get_node_detail_returns_event_history() -> None:

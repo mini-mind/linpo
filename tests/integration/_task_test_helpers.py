@@ -4,13 +4,15 @@ import json
 from datetime import UTC, datetime, timedelta
 from http.cookies import SimpleCookie
 from typing import Any, Callable, cast
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import session as db_session
-from app.db.models import Task
+from app.db.models import AuthSession, Instance, Task
+from app.services.crypto import encrypt_secret
 from app.services.instance_validator import InstanceValidationResult
 from tests.integration._asgi import request
 
@@ -108,19 +110,37 @@ def create_instance(
     endpoint: str,
     gateway_token: str,
 ) -> dict[str, Any]:
-    status_code, _, payload = request_json(
-        "POST",
-        "/api/v1/instances",
-        {
-            "name": name,
-            "type": "openclaw",
-            "endpoint": endpoint,
-            "gatewayToken": gateway_token,
-        },
-        auth_cookie,
-    )
-    assert status_code == 201
-    return payload
+    cookies = SimpleCookie()
+    cookies.load(auth_cookie)
+    session_morsel = cookies.get("linpo_session")
+    assert session_morsel is not None
+    session_id = session_morsel.value
+    assert session_id != ""
+
+    with Session(db_session.get_engine(db_session.get_database_url())) as session:
+        auth_session = session.get(AuthSession, session_id)
+        assert auth_session is not None
+        instance = Instance(
+            id=uuid4(),
+            user_id=auth_session.user_id,
+            name=name,
+            type="openclaw",
+            endpoint=endpoint,
+            gateway_token_enc=encrypt_secret(gateway_token),
+            status="active",
+        )
+        session.add(instance)
+        session.commit()
+        session.refresh(instance)
+        return {
+            "id": str(instance.id),
+            "name": instance.name,
+            "type": instance.type,
+            "endpoint": instance.endpoint,
+            "status": instance.status,
+            "last_check_at": None if instance.last_check_at is None else instance.last_check_at.isoformat(),
+            "created_at": instance.created_at.isoformat(),
+        }
 
 
 def dispatch_callback_token_for_task_id(database_url: str, task_id: str) -> str:

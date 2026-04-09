@@ -89,3 +89,25 @@ def test_instance_filter_rejects_delete_without_instance_hint() -> None:
     )
 
     assert visible is False
+
+
+def test_instance_filter_keeps_all_events_visible_without_instance_scope() -> None:
+    known_task_instances: dict[str, UUID | None] = {}
+    event = {
+        "type": "tasks_changed",
+        "payload": {
+            "action": "upsert",
+            "task": {
+                "id": "task-1",
+                "instance_id": "11111111-1111-1111-1111-111111111111",
+            },
+        },
+    }
+
+    visible = _is_board_task_event_visible_for_instance(
+        event,
+        instance_id=None,
+        known_task_instances=known_task_instances,
+    )
+
+    assert visible is True

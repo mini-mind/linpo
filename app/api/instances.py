@@ -6,7 +6,7 @@ from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 from typing import cast
 
@@ -19,28 +19,12 @@ from app.api.task_output_helpers import (
     task_temp_output_path,
 )
 from app.api.schemas import (
-    AgentMountRequestPayload,
-    AgentReceiptConfirmResponse,
-    AgentPairingRequestResponse,
-    AgentUnmountRequestPayload,
-    InstanceDeleteResponse,
     InstanceAgentDocItem,
     InstanceAgentDocListResponse,
     InstanceFileItem,
     InstanceFileListResponse,
     InstanceItem,
-    InstancePatchRequest,
-    InstanceValidationErrorResponse,
-    InstanceValidationResponse,
-    InstanceWriteRequest,
     DetailResponse,
-    PairingSessionAttachRequest,
-    PairingSessionAttachByCodeRequest,
-    PlannerAgentPreferencePatchRequest,
-    PlannerAgentPreferenceResponse,
-    PairingSessionCreateRequest,
-    PairingSessionInstanceItem,
-    PairingSessionResponse,
     TaskOutputPreviewResponse,
     UserMessageItem,
     UserMessageReadResponse,
@@ -50,17 +34,8 @@ from app.db.models import Instance, Task, User, UserMessage
 from app.db.session import get_session
 from app.services.auth_service import get_authenticated_user
 from app.services.instance_service import (
-    InstanceCreateInput,
     InstanceNotFoundError,
     InstanceService,
-    InstanceUpdateInput,
-    InstanceValidationFailedError,
-)
-from app.services.agent_self_pairing_service import (
-    AgentMountStartInput,
-    AgentSelfPairingService,
-    AgentSelfPairingUserNotFoundError,
-    AgentUnmountStartInput,
 )
 from app.services.message_center_service import MessageCenterService, MessageNotFoundError
 from app.services.task_service import TaskService
@@ -68,33 +43,15 @@ from app.services.provider_application_service import (
     ProviderApplicationService,
     ProviderExecutionContext,
 )
-from app.services.planner_agent_preference_service import PlannerAgentPreferenceService
-from app.services.pairing_receipt_service import (
-    PairingReceiptConsumedError,
-    PairingReceiptEmailMismatchError,
-    PairingReceiptExpiredError,
-    PairingReceiptNotFoundError,
-)
-from app.services.instance_validator import InstanceValidationErrorCode
-from app.services.pairing_session_service import (
-    PairingSessionAttachRateLimitError,
-    PairingSessionExpiredError,
-    PairingSessionNotFoundError,
-    PairingSessionService,
-    PairingSessionSnapshot,
-)
 
 router = APIRouter(prefix="/instances", tags=["instances"])
 
 _AGENT_DOC_PREVIEW_MAX_BYTES = 120_000
 _AGENT_DOC_DOWNLOAD_MAX_BYTES = 2_000_000
 
+
 def get_instance_service() -> InstanceService:
     return InstanceService()
-
-
-def get_agent_self_pairing_service() -> AgentSelfPairingService:
-    return AgentSelfPairingService()
 
 
 def get_message_center_service() -> MessageCenterService:
@@ -105,16 +62,8 @@ def get_task_service() -> TaskService:
     return TaskService()
 
 
-def get_pairing_session_service() -> PairingSessionService:
-    return PairingSessionService()
-
-
 def get_provider_application_service(request: Request) -> ProviderApplicationService:
     return cast(ProviderApplicationService, request.app.state.provider_application_service)
-
-
-def get_planner_agent_preference_service() -> PlannerAgentPreferenceService:
-    return PlannerAgentPreferenceService()
 
 
 def get_current_user(
@@ -139,24 +88,6 @@ def _instance_to_item(instance: Instance) -> InstanceItem:
     )
 
 
-def _validation_error_response(
-    *,
-    ok: bool,
-    status_text: str,
-    message: str,
-    code: str | None,
-) -> JSONResponse:
-    return JSONResponse(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        content=InstanceValidationErrorResponse(
-            ok=ok,
-            status=status_text,
-            message=message,
-            code=code,
-        ).model_dump(),
-    )
-
-
 def _message_to_item(message: UserMessage) -> UserMessageItem:
     return UserMessageItem(
         id=str(message.id),
@@ -172,67 +103,12 @@ def _message_to_item(message: UserMessage) -> UserMessageItem:
     )
 
 
-def _pairing_session_to_response(snapshot: PairingSessionSnapshot) -> PairingSessionResponse:
-    instance = None
-    if snapshot.instance is not None:
-        instance = PairingSessionInstanceItem(
-            id=str(snapshot.instance.id),
-            name=snapshot.instance.name,
-            endpoint=snapshot.instance.endpoint,
-            status=snapshot.instance.status,
-        )
-    return PairingSessionResponse(
-        session_id=str(snapshot.session_id),
-        short_code=snapshot.short_code,
-        pairing_url=snapshot.pairing_url,
-        status=snapshot.status,
-        name=snapshot.name,
-        expires_at=snapshot.expires_at.isoformat(),
-        last_error=snapshot.last_error,
-        instance=instance,
-    )
-
-
-def _available_agent_ids_for_instance(
-    *,
-    instance_id: UUID,
-    current_user: User,
-    db_session: Session,
-    instance_service: InstanceService,
-    provider_application_service: ProviderApplicationService,
-) -> set[str]:
-    execution_context = _build_execution_context_or_404(
-        instance_service=instance_service,
-        provider_application_service=provider_application_service,
-        db_session=db_session,
-        current_user=current_user,
-        instance_id=instance_id,
-    )
-    data_source = provider_application_service.resolve_observer_data_source(
-        "openclaw",
-        execution_context,
-    )
-    return {
-        str(agent.id).strip()
-        for agent in data_source.list_agents()
-        if str(agent.id).strip() != ""
-    }
-
-
 def _to_utc_iso(value: object) -> str:
     if isinstance(value, str):
         return value
     if isinstance(value, datetime):
         dt_value = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
         return dt_value.astimezone(UTC).isoformat()
-    return ""
-
-
-def _to_iso_from_millis(value: object) -> str:
-    if isinstance(value, int):
-        return datetime.fromtimestamp(value / 1000, tz=UTC).isoformat()
-    if isinstance(value, float):
-        return datetime.fromtimestamp(value / 1000, tz=UTC).isoformat()
     return ""
 
 
@@ -359,77 +235,6 @@ def list_instances(
 ) -> list[InstanceItem]:
     instances = instance_service.list_instances(db_session, user_id=current_user.id)
     return [_instance_to_item(instance) for instance in instances]
-
-
-@router.get("/{instance_id}/planner-agent", response_model=PlannerAgentPreferenceResponse)
-def get_instance_planner_agent(
-    instance_id: UUID,
-    current_user: User = Depends(get_current_user),
-    db_session: Session = Depends(get_session),
-    instance_service: InstanceService = Depends(get_instance_service),
-    preference_service: PlannerAgentPreferenceService = Depends(get_planner_agent_preference_service),
-) -> PlannerAgentPreferenceResponse:
-    owned = instance_service.get_owned_instance(
-        db_session,
-        user_id=current_user.id,
-        instance_id=instance_id,
-    )
-    if owned is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found")
-    planner_agent_id = preference_service.get_for_instance(
-        db_session,
-        user_id=current_user.id,
-        instance_id=instance_id,
-    )
-    return PlannerAgentPreferenceResponse(
-        instance_id=str(instance_id),
-        planner_agent_id=planner_agent_id,
-    )
-
-
-@router.patch("/{instance_id}/planner-agent", response_model=PlannerAgentPreferenceResponse)
-def patch_instance_planner_agent(
-    instance_id: UUID,
-    payload: PlannerAgentPreferencePatchRequest,
-    current_user: User = Depends(get_current_user),
-    db_session: Session = Depends(get_session),
-    instance_service: InstanceService = Depends(get_instance_service),
-    provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
-    preference_service: PlannerAgentPreferenceService = Depends(get_planner_agent_preference_service),
-) -> PlannerAgentPreferenceResponse:
-    owned = instance_service.get_owned_instance(
-        db_session,
-        user_id=current_user.id,
-        instance_id=instance_id,
-    )
-    if owned is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found")
-
-    planner_agent_id = (payload.planner_agent_id or "").strip()
-    if planner_agent_id != "":
-        available_agent_ids = _available_agent_ids_for_instance(
-            instance_id=instance_id,
-            current_user=current_user,
-            db_session=db_session,
-            instance_service=instance_service,
-            provider_application_service=provider_application_service,
-        )
-        if planner_agent_id not in available_agent_ids:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="planner_agent_id is not available in current instance",
-            )
-
-    updated = preference_service.set_for_instance(
-        db_session,
-        user_id=current_user.id,
-        instance_id=instance_id,
-        planner_agent_id=planner_agent_id or None,
-    )
-    return PlannerAgentPreferenceResponse(
-        instance_id=str(instance_id),
-        planner_agent_id=updated,
-    )
 
 
 @router.get("/{instance_id}/files", response_model=InstanceFileListResponse)
@@ -695,169 +500,6 @@ def download_instance_agent_doc(
     )
 
 
-@router.post(
-    "",
-    response_model=InstanceItem,
-    status_code=status.HTTP_201_CREATED,
-    responses={400: {"model": InstanceValidationErrorResponse}},
-)
-def create_instance(
-    payload: InstanceWriteRequest,
-    current_user: User = Depends(get_current_user),
-    db_session: Session = Depends(get_session),
-    instance_service: InstanceService = Depends(get_instance_service),
-) -> InstanceItem | JSONResponse:
-    try:
-        instance = instance_service.create_instance(
-            db_session,
-            user_id=current_user.id,
-            payload=InstanceCreateInput(
-                name=payload.name,
-                type=payload.type,
-                endpoint=payload.endpoint,
-                gateway_token=payload.gateway_token,
-            ),
-        )
-    except InstanceValidationFailedError as exc:
-        return _validation_error_response(
-            ok=exc.result.ok,
-            status_text=exc.result.status,
-            message=exc.result.message,
-            code=None if exc.result.code is None else exc.result.code.value,
-        )
-
-    return _instance_to_item(instance)
-
-
-@router.post(
-    "/agent-mount/request",
-    response_model=AgentPairingRequestResponse,
-    responses={400: {"model": InstanceValidationErrorResponse}},
-)
-def request_agent_mount(
-    payload: AgentMountRequestPayload,
-    current_user: User = Depends(get_current_user),
-    db_session: Session = Depends(get_session),
-    pairing_service: AgentSelfPairingService = Depends(get_agent_self_pairing_service),
-) -> AgentPairingRequestResponse | JSONResponse:
-    try:
-        created = pairing_service.start_mount(
-            db_session,
-            payload=AgentMountStartInput(
-                user_id=current_user.id,
-                user_email=current_user.email or "",
-                name=payload.name,
-                type=payload.type,
-                endpoint=payload.endpoint,
-                gateway_token=payload.gateway_token,
-            ),
-        )
-    except AgentSelfPairingUserNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="user email unavailable") from exc
-    except InstanceValidationFailedError as exc:
-        return _validation_error_response(
-            ok=exc.result.ok,
-            status_text=exc.result.status,
-            message=exc.result.message,
-            code=None if exc.result.code is None else exc.result.code.value,
-        )
-
-    return AgentPairingRequestResponse(
-        confirmation_url=created.confirmation_url,
-        expires_at=created.expires_at.isoformat(),
-        expires_in_seconds=created.expires_in_seconds,
-    )
-
-
-@router.post(
-    "/agent-unmount/request",
-    response_model=AgentPairingRequestResponse,
-)
-def request_agent_unmount(
-    payload: AgentUnmountRequestPayload,
-    current_user: User = Depends(get_current_user),
-    db_session: Session = Depends(get_session),
-    pairing_service: AgentSelfPairingService = Depends(get_agent_self_pairing_service),
-) -> AgentPairingRequestResponse:
-    try:
-        created = pairing_service.start_unmount(
-            db_session,
-            payload=AgentUnmountStartInput(
-                user_id=current_user.id,
-                user_email=current_user.email or "",
-                instance_id=UUID(payload.instance_id),
-            ),
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid instance id") from exc
-    except AgentSelfPairingUserNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="user email unavailable") from exc
-    except InstanceNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found") from exc
-
-    return AgentPairingRequestResponse(
-        confirmation_url=created.confirmation_url,
-        expires_at=created.expires_at.isoformat(),
-        expires_in_seconds=created.expires_in_seconds,
-    )
-
-
-@router.post(
-    "/agent-receipts/{token}/confirm",
-    response_model=AgentReceiptConfirmResponse,
-    responses={400: {"model": InstanceValidationErrorResponse}},
-)
-def confirm_agent_receipt(
-    token: str,
-    current_user: User = Depends(get_current_user),
-    db_session: Session = Depends(get_session),
-    pairing_service: AgentSelfPairingService = Depends(get_agent_self_pairing_service),
-) -> AgentReceiptConfirmResponse | JSONResponse:
-    try:
-        confirmed = pairing_service.confirm_receipt(
-            db_session,
-            token=token,
-            current_user=current_user,
-        )
-    except PairingReceiptNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="pairing receipt not found") from exc
-    except PairingReceiptExpiredError as exc:
-        raise HTTPException(status_code=status.HTTP_410_GONE, detail="pairing receipt expired") from exc
-    except PairingReceiptConsumedError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="pairing receipt already consumed") from exc
-    except PairingReceiptEmailMismatchError as exc:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="pairing receipt email mismatch") from exc
-    except InstanceNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found") from exc
-    except InstanceValidationFailedError as exc:
-        return _validation_error_response(
-            ok=exc.result.ok,
-            status_text=exc.result.status,
-            message=exc.result.message,
-            code=None if exc.result.code is None else exc.result.code.value,
-        )
-    except AgentSelfPairingUserNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="user email unavailable") from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid receipt payload") from exc
-
-    if confirmed.action == "mount":
-        return AgentReceiptConfirmResponse(
-            action="mount",
-            mounted=True,
-            unmounted=False,
-            instance=None if confirmed.instance is None else _instance_to_item(confirmed.instance),
-            instance_id=None,
-        )
-    return AgentReceiptConfirmResponse(
-        action="unmount",
-        mounted=False,
-        unmounted=True,
-        instance=None,
-        instance_id=None if confirmed.instance_id is None else str(confirmed.instance_id),
-    )
-
-
 @router.get(
     "/messages",
     response_model=list[UserMessageItem],
@@ -895,209 +537,3 @@ def read_message(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="message not found") from exc
 
     return UserMessageReadResponse(read=True)
-
-
-@router.post(
-    "/validate",
-    response_model=InstanceValidationResponse,
-    responses={400: {"model": InstanceValidationErrorResponse}},
-)
-def validate_instance(
-    payload: InstanceWriteRequest,
-    current_user: User = Depends(get_current_user),
-    db_session: Session = Depends(get_session),
-    instance_service: InstanceService = Depends(get_instance_service),
-) -> InstanceValidationResponse | JSONResponse:
-    result = instance_service.validate_instance(
-        db_session,
-        user_id=current_user.id,
-        payload=InstanceCreateInput(
-            name=payload.name,
-            type=payload.type,
-            endpoint=payload.endpoint,
-            gateway_token=payload.gateway_token,
-        ),
-    )
-    if not result.ok:
-        return _validation_error_response(
-            ok=result.ok,
-            status_text=result.status,
-            message=result.message,
-            code=None if result.code is None else result.code.value,
-        )
-
-    return InstanceValidationResponse(
-        ok=result.ok,
-        status=result.status,
-        message=result.message,
-        code=None if result.code is None else result.code.value,
-    )
-
-
-@router.post(
-    "/pairing-sessions",
-    response_model=PairingSessionResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-def create_pairing_session(
-    payload: PairingSessionCreateRequest,
-    current_user: User = Depends(get_current_user),
-    db_session: Session = Depends(get_session),
-    pairing_session_service: PairingSessionService = Depends(get_pairing_session_service),
-) -> PairingSessionResponse:
-    created = pairing_session_service.create(
-        db_session,
-        user_id=current_user.id,
-        name=payload.name,
-        exp_seconds=payload.exp_seconds,
-    )
-    return _pairing_session_to_response(created)
-
-
-@router.get(
-    "/pairing-sessions/{session_id}",
-    response_model=PairingSessionResponse,
-)
-def get_pairing_session(
-    session_id: UUID,
-    current_user: User = Depends(get_current_user),
-    db_session: Session = Depends(get_session),
-    pairing_session_service: PairingSessionService = Depends(get_pairing_session_service),
-) -> PairingSessionResponse:
-    try:
-        pairing_session = pairing_session_service.get_for_user(
-            db_session,
-            user_id=current_user.id,
-            session_id=session_id,
-        )
-    except PairingSessionNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="pairing session not found") from exc
-    return _pairing_session_to_response(pairing_session)
-
-
-@router.post(
-    "/pairing-sessions/{session_id}/attach",
-    response_model=PairingSessionResponse,
-    responses={400: {"model": InstanceValidationErrorResponse}},
-)
-def attach_pairing_session(
-    session_id: UUID,
-    payload: PairingSessionAttachRequest,
-    db_session: Session = Depends(get_session),
-    pairing_session_service: PairingSessionService = Depends(get_pairing_session_service),
-) -> PairingSessionResponse | JSONResponse:
-    try:
-        paired = pairing_session_service.attach(
-            db_session,
-            session_id=session_id,
-            endpoint=payload.endpoint,
-            gateway_token=payload.gateway_token,
-            name=payload.name,
-        )
-    except PairingSessionNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="pairing session not found") from exc
-    except PairingSessionExpiredError as exc:
-        raise HTTPException(status_code=status.HTTP_410_GONE, detail="pairing session expired") from exc
-    except InstanceValidationFailedError as exc:
-        return _validation_error_response(
-            ok=exc.result.ok,
-            status_text=exc.result.status,
-            message=exc.result.message,
-            code=None if exc.result.code is None else exc.result.code.value,
-        )
-
-    return _pairing_session_to_response(paired)
-
-
-@router.post(
-    "/pairing-sessions/attach-by-code",
-    response_model=PairingSessionResponse,
-    responses={400: {"model": InstanceValidationErrorResponse}},
-)
-def attach_pairing_session_by_code(
-    request: Request,
-    payload: PairingSessionAttachByCodeRequest,
-    db_session: Session = Depends(get_session),
-    pairing_session_service: PairingSessionService = Depends(get_pairing_session_service),
-) -> PairingSessionResponse | JSONResponse:
-    client_host = request.client.host if request.client is not None else ""
-    if client_host is None:
-        client_host = ""
-    try:
-        paired = pairing_session_service.attach_by_short_code(
-            db_session,
-            short_code=payload.short_code,
-            client_ip=client_host,
-            endpoint=payload.endpoint,
-            gateway_token=payload.gateway_token,
-            name=payload.name,
-        )
-    except PairingSessionAttachRateLimitError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="too many failed attach attempts for this short code",
-        ) from exc
-    except PairingSessionNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="pairing session not found") from exc
-    except PairingSessionExpiredError as exc:
-        raise HTTPException(status_code=status.HTTP_410_GONE, detail="pairing session expired") from exc
-    except InstanceValidationFailedError as exc:
-        return _validation_error_response(
-            ok=exc.result.ok,
-            status_text=exc.result.status,
-            message=exc.result.message,
-            code=None if exc.result.code is None else exc.result.code.value,
-        )
-    return _pairing_session_to_response(paired)
-
-
-@router.patch(
-    "/{instance_id}",
-    response_model=InstanceItem,
-    responses={400: {"model": InstanceValidationErrorResponse}},
-)
-def patch_instance(
-    instance_id: UUID,
-    payload: InstancePatchRequest,
-    current_user: User = Depends(get_current_user),
-    db_session: Session = Depends(get_session),
-    instance_service: InstanceService = Depends(get_instance_service),
-) -> InstanceItem | JSONResponse:
-    try:
-        instance = instance_service.update_instance(
-            db_session,
-            user_id=current_user.id,
-            instance_id=instance_id,
-            payload=InstanceUpdateInput(
-                name=payload.name,
-                type=payload.type,
-                endpoint=payload.endpoint,
-                gateway_token=payload.gateway_token,
-            ),
-        )
-    except InstanceNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found") from exc
-    except InstanceValidationFailedError as exc:
-        return _validation_error_response(
-            ok=exc.result.ok,
-            status_text=exc.result.status,
-            message=exc.result.message,
-            code=None if exc.result.code is None else exc.result.code.value,
-        )
-
-    return _instance_to_item(instance)
-
-
-@router.delete("/{instance_id}", response_model=InstanceDeleteResponse)
-def delete_instance(
-    instance_id: UUID,
-    current_user: User = Depends(get_current_user),
-    db_session: Session = Depends(get_session),
-    instance_service: InstanceService = Depends(get_instance_service),
-) -> InstanceDeleteResponse:
-    try:
-        instance_service.delete_instance(db_session, user_id=current_user.id, instance_id=instance_id)
-    except InstanceNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found") from exc
-
-    return InstanceDeleteResponse(deleted=True)

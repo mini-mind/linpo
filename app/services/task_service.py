@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import Task
 from app.services.board_task_realtime import get_board_task_realtime_hub
+from app.services.task_runtime_diagnostics import build_runtime_diagnostic_extras
 
 TaskStatus = Literal["queued", "running", "blocked_by_approval", "failed", "completed"]
 TaskSource = Literal["provider", "flow"]
@@ -152,19 +153,7 @@ class TaskService:
             )
             .order_by(Task.created_at.desc(), Task.id.desc())
         )
-        try:
-            db_filtered_task = db_session.execute(statement).scalars().first()
-            if db_filtered_task is not None:
-                return db_filtered_task
-        except Exception:
-            pass
-
-        # 安全回退：数据库 JSON 过滤失败时，回退到 Python 过滤，确保功能可用。
-        for task in self.list_tasks_for_board(db_session, board_id=board_id):
-            extras = task.extras if isinstance(task.extras, dict) else {}
-            if str(extras.get("dispatch_run_id", "")).strip() == normalized_run_id:
-                return task
-        return None
+        return db_session.execute(statement).scalars().first()
 
     def delete_task(
         self,
@@ -218,7 +207,7 @@ class TaskService:
         return board_id or "default"
 
     def _to_task_payload(self, task: Task) -> dict[str, Any]:
-        extras = task.extras if isinstance(task.extras, dict) else {}
+        extras = build_runtime_diagnostic_extras(task)
         created_at = (
             task.created_at.astimezone(UTC)
             if task.created_at.tzinfo is not None

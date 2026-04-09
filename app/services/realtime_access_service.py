@@ -33,18 +33,23 @@ class RealtimeAccessService:
         if data_source_name != "openclaw":
             return None
 
-        raw_instance_id = websocket.query_params.get("instanceId")
-        if raw_instance_id is None:
-            return None
-
-        try:
-            instance_id = UUID(raw_instance_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail="Invalid instanceId") from exc
-
         current_user = get_authenticated_user(db_session, cast(Any, websocket))
         if current_user is None:
             raise HTTPException(status_code=401, detail="Unauthorized")
+
+        raw_instance_id = websocket.query_params.get("instanceId")
+        if raw_instance_id is None:
+            instance_id = self._resolve_default_instance_id(
+                db_session,
+                current_user=current_user,
+            )
+            if instance_id is None:
+                return None
+        else:
+            try:
+                instance_id = UUID(raw_instance_id)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail="Invalid instanceId") from exc
 
         instance_service = InstanceService()
         try:
@@ -66,12 +71,17 @@ class RealtimeAccessService:
         instance_id: str | None,
     ) -> UUID | None:
         if instance_id is None:
-            return None
-
-        try:
-            parsed_instance_id = UUID(instance_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail="Invalid instanceId") from exc
+            parsed_instance_id = self._resolve_default_instance_id(
+                db_session,
+                current_user=current_user,
+            )
+            if parsed_instance_id is None:
+                return None
+        else:
+            try:
+                parsed_instance_id = UUID(instance_id)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail="Invalid instanceId") from exc
 
         instance_service = InstanceService()
         try:
@@ -84,3 +94,17 @@ class RealtimeAccessService:
             raise HTTPException(status_code=404, detail="Instance not found") from exc
 
         return parsed_instance_id
+
+    def _resolve_default_instance_id(
+        self,
+        db_session: Session,
+        *,
+        current_user: User,
+    ) -> UUID | None:
+        instances = InstanceService().list_instances(
+            db_session,
+            user_id=current_user.id,
+        )
+        if not instances:
+            return None
+        return instances[0].id

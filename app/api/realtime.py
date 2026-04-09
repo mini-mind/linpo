@@ -214,7 +214,7 @@ async def board_tasks_sse(
                 except Empty:
                     yield ": keep-alive\n\n"
                     continue
-                if resolved_instance_id is not None and not _is_board_task_event_visible_for_instance(
+                if not _is_board_task_event_visible_for_instance(
                     cast(dict[str, Any], event),
                     instance_id=resolved_instance_id,
                     known_task_instances=known_task_instances,
@@ -443,9 +443,11 @@ def _error_detail(exc: Exception) -> str:
 def _is_board_task_event_visible_for_instance(
     event: dict[str, Any],
     *,
-    instance_id: UUID,
+    instance_id: UUID | None,
     known_task_instances: dict[str, UUID | None],
 ) -> bool:
+    if instance_id is None:
+        return True
     if event.get("type") != "tasks_changed":
         return True
 

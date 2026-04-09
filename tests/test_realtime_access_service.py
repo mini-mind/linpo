@@ -10,14 +10,19 @@ import app.services.realtime_access_service as realtime_access_module
 
 
 class _FakeInstanceService:
-    def __init__(self, *, should_fail: bool = False) -> None:
+    def __init__(self, *, should_fail: bool = False, instance_ids: list[UUID] | None = None) -> None:
         self._should_fail = should_fail
+        self._instance_ids = instance_ids or []
 
     def get_openclaw_context(self, db_session: object, *, user_id: UUID, instance_id: UUID) -> object:
         del db_session, user_id, instance_id
         if self._should_fail:
             raise InstanceNotFoundError("missing instance")
         return object()
+
+    def list_instances(self, db_session: object, *, user_id: UUID) -> list[SimpleNamespace]:
+        del db_session, user_id
+        return [SimpleNamespace(id=item) for item in self._instance_ids]
 
 
 def test_resolve_sse_instance_id_rejects_invalid_uuid() -> None:
@@ -73,6 +78,27 @@ def test_resolve_sse_instance_id_returns_uuid_when_access_granted(
         object(),
         current_user=current_user,
         instance_id=str(expected),
+    )
+
+    assert result == expected
+
+
+def test_resolve_sse_instance_id_defaults_to_first_owned_instance_when_missing_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = RealtimeAccessService()
+    current_user = SimpleNamespace(id=uuid4())
+    expected = uuid4()
+    monkeypatch.setattr(
+        realtime_access_module,
+        "InstanceService",
+        lambda: _FakeInstanceService(should_fail=False, instance_ids=[expected]),
+    )
+
+    result = service.resolve_sse_instance_id(
+        object(),
+        current_user=current_user,
+        instance_id=None,
     )
 
     assert result == expected

@@ -7,7 +7,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import UserMessage
-from app.services.auth_service import normalize_email
 
 
 def _utc_now() -> datetime:
@@ -19,36 +18,6 @@ class MessageNotFoundError(Exception):
 
 
 class MessageCenterService:
-    def create_pairing_receipt_message(
-        self,
-        db_session: Session,
-        *,
-        user_id: UUID,
-        target_email: str,
-        action: str,
-        payload: dict[str, str],
-        confirmation_url: str,
-    ) -> UserMessage:
-        title = "实例挂载确认" if action == "mount" else "实例卸载确认"
-        body = (
-            "收到新的实例挂载请求，请打开回执链接并在登录状态下确认。"
-            if action == "mount"
-            else "收到新的实例卸载请求，请打开回执链接并在登录状态下确认。"
-        )
-        message = UserMessage(
-            user_id=user_id,
-            target_email=normalize_email(target_email),
-            action=action,
-            payload=payload,
-            title=title,
-            body=body,
-            confirmation_url=confirmation_url,
-            is_read=False,
-        )
-        db_session.add(message)
-        db_session.flush()
-        return message
-
     def list_messages(
         self,
         db_session: Session,

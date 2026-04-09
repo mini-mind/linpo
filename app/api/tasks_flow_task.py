@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-import os
 import re
 from typing import Any
 from uuid import UUID, uuid4
@@ -41,12 +40,13 @@ from app.services.flow_canvas_service import (
     build_layout as build_flow_canvas_layout,
     resolve_layers as resolve_flow_canvas_layers,
 )
-from app.services.provider_application_service import ProviderApplicationService, ProviderExecutionContext
+from app.services.provider_application_service import ProviderApplicationService
 from app.services.task_dispatch_service import TaskDispatchService
 from app.services.task_service import TaskCreateInput, TaskService
 
 router = APIRouter(prefix="/boards/{board_id}/tasks")
-_DEFAULT_PLANNER_AGENT_ID = "planner-default"
+_DEFAULT_PLANNER_AGENT_ID = "main"
+_OPENCLAW_WORKSPACE_PATH_PATTERN = re.compile(r"/(?:home/[^/\s]+|root)/\.openclaw/workspace")
 
 
 @dataclass(frozen=True)
@@ -70,9 +70,6 @@ def _normalize_agent_id(raw: str | None, fallback: str) -> str:
 
 
 def _default_planner_agent_id() -> str:
-    configured = (os.getenv("FLOW_DECOMPOSITION_AGENT_ID") or "").strip()
-    if configured:
-        return configured
     return _DEFAULT_PLANNER_AGENT_ID
 
 
@@ -82,6 +79,14 @@ def _task_requirement_title(task: Task) -> str:
     if requirement_title:
         return requirement_title
     return task.title
+
+
+def _sanitize_flow_summary(summary: str) -> str:
+    text = summary.strip()
+    if text == "":
+        return ""
+    # Hide host-specific runtime workspace path from user-visible kanban summary.
+    return _OPENCLAW_WORKSPACE_PATH_PATTERN.sub("/workspace", text)
 
 
 def _is_flow_interrupted_blocked_task(task: Task) -> bool:
@@ -193,6 +198,35 @@ def _sorted_board_tasks(
     )
 
 
+def _resolve_requested_or_default_instance_id(
+    *,
+    raw_instance_id: str | None,
+    db_session: Session,
+    current_user: User,
+    instance_service: InstanceService,
+) -> UUID:
+    normalized = (raw_instance_id or "").strip()
+    if normalized != "":
+        try:
+            requested_instance_id = UUID(normalized)
+            instance_service.get_openclaw_context(
+                db_session,
+                user_id=current_user.id,
+                instance_id=requested_instance_id,
+            )
+            return requested_instance_id
+        except (ValueError, InstanceNotFoundError):
+            pass
+
+    instances = instance_service.list_instances(
+        db_session,
+        user_id=current_user.id,
+    )
+    if not instances:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found")
+    return instances[0].id
+
+
 def _build_task_dispatch_service(
     *,
     task_service: TaskService,
@@ -294,11 +328,12 @@ def confirm_flow(
     provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
 ) -> FlowConfirmResponse:
     normalized_board_id = board_id.strip() or "default"
-
-    try:
-        default_instance_uuid = UUID(payload.instance_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid instance_id") from exc
+    default_instance_uuid = _resolve_requested_or_default_instance_id(
+        raw_instance_id=payload.instance_id,
+        db_session=db_session,
+        current_user=current_user,
+        instance_service=instance_service,
+    )
 
     executor_agent_id = payload.executor_agent_id.strip()
     if not executor_agent_id:
@@ -306,37 +341,15 @@ def confirm_flow(
     if len(payload.nodes) == 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="empty_flow_nodes")
 
-    requested_instance_by_node_id: dict[str, UUID] = {}
-    requested_instance_ids: set[UUID] = {default_instance_uuid}
-    for canvas_node in payload.nodes:
-        candidate_instance_id = (canvas_node.instance_id or "").strip()
-        if candidate_instance_id == "":
-            continue
-        try:
-            node_instance_uuid = UUID(candidate_instance_id)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid node instance_id for node {canvas_node.id}",
-            ) from exc
-        requested_instance_by_node_id[canvas_node.id] = node_instance_uuid
-        requested_instance_ids.add(node_instance_uuid)
-
-    execution_context_by_instance_id: dict[UUID, ProviderExecutionContext] = {}
-    for instance_id in requested_instance_ids:
-        try:
-            instance_context = instance_service.get_openclaw_context(
-                db_session,
-                user_id=current_user.id,
-                instance_id=instance_id,
-            )
-        except InstanceNotFoundError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found") from exc
-        execution_context_by_instance_id[instance_id] = provider_application_service.build_execution_context(
-            instance_context
+    try:
+        instance_context = instance_service.get_openclaw_context(
+            db_session,
+            user_id=current_user.id,
+            instance_id=default_instance_uuid,
         )
-
-    default_execution_context = execution_context_by_instance_id[default_instance_uuid]
+    except InstanceNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found") from exc
+    default_execution_context = provider_application_service.build_execution_context(instance_context)
     manager_agent_id = _normalize_agent_id(payload.manager_agent_id, executor_agent_id)
     planner_session_key = (
         payload.planner_session_key.strip()
@@ -399,7 +412,7 @@ def confirm_flow(
         for node_id in layer_node_ids:
             node = node_by_id[node_id]
             assigned_agent_id = node_agent_id_by_id.get(node.id, executor_agent_id)
-            assigned_instance_uuid = requested_instance_by_node_id.get(node.id, default_instance_uuid)
+            assigned_instance_uuid = default_instance_uuid
             assigned_instance_id = str(assigned_instance_uuid)
             execution_session_key = f"{execution_session_prefix}:{assigned_instance_id}:{assigned_agent_id}:{node.id}"
             task = task_service.create_task(
@@ -408,7 +421,7 @@ def confirm_flow(
                     user_id=current_user.id,
                     instance_id=assigned_instance_uuid,
                     title=node.title,
-                    summary=node.description.strip() or f"来自流程拆解节点 {node.id}",
+                    summary=_sanitize_flow_summary(node.description) or f"来自流程拆解节点 {node.id}",
                     status="queued",
                     source="flow",
                     agent_id=assigned_agent_id,
@@ -417,7 +430,7 @@ def confirm_flow(
                         f"flow_node: {node.id}",
                         f"layer: L{layer_index + 1}",
                         "dispatch_status: pending",
-                        f"description: {node.description.strip() or 'none'}",
+                        f"description: {_sanitize_flow_summary(node.description) or 'none'}",
                     ],
                     extras={
                         "requirement_id": flow_id,
@@ -495,7 +508,7 @@ def confirm_flow(
         layers=layers,
         agent_id=executor_agent_id,
         agent_id_by_node=agent_id_by_node,
-        instance_id=payload.instance_id,
+        instance_id=str(default_instance_uuid),
         instance_id_by_node=instance_id_by_node,
         status_by_node_id=status_by_node_id,
     )
@@ -815,15 +828,6 @@ def sync_requirement(
         node_title = node.title.strip() or node_id
         node_description = (node.description or "").strip()
         resolved_instance_uuid = default_instance_id
-        candidate_instance_id = (node.instance_id or "").strip()
-        if candidate_instance_id != "":
-            try:
-                resolved_instance_uuid = UUID(candidate_instance_id)
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid node instance_id for node {node_id}",
-                ) from exc
         resolved_instance_id = str(resolved_instance_uuid) if resolved_instance_uuid is not None else ""
         assigned_agent_id = (node.agent_id or "").strip() or default_agent_id
         assigned_agent_name = f"Agent {assigned_agent_id}" if assigned_agent_id else "待分配"
@@ -863,7 +867,7 @@ def sync_requirement(
             else:
                 extras["dispatch_status"] = base_dispatch_status
             existing_task.title = node_title
-            existing_task.summary = node_description or f"来自流程拆解节点 {node_id}"
+            existing_task.summary = _sanitize_flow_summary(node_description) or f"来自流程拆解节点 {node_id}"
             existing_task.instance_id = resolved_instance_uuid
             existing_task.agent_id = assigned_agent_id
             existing_task.agent_name = assigned_agent_name
@@ -882,7 +886,7 @@ def sync_requirement(
                 user_id=current_user.id,
                 instance_id=resolved_instance_uuid,
                 title=node_title,
-                summary=node_description or f"来自流程拆解节点 {node_id}",
+                summary=_sanitize_flow_summary(node_description) or f"来自流程拆解节点 {node_id}",
                 status=base_status,
                 source="flow",
                 agent_id=assigned_agent_id,
@@ -891,7 +895,7 @@ def sync_requirement(
                     f"flow_node: {node_id}",
                     f"layer: L{max(1, node.layer)}",
                     f"dispatch_status: {base_dispatch_status}",
-                    f"description: {node_description or 'none'}",
+                    f"description: {_sanitize_flow_summary(node_description) or 'none'}",
                 ],
                 extras={
                     "requirement_id": normalized_requirement_id,

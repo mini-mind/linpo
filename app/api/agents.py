@@ -135,6 +135,7 @@ def _http_exception_response(exc: HTTPException) -> JSONResponse:
 
 
 RequestOpenClawContext = ProviderExecutionContext
+_DEFAULT_INSTANCE_SCOPED_DATA_SOURCE = "openclaw"
 
 
 def get_request_openclaw_context(
@@ -144,15 +145,15 @@ def get_request_openclaw_context(
     instance_service: InstanceService = Depends(get_instance_service),
     provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
 ) -> RequestOpenClawContext | None:
-    if instance_id is None:
-        current_user = get_authenticated_user(db_session, request)
-        if current_user is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="instanceId is required")
-
     current_user = get_authenticated_user(db_session, request)
     if current_user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+
+    if instance_id is None:
+        instances = instance_service.list_instances(db_session, user_id=current_user.id)
+        if not instances:
+            return None
+        instance_id = instances[0].id
 
     try:
         instance_context = instance_service.get_openclaw_context(
@@ -171,8 +172,11 @@ def _resolve_observer_data_source(
     data_source: str | None,
     request_context: RequestOpenClawContext | None,
 ):
+    resolved_data_source = data_source
+    if resolved_data_source is None and request_context is not None:
+        resolved_data_source = _DEFAULT_INSTANCE_SCOPED_DATA_SOURCE
     return provider_application_service.resolve_observer_data_source(
-        data_source,
+        resolved_data_source,
         request_context,
     )
 

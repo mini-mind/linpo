@@ -50,6 +50,7 @@ from app.services.task_callback_security import (
     validate_task_callback_signature as validate_task_callback_signature_service,
 )
 from app.services.task_dispatch_service import TaskDispatchService
+from app.services.task_runtime_diagnostics import build_runtime_diagnostic_extras
 from app.services.task_service import TaskCreateInput, TaskService
 
 router = APIRouter(prefix="/boards/{board_id}/tasks")
@@ -70,7 +71,7 @@ def _normalize_task_source(value: str) -> TaskSource:
 
 
 def _to_task_item(task: Task) -> TaskItem:
-    extras = task.extras if isinstance(task.extras, dict) else {}
+    extras = build_runtime_diagnostic_extras(task)
     board_id = str(extras.get("board_id", "default"))
     return TaskItem(
         id=str(task.id),
@@ -208,6 +209,33 @@ def _sorted_board_tasks(
         instance_id=instance_id,
     )
     return sorted(tasks, key=lambda item: (item.created_at, item.id))
+
+
+def _resolve_requested_or_default_instance_id(
+    *,
+    db_session: Session,
+    current_user: User,
+    instance_service: InstanceService,
+    requested_instance_id: UUID | None,
+) -> UUID | None:
+    if requested_instance_id is not None:
+        try:
+            instance_service.get_openclaw_context(
+                db_session,
+                user_id=current_user.id,
+                instance_id=requested_instance_id,
+            )
+        except InstanceNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found") from exc
+        return requested_instance_id
+
+    instances = instance_service.list_instances(
+        db_session,
+        user_id=current_user.id,
+    )
+    if not instances:
+        return None
+    return instances[0].id
 
 
 def _build_task_dispatch_service(
@@ -599,40 +627,44 @@ def list_tasks(
     provider_application_service: ProviderApplicationService = Depends(get_provider_application_service),
 ) -> list[TaskItem]:
     normalized_board_id = board_id.strip() or "default"
-    if instance_id is not None:
-        try:
-            instance_context = instance_service.get_openclaw_context(
+    resolved_instance_id = _resolve_requested_or_default_instance_id(
+        db_session=db_session,
+        current_user=current_user,
+        instance_service=instance_service,
+        requested_instance_id=instance_id,
+    )
+
+    if resolved_instance_id is not None:
+        instance_context = instance_service.get_openclaw_context(
+            db_session,
+            user_id=current_user.id,
+            instance_id=resolved_instance_id,
+        )
+        execution_context = provider_application_service.build_execution_context(instance_context)
+        dispatch_service = _build_task_dispatch_service(
+            task_service=task_service,
+            provider_application_service=provider_application_service,
+            instance_service=instance_service,
+        )
+        if dispatch_service.reconcile_stale_running_tasks(
+            db_session,
+            user_id=current_user.id,
+            board_id=normalized_board_id,
+            instance_id=resolved_instance_id,
+        ).changed:
+            dispatch_service.dispatch_queue_once(
                 db_session,
-                user_id=current_user.id,
-                instance_id=instance_id,
-            )
-            execution_context = provider_application_service.build_execution_context(instance_context)
-            dispatch_service = _build_task_dispatch_service(
-                task_service=task_service,
-                provider_application_service=provider_application_service,
-                instance_service=instance_service,
-            )
-            if dispatch_service.reconcile_stale_running_tasks(
-                db_session,
+                execution_context=execution_context,
                 user_id=current_user.id,
                 board_id=normalized_board_id,
-                instance_id=instance_id,
-            ).changed:
-                dispatch_service.dispatch_queue_once(
-                    db_session,
-                    execution_context=execution_context,
-                    user_id=current_user.id,
-                    board_id=normalized_board_id,
-                    instance_id=instance_id,
-                )
-        except InstanceNotFoundError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found") from exc
+                instance_id=resolved_instance_id,
+            )
 
     tasks = task_service.list_tasks(
         db_session,
         user_id=current_user.id,
         board_id=normalized_board_id,
-        instance_id=instance_id,
+        instance_id=resolved_instance_id,
     )
     return [_to_task_item(task) for task in tasks]
 

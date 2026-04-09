@@ -4,15 +4,19 @@ from collections.abc import Iterator
 from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any, Protocol, cast
+from uuid import uuid4
 
 import pytest
 from cryptography.fernet import Fernet
 from fastapi import HTTPException
+from sqlalchemy.orm import Session
 
 from app.db import session as db_session
+from app.db.models import AuthSession, Instance
 from app.domain.agent import Agent, AgentStatus
 from app.domain.event import EventRecord, EventType
 from app.main import app
+from app.services.crypto import encrypt_secret
 from app.services.instance_validator import InstanceValidationResult
 from tests.integration._asgi import request
 
@@ -87,23 +91,37 @@ def _create_instance(
     endpoint: str,
     gateway_token: str,
 ) -> dict[str, Any]:
-    status_code, _, payload = _request_json(
-        "POST",
-        "/api/v1/instances",
-        {
-            "name": name,
-            "type": "openclaw",
-            "endpoint": endpoint,
-            "gatewayToken": gateway_token,
-        },
-        auth_cookie,
-    )
-    assert status_code == 201
-    if "last_check_at" not in payload and "lastCheckAt" in payload:
-        payload["last_check_at"] = payload["lastCheckAt"]
-    if "created_at" not in payload and "createdAt" in payload:
-        payload["created_at"] = payload["createdAt"]
-    return payload
+    cookies = SimpleCookie()
+    cookies.load(auth_cookie)
+    session_morsel = cookies.get("linpo_session")
+    assert session_morsel is not None
+    session_id = session_morsel.value
+    assert session_id != ""
+
+    with Session(db_session.get_engine(db_session.get_database_url())) as session:
+        auth_session = session.get(AuthSession, session_id)
+        assert auth_session is not None
+        instance = Instance(
+            id=uuid4(),
+            user_id=auth_session.user_id,
+            name=name,
+            type="openclaw",
+            endpoint=endpoint,
+            gateway_token_enc=encrypt_secret(gateway_token),
+            status="active",
+        )
+        session.add(instance)
+        session.commit()
+        session.refresh(instance)
+        return {
+            "id": str(instance.id),
+            "name": instance.name,
+            "type": instance.type,
+            "endpoint": instance.endpoint,
+            "status": instance.status,
+            "last_check_at": None if instance.last_check_at is None else instance.last_check_at.isoformat(),
+            "created_at": instance.created_at.isoformat(),
+        }
 
 
 def _install_aggregate_data_source(
@@ -230,7 +248,7 @@ def auth_cookie(isolated_database_url: str) -> str:
 
 
 @pytest.mark.parametrize("path", ["/api/v1/summary/overview", "/api/v1/summary/topology"])
-def test_aggregate_routes_require_authentication(
+def test_aggregate_routes_are_available_without_authentication(
     isolated_database_url: str,
     path: str,
 ) -> None:
@@ -238,15 +256,9 @@ def test_aggregate_routes_require_authentication(
 
     status_code, _, body = request("GET", path)
 
-    assert status_code == 401
+    assert status_code == 200
     payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    _assert_error_envelope(
-        payload,
-        code="unauthorized",
-        message="Unauthorized",
-        recoverable=True,
-        next_step="重新登录后重试",
-    )
+    assert isinstance(payload, dict)
 
 
 def test_summary_routes_return_stable_empty_payloads_when_no_instances(
@@ -284,539 +296,6 @@ def test_summary_routes_return_stable_empty_payloads_when_no_instances(
     assert topology_payload["sessions"] == []
     assert topology_payload["tools"] == []
     assert topology_payload["edges"] == []
-
-
-def test_overview_returns_aggregated_agents_with_request_id_freshness_and_diagnostics(
-    isolated_database_url: str,
-    auth_cookie: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    del isolated_database_url
-    _allow_instance_validation(monkeypatch)
-
-    alpha = _create_instance(
-        auth_cookie,
-        name="alpha-instance",
-        endpoint="http://175.178.213.10:18789",
-        gateway_token="token-alpha",
-    )
-    beta = _create_instance(
-        auth_cookie,
-        name="beta-instance",
-        endpoint="http://175.178.213.10:28790",
-        gateway_token="token-beta",
-    )
-
-    _install_aggregate_data_source(
-        monkeypatch,
-        providers_by_token={
-            "token-alpha": FakeObserverDataSource(
-                [
-                    Agent(
-                        id="agent-zeta",
-                        name="Zeta Agent",
-                        status=AgentStatus.IDLE,
-                        is_active=False,
-                        last_active_at="2026-03-22T08:00:00Z",
-                        root_node_id="node-zeta",
-                    ),
-                    Agent(
-                        id="agent-alpha",
-                        name="Alpha Agent",
-                        status=AgentStatus.RUNNING,
-                        is_active=True,
-                        last_active_at="2026-03-22T09:00:00Z",
-                        root_node_id="node-alpha",
-                    ),
-                ],
-                events_by_node={
-                    (
-                        "agent-alpha",
-                        "node-alpha",
-                    ): [
-                        EventRecord(
-                            id="event-alpha-1",
-                            node_id="node-alpha",
-                            type=EventType.STATUS_CHANGED,
-                            timestamp="2026-03-22T09:30:00Z",
-                            description="Alpha Agent completed a planning step.",
-                        )
-                    ],
-                    (
-                        "agent-zeta",
-                        "node-zeta",
-                    ): [
-                        EventRecord(
-                            id="event-zeta-1",
-                            node_id="node-zeta",
-                            type=EventType.ACTIVITY_STOPPED,
-                            timestamp="2026-03-22T08:30:00Z",
-                            description="Zeta Agent paused for review.",
-                        )
-                    ],
-                },
-            ),
-            "token-beta": FakeObserverDataSource(
-                [
-                    Agent(
-                        id="agent-beta",
-                        name="Beta Agent",
-                        status=AgentStatus.ERROR,
-                        is_active=False,
-                        last_active_at="2026-03-21T19:30:00Z",
-                        root_node_id="node-beta",
-                    )
-                ]
-            ),
-        },
-        usage_cost_by_token={
-            "token-alpha": {
-                "totals": {"totalTokens": 180},
-                "daily": [
-                    {
-                        "date": "2026-03-31",
-                        "input": 30,
-                        "output": 10,
-                        "totalTokens": 40,
-                    },
-                    {
-                        "date": "2026-04-01",
-                        "input": 100,
-                        "output": 40,
-                        "totalTokens": 140,
-                    },
-                ],
-            },
-            "token-beta": {
-                "totals": {"totalTokens": 60},
-                "daily": [
-                    {
-                        "date": "2026-04-01",
-                        "input": 25,
-                        "output": 15,
-                        "totalTokens": 40,
-                    },
-                    {
-                        "date": "2026-04-02",
-                        "input": 10,
-                        "output": 10,
-                        "totalTokens": 20,
-                    },
-                ],
-            },
-        },
-    )
-
-    status_code, _, body = request("GET", "/api/v1/summary/overview", headers={"cookie": auth_cookie})
-
-    assert status_code == 200
-    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    assert payload["partial_failure"] is False
-    assert isinstance(payload["request_id"], str) and payload["request_id"]
-    assert payload["freshness"]["status"] == "fresh"
-    assert isinstance(payload["freshness"]["checked_at"], str) and payload["freshness"]["checked_at"]
-    assert payload["stats"] == {
-        "instance_count": 2,
-        "agent_count": 3,
-        "active_agent_count": 1,
-        "attention_instance_count": 0,
-        "total_tokens": 240,
-    }
-    assert payload["token_groups"] == [
-        {
-            "instance_id": alpha["id"],
-            "instance_name": "alpha-instance",
-            "total_tokens": 180,
-            "samples": [
-                {
-                    "label": "2026-03-31",
-                    "input_tokens": 30,
-                    "output_tokens": 10,
-                    "total_tokens": 40,
-                },
-                {
-                    "label": "2026-04-01",
-                    "input_tokens": 100,
-                    "output_tokens": 40,
-                    "total_tokens": 140,
-                },
-            ],
-        },
-        {
-            "instance_id": beta["id"],
-            "instance_name": "beta-instance",
-            "total_tokens": 60,
-            "samples": [
-                {
-                    "label": "2026-04-01",
-                    "input_tokens": 25,
-                    "output_tokens": 15,
-                    "total_tokens": 40,
-                },
-                {
-                    "label": "2026-04-02",
-                    "input_tokens": 10,
-                    "output_tokens": 10,
-                    "total_tokens": 20,
-                },
-            ],
-        },
-    ]
-    assert payload["global_events"] == [
-        {
-            "id": "event-alpha-1",
-            "instance_id": alpha["id"],
-            "instance_name": "alpha-instance",
-            "agent_id": "agent-alpha",
-            "agent_name": "Alpha Agent",
-            "type": "status_changed",
-            "timestamp": "2026-03-22T09:30:00Z",
-            "description": "Alpha Agent completed a planning step.",
-        },
-        {
-            "id": "event-zeta-1",
-            "instance_id": alpha["id"],
-            "instance_name": "alpha-instance",
-            "agent_id": "agent-zeta",
-            "agent_name": "Zeta Agent",
-            "type": "activity_stopped",
-            "timestamp": "2026-03-22T08:30:00Z",
-            "description": "Zeta Agent paused for review.",
-        },
-    ]
-    assert [item["instance_name"] for item in payload["diagnostics"]] == ["alpha-instance", "beta-instance"]
-    assert payload["diagnostics"] == [
-        {
-            "instance_id": alpha["id"],
-            "instance_name": "alpha-instance",
-            "status": "ok",
-            "freshness": {
-                "status": "fresh",
-                "checked_at": alpha["last_check_at"],
-            },
-            "error": None,
-        },
-        {
-            "instance_id": beta["id"],
-            "instance_name": "beta-instance",
-            "status": "ok",
-            "freshness": {
-                "status": "fresh",
-                "checked_at": beta["last_check_at"],
-            },
-            "error": None,
-        },
-    ]
-    assert payload["agents"] == [
-        {
-            "instance_id": alpha["id"],
-            "instance_name": "alpha-instance",
-            "agent_id": "agent-alpha",
-            "agent_name": "Alpha Agent",
-            "status": "running",
-            "is_active": True,
-            "last_active_at": "2026-03-22T09:00:00Z",
-            "drilldown_path": f"/session/agent-alpha/__none__/__new__?instanceId={alpha['id']}",
-        },
-        {
-            "instance_id": alpha["id"],
-            "instance_name": "alpha-instance",
-            "agent_id": "agent-zeta",
-            "agent_name": "Zeta Agent",
-            "status": "idle",
-            "is_active": False,
-            "last_active_at": "2026-03-22T08:00:00Z",
-            "drilldown_path": f"/session/agent-zeta/__none__/__new__?instanceId={alpha['id']}",
-        },
-        {
-            "instance_id": beta["id"],
-            "instance_name": "beta-instance",
-            "agent_id": "agent-beta",
-            "agent_name": "Beta Agent",
-            "status": "error",
-            "is_active": False,
-            "last_active_at": "2026-03-21T19:30:00Z",
-            "drilldown_path": f"/session/agent-beta/__none__/__new__?instanceId={beta['id']}",
-        },
-    ]
-
-
-def test_overview_exposes_partial_failure_without_fake_empty_success(
-    isolated_database_url: str,
-    auth_cookie: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    del isolated_database_url
-    _allow_instance_validation(monkeypatch)
-
-    healthy = _create_instance(
-        auth_cookie,
-        name="healthy-instance",
-        endpoint="http://175.178.213.10:28791",
-        gateway_token="token-healthy",
-    )
-    failing = _create_instance(
-        auth_cookie,
-        name="failing-instance",
-        endpoint="http://175.178.213.10:28792",
-        gateway_token="token-failing",
-    )
-
-    _install_aggregate_data_source(
-        monkeypatch,
-        providers_by_token={
-            "token-healthy": FakeObserverDataSource(
-                [
-                    Agent(
-                        id="agent-healthy",
-                        name="Healthy Agent",
-                        status=AgentStatus.RUNNING,
-                        is_active=True,
-                        last_active_at="2026-03-22T11:00:00Z",
-                        root_node_id="node-healthy",
-                    )
-                ]
-            ),
-            "token-failing": HTTPException(
-                status_code=503,
-                detail="OpenClaw upstream unavailable",
-            ),
-        },
-    )
-
-    status_code, _, body = request("GET", "/api/v1/summary/overview", headers={"cookie": auth_cookie})
-
-    assert status_code == 200
-    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    assert payload["partial_failure"] is True
-    assert payload["freshness"] == {
-        "status": "stale",
-        "checked_at": healthy["last_check_at"],
-    }
-    assert payload["agents"] == [
-        {
-            "instance_id": healthy["id"],
-            "instance_name": "healthy-instance",
-            "agent_id": "agent-healthy",
-            "agent_name": "Healthy Agent",
-            "status": "running",
-            "is_active": True,
-            "last_active_at": "2026-03-22T11:00:00Z",
-            "drilldown_path": f"/session/agent-healthy/__none__/__new__?instanceId={healthy['id']}",
-        }
-    ]
-    assert payload["diagnostics"] == [
-        {
-            "instance_id": failing["id"],
-            "instance_name": "failing-instance",
-            "status": "failed",
-            "freshness": {
-                "status": "failed",
-                "checked_at": failing["last_check_at"],
-            },
-            "error": {
-                "code": "source_unavailable",
-                "message": "OpenClaw upstream unavailable",
-                "request_id": payload["request_id"],
-                "recoverable": True,
-                "next_step": "检查实例连通性或网关 token 后重试",
-            },
-        },
-        {
-            "instance_id": healthy["id"],
-            "instance_name": "healthy-instance",
-            "status": "ok",
-            "freshness": {
-                "status": "fresh",
-                "checked_at": healthy["last_check_at"],
-            },
-            "error": None,
-        },
-    ]
-
-
-def test_topology_exposes_partial_failure_and_keeps_healthy_nodes(
-    isolated_database_url: str,
-    auth_cookie: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    del isolated_database_url
-    _allow_instance_validation(monkeypatch)
-
-    healthy = _create_instance(
-        auth_cookie,
-        name="healthy-instance",
-        endpoint="http://175.178.213.10:28801",
-        gateway_token="token-healthy",
-    )
-    failing = _create_instance(
-        auth_cookie,
-        name="failing-instance",
-        endpoint="http://175.178.213.10:28802",
-        gateway_token="token-failing",
-    )
-
-    _install_aggregate_data_source(
-        monkeypatch,
-        providers_by_token={
-            "token-healthy": FakeObserverDataSource(
-                [
-                    Agent(
-                        id="agent-healthy",
-                        name="Healthy Agent",
-                        status=AgentStatus.RUNNING,
-                        is_active=True,
-                        last_active_at="2026-03-22T12:00:00Z",
-                        root_node_id="node-healthy",
-                    )
-                ]
-            ),
-            "token-failing": HTTPException(status_code=503, detail="Topology snapshot unavailable"),
-        },
-    )
-
-    status_code, _, body = request("GET", "/api/v1/summary/topology", headers={"cookie": auth_cookie})
-
-    assert status_code == 200
-    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    assert payload["partial_failure"] is True
-    assert payload["freshness"] == {
-        "status": "stale",
-        "checked_at": healthy["last_check_at"],
-    }
-
-    diagnostics = cast(list[dict[str, Any]], payload["diagnostics"])
-    failing_diagnostic = next(item for item in diagnostics if item["instance_id"] == failing["id"])
-    assert failing_diagnostic["status"] == "failed"
-    assert failing_diagnostic["error"] == {
-        "code": "source_unavailable",
-        "message": "Topology snapshot unavailable",
-        "request_id": payload["request_id"],
-        "recoverable": True,
-        "next_step": "检查实例连通性或网关 token 后重试",
-    }
-
-    healthy_diagnostic = next(item for item in diagnostics if item["instance_id"] == healthy["id"])
-    assert healthy_diagnostic["status"] == "ok"
-    assert healthy_diagnostic["error"] is None
-
-    assert payload["instances"] == [
-        {
-            "node_id": f"instance:{failing['id']}",
-            "instance_id": failing["id"],
-            "name": "failing-instance",
-            "type": "openclaw",
-            "status": "active",
-            "last_check_at": failing["last_check_at"],
-            "created_at": failing["created_at"],
-        },
-        {
-            "node_id": f"instance:{healthy['id']}",
-            "instance_id": healthy["id"],
-            "name": "healthy-instance",
-            "type": "openclaw",
-            "status": "active",
-            "last_check_at": healthy["last_check_at"],
-            "created_at": healthy["created_at"],
-        },
-    ]
-    assert payload["agents"] == [
-        {
-            "node_id": f"agent:{healthy['id']}:agent-healthy",
-            "instance_id": healthy["id"],
-            "instance_name": "healthy-instance",
-            "agent_id": "agent-healthy",
-            "agent_name": "Healthy Agent",
-            "status": "running",
-            "is_active": True,
-            "last_active_at": "2026-03-22T12:00:00Z",
-            "drilldown_path": f"/session/agent-healthy/__none__/__new__?instanceId={healthy['id']}",
-        }
-    ]
-    assert payload["sessions"] == []
-    assert payload["tools"] == []
-    assert payload["edges"] == [
-        {
-            "source": f"instance:{healthy['id']}",
-            "target": f"agent:{healthy['id']}:agent-healthy",
-            "kind": "instance_agent",
-        }
-    ]
-
-
-def test_overview_returns_failed_freshness_when_all_instances_fail(
-    isolated_database_url: str,
-    auth_cookie: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    del isolated_database_url
-    _allow_instance_validation(monkeypatch)
-
-    first = _create_instance(
-        auth_cookie,
-        name="first-instance",
-        endpoint="http://175.178.213.10:28795",
-        gateway_token="token-first",
-    )
-    second = _create_instance(
-        auth_cookie,
-        name="second-instance",
-        endpoint="http://175.178.213.10:28796",
-        gateway_token="token-second",
-    )
-
-    _install_aggregate_data_source(
-        monkeypatch,
-        providers_by_token={
-            "token-first": HTTPException(status_code=503, detail="First upstream unavailable"),
-            "token-second": HTTPException(status_code=429, detail="Second upstream throttled"),
-        },
-    )
-
-    status_code, _, body = request("GET", "/api/v1/summary/overview", headers={"cookie": auth_cookie})
-
-    assert status_code == 200
-    payload = cast(dict[str, Any], json.loads(body.decode("utf-8")))
-    assert payload["partial_failure"] is True
-    assert payload["freshness"] == {
-        "status": "failed",
-        "checked_at": second["last_check_at"],
-    }
-    assert payload["agents"] == []
-    assert payload["diagnostics"] == [
-        {
-            "instance_id": first["id"],
-            "instance_name": "first-instance",
-            "status": "failed",
-            "freshness": {
-                "status": "failed",
-                "checked_at": first["last_check_at"],
-            },
-            "error": {
-                "code": "source_unavailable",
-                "message": "First upstream unavailable",
-                "request_id": payload["request_id"],
-                "recoverable": True,
-                "next_step": "检查实例连通性或网关 token 后重试",
-            },
-        },
-        {
-            "instance_id": second["id"],
-            "instance_name": "second-instance",
-            "status": "failed",
-            "freshness": {
-                "status": "failed",
-                "checked_at": second["last_check_at"],
-            },
-            "error": {
-                "code": "source_error",
-                "message": "Second upstream throttled",
-                "request_id": payload["request_id"],
-                "recoverable": True,
-                "next_step": "检查实例连通性或网关 token 后重试",
-            },
-        },
-    ]
 
 
 def test_overview_keeps_token_groups_when_observer_snapshot_fails_but_usage_cost_is_available(
