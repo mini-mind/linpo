@@ -60,7 +60,6 @@ type SummaryEventItem = {
 };
 
 type SummaryEventFilter = 'all' | 'approval' | 'execution' | 'topology' | 'agent' | 'exception';
-type ApprovalInstanceOption = { id: string; name: string };
 type ApprovalTaskView = {
   task: KanbanTaskItem;
   instanceId: string | null;
@@ -81,7 +80,6 @@ export function SummaryPage(): JSX.Element {
   const [overviewError, setOverviewError] = useState<Error | null>(null);
   const [tasksError, setTasksError] = useState<string | null>(null);
   const [continuingTaskId, setContinuingTaskId] = useState<string | null>(null);
-  const [approvalInstanceFilter, setApprovalInstanceFilter] = useState('all');
   const [selectedTokenSeriesIds, setSelectedTokenSeriesIds] = useState<string[]>([]);
   const [eventQuery, setEventQuery] = useState('');
   const [eventPage, setEventPage] = useState(1);
@@ -396,7 +394,7 @@ export function SummaryPage(): JSX.Element {
     [tasks]
   );
 
-  const approvalInstanceOptions = useMemo(() => {
+  const approvalInstanceNameById = useMemo(() => {
     const map = new Map<string, string>();
     for (const item of overview?.diagnostics ?? []) {
       const instanceId = item.instance_id.trim();
@@ -414,37 +412,13 @@ export function SummaryPage(): JSX.Element {
       const instanceName = item.instance_name.trim() || instanceId;
       map.set(instanceId, instanceName);
     }
-    return Array.from(map.entries())
-      .map(([id, name]) => ({ id, name }))
-      .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'));
+    return map;
   }, [overview?.agents, overview?.diagnostics]);
-
-  const approvalInstanceNameById = useMemo(
-    () => new Map(approvalInstanceOptions.map((item) => [item.id, item.name])),
-    [approvalInstanceOptions]
-  );
 
   const approvalTaskViews = useMemo<ApprovalTaskView[]>(
     () => approvalTasks.map((task) => ({ task, ...resolveApprovalTaskInstance(task, approvalInstanceNameById) })),
     [approvalInstanceNameById, approvalTasks]
   );
-
-  const filteredApprovalTaskViews = useMemo(() => {
-    if (approvalInstanceFilter === 'all') {
-      return approvalTaskViews;
-    }
-    return approvalTaskViews.filter((view) => view.instanceId === approvalInstanceFilter);
-  }, [approvalInstanceFilter, approvalTaskViews]);
-
-  useEffect(() => {
-    if (approvalInstanceFilter === 'all') {
-      return;
-    }
-    const hasSelectedInstance = approvalInstanceOptions.some((item) => item.id === approvalInstanceFilter);
-    if (!hasSelectedInstance) {
-      setApprovalInstanceFilter('all');
-    }
-  }, [approvalInstanceFilter, approvalInstanceOptions]);
 
   const metric = useMemo(
     () => buildSummaryMetric(overview?.token_groups ?? [], tasks),
@@ -608,13 +582,10 @@ export function SummaryPage(): JSX.Element {
             />
             <div style={getBodyLayoutStyle(isMobile)}>
               <ApprovalPane
-                approvalTaskViews={filteredApprovalTaskViews}
-                approvalInstanceFilter={approvalInstanceFilter}
-                approvalInstanceOptions={approvalInstanceOptions}
+                approvalTaskViews={approvalTaskViews}
                 tasksError={tasksError}
                 continuingTaskId={continuingTaskId}
                 onContinueTask={handleContinueTask}
-                onApprovalInstanceFilterChange={setApprovalInstanceFilter}
                 isMobile={isMobile}
               />
               {!isMobile ? (
@@ -767,21 +738,15 @@ function SummaryChart({
 
 function ApprovalPane({
   approvalTaskViews,
-  approvalInstanceFilter,
-  approvalInstanceOptions,
   tasksError,
   continuingTaskId,
   onContinueTask,
-  onApprovalInstanceFilterChange,
   isMobile,
 }: {
   approvalTaskViews: ApprovalTaskView[];
-  approvalInstanceFilter: string;
-  approvalInstanceOptions: ApprovalInstanceOption[];
   tasksError: string | null;
   continuingTaskId: string | null;
   onContinueTask: (taskId: string, instanceId?: string | null) => void;
-  onApprovalInstanceFilterChange: (value: string) => void;
   isMobile: boolean;
 }): JSX.Element {
   return (
@@ -791,22 +756,6 @@ function ApprovalPane({
           <h2 style={sectionTitleStyle}>审批项</h2>
           <p style={sectionHintStyle}>集中处理被敏感操作阻塞的任务节点。</p>
         </div>
-        <label style={approvalFilterWrapStyle}>
-          <span style={srOnlyStyle}>筛选审批实例</span>
-          <select
-            aria-label="筛选审批实例"
-            value={approvalInstanceFilter}
-            onChange={(event) => onApprovalInstanceFilterChange(event.target.value)}
-            style={approvalFilterSelectStyle}
-          >
-            <option value="all">全部实例</option>
-            {approvalInstanceOptions.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name}
-              </option>
-            ))}
-          </select>
-        </label>
       </div>
 
       {tasksError ? <div style={inlineErrorStyle}>{tasksError}</div> : null}

@@ -6,17 +6,15 @@ import {
   buildInstanceFileDownloadUrl,
   listInstanceAgentDocs,
   listInstanceFiles,
-  listInstances,
+  resolveSingleInstance,
   previewInstanceAgentDoc,
   previewInstanceFile,
 } from '../api/instanceClient';
 import type {
   InstanceAgentDocItem,
   InstanceFileItem,
-  InstanceItem,
   TaskOutputPreviewResponse,
 } from '../api/types';
-import { useCurrentInstanceId } from '../hooks/useCurrentInstance';
 import { useDraggableFab } from '../hooks/useDraggableFab';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
@@ -74,9 +72,11 @@ type PathTreeNode = {
 export function InstanceFilesPage(): JSX.Element {
   const isMobile = useIsMobile(960);
   const { addToast } = useToast();
-  const [currentInstanceId, setCurrentInstanceId] = useCurrentInstanceId();
-  const [instances, setInstances] = useState<InstanceItem[]>([]);
-  const [selectedInstanceId, setSelectedInstanceId] = useState('');
+  const [currentInstance, setCurrentInstance] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+  const [instanceConfigHint, setInstanceConfigHint] = useState<string | null>(null);
   const [taskItems, setTaskItems] = useState<InstanceFileItem[]>([]);
   const [agentDocs, setAgentDocs] = useState<InstanceAgentDocItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -92,10 +92,7 @@ export function InstanceFilesPage(): JSX.Element {
   const sidebarResizeStateRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
   const filesFab = useDraggableFab('linpo.mobile_fab.instance_files_sidebar', { x: 16, y: 88 });
 
-  const selectedInstance = useMemo(
-    () => instances.find((item) => item.id === selectedInstanceId) ?? null,
-    [instances, selectedInstanceId]
-  );
+  const currentInstanceId = currentInstance?.id ?? '';
   const selectedTaskFile = useMemo(
     () =>
       selectedResource?.kind === 'task'
@@ -111,29 +108,30 @@ export function InstanceFilesPage(): JSX.Element {
     [agentDocs, selectedResource]
   );
 
-  const loadInstancesData = useCallback(async () => {
+  const loadInstanceContext = useCallback(async () => {
     try {
-      const data = await listInstances();
-      setInstances(data);
-      setSelectedInstanceId((current) => {
-        const fromCurrent = current.trim();
-        if (fromCurrent && data.some((item) => item.id === fromCurrent)) {
-          return fromCurrent;
-        }
-        const preferred = currentInstanceId ?? '';
-        if (preferred && data.some((item) => item.id === preferred)) {
-          return preferred;
-        }
-        return data[0]?.id ?? '';
-      });
+      const { instance, total } = await resolveSingleInstance();
+      if (instance) {
+        setCurrentInstance({ id: instance.id, name: instance.name });
+        setInstanceConfigHint(null);
+        return;
+      }
+      setCurrentInstance(null);
+      if (total <= 0) {
+        setInstanceConfigHint('未检测到可用实例。请先在服务端配置 1 个实例后刷新。');
+      } else {
+        setInstanceConfigHint('检测到多个实例。开源版仅支持单实例，请在服务端仅保留 1 个实例。');
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : '读取实例失败';
       addToast(message, 'error');
+      setCurrentInstance(null);
+      setInstanceConfigHint('读取实例配置失败，请检查后端实例配置并重试。');
     }
-  }, [addToast, currentInstanceId]);
+  }, [addToast]);
 
   const loadFiles = useCallback(async () => {
-    const instanceId = selectedInstanceId.trim();
+    const instanceId = currentInstanceId.trim();
     if (!instanceId) {
       setTaskItems([]);
       setAgentDocs([]);
@@ -161,21 +159,14 @@ export function InstanceFilesPage(): JSX.Element {
     } finally {
       setIsLoading(false);
     }
-  }, [keyword, selectedInstanceId]);
+  }, [currentInstanceId, keyword]);
 
   useEffect(() => {
-    void loadInstancesData();
-  }, [loadInstancesData]);
+    void loadInstanceContext();
+  }, [loadInstanceContext]);
 
   useEffect(() => {
-    if (!selectedInstanceId.trim()) {
-      return;
-    }
-    setCurrentInstanceId(selectedInstanceId);
-  }, [selectedInstanceId, setCurrentInstanceId]);
-
-  useEffect(() => {
-    if (!selectedInstanceId.trim()) {
+    if (!currentInstanceId.trim()) {
       return;
     }
     const timer = window.setTimeout(() => {
@@ -184,10 +175,10 @@ export function InstanceFilesPage(): JSX.Element {
     return () => {
       window.clearTimeout(timer);
     };
-  }, [loadFiles, selectedInstanceId]);
+  }, [currentInstanceId, loadFiles]);
 
   useEffect(() => {
-    const instanceId = selectedInstanceId.trim();
+    const instanceId = currentInstanceId.trim();
     if (!instanceId || !selectedResource) {
       setPreview(null);
       setPreviewError(null);
@@ -236,43 +227,43 @@ export function InstanceFilesPage(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [selectedAgentDoc, selectedInstanceId, selectedResource, selectedTaskFile]);
+  }, [currentInstanceId, selectedAgentDoc, selectedResource, selectedTaskFile]);
 
   const inlineUrl = useMemo(() => {
-    if (!selectedInstanceId.trim()) {
+    if (!currentInstanceId.trim()) {
       return '';
     }
     if (selectedResource?.kind === 'task' && selectedTaskFile) {
-      return buildInstanceFileDownloadUrl(selectedInstanceId, selectedTaskFile.task_id, selectedTaskFile.path, {
+      return buildInstanceFileDownloadUrl(currentInstanceId, selectedTaskFile.task_id, selectedTaskFile.path, {
         boardId: DEFAULT_BOARD_ID,
         download: false,
       });
     }
     if (selectedResource?.kind === 'agent-doc' && selectedAgentDoc) {
-      return buildInstanceAgentDocDownloadUrl(selectedInstanceId, selectedAgentDoc.agent_id, selectedAgentDoc.name, {
+      return buildInstanceAgentDocDownloadUrl(currentInstanceId, selectedAgentDoc.agent_id, selectedAgentDoc.name, {
         download: false,
       });
     }
     return '';
-  }, [selectedAgentDoc, selectedInstanceId, selectedResource, selectedTaskFile]);
+  }, [currentInstanceId, selectedAgentDoc, selectedResource, selectedTaskFile]);
 
   const downloadUrl = useMemo(() => {
-    if (!selectedInstanceId.trim()) {
+    if (!currentInstanceId.trim()) {
       return '';
     }
     if (selectedResource?.kind === 'task' && selectedTaskFile) {
-      return buildInstanceFileDownloadUrl(selectedInstanceId, selectedTaskFile.task_id, selectedTaskFile.path, {
+      return buildInstanceFileDownloadUrl(currentInstanceId, selectedTaskFile.task_id, selectedTaskFile.path, {
         boardId: DEFAULT_BOARD_ID,
         download: true,
       });
     }
     if (selectedResource?.kind === 'agent-doc' && selectedAgentDoc) {
-      return buildInstanceAgentDocDownloadUrl(selectedInstanceId, selectedAgentDoc.agent_id, selectedAgentDoc.name, {
+      return buildInstanceAgentDocDownloadUrl(currentInstanceId, selectedAgentDoc.agent_id, selectedAgentDoc.name, {
         download: true,
       });
     }
     return '';
-  }, [selectedAgentDoc, selectedInstanceId, selectedResource, selectedTaskFile]);
+  }, [currentInstanceId, selectedAgentDoc, selectedResource, selectedTaskFile]);
 
   const resourceItems = useMemo(() => {
     const merged: SidebarResourceItem[] = [];
@@ -310,8 +301,8 @@ export function InstanceFilesPage(): JSX.Element {
   }, [agentDocs, taskItems]);
 
   const pathTree = useMemo(
-    () => buildPathTree(resourceItems, selectedInstance?.name ?? ''),
-    [resourceItems, selectedInstance?.name]
+    () => buildPathTree(resourceItems, currentInstance?.name ?? ''),
+    [currentInstance?.name, resourceItems]
   );
 
   useEffect(() => {
@@ -403,28 +394,26 @@ export function InstanceFilesPage(): JSX.Element {
     >
       <section style={sidebarHeaderStyle}>
         <div style={isMobile ? { ...sidebarControlRowStyle, ...sidebarControlRowMobileStyle } : sidebarControlRowStyle}>
-          <select
-            value={selectedInstanceId}
-            onChange={(event) => setSelectedInstanceId(event.target.value)}
-            style={isMobile ? { ...controlStyle, ...controlMobileStyle } : controlStyle}
-            aria-label="选择实例"
+          <div
+            style={isMobile ? { ...controlStyle, ...controlMobileStyle, display: 'flex', alignItems: 'center' } : { ...controlStyle, display: 'flex', alignItems: 'center' }}
+            aria-label="当前实例"
           >
-            {instances.length === 0 ? <option value="">暂无实例</option> : null}
-            {instances.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name}
-              </option>
-            ))}
-          </select>
+            {currentInstance ? `实例：${currentInstance.name}` : '实例：未配置'}
+          </div>
           <button
             type="button"
             style={isMobile ? { ...buttonStyle, ...buttonMobileStyle } : buttonStyle}
-            onClick={() => void loadFiles()}
+            onClick={() => {
+              void loadInstanceContext().then(() => {
+                void loadFiles();
+              });
+            }}
             disabled={isLoading}
           >
             {isLoading ? '刷新中...' : '刷新'}
           </button>
         </div>
+        {instanceConfigHint ? <p style={hintTextStyle}>{instanceConfigHint}</p> : null}
         <input
           value={keyword}
           onChange={(event) => setKeyword(event.target.value)}
@@ -477,7 +466,7 @@ export function InstanceFilesPage(): JSX.Element {
           </div>
           <div style={isMobile ? { ...metaGridStyle, ...metaGridMobileStyle } : metaGridStyle}>
             <span style={isMobile ? { ...metaItemStyle, ...metaItemMobileStyle } : metaItemStyle}>
-              实例：{selectedInstance?.name ?? '-'}
+              实例：{currentInstance?.name ?? '-'}
             </span>
             <span style={isMobile ? { ...metaItemStyle, ...metaItemMobileStyle } : metaItemStyle}>
               类型：{selectedTaskFile ? '产出' : '配置'}

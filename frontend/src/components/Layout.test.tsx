@@ -1,10 +1,8 @@
 import '@testing-library/jest-dom';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-const mockListInstances = vi.fn(async () => [{ id: 'inst-1' }]);
 
 vi.mock('../hooks/useToast', () => ({
   useToast: () => ({
@@ -13,14 +11,8 @@ vi.mock('../hooks/useToast', () => ({
   }),
 }));
 
-vi.mock('../api/instanceClient', () => ({
-  listInstances: () => mockListInstances(),
-}));
-
 vi.mock('./AccountMenu', () => ({
-  AccountMenu: ({ openInstanceListSignal }: { openInstanceListSignal?: number }) => (
-    <div data-testid="account-menu" data-open-instance-signal={String(openInstanceListSignal ?? 0)} />
-  ),
+  AccountMenu: () => <div data-testid="account-menu" />,
 }));
 
 import { Layout } from './Layout';
@@ -33,7 +25,6 @@ function renderLayout(initialPath = '/kanban') {
           <Route path="/kanban" element={<div>看板内容</div>} />
           <Route path="/flow/edit/:flowId" element={<div>流程编辑内容</div>} />
           <Route path="/instance-files" element={<div>文件内容</div>} />
-          <Route path="/pairing" element={<div>接入内容</div>} />
         </Route>
       </Routes>
     </MemoryRouter>
@@ -43,8 +34,6 @@ function renderLayout(initialPath = '/kanban') {
 describe('Layout', () => {
   beforeEach(() => {
     window.localStorage.clear();
-    mockListInstances.mockReset();
-    mockListInstances.mockResolvedValue([{ id: 'inst-1' }]);
   });
 
   it('renders toolbar and main shell', () => {
@@ -115,11 +104,4 @@ describe('Layout', () => {
     window.innerWidth = originalWidth;
   });
 
-  it('triggers auto-open instance modal when entering kanban without instances', async () => {
-    mockListInstances.mockResolvedValueOnce([]);
-    renderLayout('/kanban');
-    await waitFor(() => {
-      expect(screen.getByTestId('account-menu')).toHaveAttribute('data-open-instance-signal', '1');
-    });
-  });
 });

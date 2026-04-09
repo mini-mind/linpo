@@ -5,19 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let mockUsername = 'alice';
 let mockAvatarUrl: string | null = null;
-const mockLogout = vi.fn(async () => {});
-const mockAddToast = vi.fn();
 
 vi.mock('../hooks/useAuth', () => ({
   useAuth: () => ({
     user: { id: 'u-1', username: mockUsername, avatar_url: mockAvatarUrl },
-    logout: mockLogout,
-  }),
-}));
-
-vi.mock('../hooks/useToast', () => ({
-  useToast: () => ({
-    addToast: mockAddToast,
   }),
 }));
 
@@ -26,24 +17,20 @@ vi.mock('../api/messageClient', () => ({
   readUserMessage: vi.fn(async () => ({ read: true })),
 }));
 
-vi.mock('./InstanceListModal', () => ({
-  InstanceListModal: ({ open }: { open: boolean }) => (open ? <div>实例列表弹窗</div> : null),
+vi.mock('./MessageCenterModal', () => ({
+  MessageCenterModal: () => null,
 }));
 
 vi.mock('./UserProfileModal', () => ({
   UserProfileModal: ({ open }: { open: boolean }) => (open ? <div>用户信息弹窗</div> : null),
 }));
 
-vi.mock('./PlannerAgentModal', () => ({
-  PlannerAgentModal: ({ open }: { open: boolean }) => (open ? <div>Planner Agent弹窗</div> : null),
-}));
-
 import { AccountMenu } from './AccountMenu';
 
-function renderMenu(openInstanceListSignal?: number): void {
+function renderMenu(): void {
   render(
     <MemoryRouter>
-      <AccountMenu triggerVariant="icon" openInstanceListSignal={openInstanceListSignal} />
+      <AccountMenu triggerVariant="icon" />
     </MemoryRouter>
   );
 }
@@ -56,8 +43,6 @@ describe('AccountMenu avatar trigger text', () => {
   beforeEach(() => {
     mockUsername = 'alice';
     mockAvatarUrl = null;
-    mockLogout.mockClear();
-    mockAddToast.mockClear();
     vi.restoreAllMocks();
   });
 
@@ -102,33 +87,6 @@ describe('AccountMenu avatar trigger text', () => {
     expect(screen.getByText('用户信息弹窗')).toBeInTheDocument();
   });
 
-  it('opens instance list modal from instance menu item', async () => {
-    renderMenu();
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '打开账户菜单' }));
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByRole('menuitem', { name: '实例' }));
-    });
-    expect(screen.getByText('实例列表弹窗')).toBeInTheDocument();
-  });
-
-  it('opens planner agent modal from menu item', async () => {
-    renderMenu();
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '打开账户菜单' }));
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByRole('menuitem', { name: 'Planner Agent' }));
-    });
-    expect(screen.getByText('Planner Agent弹窗')).toBeInTheDocument();
-  });
-
-  it('opens instance list modal when auto-open signal arrives', async () => {
-    renderMenu(1);
-    expect(await screen.findByText('实例列表弹窗')).toBeInTheDocument();
-  });
-
   it('does not render instance files menu item in account dropdown', async () => {
     renderMenu();
     await act(async () => {
@@ -137,35 +95,11 @@ describe('AccountMenu avatar trigger text', () => {
     expect(screen.queryByRole('menuitem', { name: '实例文件' })).not.toBeInTheDocument();
   });
 
-  it('confirms before logout and skips logout when cancelled', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+  it('does not render logout menu item in private deployment mode', async () => {
     renderMenu();
-
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: '打开账户菜单' }));
     });
-    await act(async () => {
-      fireEvent.click(screen.getByRole('menuitem', { name: '退出登录' }));
-    });
-
-    expect(confirmSpy).toHaveBeenCalledWith('确认退出登录吗？');
-    expect(mockLogout).not.toHaveBeenCalled();
-    expect(mockAddToast).not.toHaveBeenCalled();
-  });
-
-  it('logs out after confirmation', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    renderMenu();
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '打开账户菜单' }));
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByRole('menuitem', { name: '退出登录' }));
-    });
-
-    expect(confirmSpy).toHaveBeenCalledWith('确认退出登录吗？');
-    expect(mockLogout).toHaveBeenCalledTimes(1);
-    expect(mockAddToast).toHaveBeenCalledWith('已退出登录', 'success');
+    expect(screen.queryByRole('menuitem', { name: '退出登录' })).not.toBeInTheDocument();
   });
 });

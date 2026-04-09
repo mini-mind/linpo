@@ -4,7 +4,6 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { Layout, RedirectToSummary } from './components/Layout';
 import { AuthProvider } from './hooks/useAuth';
 import { ToastProvider } from './hooks/useToast';
-import { ProtectedRoute, PublicRoute } from './routes';
 
 const rootElement = document.getElementById('root');
 
@@ -12,14 +11,6 @@ if (!rootElement) {
   throw new Error('Root element not found');
 }
 
-const LoginPage = lazy(() =>
-  import('./components/LoginPage').then((module) => ({ default: module.LoginPage }))
-);
-const PairingReceiptConfirmPage = lazy(() =>
-  import('./components/PairingReceiptConfirmPage').then((module) => ({
-    default: module.PairingReceiptConfirmPage,
-  }))
-);
 const SummaryPage = lazy(() =>
   import('./components/SummaryPage').then((module) => ({ default: module.SummaryPage }))
 );
@@ -39,22 +30,16 @@ function App(): JSX.Element {
         <BrowserRouter>
           <Suspense fallback={<RouteFallback />}>
             <Routes>
-              <Route element={<PublicRoute />}>
-                <Route path="/login" element={<LoginPage />} />
+              <Route path="/" element={<Layout />}>
+                <Route index element={<RedirectToSummary />} />
+                <Route path="summary" element={<SummaryPage />} />
+                <Route path="kanban" element={<CollabPage />} />
+                <Route path="flow" element={<Navigate to="/flow/edit/new" replace />} />
+                <Route path="flow/edit/:flowId" element={<FlowPage />} />
+                <Route path="files" element={<InstanceFilesPage />} />
+                <Route path="instance-files" element={<Navigate to="/files" replace />} />
               </Route>
-              <Route element={<ProtectedRoute />}>
-                <Route path="/pairing/receipt/:token" element={<PairingReceiptConfirmPage />} />
-                <Route path="/" element={<Layout />}>
-                  <Route index element={<RedirectToSummary />} />
-                  <Route path="summary" element={<SummaryPage />} />
-                  <Route path="kanban" element={<CollabPage />} />
-                  <Route path="flow" element={<Navigate to="/flow/edit/new" replace />} />
-                  <Route path="flow/edit/:flowId" element={<FlowPage />} />
-                  <Route path="instance-files" element={<InstanceFilesPage />} />
-                  <Route path="*" element={<Navigate to="/summary" replace />} />
-                </Route>
-              </Route>
-              <Route path="*" element={<Navigate to="/login" replace />} />
+              <Route path="*" element={<Navigate to="/summary" replace />} />
             </Routes>
           </Suspense>
         </BrowserRouter>

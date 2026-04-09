@@ -1,7 +1,3 @@
-/**
- * Auth context and hook for managing authentication state
- * Provides: user, loading, login, logout, refresh
- */
 import type React from 'react';
 import {
   createContext,
@@ -15,25 +11,13 @@ import {
 } from 'react';
 import {
   getCurrentUser,
-  login,
-  logout,
-  register,
-  type LoginCredentials,
-  type RegisterCredentials,
   type User,
-  AuthError,
 } from '../api/authClient';
-import { clearStoredCurrentInstanceId } from './useCurrentInstance';
 
 export interface AuthState {
   user: User | null;
   loading: boolean;
-  error: string | null;
-  login: (credentials: LoginCredentials) => Promise<void>;
-  register: (credentials: RegisterCredentials) => Promise<void>;
-  logout: () => Promise<void>;
   refresh: () => Promise<void>;
-  clearError: () => void;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -45,7 +29,6 @@ interface AuthProviderProps {
 export function AuthProvider({ children }: AuthProviderProps): JSX.Element {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const initialCheckDone = useRef(false);
 
   const refresh = useCallback(async () => {
@@ -53,97 +36,24 @@ export function AuthProvider({ children }: AuthProviderProps): JSX.Element {
       const currentUser = await getCurrentUser();
       setUser(currentUser);
     } catch {
-      clearStoredCurrentInstanceId();
       setUser(null);
     }
   }, []);
 
-  // Check auth status on mount
   useEffect(() => {
     if (initialCheckDone.current) return;
     initialCheckDone.current = true;
-    
+
     refresh().finally(() => setLoading(false));
   }, [refresh]);
-
-  const handleLogin = useCallback(async (credentials: LoginCredentials) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const loggedInUser = await login(credentials);
-      clearStoredCurrentInstanceId();
-      setUser(loggedInUser);
-    } catch (e) {
-      if (e instanceof AuthError) {
-        // Map error codes to Chinese messages
-        const messageMap: Record<string, string> = {
-          unauthorized: '账号或密码错误',
-          conflict: '用户名已存在',
-          network_error: '网络错误，请重试',
-          unknown: '登录失败，请重试',
-        };
-        setError(messageMap[e.code] || e.message);
-      } else {
-        setError('登录失败，请重试');
-      }
-      throw e;
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const handleRegister = useCallback(async (credentials: RegisterCredentials) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const newUser = await register(credentials);
-      clearStoredCurrentInstanceId();
-      setUser(newUser);
-    } catch (e) {
-      if (e instanceof AuthError) {
-        const messageMap: Record<string, string> = {
-          unauthorized: '未登录',
-          conflict: '用户名或邮箱已存在',
-          network_error: '网络错误，请重试',
-          unknown: '注册失败，请重试',
-        };
-        setError(messageMap[e.code] || e.message);
-      } else {
-        setError('注册失败，请重试');
-      }
-      throw e;
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const handleLogout = useCallback(async () => {
-    setLoading(true);
-    try {
-      await logout();
-      clearStoredCurrentInstanceId();
-      setUser(null);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const clearError = useCallback(() => {
-    setError(null);
-  }, []);
 
   const value = useMemo(
     () => ({
       user,
       loading,
-      error,
-      login: handleLogin,
-      register: handleRegister,
-      logout: handleLogout,
       refresh,
-      clearError,
     }),
-    [user, loading, error, handleLogin, handleRegister, handleLogout, refresh, clearError]
+    [user, loading, refresh]
   );
 
   return createElement(AuthContext.Provider, { value }, children);

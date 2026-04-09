@@ -9,16 +9,7 @@ import type {
   InstanceFileItem,
   InstanceFileListResponse,
   InstanceItem,
-  PairingSession,
-  PairingSessionCreateRequest,
-  PairingSessionBoundInstance,
-  InstanceWriteRequest,
-  InstancePatchRequest,
-  InstanceValidationResponse,
-  InstanceValidationErrorResponse,
-  InstanceDeleteResponse,
   TaskOutputPreviewResponse,
-  PlannerAgentPreferenceResponse,
 } from './types';
 import { API_BASE_URL } from './apiBaseUrl';
 import { buildApiError } from './client';
@@ -69,34 +60,6 @@ function normalizeInstanceAgentDocItem(payload: unknown): InstanceAgentDocItem {
   };
 }
 
-function normalizePairingSessionBoundInstance(payload: unknown): PairingSessionBoundInstance | null {
-  if (!payload || typeof payload !== 'object') {
-    return null;
-  }
-  const record = payload as Record<string, unknown>;
-  return {
-    id: String(record.id ?? ''),
-    name: String(record.name ?? ''),
-    endpoint: String(record.endpoint ?? ''),
-    status: String(record.status ?? ''),
-  };
-}
-
-function normalizePairingSession(payload: unknown): PairingSession {
-  const record = (payload && typeof payload === 'object') ? (payload as Record<string, unknown>) : {};
-  const instance = normalizePairingSessionBoundInstance(record.instance);
-  return {
-    sessionId: String(record.sessionId ?? record.session_id ?? ''),
-    name: String(record.name ?? ''),
-    shortCode: String(record.shortCode ?? record.short_code ?? ''),
-    pairingUrl: String(record.pairingUrl ?? record.pairing_url ?? ''),
-    status: String(record.status ?? ''),
-    expiresAt: (record.expiresAt as string | null | undefined) ?? (record.expires_at as string | null | undefined) ?? null,
-    instanceId: (record.instanceId as string | null | undefined) ?? (record.instance_id as string | null | undefined) ?? null,
-    instance,
-  };
-}
-
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
@@ -119,82 +82,18 @@ export async function listInstances(): Promise<InstanceItem[]> {
   return Array.isArray(payload) ? payload.map((item) => normalizeInstanceItem(item)) : [];
 }
 
-export async function createInstance(payload: InstanceWriteRequest): Promise<InstanceItem> {
-  const created = await fetchApi<unknown>('/api/v1/instances', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-  return normalizeInstanceItem(created);
-}
-
-export async function createPairingSession(payload: PairingSessionCreateRequest): Promise<PairingSession> {
-  const created = await fetchApi<unknown>('/api/v1/instances/pairing-sessions', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-  return normalizePairingSession(created);
-}
-
-export async function getPairingSession(sessionId: string): Promise<PairingSession> {
-  const detail = await fetchApi<unknown>(`/api/v1/instances/pairing-sessions/${encodeURIComponent(sessionId)}`);
-  return normalizePairingSession(detail);
-}
-
-export async function validateInstance(
-  payload: InstanceWriteRequest
-): Promise<InstanceValidationResponse> {
-  return fetchApi<InstanceValidationResponse>('/api/v1/instances/validate', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-}
-
-export async function updateInstance(
-  instanceId: string,
-  payload: InstancePatchRequest
-): Promise<InstanceItem> {
-  const updated = await fetchApi<unknown>(`/api/v1/instances/${instanceId}`, {
-    method: 'PATCH',
-    body: JSON.stringify(payload),
-  });
-  return normalizeInstanceItem(updated);
-}
-
-function normalizePlannerAgentPreference(payload: unknown): PlannerAgentPreferenceResponse {
-  const record = (payload && typeof payload === 'object') ? (payload as Record<string, unknown>) : {};
+export async function resolveSingleInstance(): Promise<{ instance: InstanceItem | null; total: number }> {
+  const instances = await listInstances();
+  if (instances.length !== 1) {
+    return {
+      instance: null,
+      total: instances.length,
+    };
+  }
   return {
-    instanceId: String(record.instanceId ?? record.instance_id ?? ''),
-    plannerAgentId: (record.plannerAgentId as string | null | undefined) ?? (record.planner_agent_id as string | null | undefined) ?? null,
+    instance: instances[0],
+    total: 1,
   };
-}
-
-export async function getInstancePlannerAgentPreference(
-  instanceId: string
-): Promise<PlannerAgentPreferenceResponse> {
-  const detail = await fetchApi<unknown>(
-    `/api/v1/instances/${encodeURIComponent(instanceId)}/planner-agent`
-  );
-  return normalizePlannerAgentPreference(detail);
-}
-
-export async function updateInstancePlannerAgentPreference(
-  instanceId: string,
-  plannerAgentId: string | null
-): Promise<PlannerAgentPreferenceResponse> {
-  const updated = await fetchApi<unknown>(
-    `/api/v1/instances/${encodeURIComponent(instanceId)}/planner-agent`,
-    {
-      method: 'PATCH',
-      body: JSON.stringify({ plannerAgentId }),
-    }
-  );
-  return normalizePlannerAgentPreference(updated);
-}
-
-export async function deleteInstance(instanceId: string): Promise<InstanceDeleteResponse> {
-  return fetchApi<InstanceDeleteResponse>(`/api/v1/instances/${instanceId}`, {
-    method: 'DELETE',
-  });
 }
 
 export async function listInstanceFiles(
@@ -314,10 +213,4 @@ export function buildInstanceFileDownloadUrl(
     params.set('download', 'true');
   }
   return `${API_BASE_URL}/api/v1/instances/${encodeURIComponent(instanceId)}/files/download?${params.toString()}`;
-}
-
-export function isValidationError(
-  response: InstanceValidationResponse | InstanceValidationErrorResponse
-): response is InstanceValidationErrorResponse {
-  return !response.ok;
 }

@@ -13,68 +13,6 @@ export interface InstanceItem {
   created_at: string;
 }
 
-export interface InstanceWriteRequest {
-  name: string;
-  type: string;
-  endpoint: string;
-  gatewayToken: string;
-}
-
-export type PairingSessionStatus = 'pending' | 'attached' | 'bound' | 'expired' | 'failed';
-
-export interface PairingSessionCreateRequest {
-  name: string;
-  expSeconds?: number;
-}
-
-export interface PairingSessionBoundInstance {
-  id: string;
-  name: string;
-  endpoint: string;
-  status: string;
-}
-
-export interface PairingSession {
-  sessionId: string;
-  name: string;
-  shortCode: string;
-  pairingUrl: string;
-  status: PairingSessionStatus | string;
-  expiresAt: string | null;
-  instanceId: string | null;
-  instance: PairingSessionBoundInstance | null;
-}
-
-export interface InstancePatchRequest {
-  name?: string;
-  type?: string;
-  endpoint?: string;
-  gatewayToken?: string;
-}
-
-export interface PlannerAgentPreferenceResponse {
-  instanceId: string;
-  plannerAgentId: string | null;
-}
-
-export interface InstanceValidationResponse {
-  ok: boolean;
-  status: string;
-  message: string;
-  code?: string | null;
-}
-
-export interface InstanceValidationErrorResponse {
-  ok: boolean;
-  status: string;
-  message: string;
-  code?: string | null;
-}
-
-export interface InstanceDeleteResponse {
-  deleted: boolean;
-}
-
 export interface InstanceFileItem {
   id: string;
   task_id: string;
@@ -136,17 +74,7 @@ export interface FreshnessInfo {
   checked_at: string | null;
 }
 
-export type InstanceValidationErrorCode =
-  | 'invalid_endpoint'
-  | 'unsafe_endpoint'
-  | 'connect_failed'
-  | 'auth_failed'
-  | 'protocol_failed'
-  | 'unsupported_type'
-  | 'instance_limit_exceeded';
-
 export type ErrorCode =
-  | InstanceValidationErrorCode
   | 'unauthorized'
   | 'invalid_request'
   | 'not_found'

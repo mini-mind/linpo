@@ -17,8 +17,6 @@ const flowPageMockRegistry = vi.hoisted(() => ({
   mockUpsertFlowDraftRecord: vi.fn(),
   mockCreateBoardTasksSseClient: vi.fn(),
   mockCreateFlowPlannerSseClient: vi.fn(),
-  mockGetInstancePlannerAgentPreference: vi.fn(),
-  mockUpdateInstancePlannerAgentPreference: vi.fn(),
 }));
 
 export function getFlowPageMockRegistry() {
@@ -52,14 +50,5 @@ vi.mock('../api/realtimeClient', async () => {
     ...actual,
     createBoardTasksSseClient: flowPageMockRegistry.mockCreateBoardTasksSseClient,
     createFlowPlannerSseClient: flowPageMockRegistry.mockCreateFlowPlannerSseClient,
-  };
-});
-
-vi.mock('../api/instanceClient', async () => {
-  const actual = await vi.importActual<typeof import('../api/instanceClient')>('../api/instanceClient');
-  return {
-    ...actual,
-    getInstancePlannerAgentPreference: flowPageMockRegistry.mockGetInstancePlannerAgentPreference,
-    updateInstancePlannerAgentPreference: flowPageMockRegistry.mockUpdateInstancePlannerAgentPreference,
   };
 });

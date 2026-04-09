@@ -3,6 +3,9 @@ function normalizeApiBaseUrl(raw: string): string {
 }
 
 function inferDefaultApiBaseUrl(): string {
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin;
+  }
   return 'http://localhost:8000';
 }
 

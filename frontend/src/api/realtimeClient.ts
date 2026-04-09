@@ -1,4 +1,3 @@
-import { resolveCurrentInstanceId } from '../hooks/useCurrentInstance';
 import { resolveRequiredApiBaseUrl } from './apiBaseUrl';
 import {
   type FlowChatMessageItem,
@@ -210,9 +209,12 @@ function toWebSocketUrl(
   const url = new URL(OBSERVER_WS_PATH, apiBaseUrl);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   url.searchParams.set('data_source', dataSource);
-  const resolvedInstanceId = disableInstanceContext ? null : resolveCurrentInstanceId(instanceId);
-  if (resolvedInstanceId) {
-    url.searchParams.set('instanceId', resolvedInstanceId);
+  if (disableInstanceContext) {
+    return url.toString();
+  }
+  const normalizedInstanceId = typeof instanceId === 'string' ? instanceId.trim() : '';
+  if (normalizedInstanceId) {
+    url.searchParams.set('instanceId', normalizedInstanceId);
   }
   return url.toString();
 }

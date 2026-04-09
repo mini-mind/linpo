@@ -14,7 +14,6 @@ import {
   previewKanbanTaskOutput,
   stopFlowRequirement,
 } from '../api/client';
-import { listInstances } from '../api/instanceClient';
 import {
   createBoardTasksSseClient,
   type BoardRealtimeMessage,
@@ -24,7 +23,6 @@ import type {
   AggregateOverviewAgentItem,
   FlowCanvasEdge,
   FlowCanvasNode,
-  InstanceItem,
   ObserverRealtimeMessage,
   KanbanTaskItem,
   SessionPreviewItem,
@@ -53,7 +51,6 @@ import {
   type TaskDetailTab,
   type TaskOutputEntry,
 } from './collabTaskDetailModal';
-import { useCurrentInstanceId } from '../hooks/useCurrentInstance';
 import { useDraggableFab } from '../hooks/useDraggableFab';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
@@ -86,10 +83,8 @@ const KANBAN_BOARD_REALTIME_ID = 'default';
 export default function CollabPage(): JSX.Element {
   const isMobile = useIsMobile(960);
   const { addToast } = useToast();
-  const [currentInstanceId, setCurrentInstanceId] = useCurrentInstanceId();
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window === 'undefined' ? 1280 : window.innerWidth));
   const [overview, setOverview] = useState<AggregateOverviewResponse | null>(null);
-  const [instances, setInstances] = useState<InstanceItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [taskRecords, setTaskRecords] = useState<BoardTask[]>([]);
@@ -133,16 +128,6 @@ export default function CollabPage(): JSX.Element {
     };
   }, []);
 
-  const loadInstancesData = useCallback(async () => {
-    try {
-      const data = await listInstances();
-      setInstances(data);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '获取实例列表失败';
-      addToast(message, 'error');
-    }
-  }, [addToast]);
-
   const loadOverview = useCallback(async () => {
     try {
       setLoading(true);
@@ -162,12 +147,8 @@ export default function CollabPage(): JSX.Element {
   }, []);
 
   useEffect(() => {
-    void loadInstancesData();
-  }, [loadInstancesData]);
-
-  useEffect(() => {
     void loadOverview();
-  }, [currentInstanceId, loadOverview]);
+  }, [loadOverview]);
 
   const applyBoardRealtimeUpdate = useCallback((message: BoardRealtimeMessage) => {
     if (message.type === 'error') {
@@ -217,7 +198,6 @@ export default function CollabPage(): JSX.Element {
       }
       const client = createBoardTasksSseClient({
         boardId: KANBAN_BOARD_REALTIME_ID,
-        instanceId: currentInstanceId,
         onMessage: (message) => {
           if (cancelled) {
             return;
@@ -252,7 +232,7 @@ export default function CollabPage(): JSX.Element {
       boardRealtimeRef.current?.close();
       boardRealtimeRef.current = null;
     };
-  }, [applyBoardRealtimeUpdate, currentInstanceId]);
+  }, [applyBoardRealtimeUpdate]);
 
   const allTasks = useMemo(() => taskRecords, [taskRecords]);
   const assignableAgents = useMemo<AssignableAgent[]>(() => {
@@ -398,8 +378,6 @@ export default function CollabPage(): JSX.Element {
 
   const isNarrowMobileBoard = viewportWidth < WORKSPACE_NARROW_MOBILE_BREAKPOINT_PX;
   const currentMobileColumnIndex = columns.length > 0 ? Math.min(mobileVisibleColumnIndex, columns.length - 1) : 0;
-  const resolvedInstanceSelection = (currentInstanceId ?? '').trim();
-  const hasInstanceOptions = instances.length > 0;
   const visibleBoardColumns = isNarrowMobileBoard
     ? columns.length > 0
       ? [columns[Math.min(mobileVisibleColumnIndex, columns.length - 1)]]
@@ -832,26 +810,6 @@ export default function CollabPage(): JSX.Element {
               ) : null}
             </div>
             <label style={mobileBoardMenuFieldStyle}>
-              <span style={mobileBoardMenuLabelStyle}>看板实例</span>
-              <select
-                aria-label="看板实例"
-                value={resolvedInstanceSelection}
-                onChange={(event) => {
-                  const nextValue = event.target.value.trim();
-                  setCurrentInstanceId(nextValue || null);
-                }}
-                style={{ ...viewSelectStyle, ...viewSelectMobileStyle }}
-                disabled={!hasInstanceOptions}
-              >
-                <option value="">{hasInstanceOptions ? '全部实例' : '暂无实例'}</option>
-                {instances.map((instance) => (
-                  <option key={instance.id} value={instance.id}>
-                    {instance.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label style={mobileBoardMenuFieldStyle}>
               <span style={mobileBoardMenuLabelStyle}>分列方式</span>
               <select
                 aria-label="分列方式"
@@ -901,23 +859,6 @@ export default function CollabPage(): JSX.Element {
             ) : null}
           </div>
           <div style={isMobile ? { ...toolbarGroupStyle, ...toolbarGroupMobileStyle } : toolbarGroupStyle}>
-            <select
-              aria-label="看板实例"
-              value={resolvedInstanceSelection}
-              onChange={(event) => {
-                const nextValue = event.target.value.trim();
-                setCurrentInstanceId(nextValue || null);
-              }}
-              style={isMobile ? { ...viewSelectStyle, ...viewSelectMobileStyle } : viewSelectStyle}
-              disabled={!hasInstanceOptions}
-            >
-              <option value="">{hasInstanceOptions ? '全部实例' : '暂无实例'}</option>
-              {instances.map((instance) => (
-                <option key={instance.id} value={instance.id}>
-                  {instance.name}
-                </option>
-              ))}
-            </select>
             <select
               id="view-mode"
               aria-label="分列方式"
@@ -1226,6 +1167,8 @@ export default function CollabPage(): JSX.Element {
                           <h4 style={taskTitleStyle}>{task.title}</h4>
                           <p style={taskSummaryStyle}>{task.summary}</p>
                           <p style={taskMetaStyle}>Agent：{formatTaskAgentLabel(task)}</p>
+                          <p style={taskMetaStyle}>任务ID：{task.id}</p>
+                          <p style={taskMetaStyle}>requirement_id：{getTaskRequirementIdForCard(task)}</p>
                           {task.artifacts.length > 0 ? (
                             <p style={taskArtifactStyle}>{task.artifacts[0]}</p>
                           ) : null}
@@ -1288,6 +1231,11 @@ function formatTaskAgentLabel(task: BoardTask): string {
     return agentName;
   }
   return `${instanceId} / ${agentName}`;
+}
+
+function getTaskRequirementIdForCard(task: BoardTask): string {
+  const requirementId = (task.extras.requirement_id ?? '').trim();
+  return requirementId || '-';
 }
 
 function normalizeTaskStatus(status: string): TaskStatus {

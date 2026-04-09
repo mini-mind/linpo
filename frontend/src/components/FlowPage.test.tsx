@@ -38,7 +38,6 @@ const {
   mockUpsertFlowDraftRecord,
   mockCreateBoardTasksSseClient,
   mockCreateFlowPlannerSseClient,
-  mockGetInstancePlannerAgentPreference,
 } = flowPageMocks;
 
 function buildKanbanTask(overrides: Partial<KanbanTaskItem> = {}): KanbanTaskItem {
@@ -243,13 +242,7 @@ describe('FlowPage', () => {
     expect(await screen.findByRole('button', { name: '发送' })).toBeInTheDocument();
   });
 
-  it('uses configured default planner agent for current instance when present', async () => {
-    window.localStorage.setItem('linpo.currentInstanceId', 'instance-alpha');
-    mockGetInstancePlannerAgentPreference.mockResolvedValueOnce({
-      instanceId: 'instance-alpha',
-      plannerAgentId: 'agent-alpha',
-    });
-
+  it('uses default planner agent scope when no instance preference is provided', async () => {
     const flowId = seedDraftFlow('draft-planner-default-agent');
     renderFlowPage(`/flow/edit/${flowId}`);
     await waitForFlowCanvasReady();
@@ -262,8 +255,8 @@ describe('FlowPage', () => {
       expect(mockGenerateFlowFromRequirement).toHaveBeenCalledTimes(1);
     });
     const payload = mockGenerateFlowFromRequirement.mock.calls[0][0];
-    expect(payload.planner_agent_id).toBe('agent-alpha');
-    expect(String(payload.planner_session_key)).toContain('linpo:flow:default:planner:agent-alpha:');
+    expect(payload.planner_agent_id).toBeNull();
+    expect(String(payload.planner_session_key)).toContain('linpo:flow:default:planner:planner:');
   });
 
   it('falls back to an available executor agent when a draft stores a stale agent id', async () => {

@@ -27,6 +27,13 @@ export type TaskDependencyEntry = {
   statusLabel: string;
 };
 
+type RuntimeDiagnostic = {
+  lastHeartbeatAt: string | null;
+  heartbeatAgeSeconds: string | null;
+  stale: boolean | null;
+  recommendedAction: string | null;
+};
+
 export type CollabTaskDetailModalStyles = {
   modalOverlayStyle: React.CSSProperties;
   modalOverlayMobileStyle: React.CSSProperties;
@@ -149,6 +156,7 @@ export function CollabTaskDetailModal(props: CollabTaskDetailModalProps): JSX.El
     taskSessionListRef,
     styles,
   } = props;
+  const runtimeDiagnostic = resolveRuntimeDiagnostic(selectedTask);
 
   return (
     <div style={isMobile ? { ...styles.modalOverlayStyle, ...styles.modalOverlayMobileStyle } : styles.modalOverlayStyle} role="dialog" aria-modal="true" aria-label="任务详情">
@@ -269,6 +277,39 @@ export function CollabTaskDetailModal(props: CollabTaskDetailModalProps): JSX.El
                   ) : null}
                 </div>
               </section>
+
+              {runtimeDiagnostic ? (
+                <section style={styles.taskKeyFieldsCardStyle} aria-label="运行诊断">
+                  <p style={styles.taskDetailSectionTitleStyle}>运行诊断</p>
+                  <div style={styles.taskDetailMetaGridStyle}>
+                    <article style={styles.taskMetaFieldItemStyle}>
+                      <p style={styles.taskMetaFieldLabelStyle}>最后心跳</p>
+                      <p style={styles.taskMetaFieldValueStyle}>{runtimeDiagnostic.lastHeartbeatAt ?? '未上报'}</p>
+                    </article>
+                    <article style={styles.taskMetaFieldItemStyle}>
+                      <p style={styles.taskMetaFieldLabelStyle}>心跳间隔(秒)</p>
+                      <p style={styles.taskMetaFieldValueStyle}>{runtimeDiagnostic.heartbeatAgeSeconds ?? 'n/a'}</p>
+                    </article>
+                    <article style={styles.taskMetaFieldItemStyle}>
+                      <p style={styles.taskMetaFieldLabelStyle}>Stale 判定</p>
+                      <p style={styles.taskMetaFieldValueStyle}>
+                        {runtimeDiagnostic.stale === true
+                          ? '疑似卡住（超过心跳窗口）'
+                          : runtimeDiagnostic.stale === false
+                            ? '未 stale'
+                            : '未知'}
+                      </p>
+                    </article>
+                    <article style={styles.taskMetaFieldItemStyle}>
+                      <p style={styles.taskMetaFieldLabelStyle}>建议动作</p>
+                      <p style={styles.taskMetaFieldValueStyle}>{runtimeDiagnostic.recommendedAction ?? '暂无建议'}</p>
+                    </article>
+                  </div>
+                  {runtimeDiagnostic.stale === true ? (
+                    <p style={styles.taskSessionErrorTextStyle}>系统不会自动中断，请由用户手动决策是否中断。</p>
+                  ) : null}
+                </section>
+              ) : null}
 
               <div style={styles.taskDetailDescriptionWrapStyle}>
                 <p style={styles.taskDetailSectionTitleStyle}>依赖节点</p>
@@ -397,6 +438,42 @@ export function CollabTaskDetailModal(props: CollabTaskDetailModalProps): JSX.El
       </div>
     </div>
   );
+}
+
+function resolveRuntimeDiagnostic(task: BoardTask): RuntimeDiagnostic | null {
+  const extras = task.extras ?? {};
+  const lastHeartbeatAt = normalizeValue(extras.runtime_last_heartbeat_at ?? extras.dispatch_last_heartbeat_at);
+  const heartbeatAgeSeconds = normalizeValue(extras.runtime_heartbeat_age_seconds);
+  const stale = parseBooleanFlag(extras.runtime_stale);
+  const recommendedAction = normalizeValue(extras.runtime_recommended_action);
+  if (lastHeartbeatAt === null && heartbeatAgeSeconds === null && stale === null && recommendedAction === null) {
+    return null;
+  }
+  return {
+    lastHeartbeatAt,
+    heartbeatAgeSeconds,
+    stale,
+    recommendedAction,
+  };
+}
+
+function normalizeValue(value: string | undefined): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.trim();
+  return normalized === '' ? null : normalized;
+}
+
+function parseBooleanFlag(value: string | undefined): boolean | null {
+  const normalized = normalizeValue(value)?.toLowerCase();
+  if (normalized === 'true') {
+    return true;
+  }
+  if (normalized === 'false') {
+    return false;
+  }
+  return null;
 }
 
 function CollapsibleMessage({

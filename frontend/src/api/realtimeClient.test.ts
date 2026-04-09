@@ -120,18 +120,14 @@ describe('observer realtime message parsing', () => {
 });
 
 describe('observer realtime client', () => {
-  beforeEach(() => {
-    window.localStorage.clear();
-  });
-
-  it('injects storage instance context into observer websocket url', () => {
-    window.localStorage.setItem('linpo.currentInstanceId', 'instance-1');
+  it('injects explicit instance context into observer websocket url', () => {
     const fakeSocket = new FakeWebSocket();
     const socketFactory = vi.fn(() => fakeSocket);
 
     const client = createObserverRealtimeClient({
       baseUrl: 'http://linpo.test:8000',
       dataSource: 'openclaw',
+      instanceId: 'instance-1',
       channel: 'agents:list',
       onMessage: vi.fn(),
       createWebSocket: socketFactory,
@@ -353,7 +349,6 @@ describe('board realtime sse client', () => {
   });
 
   it('keeps board task sse url unchanged when instanceId is omitted', () => {
-    window.localStorage.setItem('linpo.currentInstanceId', 'instance-from-storage');
     const fakeSource = new FakeEventSource();
     const sourceFactory = vi.fn(() => fakeSource);
 
@@ -366,7 +361,6 @@ describe('board realtime sse client', () => {
 
     client.connect();
     expect(sourceFactory).toHaveBeenCalledWith('http://linpo.test:8000/api/v1/sse/boards/default/tasks');
-    window.localStorage.removeItem('linpo.currentInstanceId');
   });
 
   it('parses tasks_changed messages from sse stream', () => {

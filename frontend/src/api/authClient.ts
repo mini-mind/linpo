@@ -12,17 +12,6 @@ export interface User {
   avatar_url?: string | null;
 }
 
-export interface LoginCredentials {
-  identifier: string;
-  password: string;
-}
-
-export interface RegisterCredentials {
-  username: string;
-  email: string;
-  password: string;
-}
-
 export interface UpdateProfilePayload {
   username?: string;
   avatar_url?: string | null;
@@ -82,7 +71,7 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
 
 /**
  * Get current user info
- * Returns null if not authenticated
+ * In open-source private mode backend auto-provisions a local user.
  */
 export async function getCurrentUser(): Promise<User | null> {
   try {
@@ -93,37 +82,6 @@ export async function getCurrentUser(): Promise<User | null> {
     }
     throw error;
   }
-}
-
-/**
- * Login with identifier (username or email) and password
- * Sets session cookie on success
- */
-export async function login(credentials: LoginCredentials): Promise<User> {
-  return fetchApi<User>('/api/v1/auth/login', {
-    method: 'POST',
-    body: JSON.stringify(credentials),
-  });
-}
-
-/**
- * Register new user
- */
-export async function register(credentials: RegisterCredentials): Promise<User> {
-  return fetchApi<User>('/api/v1/auth/register', {
-    method: 'POST',
-    body: JSON.stringify(credentials),
-  });
-}
-
-/**
- * Logout current user
- * Clears session cookie
- */
-export async function logout(): Promise<void> {
-  await fetchApi<{ ok: boolean }>('/api/v1/auth/logout', {
-    method: 'POST',
-  });
 }
 
 export async function updateProfile(payload: UpdateProfilePayload): Promise<User> {

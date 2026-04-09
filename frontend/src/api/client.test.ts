@@ -75,12 +75,10 @@ function ensureTestLocalStorage(): Storage {
 describe('business API client instance context', () => {
   beforeEach(() => {
     fetchMock.mockReset();
-    ensureTestLocalStorage().clear();
     vi.stubGlobal('fetch', fetchMock);
   });
 
-  it('injects storage instance context into observer requests', async () => {
-    window.localStorage.setItem('linpo.currentInstanceId', 'instance-1');
+  it('injects explicit instance context into observer requests', async () => {
     fetchMock.mockResolvedValue({
       ok: true,
       status: 200,
@@ -88,34 +86,43 @@ describe('business API client instance context', () => {
       json: async () => [],
     });
 
-    await listAgents();
+    await listAgents({ instanceId: 'instance-1' });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8000/api/v1/agents?data_source=openclaw&instanceId=instance-1',
+      'http://localhost:3000/api/v1/agents?data_source=openclaw&instanceId=instance-1',
       expect.objectContaining({ credentials: 'include' }),
     );
   });
 
-  it('fails fast for agents requests when instanceId is missing', async () => {
-    await expect(listAgents()).rejects.toMatchObject({
-      name: 'ApiError',
-      status: 400,
-      message: 'instanceId is required for agents/chat requests',
+  it('allows agents requests when instanceId is missing', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: async () => [],
     });
-    expect(fetchMock).not.toHaveBeenCalled();
+    await listAgents();
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:3000/api/v1/agents?data_source=openclaw',
+      expect.objectContaining({ credentials: 'include' }),
+    );
   });
 
-  it('still fails fast for agents requests when disableInstanceContext is true but instanceId is missing', async () => {
-    await expect(listAgents({ disableInstanceContext: true })).rejects.toMatchObject({
-      name: 'ApiError',
-      status: 400,
-      message: 'instanceId is required for agents/chat requests',
+  it('supports agents requests without instance context when disableInstanceContext is true', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: async () => [],
     });
-    expect(fetchMock).not.toHaveBeenCalled();
+    await listAgents({ disableInstanceContext: true });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:3000/api/v1/agents?data_source=openclaw',
+      expect.objectContaining({ credentials: 'include' }),
+    );
   });
 
-  it('injects storage instance context into aggregate requests', async () => {
-    window.localStorage.setItem('linpo.currentInstanceId', 'instance-1');
+  it('injects explicit instance context into aggregate requests', async () => {
     fetchMock.mockResolvedValue({
       ok: true,
       status: 200,
@@ -129,16 +136,15 @@ describe('business API client instance context', () => {
       }),
     });
 
-    await getAggregateOverview();
+    await getAggregateOverview({ instanceId: 'instance-1' });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8000/api/v1/summary/overview?data_source=openclaw&instanceId=instance-1',
+      'http://localhost:3000/api/v1/summary/overview?data_source=openclaw&instanceId=instance-1',
       expect.objectContaining({ credentials: 'include' }),
     );
   });
 
   it('supports aggregate requests without instance context when explicitly disabled', async () => {
-    window.localStorage.setItem('linpo.currentInstanceId', 'instance-1');
     fetchMock.mockResolvedValue({
       ok: true,
       status: 200,
@@ -155,13 +161,12 @@ describe('business API client instance context', () => {
     await getAggregateOverview({ disableInstanceContext: true });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8000/api/v1/summary/overview?data_source=openclaw',
+      'http://localhost:3000/api/v1/summary/overview?data_source=openclaw',
       expect.objectContaining({ credentials: 'include' }),
     );
   });
 
   it('sends previewSessions keys as comma-separated query parameter', async () => {
-    window.localStorage.setItem('linpo.currentInstanceId', 'instance-1');
     fetchMock.mockResolvedValue({
       ok: true,
       status: 200,
@@ -169,25 +174,29 @@ describe('business API client instance context', () => {
       json: async () => ({ ts: 123, previews: [] }),
     });
 
-    await previewSessions(['session-a', 'session-b']);
+    await previewSessions(['session-a', 'session-b'], { instanceId: 'instance-1' });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8000/api/v1/chat/sessions/preview?keys=session-a%2Csession-b&maxChars=2000&data_source=openclaw&instanceId=instance-1',
+      'http://localhost:3000/api/v1/chat/sessions/preview?keys=session-a%2Csession-b&maxChars=2000&data_source=openclaw&instanceId=instance-1',
       expect.objectContaining({ credentials: 'include' }),
     );
   });
 
-  it('fails fast for chat requests when instanceId is missing', async () => {
-    await expect(previewSessions(['session-a'])).rejects.toMatchObject({
-      name: 'ApiError',
-      status: 400,
-      message: 'instanceId is required for agents/chat requests',
+  it('allows chat requests when instanceId is missing', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: async () => ({ ts: 123, previews: [] }),
     });
-    expect(fetchMock).not.toHaveBeenCalled();
+    await previewSessions(['session-a']);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:3000/api/v1/chat/sessions/preview?keys=session-a&maxChars=2000&data_source=openclaw',
+      expect.objectContaining({ credentials: 'include' }),
+    );
   });
 
   it('calls session history endpoint for selected session', async () => {
-    window.localStorage.setItem('linpo.currentInstanceId', 'instance-1');
     fetchMock.mockResolvedValue({
       ok: true,
       status: 200,
@@ -195,16 +204,15 @@ describe('business API client instance context', () => {
       json: async () => ({ ts: 123, items: [] }),
     });
 
-    await getSessionHistory('agent:main:main');
+    await getSessionHistory('agent:main:main', { instanceId: 'instance-1' });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8000/api/v1/chat/sessions/agent%3Amain%3Amain/history?limit=200&data_source=openclaw&instanceId=instance-1',
+      'http://localhost:3000/api/v1/chat/sessions/agent%3Amain%3Amain/history?limit=200&data_source=openclaw&instanceId=instance-1',
       expect.objectContaining({ credentials: 'include' }),
     );
   });
 
   it('patchSession throws ApiError with envelope when backend returns error envelope', async () => {
-    window.localStorage.setItem('linpo.currentInstanceId', 'instance-1');
     fetchMock.mockResolvedValue({
       ok: false,
       status: 404,
@@ -279,7 +287,6 @@ describe('business API client instance context', () => {
   });
 
   it('calls resetSession with POST /chat/sessions/{key}/reset', async () => {
-    window.localStorage.setItem('linpo.currentInstanceId', 'instance-1');
     fetchMock.mockResolvedValue({
       ok: true,
       status: 200,
@@ -287,10 +294,10 @@ describe('business API client instance context', () => {
       json: async () => ({ reset: true }),
     });
 
-    await resetSession('session-a');
+    await resetSession('session-a', { instanceId: 'instance-1' });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8000/api/v1/chat/sessions/session-a/reset?data_source=openclaw&instanceId=instance-1',
+      'http://localhost:3000/api/v1/chat/sessions/session-a/reset?data_source=openclaw&instanceId=instance-1',
       expect.objectContaining({
         method: 'POST',
         credentials: 'include',
@@ -299,7 +306,6 @@ describe('business API client instance context', () => {
   });
 
   it('calls deleteSession with DELETE /chat/sessions/{key}', async () => {
-    window.localStorage.setItem('linpo.currentInstanceId', 'instance-1');
     fetchMock.mockResolvedValue({
       ok: true,
       status: 200,
@@ -307,10 +313,10 @@ describe('business API client instance context', () => {
       json: async () => ({ deleted: true }),
     });
 
-    await deleteSession('session-a');
+    await deleteSession('session-a', { instanceId: 'instance-1' });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8000/api/v1/chat/sessions/session-a?data_source=openclaw&instanceId=instance-1',
+      'http://localhost:3000/api/v1/chat/sessions/session-a?data_source=openclaw&instanceId=instance-1',
       expect.objectContaining({
         method: 'DELETE',
         credentials: 'include',
@@ -319,7 +325,6 @@ describe('business API client instance context', () => {
   });
 
   it('calls pauseSession with POST /chat/agents/{agentId}/pause', async () => {
-    window.localStorage.setItem('linpo.currentInstanceId', 'instance-1');
     fetchMock.mockResolvedValue({
       ok: true,
       status: 200,
@@ -331,10 +336,10 @@ describe('business API client instance context', () => {
       }),
     });
 
-    await pauseSession({ sessionKey: 'session-a', agentId: 'main' });
+    await pauseSession({ sessionKey: 'session-a', agentId: 'main' }, { instanceId: 'instance-1' });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8000/api/v1/chat/agents/main/pause?sessionKey=session-a&data_source=openclaw&instanceId=instance-1',
+      'http://localhost:3000/api/v1/chat/agents/main/pause?sessionKey=session-a&data_source=openclaw&instanceId=instance-1',
       expect.objectContaining({
         method: 'POST',
         credentials: 'include',
@@ -381,7 +386,7 @@ describe('business API client instance context', () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8000/api/v1/boards/default/tasks/flow/planner-stop?data_source=openclaw',
+      'http://localhost:3000/api/v1/boards/default/tasks/flow/planner-stop?data_source=openclaw',
       expect.objectContaining({
         method: 'POST',
         credentials: 'include',
@@ -407,7 +412,7 @@ describe('business API client instance context', () => {
     await probeFlowPlannerSession('linpo:flow:default:planner:planner-default:test', undefined, BOARD_ID);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8000/api/v1/boards/default/tasks/flow/planner-sessions/linpo%3Aflow%3Adefault%3Aplanner%3Aplanner-default%3Atest/exists?data_source=openclaw',
+      'http://localhost:3000/api/v1/boards/default/tasks/flow/planner-sessions/linpo%3Aflow%3Adefault%3Aplanner%3Aplanner-default%3Atest/exists?data_source=openclaw',
       expect.objectContaining({
         credentials: 'include',
       }),
@@ -499,7 +504,7 @@ describe('business API client instance context', () => {
     );
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8000/api/v1/boards/default/tasks?data_source=openclaw',
+      'http://localhost:3000/api/v1/boards/default/tasks?data_source=openclaw',
       expect.objectContaining({
         method: 'POST',
         credentials: 'include',

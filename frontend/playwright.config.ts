@@ -1,6 +1,6 @@
 import { defineConfig } from '@playwright/test';
 
-const localBaseURL = process.env.PLAYWRIGHT_LOCAL_BASE_URL ?? 'http://127.0.0.1:4175';
+const localBaseURL = process.env.PLAYWRIGHT_LOCAL_BASE_URL ?? 'http://127.0.0.1:5173';
 const deployedBaseURL = process.env.PLAYWRIGHT_DEPLOYED_BASE_URL ?? '';
 const shouldStartLocalWebServer = process.env.PLAYWRIGHT_SKIP_LOCAL_WEB_SERVER !== '1';
 
@@ -38,7 +38,7 @@ export default defineConfig({
   // local e2e 允许开箱即跑；deployed 通过 PLAYWRIGHT_SKIP_LOCAL_WEB_SERVER=1 关闭本地服务启动。
   webServer: shouldStartLocalWebServer
     ? {
-        command: 'vite --host 127.0.0.1 --port 4175 --strictPort',
+        command: 'npm run dev',
         url: localBaseURL,
         reuseExistingServer: true,
         timeout: 120_000,

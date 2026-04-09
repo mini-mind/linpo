@@ -7,7 +7,7 @@ import { ToastProvider } from '../hooks/useToast';
 import { InstanceFilesPage } from './InstanceFilesPage';
 
 const {
-  mockListInstances,
+  mockResolveSingleInstance,
   mockListInstanceFiles,
   mockListInstanceAgentDocs,
   mockPreviewInstanceFile,
@@ -15,7 +15,7 @@ const {
   mockBuildInstanceFileDownloadUrl,
   mockBuildInstanceAgentDocDownloadUrl,
 } = vi.hoisted(() => ({
-  mockListInstances: vi.fn(),
+  mockResolveSingleInstance: vi.fn(),
   mockListInstanceFiles: vi.fn(),
   mockListInstanceAgentDocs: vi.fn(),
   mockPreviewInstanceFile: vi.fn(),
@@ -28,7 +28,7 @@ vi.mock('../api/instanceClient', async () => {
   const actual = await vi.importActual<typeof import('../api/instanceClient')>('../api/instanceClient');
   return {
     ...actual,
-    listInstances: mockListInstances,
+    resolveSingleInstance: mockResolveSingleInstance,
     listInstanceFiles: mockListInstanceFiles,
     listInstanceAgentDocs: mockListInstanceAgentDocs,
     previewInstanceFile: mockPreviewInstanceFile,
@@ -51,8 +51,8 @@ function renderPage(): void {
 describe('InstanceFilesPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockListInstances.mockResolvedValue([
-      {
+    mockResolveSingleInstance.mockResolvedValue({
+      instance: {
         id: 'inst-1',
         name: 'claw1',
         type: 'openclaw',
@@ -61,7 +61,8 @@ describe('InstanceFilesPage', () => {
         last_check_at: null,
         created_at: '2026-04-01T00:00:00Z',
       },
-    ]);
+      total: 1,
+    });
     mockListInstanceFiles.mockResolvedValue({
       items: [
         {
@@ -246,12 +247,27 @@ describe('InstanceFilesPage', () => {
     await userEvent.click(screen.getByRole('button', { name: '打开文件侧栏' }));
     await screen.findByRole('dialog', { name: '文件侧栏抽屉' });
     expect(screen.getByRole('button', { name: '刷新' })).toBeInTheDocument();
-    expect(screen.getByLabelText('选择实例')).toHaveStyle({ width: '100%' });
+    expect(screen.getByLabelText('当前实例')).toHaveTextContent('实例：claw1');
     expect(screen.getByLabelText('搜索实例文件')).toHaveStyle({ width: '100%' });
 
     await act(async () => {
       window.innerWidth = originalWidth;
       window.dispatchEvent(new Event('resize'));
     });
+  });
+
+  it('shows configuration hint when no single instance is configured', async () => {
+    mockResolveSingleInstance.mockResolvedValueOnce({
+      instance: null,
+      total: 0,
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('未检测到可用实例。请先在服务端配置 1 个实例后刷新。')).toBeInTheDocument();
+    expect(screen.getByLabelText('当前实例')).toHaveTextContent('实例：未配置');
+    expect(screen.getByText('暂无文件')).toBeInTheDocument();
+    expect(mockListInstanceFiles).not.toHaveBeenCalled();
+    expect(mockListInstanceAgentDocs).not.toHaveBeenCalled();
   });
 });

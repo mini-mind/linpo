@@ -1,4 +1,3 @@
-import { resolveCurrentInstanceId } from '../hooks/useCurrentInstance';
 import { API_BASE_URL } from './apiBaseUrl';
 import type {
 	AgentDetailResponse,
@@ -69,7 +68,6 @@ interface ObserverRequestOptions {
   instanceId?: string | null;
   disableInstanceContext?: boolean;
 }
-const INSTANCE_ID_REQUIRED_MESSAGE = 'instanceId is required for agents/chat requests';
 
 function resolveBoardId(boardId: string): string {
   const normalized = boardId.trim();
@@ -84,23 +82,14 @@ function withDefaultDataSource(path: string): string {
   return `${path}${separator}data_source=${DEFAULT_OBSERVER_DATA_SOURCE}`;
 }
 
-function requiresInstanceContext(path: string): boolean {
-  const { pathname } = new URL(path, 'http://linpo.local');
-  return pathname.startsWith('/api/v1/agents')
-    || pathname === '/api/v1/chat'
-    || pathname.startsWith('/api/v1/chat/');
-}
-
 function withInstanceContext(path: string, options?: ObserverRequestOptions): string {
-  const mustHaveInstanceContext = requiresInstanceContext(path);
-  if (options?.disableInstanceContext && !mustHaveInstanceContext) {
+  if (options?.disableInstanceContext) {
     return path;
   }
-  const instanceId = resolveCurrentInstanceId(options?.instanceId);
+  const instanceId = typeof options?.instanceId === 'string'
+    ? options.instanceId.trim()
+    : '';
   if (!instanceId) {
-    if (mustHaveInstanceContext) {
-      throw new ApiError(400, INSTANCE_ID_REQUIRED_MESSAGE);
-    }
     return path;
   }
 

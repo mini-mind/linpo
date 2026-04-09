@@ -13,9 +13,9 @@ describe('resolveRequiredApiBaseUrl', () => {
     vi.unstubAllEnvs();
   });
 
-  it('falls back to local api endpoint when VITE_API_BASE_URL is missing', () => {
+  it('falls back to current origin when VITE_API_BASE_URL is missing', () => {
     vi.stubEnv('VITE_API_BASE_URL', '');
-    expect(resolveRequiredApiBaseUrl()).toBe('http://localhost:8000');
+    expect(resolveRequiredApiBaseUrl()).toBe(window.location.origin);
     vi.unstubAllEnvs();
   });
 });

@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Link, Navigate, NavLink, Outlet, useLocation } from 'react-router-dom';
-import { listInstances } from '../api/instanceClient';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useToast } from '../hooks/useToast';
 import { AccountMenu } from './AccountMenu';
@@ -36,7 +35,6 @@ export function Layout(): JSX.Element {
   const isInstanceFilesRoute = location.pathname.startsWith('/instance-files');
   const mainRef = useRef<HTMLElement | null>(null);
   const [flowNavTarget, setFlowNavTarget] = useState('/flow/edit/new');
-  const [openInstanceListSignal, setOpenInstanceListSignal] = useState(0);
 
   useEffect(() => {
     const cached = loadLastFlowEntryPath();
@@ -64,34 +62,6 @@ export function Layout(): JSX.Element {
     mainElement.scrollTop = 0;
     mainElement.scrollLeft = 0;
   }, [location.pathname, location.search]);
-
-  useEffect(() => {
-    const needsInstanceWorkspaceRoute = (
-      location.pathname.startsWith('/kanban')
-      || location.pathname.startsWith('/flow')
-      || location.pathname.startsWith('/instance-files')
-      || location.pathname.startsWith('/summary')
-    );
-    if (!needsInstanceWorkspaceRoute) {
-      return;
-    }
-    let active = true;
-    void listInstances()
-      .then((instances) => {
-        if (!active) {
-          return;
-        }
-        if (instances.length === 0) {
-          setOpenInstanceListSignal((current) => current + 1);
-        }
-      })
-      .catch(() => {
-        // ignore auto-open probe failures
-      });
-    return () => {
-      active = false;
-    };
-  }, [location.pathname]);
 
   return (
     <div style={shellStyle}>
@@ -151,7 +121,6 @@ export function Layout(): JSX.Element {
             compact
             menuPlacement="below"
             triggerVariant="icon"
-            openInstanceListSignal={openInstanceListSignal}
           />
         </div>
       </header>

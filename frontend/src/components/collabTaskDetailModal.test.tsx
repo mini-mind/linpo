@@ -115,4 +115,21 @@ describe('collabTaskDetailModal', () => {
     expect(screen.getByText('执行消息流')).toBeInTheDocument();
     expect(screen.getByText('hello')).toBeInTheDocument();
   });
+
+  it('renders runtime diagnostics and stale manual-decision hint', () => {
+    renderModal('info', {
+      task: buildTask({
+        status: 'running',
+        extras: {
+          runtime_last_heartbeat_at: '2026-04-09T00:00:00+00:00',
+          runtime_heartbeat_age_seconds: '420',
+          runtime_stale: 'true',
+          runtime_recommended_action: '任务长时间无进展，建议先检查实例与日志，再由用户决定是否手动中断',
+        },
+      }),
+    });
+    expect(screen.getByText('运行诊断')).toBeInTheDocument();
+    expect(screen.getByText('疑似卡住（超过心跳窗口）')).toBeInTheDocument();
+    expect(screen.getByText('系统不会自动中断，请由用户手动决策是否中断。')).toBeInTheDocument();
+  });
 });

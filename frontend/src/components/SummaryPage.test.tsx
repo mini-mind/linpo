@@ -160,7 +160,6 @@ describe('SummaryPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     observerOptions.length = 0;
-    window.localStorage.setItem('linpo.currentInstanceId', 'instance-alpha');
 
     mockGetAggregateOverview.mockResolvedValue(buildOverview());
     mockListKanbanTasks.mockResolvedValue([buildTask()]);
@@ -228,7 +227,6 @@ describe('SummaryPage', () => {
         ],
       })
     );
-    window.localStorage.setItem('linpo.currentInstanceId', 'instance-alpha');
 
     renderPage();
 
@@ -287,127 +285,6 @@ describe('SummaryPage', () => {
     expect(within(chart).getByLabelText('切换全部实例曲线')).toBeInTheDocument();
     expect(within(chart).getByLabelText('切换alpha-instance曲线')).toBeInTheDocument();
     expect(within(chart).getByLabelText('切换beta-instance曲线')).toBeInTheDocument();
-  });
-
-  it('filters approval cards by selected instance', async () => {
-    mockGetAggregateOverview.mockResolvedValue(
-      buildOverview({
-        diagnostics: [
-          {
-            instance_id: 'instance-alpha',
-            instance_name: 'alpha-instance',
-            status: 'ok',
-            freshness: { status: 'fresh', checked_at: '2026-04-01T00:00:00Z' },
-            error: null,
-          },
-          {
-            instance_id: 'instance-beta',
-            instance_name: 'beta-instance',
-            status: 'ok',
-            freshness: { status: 'fresh', checked_at: '2026-04-01T00:00:00Z' },
-            error: null,
-          },
-        ],
-      })
-    );
-    mockListKanbanTasks.mockResolvedValue([
-      buildTask(),
-      buildTask({
-        id: 'task-beta',
-        title: '审批任务 Beta',
-        agent_id: 'agent-beta',
-        agent_name: 'Beta Agent',
-        instance_id: 'instance-beta',
-        extras: {
-          requirement_title: '巡检流程',
-          instance_name: 'beta-instance',
-          dependencies: '执行巡检',
-        },
-      }),
-    ]);
-
-    renderPage();
-
-    const approvalList = await screen.findByTestId('summary-approval-list');
-    expect(approvalList).toHaveTextContent('审批任务 Alpha');
-    expect(approvalList).toHaveTextContent('审批任务 Beta');
-
-    await userEvent.selectOptions(screen.getByLabelText('筛选审批实例'), 'instance-beta');
-
-    await waitFor(() => {
-      expect(approvalList).not.toHaveTextContent('审批任务 Alpha');
-      expect(approvalList).toHaveTextContent('审批任务 Beta');
-    });
-  });
-
-  it('shows concrete approval instance options from backend diagnostics', async () => {
-    mockGetAggregateOverview.mockResolvedValue(
-      buildOverview({
-        diagnostics: [
-          {
-            instance_id: 'instance-alpha',
-            instance_name: 'alpha-instance',
-            status: 'ok',
-            freshness: { status: 'fresh', checked_at: '2026-04-01T00:00:00Z' },
-            error: null,
-          },
-          {
-            instance_id: 'instance-beta',
-            instance_name: 'beta-instance',
-            status: 'ok',
-            freshness: { status: 'fresh', checked_at: '2026-04-01T00:00:00Z' },
-            error: null,
-          },
-        ],
-        agents: [
-          {
-            instance_id: 'instance-alpha',
-            instance_name: 'alpha-instance',
-            agent_id: 'agent-alpha',
-            agent_name: 'Alpha Agent',
-            status: 'running',
-            is_active: true,
-            last_active_at: '2026-04-01T00:01:00Z',
-            drilldown_path: '/session/agent-alpha/__none__/__new__?instanceId=instance-alpha',
-          },
-          {
-            instance_id: 'instance-beta',
-            instance_name: 'beta-instance',
-            agent_id: 'agent-beta',
-            agent_name: 'Beta Agent',
-            status: 'running',
-            is_active: true,
-            last_active_at: '2026-04-01T00:01:00Z',
-            drilldown_path: '/session/agent-beta/__none__/__new__?instanceId=instance-beta',
-          },
-        ],
-      })
-    );
-    mockListKanbanTasks.mockResolvedValue([
-      buildTask({ id: 'task-alpha', title: '审批任务 Alpha' }),
-      buildTask({
-        id: 'task-beta',
-        title: '审批任务 Beta',
-        agent_id: 'agent-beta',
-        agent_name: 'Beta Agent',
-        instance_id: 'instance-beta',
-        extras: {
-          requirement_title: '巡检流程',
-          dependencies: '执行巡检',
-        },
-      }),
-    ]);
-
-    renderPage();
-
-    const approvalList = await screen.findByTestId('summary-approval-list');
-    await screen.findByRole('option', { name: 'beta-instance' });
-
-    await userEvent.selectOptions(screen.getByLabelText('筛选审批实例'), 'instance-beta');
-    await waitFor(() => {
-      expect(approvalList).not.toHaveTextContent('审批任务 Alpha');
-      expect(approvalList).toHaveTextContent('审批任务 Beta');
-    });
   });
 
   it('continues blocked task from summary page', async () => {

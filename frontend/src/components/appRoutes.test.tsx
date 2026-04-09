@@ -11,11 +11,6 @@ vi.mock('../hooks/useToast', () => ({
   ToastProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
-vi.mock('../routes', () => ({
-  ProtectedRoute: () => <Outlet />,
-  PublicRoute: () => <Outlet />,
-}));
-
 vi.mock('./Layout', () => ({
   Layout: () => <Outlet />,
   RedirectToSummary: () => <Navigate to="/summary" replace />,
@@ -33,12 +28,8 @@ vi.mock('./FlowPage', () => ({
   FlowPage: () => <div>flow-page</div>,
 }));
 
-vi.mock('./LoginPage', () => ({
-  LoginPage: () => <div>login-page</div>,
-}));
-
-vi.mock('./PairingReceiptConfirmPage', () => ({
-  PairingReceiptConfirmPage: () => <div>pairing-receipt-confirm-page</div>,
+vi.mock('./InstanceFilesPage', () => ({
+  InstanceFilesPage: () => <div>files-page</div>,
 }));
 
 describe('app routes', () => {
@@ -137,6 +128,36 @@ describe('app routes', () => {
     });
 
     expect(screen.getByText('flow-page')).toBeInTheDocument();
+  });
+
+  it('renders /files as first-class app route', async () => {
+    document.body.innerHTML = '<div id="root"></div>';
+    window.history.pushState({}, '', '/files');
+
+    await act(async () => {
+      await import('../main');
+    });
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/files');
+    });
+
+    expect(screen.getByText('files-page')).toBeInTheDocument();
+  });
+
+  it('keeps /instance-files compatible by redirecting to /files', async () => {
+    document.body.innerHTML = '<div id="root"></div>';
+    window.history.pushState({}, '', '/instance-files');
+
+    await act(async () => {
+      await import('../main');
+    });
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/files');
+    });
+
+    expect(screen.getByText('files-page')).toBeInTheDocument();
   });
 
 });

@@ -10,7 +10,6 @@ import { getCollabPageMockRegistry } from './collabPageTestMockRegistry';
 
 const {
   mockGetAggregateOverview,
-  mockListInstances,
   mockListKanbanTasks,
   mockCreateKanbanTask,
   mockConfirmFlowToKanban,
@@ -91,28 +90,7 @@ describe('CollabPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.removeItem('linpo.v07.flow_tasks');
-    window.localStorage.removeItem('linpo.currentInstanceId');
     setTestViewportWidth(1280);
-    mockListInstances.mockResolvedValue([
-      {
-        id: 'instance-alpha',
-        name: 'alpha-instance',
-        type: 'openclaw',
-        endpoint: 'http://alpha.test',
-        status: 'running',
-        last_check_at: null,
-        created_at: '2026-03-01T00:00:00Z',
-      },
-      {
-        id: 'instance-beta',
-        name: 'beta-instance',
-        type: 'openclaw',
-        endpoint: 'http://beta.test',
-        status: 'running',
-        last_check_at: null,
-        created_at: '2026-03-01T00:00:00Z',
-      },
-    ]);
     mockListKanbanTasks.mockResolvedValue([]);
     mockCreateKanbanTask.mockResolvedValue(buildKanbanTask());
     mockConfirmFlowToKanban.mockResolvedValue({
@@ -178,7 +156,6 @@ describe('CollabPage', () => {
     await renderBoard();
 
     expect(screen.queryByRole('button', { name: '新增任务' })).not.toBeInTheDocument();
-    expect(screen.getByLabelText('看板实例')).toBeInTheDocument();
     expect(screen.getByLabelText('分列方式')).toBeInTheDocument();
     expect(screen.queryByLabelText('需求筛选')).not.toBeInTheDocument();
     expect(screen.getByLabelText('看板统计')).toBeInTheDocument();
@@ -189,24 +166,6 @@ describe('CollabPage', () => {
     expect(screen.getAllByRole('button', { name: '创建任务' })[0]).toBeInTheDocument();
     expect(screen.getByTestId('kanban-frame')).toHaveStyle({ width: '100%' });
     expect(screen.getByTestId('kanban-board')).toHaveStyle({ overflowX: 'auto' });
-  });
-
-  it('switches current instance from toolbar dropdown', async () => {
-    mockGetAggregateOverview.mockResolvedValue(buildOverview({ agents: [buildAgent()] }));
-
-    await renderBoard();
-
-    const instanceSelect = screen.getByLabelText('看板实例');
-    await waitFor(() => {
-      expect(within(instanceSelect).getByRole('option', { name: 'beta-instance' })).toBeInTheDocument();
-    });
-    await userEvent.selectOptions(instanceSelect, 'instance-beta');
-
-    expect(window.localStorage.getItem('linpo.currentInstanceId')).toBe('instance-beta');
-    await waitFor(() => {
-      expect(mockGetAggregateOverview).toHaveBeenCalledTimes(2);
-      expect(mockListKanbanTasks).toHaveBeenCalledTimes(2);
-    });
   });
 
   it('groups tasks by status by default and can switch to agent grouping', async () => {
@@ -327,6 +286,25 @@ describe('CollabPage', () => {
     expect(screen.getByText('需求一-节点一')).toBeInTheDocument();
     expect(screen.getByText('需求一-节点二')).toBeInTheDocument();
     expect(screen.getByText('需求二-节点一')).toBeInTheDocument();
+  });
+
+  it('shows task id and requirement_id on task cards for quick reconciliation', async () => {
+    mockGetAggregateOverview.mockResolvedValue(buildOverview({ agents: [buildAgent()] }));
+    mockListKanbanTasks.mockResolvedValue([
+      buildKanbanTask({
+        id: 'task-reconcile-1',
+        title: '对账任务',
+        extras: {
+          requirement_id: 'req-reconcile-1',
+          requirement_title: '对账需求',
+        },
+      }),
+    ]);
+
+    await renderBoard();
+
+    expect(screen.getByText('任务ID：task-reconcile-1')).toBeInTheDocument();
+    expect(screen.getByText('requirement_id：req-reconcile-1')).toBeInTheDocument();
   });
 
   it('does not read legacy local flow task cache for board rendering', async () => {

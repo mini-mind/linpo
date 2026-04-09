@@ -2,38 +2,28 @@ import type React from 'react';
 import { useCallback, useState, useRef, useEffect } from 'react';
 import { listUserMessages } from '../api/messageClient';
 import { useAuth } from '../hooks/useAuth';
-import { useToast } from '../hooks/useToast';
-import { InstanceListModal } from './InstanceListModal';
 import { MessageCenterModal } from './MessageCenterModal';
-import { PlannerAgentModal } from './PlannerAgentModal';
 import { UserProfileModal } from './UserProfileModal';
 
 type AccountMenuProps = {
   compact?: boolean;
   menuPlacement?: 'above' | 'below';
   triggerVariant?: 'username' | 'icon';
-  openInstanceListSignal?: number;
 };
 
 export function AccountMenu({
   compact = false,
   menuPlacement = 'above',
   triggerVariant = 'username',
-  openInstanceListSignal = 0,
 }: AccountMenuProps = {}): JSX.Element | null {
-  const { user, logout } = useAuth();
-  const { addToast } = useToast();
+  const { user } = useAuth();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isMessageCenterOpen, setIsMessageCenterOpen] = useState(false);
-  const [isInstanceListOpen, setIsInstanceListOpen] = useState(false);
   const [isUserProfileOpen, setIsUserProfileOpen] = useState(false);
-  const [isPlannerAgentModalOpen, setIsPlannerAgentModalOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
   const messageButtonRef = useRef<HTMLButtonElement>(null);
-  const instanceButtonRef = useRef<HTMLButtonElement>(null);
   const triggerButtonRef = useRef<HTMLButtonElement>(null);
-  const handledAutoOpenSignalRef = useRef(0);
 
   const refreshUnreadCount = useCallback(async () => {
     try {
@@ -47,19 +37,6 @@ export function AccountMenu({
       // 静默失败，避免消息接口短暂不可用影响主操作
     }
   }, []);
-
-  const handleLogout = useCallback(async () => {
-    const confirmed = window.confirm('确认退出登录吗？');
-    if (!confirmed) {
-      return;
-    }
-    try {
-      await logout();
-      addToast('已退出登录', 'success');
-    } catch {
-      addToast('退出登录失败', 'error');
-    }
-  }, [logout, addToast]);
 
   const toggleMenu = useCallback(() => {
     setIsMenuOpen((prev) => !prev);
@@ -89,42 +66,14 @@ export function AccountMenu({
     }, 0);
   }, [closeMenu]);
 
-  const handleOpenInstanceList = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    closeMenu();
-    window.setTimeout(() => {
-      setIsInstanceListOpen(true);
-    }, 0);
-  }, [closeMenu]);
-
-  const handleOpenPlannerAgentModal = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    closeMenu();
-    window.setTimeout(() => {
-      setIsPlannerAgentModalOpen(true);
-    }, 0);
-  }, [closeMenu]);
-
   const handleCloseMessageCenter = useCallback(() => {
     setIsMessageCenterOpen(false);
     void refreshUnreadCount();
     triggerButtonRef.current?.focus();
   }, [refreshUnreadCount]);
 
-  const handleCloseInstanceList = useCallback(() => {
-    setIsInstanceListOpen(false);
-    triggerButtonRef.current?.focus();
-  }, []);
-
   const handleCloseUserProfile = useCallback(() => {
     setIsUserProfileOpen(false);
-    triggerButtonRef.current?.focus();
-  }, []);
-
-  const handleClosePlannerAgentModal = useCallback(() => {
-    setIsPlannerAgentModalOpen(false);
     triggerButtonRef.current?.focus();
   }, []);
 
@@ -167,7 +116,7 @@ export function AccountMenu({
 
   useEffect(() => {
     if (isMenuOpen) {
-      instanceButtonRef.current?.focus();
+      messageButtonRef.current?.focus();
       void refreshUnreadCount();
     }
   }, [isMenuOpen, refreshUnreadCount]);
@@ -178,18 +127,6 @@ export function AccountMenu({
     }
     void refreshUnreadCount();
   }, [refreshUnreadCount, user]);
-
-  useEffect(() => {
-    if (openInstanceListSignal <= 0) {
-      return;
-    }
-    if (openInstanceListSignal === handledAutoOpenSignalRef.current) {
-      return;
-    }
-    handledAutoOpenSignalRef.current = openInstanceListSignal;
-    closeMenu();
-    setIsInstanceListOpen(true);
-  }, [closeMenu, openInstanceListSignal]);
 
   // Don't render if not authenticated
   if (!user) {
@@ -238,19 +175,6 @@ export function AccountMenu({
           </button>
           <button
             type="button"
-            onClick={handleOpenInstanceList}
-            onMouseDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-            }}
-            style={menuActionButtonStyle}
-            role="menuitem"
-            ref={instanceButtonRef}
-          >
-            实例
-          </button>
-          <button
-            type="button"
             onClick={handleOpenMessageCenter}
             onMouseDown={(event) => {
               event.preventDefault();
@@ -262,32 +186,10 @@ export function AccountMenu({
           >
             消息{unreadCount > 0 ? ` (${formatUnreadCount(unreadCount)})` : ''}
           </button>
-          <button
-            type="button"
-            onClick={handleOpenPlannerAgentModal}
-            onMouseDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-            }}
-            style={menuActionButtonStyle}
-            role="menuitem"
-          >
-            Planner Agent
-          </button>
-          <button
-            type="button"
-            onClick={handleLogout}
-            style={menuLogoutButtonStyle}
-            role="menuitem"
-          >
-            退出登录
-          </button>
         </div>
       )}
       <MessageCenterModal open={isMessageCenterOpen} onClose={handleCloseMessageCenter} />
-      <InstanceListModal open={isInstanceListOpen} onClose={handleCloseInstanceList} />
       <UserProfileModal open={isUserProfileOpen} onClose={handleCloseUserProfile} user={user} />
-      <PlannerAgentModal open={isPlannerAgentModalOpen} onClose={handleClosePlannerAgentModal} />
     </div>
   );
 }
@@ -455,20 +357,6 @@ const menuUsernameStyle: React.CSSProperties = {
   wordBreak: 'break-word',
   textAlign: 'center',
   display: 'block',
-};
-
-const menuLogoutButtonStyle: React.CSSProperties = {
-  padding: '0.5rem',
-  background: 'transparent',
-  border: 'none',
-  color: '#6b7280',
-  fontSize: '0.75rem',
-  fontWeight: 400,
-  cursor: 'pointer',
-  transition: 'all 0.2s',
-  fontFamily: 'system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif',
-  textAlign: 'center',
-  borderRadius: '0.375rem',
 };
 
 const menuActionButtonStyle: React.CSSProperties = {
