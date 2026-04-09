@@ -627,9 +627,12 @@ function SummaryChart({
   const chartSeries = visibleSeries.length > 0 ? visibleSeries : metric.series;
   const maxValue = Math.max(1, ...chartSeries.flatMap((item) => item.values));
   const pointCount = Math.max(1, metric.labels.length - 1);
-  const viewBoxWidth = 100;
-  const viewBoxHeight = 36;
-  const visibleLabels = getVisibleMetricLabels(metric.labels, isMobile);
+  const viewBoxWidth = metric.kind === 'tokens' ? Math.max(480, metric.labels.length * 30) : 100;
+  const viewBoxHeight = metric.kind === 'tokens' ? 46 : 36;
+  const plotTop = metric.kind === 'tokens' ? 8 : 4;
+  const plotBottom = metric.kind === 'tokens' ? 11 : 4;
+  const primarySeries = chartSeries.find((item) => item.id === 'aggregate:all-instances') ?? chartSeries[0] ?? null;
+  const visibleLabels = metric.kind === 'tokens' ? metric.labels : getVisibleMetricLabels(metric.labels, isMobile);
 
   return (
     <section style={getChartCardStyle(isMobile)} data-testid="summary-chart">
@@ -676,7 +679,13 @@ function SummaryChart({
             </div>
           )}
           <div style={getChartViewportStyle(isMobile)}>
-            <svg viewBox={`0 0 ${viewBoxWidth} ${viewBoxHeight}`} preserveAspectRatio="none" style={chartSvgStyle} aria-label={metric.title}>
+            <svg
+              viewBox={`0 0 ${viewBoxWidth} ${viewBoxHeight}`}
+              width={metric.kind === 'tokens' ? viewBoxWidth : undefined}
+              preserveAspectRatio="none"
+              style={getChartSvgStyle(metric.kind)}
+              aria-label={metric.title}
+            >
               <defs>
                 <linearGradient id="summary-grid" x1="0%" y1="0%" x2="0%" y2="100%">
                   <stop offset="0%" stopColor="rgba(15, 118, 110, 0.14)" />
@@ -699,7 +708,7 @@ function SummaryChart({
                 const points = item.values
                   .map((value, index) => {
                     const x = pointCount === 0 ? 0 : (index / pointCount) * viewBoxWidth;
-                    const y = viewBoxHeight - 4 - (value / maxValue) * (viewBoxHeight - 8);
+                    const y = viewBoxHeight - plotBottom - (value / maxValue) * (viewBoxHeight - plotTop - plotBottom);
                     return `${x},${y}`;
                   })
                   .join(' ');
@@ -715,21 +724,60 @@ function SummaryChart({
                     />
                     {item.values.map((value, index) => {
                       const x = pointCount === 0 ? 0 : (index / pointCount) * viewBoxWidth;
-                      const y = viewBoxHeight - 4 - (value / maxValue) * (viewBoxHeight - 8);
+                      const y = viewBoxHeight - plotBottom - (value / maxValue) * (viewBoxHeight - plotTop - plotBottom);
                       return <circle key={`${item.id}:${metric.labels[index]}`} cx={x} cy={y} r="1.1" fill={item.color} />;
                     })}
                   </g>
                 );
               })}
+              {metric.kind === 'tokens' && primarySeries
+                ? primarySeries.values.map((value, index) => {
+                  const x = pointCount === 0 ? 0 : (index / pointCount) * viewBoxWidth;
+                  const y = viewBoxHeight - plotBottom - (value / maxValue) * (viewBoxHeight - plotTop - plotBottom);
+                  return (
+                    <text
+                      key={`token-value-${metric.labels[index]}`}
+                      x={x}
+                      y={Math.max(1.2, y - 1.3)}
+                      textAnchor="middle"
+                      fill="#334155"
+                      fontSize="1.35"
+                      fontWeight="600"
+                    >
+                      {formatTokenCompact(value)}
+                    </text>
+                  );
+                })
+                : null}
+              {metric.kind === 'tokens'
+                ? metric.labels.map((label, index) => {
+                  const x = pointCount === 0 ? 0 : (index / pointCount) * viewBoxWidth;
+                  return (
+                    <text
+                      key={`token-day-${label}`}
+                      x={x}
+                      y={viewBoxHeight - 0.9}
+                      textAnchor="middle"
+                      fill="#475569"
+                      fontSize="1.15"
+                      fontWeight="500"
+                    >
+                      {formatShortLabel(label)}
+                    </text>
+                  );
+                })
+                : null}
             </svg>
           </div>
-          <div style={chartLabelsStyle}>
-            {visibleLabels.map((label) => (
-              <span key={label} style={chartLabelStyle}>
-                {formatShortLabel(label)}
-              </span>
-            ))}
-          </div>
+          {metric.kind === 'tokens' ? null : (
+            <div style={chartLabelsStyle}>
+              {visibleLabels.map((label) => (
+                <span key={label} style={chartLabelStyle}>
+                  {formatShortLabel(label)}
+                </span>
+              ))}
+            </div>
+          )}
         </>
       )}
     </section>
@@ -1162,15 +1210,23 @@ function buildSummaryMetric(
 
 function buildTokenMetric(tokenGroups: AggregateOverviewTokenGroup[]): SummaryMetric | null {
   const mergedGroups = mergeTokenGroups(tokenGroups);
-  const labels = Array.from(
-    new Set(mergedGroups.flatMap((group) => group.samples.map((sample) => sample.label)))
-  ).sort((left, right) => left.localeCompare(right));
-  if (labels.length === 0) {
+  const hasAnySample = mergedGroups.some((group) =>
+    group.samples.some((sample) => Boolean(normalizeSampleDayLabel(sample.label)))
+  );
+  if (!hasAnySample) {
     return null;
   }
+  const labels = buildRecentDayLabels(30, mergedGroups);
   const aggregateSampleMap = new Map<string, number>();
   const instanceSeries = mergedGroups.map((group, index) => {
-    const sampleMap = new Map(group.samples.map((sample) => [sample.label, sample.total_tokens]));
+    const sampleMap = new Map<string, number>();
+    for (const sample of group.samples) {
+      const normalized = normalizeSampleDayLabel(sample.label);
+      if (!normalized) {
+        continue;
+      }
+      sampleMap.set(normalized, (sampleMap.get(normalized) ?? 0) + sample.total_tokens);
+    }
     for (const [label, totalTokens] of sampleMap.entries()) {
       aggregateSampleMap.set(label, (aggregateSampleMap.get(label) ?? 0) + totalTokens);
     }
@@ -1197,8 +1253,40 @@ function buildTokenMetric(tokenGroups: AggregateOverviewTokenGroup[]): SummaryMe
     hint: '默认展示全部实例聚合曲线，并保留各实例走势对比。',
     labels,
     series,
-    totalLabel: total > 0 ? `${total.toLocaleString('en-US')} tokens` : '暂无总量',
+    totalLabel: total > 0 ? `${total.toLocaleString('en-US')} tokens (${formatTokenCompact(total)})` : '暂无总量',
   };
+}
+
+function normalizeSampleDayLabel(label: string): string | null {
+  const value = String(label ?? '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return formatDayKey(new Date(parsed));
+}
+
+function buildRecentDayLabels(days: number, groups: AggregateOverviewTokenGroup[]): string[] {
+  const allSampleTimestamps = groups
+    .flatMap((group) => group.samples.map((sample) => normalizeSampleDayLabel(sample.label)))
+    .filter((label): label is string => Boolean(label))
+    .map((label) => Date.parse(label));
+  const fallbackNow = Date.now();
+  const reference = allSampleTimestamps.length > 0
+    ? Math.max(...allSampleTimestamps.filter((ts) => Number.isFinite(ts)))
+    : fallbackNow;
+  const endDate = Number.isFinite(reference) ? new Date(reference) : new Date(fallbackNow);
+  endDate.setHours(0, 0, 0, 0);
+  const labels: string[] = [];
+  for (let offset = days - 1; offset >= 0; offset -= 1) {
+    const date = new Date(endDate);
+    date.setDate(endDate.getDate() - offset);
+    labels.push(formatDayKey(date));
+  }
+  return labels;
 }
 
 function mergeTokenGroups(tokenGroups: AggregateOverviewTokenGroup[]): AggregateOverviewTokenGroup[] {
@@ -1260,7 +1348,7 @@ function buildTaskFallbackMetric(tasks: KanbanTaskItem[]): SummaryMetric {
     if (!Number.isFinite(parsed)) {
       continue;
     }
-    const label = new Date(parsed).toLocaleDateString('en-CA');
+    const label = formatDayKey(new Date(parsed));
     buckets.set(label, (buckets.get(label) ?? 0) + 1);
   }
   const labels = Array.from(buckets.keys()).sort((left, right) => left.localeCompare(right));
@@ -1285,6 +1373,33 @@ function formatDateTime(value: string): string {
 
 function formatShortLabel(label: string): string {
   return label.length > 5 ? label.slice(5) : label;
+}
+
+function formatTokenCompact(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    return '0';
+  }
+  if (value >= 1_000_000_000) {
+    return `${trimTrailingZero((value / 1_000_000_000).toFixed(1))}B`;
+  }
+  if (value >= 1_000_000) {
+    return `${trimTrailingZero((value / 1_000_000).toFixed(1))}M`;
+  }
+  if (value >= 1_000) {
+    return `${trimTrailingZero((value / 1_000).toFixed(1))}K`;
+  }
+  return String(Math.round(value));
+}
+
+function trimTrailingZero(value: string): string {
+  return value.endsWith('.0') ? value.slice(0, -2) : value;
+}
+
+function formatDayKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function getVisibleMetricLabels(labels: string[], isMobile: boolean): string[] {
@@ -1502,17 +1617,27 @@ function getChartViewportStyle(isMobile: boolean): React.CSSProperties {
     width: '100%',
     height: isMobile ? '176px' : '220px',
     borderRadius: '0.9rem',
-    overflow: 'hidden',
+    overflowX: 'auto',
+    overflowY: 'hidden',
     border: '1px solid rgba(148, 163, 184, 0.16)',
     background: 'rgba(248, 250, 252, 0.86)',
   };
 }
 
-const chartSvgStyle: React.CSSProperties = {
-  width: '100%',
-  height: '100%',
-  display: 'block',
-};
+function getChartSvgStyle(kind: SummaryMetricKind): React.CSSProperties {
+  if (kind === 'tokens') {
+    return {
+      minWidth: '100%',
+      height: '100%',
+      display: 'block',
+    };
+  }
+  return {
+    width: '100%',
+    height: '100%',
+    display: 'block',
+  };
+}
 
 const chartLabelsStyle: React.CSSProperties = {
   display: 'grid',

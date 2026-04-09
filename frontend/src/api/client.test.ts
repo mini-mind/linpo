@@ -16,7 +16,6 @@ import {
   stopFlowPlannerSession,
 } from './client';
 import { listInstances } from './instanceClient';
-import { listUserMessages } from './messageClient';
 
 const fetchMock = vi.fn();
 const BOARD_ID = 'default';
@@ -264,25 +263,6 @@ describe('business API client instance context', () => {
         code: 'source_error',
         request_id: 'req-502',
       }),
-    });
-  });
-
-  it('message client throws ApiError and preserves message on 4xx errors', async () => {
-    fetchMock.mockResolvedValue({
-      ok: false,
-      status: 401,
-      statusText: 'Unauthorized',
-      json: async () => ({
-        message: 'Login required',
-      }),
-    });
-
-    const error = await listUserMessages().catch((err) => err);
-    expect(error).toBeInstanceOf(ApiError);
-    expect(error).toMatchObject({
-      status: 401,
-      message: 'Login required',
-      envelope: null,
     });
   });
 

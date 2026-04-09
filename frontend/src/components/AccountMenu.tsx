@@ -1,9 +1,7 @@
 import type React from 'react';
-import { useCallback, useState, useRef, useEffect } from 'react';
-import { listUserMessages } from '../api/messageClient';
-import { useAuth } from '../hooks/useAuth';
-import { MessageCenterModal } from './MessageCenterModal';
-import { UserProfileModal } from './UserProfileModal';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { InstanceItem } from '../api/types';
+import { resolveSingleInstance } from '../api/instanceClient';
 
 type AccountMenuProps = {
   compact?: boolean;
@@ -15,26 +13,24 @@ export function AccountMenu({
   compact = false,
   menuPlacement = 'above',
   triggerVariant = 'username',
-}: AccountMenuProps = {}): JSX.Element | null {
-  const { user } = useAuth();
+}: AccountMenuProps = {}): JSX.Element {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isMessageCenterOpen, setIsMessageCenterOpen] = useState(false);
-  const [isUserProfileOpen, setIsUserProfileOpen] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(0);
+  const [instance, setInstance] = useState<InstanceItem | null>(null);
+  const [instanceCount, setInstanceCount] = useState<number | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const messageButtonRef = useRef<HTMLButtonElement>(null);
   const triggerButtonRef = useRef<HTMLButtonElement>(null);
 
-  const refreshUnreadCount = useCallback(async () => {
+  const loadInstance = useCallback(async () => {
     try {
-      const messages = await listUserMessages();
-      const count = messages.reduce((total, item) => {
-        const isRead = item.is_read === true;
-        return isRead ? total : total + 1;
-      }, 0);
-      setUnreadCount(count);
-    } catch {
-      // 静默失败，避免消息接口短暂不可用影响主操作
+      const result = await resolveSingleInstance();
+      setInstance(result.instance);
+      setInstanceCount(result.total);
+      setLoadError(null);
+    } catch (error) {
+      setInstance(null);
+      setInstanceCount(null);
+      setLoadError(error instanceof Error ? error.message : '读取实例失败');
     }
   }, []);
 
@@ -44,37 +40,6 @@ export function AccountMenu({
 
   const closeMenu = useCallback(() => {
     setIsMenuOpen(false);
-  }, []);
-
-  const handleOpenMessageCenter = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    closeMenu();
-    window.setTimeout(() => {
-      setIsMessageCenterOpen(true);
-    }, 0);
-  }, [closeMenu]);
-
-  const handleOpenUserProfile = useCallback((event?: React.MouseEvent<HTMLButtonElement>) => {
-    if (event) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
-    closeMenu();
-    window.setTimeout(() => {
-      setIsUserProfileOpen(true);
-    }, 0);
-  }, [closeMenu]);
-
-  const handleCloseMessageCenter = useCallback(() => {
-    setIsMessageCenterOpen(false);
-    void refreshUnreadCount();
-    triggerButtonRef.current?.focus();
-  }, [refreshUnreadCount]);
-
-  const handleCloseUserProfile = useCallback(() => {
-    setIsUserProfileOpen(false);
-    triggerButtonRef.current?.focus();
   }, []);
 
   const handleTriggerKeyDown = useCallback(
@@ -98,7 +63,10 @@ export function AccountMenu({
     [closeMenu]
   );
 
-  // Close menu when clicking outside
+  useEffect(() => {
+    void loadInstance();
+  }, [loadInstance]);
+
   useEffect(() => {
     if (!isMenuOpen) return;
 
@@ -114,25 +82,6 @@ export function AccountMenu({
     };
   }, [isMenuOpen, closeMenu]);
 
-  useEffect(() => {
-    if (isMenuOpen) {
-      messageButtonRef.current?.focus();
-      void refreshUnreadCount();
-    }
-  }, [isMenuOpen, refreshUnreadCount]);
-
-  useEffect(() => {
-    if (!user) {
-      return;
-    }
-    void refreshUnreadCount();
-  }, [refreshUnreadCount, user]);
-
-  // Don't render if not authenticated
-  if (!user) {
-    return null;
-  }
-
   return (
     <div style={getContainerStyle(compact)} ref={menuRef}>
       <button
@@ -140,78 +89,96 @@ export function AccountMenu({
         onClick={toggleMenu}
         onKeyDown={handleTriggerKeyDown}
         style={getTriggerButtonStyle(compact)}
-        aria-label="打开账户菜单"
+        aria-label="打开实例信息"
         aria-expanded={isMenuOpen}
         aria-haspopup="menu"
         ref={triggerButtonRef}
       >
         {triggerVariant === 'icon' ? (
-          <span aria-hidden={!user.avatar_url} style={triggerAvatarShellStyle}>
-            {user.avatar_url ? (
-              <img src={user.avatar_url} alt="用户头像" style={triggerAvatarImageStyle} />
-            ) : (
-              <span aria-hidden="true" style={iconGlyphStyle}>{getAvatarText(user.username)}</span>
-            )}
+          <span style={triggerIconShellStyle} aria-hidden="true">
+            <img src="/assets/brand/openclaw-icon.svg" alt="" style={triggerIconImageStyle} />
           </span>
-        ) : (
-          <span style={usernameStyle}>{user.username}</span>
-        )}
-        {unreadCount > 0 ? <span style={badgeStyle}>{formatUnreadCount(unreadCount)}</span> : null}
+        ) : null}
+        <span style={triggerLabelStyle}>{resolveTriggerLabel(instance, instanceCount)}</span>
       </button>
 
       {isMenuOpen && (
-        <div style={getMenuStyle(menuPlacement)} role="menu" aria-label="账户菜单" onKeyDown={handleMenuKeyDown}>
+        <div style={getMenuStyle(menuPlacement)} role="menu" aria-label="实例信息" onKeyDown={handleMenuKeyDown}>
+          <div style={menuHeaderStyle}>当前 OpenClaw 实例</div>
+          {renderInstanceDetail(instance, instanceCount, loadError)}
           <button
             type="button"
-            style={menuHeaderButtonStyle}
+            style={refreshButtonStyle}
             role="menuitem"
-            onClick={handleOpenUserProfile}
-            onMouseDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
+            onClick={() => {
+              void loadInstance();
             }}
           >
-            <span style={menuUsernameStyle}>账户</span>
-          </button>
-          <button
-            type="button"
-            onClick={handleOpenMessageCenter}
-            onMouseDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-            }}
-            style={menuActionButtonStyle}
-            role="menuitem"
-            ref={messageButtonRef}
-          >
-            消息{unreadCount > 0 ? ` (${formatUnreadCount(unreadCount)})` : ''}
+            刷新实例信息
           </button>
         </div>
       )}
-      <MessageCenterModal open={isMessageCenterOpen} onClose={handleCloseMessageCenter} />
-      <UserProfileModal open={isUserProfileOpen} onClose={handleCloseUserProfile} user={user} />
     </div>
   );
 }
 
-function formatUnreadCount(count: number): string {
-  if (count > 99) {
-    return '99+';
+function resolveTriggerLabel(instance: InstanceItem | null, count: number | null): string {
+  if (instance?.name?.trim()) {
+    return instance.name.trim();
   }
-  return String(count);
+  if (count === null) {
+    return '实例信息';
+  }
+  if (count === 0) {
+    return '未配置实例';
+  }
+  if (count > 1) {
+    return `实例异常 (${count})`;
+  }
+  return '实例信息';
 }
 
-function getAvatarText(username: string | null | undefined): string {
-  const normalized = username?.trim() ?? '';
-  if (!normalized) {
-    return 'U';
+function renderInstanceDetail(instance: InstanceItem | null, count: number | null, loadError: string | null): JSX.Element {
+  if (loadError) {
+    return <p style={hintStyle}>读取失败：{loadError}</p>;
   }
 
-  if (/^[\u3400-\u9fff]/.test(normalized)) {
-    return normalized.charAt(0);
+  if (!instance && count === 0) {
+    return <p style={hintStyle}>未检测到实例，请先在服务端配置 1 个 OpenClaw 实例。</p>;
   }
 
-  return normalized.slice(0, 2).toUpperCase();
+  if (!instance && typeof count === 'number' && count > 1) {
+    return <p style={hintStyle}>检测到 {count} 个实例。当前版本仅支持单实例，请保留 1 个。</p>;
+  }
+
+  if (!instance) {
+    return <p style={hintStyle}>正在读取实例信息...</p>;
+  }
+
+  return (
+    <dl style={detailListStyle}>
+      <div style={detailRowStyle}>
+        <dt style={detailKeyStyle}>名称</dt>
+        <dd style={detailValueStyle}>{instance.name || '-'}</dd>
+      </div>
+      <div style={detailRowStyle}>
+        <dt style={detailKeyStyle}>ID</dt>
+        <dd style={detailValueStyle}>{instance.id || '-'}</dd>
+      </div>
+      <div style={detailRowStyle}>
+        <dt style={detailKeyStyle}>类型</dt>
+        <dd style={detailValueStyle}>{instance.type || '-'}</dd>
+      </div>
+      <div style={detailRowStyle}>
+        <dt style={detailKeyStyle}>Endpoint</dt>
+        <dd style={detailValueStyle}>{instance.endpoint || '-'}</dd>
+      </div>
+      <div style={detailRowStyle}>
+        <dt style={detailKeyStyle}>状态</dt>
+        <dd style={detailValueStyle}>{instance.status || '-'}</dd>
+      </div>
+    </dl>
+  );
 }
 
 function getContainerStyle(compact: boolean): React.CSSProperties {
@@ -237,8 +204,8 @@ function getContainerStyle(compact: boolean): React.CSSProperties {
 function getTriggerButtonStyle(compact: boolean): React.CSSProperties {
   if (compact) {
     return {
-      width: '2.125rem',
       height: '2.125rem',
+      maxWidth: '14rem',
       borderRadius: '999px',
       position: 'relative',
       border: '1px solid #dbe4ef',
@@ -247,9 +214,11 @@ function getTriggerButtonStyle(compact: boolean): React.CSSProperties {
       display: 'inline-flex',
       alignItems: 'center',
       justifyContent: 'center',
+      gap: '0.4rem',
       cursor: 'pointer',
       fontFamily: 'system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif',
       boxShadow: '0 10px 24px -20px rgba(15, 23, 42, 0.6)',
+      padding: '0 0.65rem 0 0.35rem',
     };
   }
   return {
@@ -266,13 +235,12 @@ function getTriggerButtonStyle(compact: boolean): React.CSSProperties {
     width: '100%',
     textAlign: 'center',
     borderRadius: '0.375rem',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '0.45rem',
   };
 }
-
-const usernameStyle: React.CSSProperties = {
-  wordBreak: 'break-word',
-  maxWidth: '100%',
-};
 
 function getMenuStyle(menuPlacement: 'above' | 'below'): React.CSSProperties {
   return {
@@ -281,94 +249,96 @@ function getMenuStyle(menuPlacement: 'above' | 'below'): React.CSSProperties {
       ? { bottom: 'calc(100% + 0.5rem)' }
       : { top: 'calc(100% + 0.5rem)' }),
     right: 0,
-    minWidth: '9.25rem',
+    minWidth: '19rem',
+    maxWidth: '24rem',
     background: '#fff',
     border: '1px solid #e5e7eb',
     borderRadius: '0.5rem',
     boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
-    padding: '0.5rem',
+    padding: '0.65rem',
     display: 'flex',
     flexDirection: 'column',
-    gap: '0.25rem',
+    gap: '0.45rem',
     zIndex: 120,
   };
 }
 
-const iconGlyphStyle: React.CSSProperties = {
-  fontSize: '0.78rem',
-  fontWeight: 700,
-  lineHeight: 1,
-};
-
-const triggerAvatarShellStyle: React.CSSProperties = {
-  width: '1.65rem',
-  height: '1.65rem',
+const triggerIconShellStyle: React.CSSProperties = {
+  width: '1.55rem',
+  height: '1.55rem',
   borderRadius: '999px',
   overflow: 'hidden',
   border: '1px solid rgba(56, 189, 248, 0.36)',
-  background: 'linear-gradient(145deg, rgba(16, 185, 129, 0.24), rgba(14, 165, 233, 0.24))',
+  background: '#ffffff',
   display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
   flexShrink: 0,
 };
 
-const triggerAvatarImageStyle: React.CSSProperties = {
+const triggerIconImageStyle: React.CSSProperties = {
   width: '100%',
   height: '100%',
   objectFit: 'cover',
 };
 
-const badgeStyle: React.CSSProperties = {
-  position: 'absolute',
-  top: '-0.22rem',
-  right: '-0.22rem',
-  minWidth: '1rem',
-  height: '1rem',
-  borderRadius: '999px',
-  background: '#dc2626',
-  color: '#fff',
-  border: '1px solid rgba(255, 255, 255, 0.92)',
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  padding: '0 0.2rem',
-  fontSize: '0.62rem',
-  fontWeight: 700,
-  lineHeight: 1,
-};
-
-const menuHeaderButtonStyle: React.CSSProperties = {
-  width: '100%',
-  padding: '0.375rem 0.5rem',
-  borderBottom: '1px solid #e5e7eb',
-  marginBottom: '0.25rem',
-  borderTop: 'none',
-  borderLeft: 'none',
-  borderRight: 'none',
-  background: 'transparent',
-  cursor: 'pointer',
-};
-
-const menuUsernameStyle: React.CSSProperties = {
-  fontSize: '0.75rem',
+const triggerLabelStyle: React.CSSProperties = {
+  maxWidth: '10rem',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  fontSize: '0.78rem',
   fontWeight: 600,
-  color: '#1f2933',
-  wordBreak: 'break-word',
-  textAlign: 'center',
-  display: 'block',
 };
 
-const menuActionButtonStyle: React.CSSProperties = {
-  padding: '0.5rem',
-  background: 'transparent',
-  border: 'none',
+const menuHeaderStyle: React.CSSProperties = {
+  fontSize: '0.78rem',
   color: '#0f172a',
-  fontSize: '0.75rem',
-  fontWeight: 500,
+  fontWeight: 700,
+};
+
+const hintStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.73rem',
+  lineHeight: 1.5,
+  color: '#4b5563',
+};
+
+const detailListStyle: React.CSSProperties = {
+  margin: 0,
+  padding: 0,
+  display: 'grid',
+  gap: '0.35rem',
+};
+
+const detailRowStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: '4.5rem 1fr',
+  gap: '0.45rem',
+  alignItems: 'start',
+};
+
+const detailKeyStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.72rem',
+  fontWeight: 600,
+  color: '#6b7280',
+};
+
+const detailValueStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.76rem',
+  color: '#0f172a',
+  wordBreak: 'break-all',
+};
+
+const refreshButtonStyle: React.CSSProperties = {
+  border: '1px solid #d5dee9',
+  borderRadius: '0.45rem',
+  background: '#f8fafc',
+  color: '#0f172a',
+  fontSize: '0.74rem',
+  padding: '0.3rem 0.5rem',
   cursor: 'pointer',
-  transition: 'all 0.2s',
-  fontFamily: 'system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif',
-  textAlign: 'center',
-  borderRadius: '0.375rem',
+  alignSelf: 'flex-end',
 };

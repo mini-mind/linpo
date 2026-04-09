@@ -190,7 +190,7 @@ describe('SummaryPage', () => {
     expect(mockGetAggregateOverview).toHaveBeenCalledWith({ disableInstanceContext: true });
 
     expect(screen.getByText('Token 消耗趋势')).toBeInTheDocument();
-    expect(screen.getByText('120 tokens')).toBeInTheDocument();
+    expect(screen.getByText(/120 tokens/)).toBeInTheDocument();
     expect(screen.getByTestId('summary-approval-list')).toHaveTextContent('审批任务 Alpha');
     expect(screen.getByTestId('summary-approval-list')).toHaveTextContent('周报流程');
     expect(screen.queryByRole('button', { name: '打开看板' })).not.toBeInTheDocument();
@@ -233,7 +233,7 @@ describe('SummaryPage', () => {
     await screen.findByTestId('summary-chart');
     const chart = screen.getByTestId('summary-chart');
 
-    expect(screen.getByText('240 tokens')).toBeInTheDocument();
+    expect(screen.getByText(/240 tokens/)).toBeInTheDocument();
     expect(within(chart).getByLabelText('切换全部实例曲线')).toBeInTheDocument();
     expect(within(chart).getByLabelText('切换alpha-instance曲线')).toBeInTheDocument();
     expect(within(chart).getByLabelText('切换beta-instance曲线')).toBeInTheDocument();
@@ -281,10 +281,43 @@ describe('SummaryPage', () => {
 
     const chart = await screen.findByTestId('summary-chart');
 
-    expect(screen.getByText('180 tokens')).toBeInTheDocument();
+    expect(screen.getByText(/180 tokens/)).toBeInTheDocument();
     expect(within(chart).getByLabelText('切换全部实例曲线')).toBeInTheDocument();
     expect(within(chart).getByLabelText('切换alpha-instance曲线')).toBeInTheDocument();
     expect(within(chart).getByLabelText('切换beta-instance曲线')).toBeInTheDocument();
+  });
+
+  it('renders last 30 day x-axis labels and compact token values', async () => {
+    mockGetAggregateOverview.mockResolvedValue(
+      buildOverview({
+        stats: {
+          instance_count: 1,
+          agent_count: 1,
+          active_agent_count: 1,
+          attention_instance_count: 0,
+          total_tokens: 1500,
+        },
+        token_groups: [
+          {
+            instance_id: 'instance-alpha',
+            instance_name: 'alpha-instance',
+            total_tokens: 1500,
+            samples: [
+              { label: '2026-03-31', input_tokens: 800, output_tokens: 400, total_tokens: 1200 },
+              { label: '2026-04-01', input_tokens: 200, output_tokens: 100, total_tokens: 300 },
+            ],
+          },
+        ],
+      })
+    );
+
+    renderPage();
+
+    const chart = await screen.findByTestId('summary-chart');
+    expect(screen.getByText(/1,500 tokens/)).toBeInTheDocument();
+    expect(within(chart).getByText('1.2K')).toBeInTheDocument();
+    expect(within(chart).getByText('300')).toBeInTheDocument();
+    expect(within(chart).getAllByText(/^\d{2}-\d{2}$/).length).toBe(30);
   });
 
   it('continues blocked task from summary page', async () => {

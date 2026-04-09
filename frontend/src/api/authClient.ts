@@ -12,16 +12,6 @@ export interface User {
   avatar_url?: string | null;
 }
 
-export interface UpdateProfilePayload {
-  username?: string;
-  avatar_url?: string | null;
-}
-
-export interface UpdatePasswordPayload {
-  current_password: string;
-  new_password: string;
-}
-
 type AuthErrorCode = 
   | 'unauthorized' 
   | 'conflict' 
@@ -82,18 +72,4 @@ export async function getCurrentUser(): Promise<User | null> {
     }
     throw error;
   }
-}
-
-export async function updateProfile(payload: UpdateProfilePayload): Promise<User> {
-  return fetchApi<User>('/api/v1/auth/profile', {
-    method: 'PATCH',
-    body: JSON.stringify(payload),
-  });
-}
-
-export async function updatePassword(payload: UpdatePasswordPayload): Promise<void> {
-  await fetchApi<{ ok: boolean }>('/api/v1/auth/password', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
 }

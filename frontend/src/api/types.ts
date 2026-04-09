@@ -52,23 +52,6 @@ export interface InstanceAgentDocListResponse {
   existing_count: number;
 }
 
-export interface UserMessageItem {
-  id: string;
-  target_email: string;
-  action: string;
-  payload: Record<string, string>;
-  title: string;
-  body: string;
-  created_at: string;
-  is_read: boolean;
-  read_at: string | null;
-  confirmation_url: string;
-}
-
-export interface UserMessageReadResponse {
-  read: boolean;
-}
-
 export interface FreshnessInfo {
   status: 'fresh' | 'stale' | 'failed';
   checked_at: string | null;

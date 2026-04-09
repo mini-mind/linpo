@@ -1,28 +1,12 @@
 import '@testing-library/jest-dom';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-let mockUsername = 'alice';
-let mockAvatarUrl: string | null = null;
+const mockResolveSingleInstance = vi.fn();
 
-vi.mock('../hooks/useAuth', () => ({
-  useAuth: () => ({
-    user: { id: 'u-1', username: mockUsername, avatar_url: mockAvatarUrl },
-  }),
-}));
-
-vi.mock('../api/messageClient', () => ({
-  listUserMessages: vi.fn(async () => []),
-  readUserMessage: vi.fn(async () => ({ read: true })),
-}));
-
-vi.mock('./MessageCenterModal', () => ({
-  MessageCenterModal: () => null,
-}));
-
-vi.mock('./UserProfileModal', () => ({
-  UserProfileModal: ({ open }: { open: boolean }) => (open ? <div>用户信息弹窗</div> : null),
+vi.mock('../api/instanceClient', () => ({
+  resolveSingleInstance: (...args: unknown[]) => mockResolveSingleInstance(...args),
 }));
 
 import { AccountMenu } from './AccountMenu';
@@ -35,71 +19,52 @@ function renderMenu(): void {
   );
 }
 
-describe('AccountMenu avatar trigger text', () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
+describe('AccountMenu instance info menu', () => {
   beforeEach(() => {
-    mockUsername = 'alice';
-    mockAvatarUrl = null;
-    vi.restoreAllMocks();
-  });
-
-  it('uses first Chinese character when username starts with Chinese', () => {
-    mockUsername = '张三';
-    renderMenu();
-
-    expect(screen.getByRole('button', { name: '打开账户菜单' })).toHaveTextContent('张');
-  });
-
-  it('uses first two characters uppercased for English or digits', () => {
-    mockUsername = 'a9test';
-    renderMenu();
-
-    expect(screen.getByRole('button', { name: '打开账户菜单' })).toHaveTextContent('A9');
-  });
-
-  it('falls back to U when username is empty after trim', () => {
-    mockUsername = '   ';
-    renderMenu();
-
-    expect(screen.getByRole('button', { name: '打开账户菜单' })).toHaveTextContent('U');
-  });
-
-  it('renders avatar image when avatar_url exists', () => {
-    mockAvatarUrl = 'data:image/png;base64,AAAA';
-    renderMenu();
-
-    const avatar = screen.getByRole('img', { name: '用户头像' });
-    expect(avatar).toBeInTheDocument();
-    expect(avatar).toHaveAttribute('src', mockAvatarUrl);
-  });
-
-  it('opens user profile modal from account menu item', async () => {
-    renderMenu();
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '打开账户菜单' }));
+    vi.clearAllMocks();
+    mockResolveSingleInstance.mockResolvedValue({
+      instance: {
+        id: 'inst-1',
+        name: 'claw1',
+        type: 'openclaw',
+        endpoint: 'http://127.0.0.1:8000',
+        status: 'healthy',
+        last_check_at: null,
+        created_at: '2026-04-09T00:00:00Z',
+      },
+      total: 1,
     });
-    await act(async () => {
-      fireEvent.click(screen.getByRole('menuitem', { name: '账户' }));
-    });
-    expect(screen.getByText('用户信息弹窗')).toBeInTheDocument();
   });
 
-  it('does not render instance files menu item in account dropdown', async () => {
+  it('renders instance name on trigger', async () => {
     renderMenu();
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '打开账户菜单' }));
-    });
-    expect(screen.queryByRole('menuitem', { name: '实例文件' })).not.toBeInTheDocument();
+
+    expect(await screen.findByRole('button', { name: '打开实例信息' })).toHaveTextContent('claw1');
   });
 
-  it('does not render logout menu item in private deployment mode', async () => {
+  it('opens instance detail menu', async () => {
     renderMenu();
+
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '打开账户菜单' }));
+      fireEvent.click(await screen.findByRole('button', { name: '打开实例信息' }));
     });
-    expect(screen.queryByRole('menuitem', { name: '退出登录' })).not.toBeInTheDocument();
+
+    expect(screen.getByRole('menu', { name: '实例信息' })).toBeInTheDocument();
+    expect(screen.getByText('当前 OpenClaw 实例')).toBeInTheDocument();
+    expect(screen.getByText('http://127.0.0.1:8000')).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: '刷新实例信息' })).toBeInTheDocument();
+  });
+
+  it('shows not configured state when no instance exists', async () => {
+    mockResolveSingleInstance.mockResolvedValueOnce({ instance: null, total: 0 });
+    renderMenu();
+
+    expect(await screen.findByRole('button', { name: '打开实例信息' })).toHaveTextContent('未配置实例');
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '打开实例信息' }));
+    });
+
+    expect(screen.getByText('未检测到实例，请先在服务端配置 1 个 OpenClaw 实例。')).toBeInTheDocument();
   });
 });
