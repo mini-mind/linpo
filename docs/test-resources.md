@@ -16,7 +16,7 @@
 ## 本地联调提示（8000 路径）
 
 - 后端默认会自动读取仓库根目录 `.env`。
-- 前端开发默认直连 `http://localhost:8000`（`npm run dev` 已固定注入）。
+- 前端开发默认同源请求（`http://<当前host>:5173/api/*`），由 Vite 代理到后端。
 - 前端开发端口固定为 `5173`；端口占用会直接报错（不自动漂移）。
 - `LINPO_TASK_EVENT_CALLBACK_BASE_URL` 为必填；本机联调可用 `http://localhost:8000`。
 

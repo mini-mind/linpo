@@ -105,8 +105,8 @@ npm --prefix frontend run dev
 常见本地坑位（`8000 + npm run dev`）：
 
 - 前端开发端口固定为 `5173`；若被占用会直接报错，请先释放端口后重试。
-- 前端开发默认连接 `http://localhost:8000`；可通过 `VITE_API_BASE_URL` 覆盖，例如：
-  `VITE_API_BASE_URL=http://<server-ip>:8000 npm --prefix frontend run dev`。
+- 前端开发默认同源请求（`http://<当前host>:5173/api/*`），由 Vite 代理到后端。
+  如需显式直连后端，可覆盖 `VITE_API_BASE_URL=http://<server-ip>:8000`。
 - 后端 CORS 通过 `LINPO_CORS_ALLOW_ORIGINS` 控制允许来源（逗号分隔完整 Origin）。
 - `LINPO_TASK_EVENT_CALLBACK_BASE_URL` 为必填；建议本机联调填 `http://localhost:8000`，跨机/容器填 OpenClaw 可访问的 Linpo 地址。
 
