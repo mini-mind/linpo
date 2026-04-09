@@ -8,49 +8,36 @@ Linpo 是位于 OpenClaw 与用户之间的人机协作编排交互层。
 - 流程编辑
 - 文件
 
-## 快速启动（本地）
-
-前置：
-
-- Node.js `20.19.0`
-- npm `>=10`
-- Python `3.12+`
-
-后端：
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-cp .env.example .env
-set -a; source .env; set +a
-pip install -e .
-fastapi dev app/main.py
-```
-
-前端：
-
-```bash
-cd frontend
-npm ci
-npm run dev
-```
-
-默认地址：
-
-- 前端：`http://127.0.0.1:5173`
-- 后端：`http://127.0.0.1:8000`
-
-## Docker 私有化部署（推荐）
+## Docker 私有化部署（主路径）
 
 前置：
 
 - Docker 24+
 - Docker Compose v2
 
-启动：
+### 1) 准备最小配置
 
 ```bash
-docker compose up -d --build
+cp .env.deploy.example .env.deploy
+```
+
+必须设置：
+
+- `LINPO_SECRET_ENCRYPTION_KEY`（合法 Fernet key，32-byte urlsafe base64）
+
+可用以下命令生成一个 key：
+
+```bash
+python - <<'PY'
+import base64, os
+print(base64.urlsafe_b64encode(os.urandom(32)).decode())
+PY
+```
+
+### 2) 启动
+
+```bash
+docker compose --env-file .env.deploy up -d --build
 ```
 
 默认地址：
@@ -58,7 +45,7 @@ docker compose up -d --build
 - 前端：`http://localhost:4173`
 - 后端：`http://localhost:8000`
 
-健康检查：
+### 3) 健康检查
 
 ```bash
 curl -fsS http://localhost:8000/api/v1/health
@@ -67,21 +54,86 @@ curl -i http://localhost:8000/api/v1/ops/setup
 
 说明：
 
-- `ops/setup` 未登录返回 `401` 属于正常。
-- 默认无需手工配置 `.env.deploy`，直接可启动。
-- 启动后可直接在前端“实例”弹窗通过 UI 完成 OpenClaw 绑定（endpoint/token）。
+- 开源版默认免注册/免登录，首次访问会自动引导为本地默认用户。
+- 开源版为单实例模式，不提供运行时实例创建/配对能力。
 
-仅在需要覆盖默认值时创建 `.env.deploy`（可参考 `.env.deploy.example`）：
+### 4) 必填 OpenClaw 配置
 
-- 常用覆盖项：`OPENCLAW_BASE_URL`、`OPENCLAW_GATEWAY_TOKEN`
-- 若容器访问宿主机 OpenClaw：建议 `host.docker.internal`
+开源版单实例模式下，以下两项必须在启动前提供：
+
+- `OPENCLAW_BASE_URL`
+- `OPENCLAW_GATEWAY_TOKEN`
+
+可在 `.env.deploy`、容器环境变量或 `docker-compose` 覆盖项中设置。
+
+其余常用覆盖项：
+
+- `LINPO_ALLOW_PRIVATE_ENDPOINTS`
+- `LINPO_ALLOW_LOOPBACK_ENDPOINTS`
 
 ## 数据库策略
 
 - 默认无需外部数据库：未配置 `LINPO_DATABASE_URL` 时，后端使用 `sqlite:///./linpo.db`。
 - 生产如需切换外部数据库，显式设置 `LINPO_DATABASE_URL` 即可。
 
-## 质量命令
+## 本地开发（贡献者）
+
+本地开发与质量门详见：
+
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+
+最小联调路径（跳过 Docker，推荐用于私有化本地验收）：
+
+```bash
+# 后端（默认会自动读取仓库根目录 .env）
+fastapi dev --port 8000
+
+# 前端
+npm --prefix frontend run dev
+```
+
+常见本地坑位（`8000 + npm run dev`）：
+
+- 前端开发端口固定为 `5173`；若被占用会直接报错，请先释放端口后重试。
+- 前端开发默认直接连接 `http://localhost:8000`（由 `frontend/package.json` 固定注入 `VITE_API_BASE_URL`）。
+- 任务回调地址默认使用 `http://localhost:8000`；仅在跨机/容器网络时才需覆盖 `LINPO_TASK_EVENT_CALLBACK_BASE_URL`。
+
+一键本地验收（最小串联，需先启动后端+前端）：
+
+```bash
+set -euo pipefail
+curl -fsS http://localhost:8000/api/v1/health >/dev/null
+INSTANCE_ID="$(curl -fsS http://localhost:8000/api/v1/instances | jq -r '.[0].id')"
+jq -n --arg instanceId "$INSTANCE_ID" \
+  '{requirement:"smoke: 拆分并推进最小流程",instanceId:$instanceId,executorAgentId:"main"}' \
+  > /tmp/linpo-flow-generate.json
+curl -fsS -X POST http://localhost:8000/api/v1/boards/default/tasks/flow/generate \
+  -H 'content-type: application/json' \
+  --data @/tmp/linpo-flow-generate.json \
+  > /tmp/linpo-flow-generate-resp.json
+jq -n \
+  --arg instanceId "$INSTANCE_ID" \
+  --arg plannerSessionKey "$(jq -r '.plannerSessionKey' /tmp/linpo-flow-generate-resp.json)" \
+  --arg executionSessionPrefix "$(jq -r '.executionSessionPrefix' /tmp/linpo-flow-generate-resp.json)" \
+  --argjson nodes "$(jq '.nodes' /tmp/linpo-flow-generate-resp.json)" \
+  --argjson edges "$(jq '.edges' /tmp/linpo-flow-generate-resp.json)" \
+  '{instanceId:$instanceId,executorAgentId:"main",managerAgentId:"main",plannerSessionKey:$plannerSessionKey,executionSessionPrefix:$executionSessionPrefix,requirementTitle:"smoke-confirm",nodes:$nodes,edges:$edges}' \
+  > /tmp/linpo-flow-confirm.json
+curl -fsS -X POST http://localhost:8000/api/v1/boards/default/tasks/flow/confirm \
+  -H 'content-type: application/json' \
+  --data @/tmp/linpo-flow-confirm.json >/tmp/linpo-flow-confirm-resp.json
+PLAYWRIGHT_DEPLOYED_BASE_URL=http://127.0.0.1:5173 npm --prefix frontend run e2e:deployed
+echo "local smoke passed"
+```
+
+若失败，优先排查：
+
+- `curl .../health` 失败：后端未在 `8000` 启动。
+- `flow/generate` 或 `flow/confirm` 失败：检查 `.env` 的 `OPENCLAW_*`。
+- 若 `ops/setup` 的 `flow_decomposition_configured` 报 planner agent 不可用：按 `nextStep` 直接执行推荐命令（如 `export FLOW_DECOMPOSITION_AGENT_ID=<建议值>`），并核对 message 中“当前运行时可用 agents”列表。
+- `e2e:deployed` 失败：确认前端在 `5173`，并检查 `PLAYWRIGHT_DEPLOYED_BASE_URL`。
+
+常用质量命令（精简）：
 
 ```bash
 pytest

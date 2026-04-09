@@ -2,6 +2,10 @@ function normalizeApiBaseUrl(raw: string): string {
   return raw.trim().replace(/\/+$/, '');
 }
 
+function inferDefaultApiBaseUrl(): string {
+  return 'http://localhost:8000';
+}
+
 export function resolveRequiredApiBaseUrl(overrideBaseUrl?: string): string {
   const override = (overrideBaseUrl ?? '').trim();
   if (override) {
@@ -14,9 +18,7 @@ export function resolveRequiredApiBaseUrl(overrideBaseUrl?: string): string {
     return normalizeApiBaseUrl(normalizedConfigured);
   }
 
-  throw new Error(
-    'Missing VITE_API_BASE_URL. Please configure frontend/.env or frontend/.env.local before starting the frontend.'
-  );
+  return normalizeApiBaseUrl(inferDefaultApiBaseUrl());
 }
 
 export const API_BASE_URL = resolveRequiredApiBaseUrl();

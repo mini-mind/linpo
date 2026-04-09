@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -235,36 +236,23 @@ class FlowDecompositionService:
 
     def _build_flow_decomposition_execution_context(self) -> ProviderExecutionContext:
         provider_name = self._decomposition_provider_name()
-        if provider_name == "openclaw":
-            base_url = self._decomposition_base_url()
-            token = self._decomposition_gateway_token()
-            origin = self._decomposition_origin()
+        base_url = self._decomposition_base_url()
+        token = self._decomposition_gateway_token()
+        origin = self._decomposition_origin()
 
-            client = OpenClawClient(
-                base_url=base_url,
-                gateway_token=token,
-                origin=origin,
-            )
-            adapter = OpenClawAdapter(
-                client=client,
-                instance_id=f"flow-decomposer-{self._decomposition_agent_id()}",
-                instance_name=self._decomposition_agent_id(),
-            )
-            return ProviderExecutionContext(
-                adapter=cast(ProviderAdapter, adapter),
-                cache_key=(f"flow-decomposer-{provider_name}", base_url, origin, self._decomposition_agent_id()),
-            )
-
-        try:
-            adapter = self._provider_registry.create_adapter(provider_name)
-        except KeyError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail=f"Flow decomposition provider is not supported: {provider_name}",
-            ) from exc
+        client = OpenClawClient(
+            base_url=base_url,
+            gateway_token=token,
+            origin=origin,
+        )
+        adapter = OpenClawAdapter(
+            client=client,
+            instance_id=f"flow-decomposer-{self._decomposition_agent_id()}",
+            instance_name=self._decomposition_agent_id(),
+        )
         return ProviderExecutionContext(
-            adapter=adapter,
-            cache_key=(f"flow-decomposer-{provider_name}", *adapter.config_key()),
+            adapter=cast(ProviderAdapter, adapter),
+            cache_key=(f"flow-decomposer-{provider_name}", base_url, origin, self._decomposition_agent_id()),
         )
 
     def _wait_for_assistant_json(
@@ -348,9 +336,16 @@ class FlowDecompositionService:
         current_nodes: list[dict[str, Any]] | None = None,
     ) -> list[FlowNodeDraft]:
         payload = self._parse_json_payload(assistant_message)
-        nodes_payload = payload.get("nodes")
+        nodes_payload = self._extract_nodes_payload(payload)
         if not isinstance(nodes_payload, list) or len(nodes_payload) == 0:
-            raise HTTPException(status_code=503, detail="Flow decomposition failed: missing nodes")
+            payload_keys = sorted(str(key) for key in payload.keys())
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Flow decomposition failed: missing nodes"
+                    f" (supported keys: nodes/steps/tasks/add_nodes; payload keys: {payload_keys})"
+                ),
+            )
 
         normalized_nodes: list[FlowNodeDraft] = []
         seen_ids: set[str] = set()
@@ -358,11 +353,14 @@ class FlowDecompositionService:
             if not isinstance(item, dict):
                 continue
 
-            node_id_raw = item.get("id")
-            title_raw = item.get("title")
-            description_raw = item.get("description")
-            depends_raw = item.get("depends_on", [])
-            sensitive_raw = item.get("sensitive")
+            node_id_raw = item.get("id", item.get("node_id"))
+            title_raw = item.get("title", item.get("name", item.get("task", item.get("step"))))
+            description_raw = item.get(
+                "description",
+                item.get("details", item.get("summary", "")),
+            )
+            depends_raw = item.get("depends_on", item.get("dependsOn", item.get("dependencies", [])))
+            sensitive_raw = item.get("sensitive", item.get("requires_approval", item.get("approval_required")))
 
             title = str(title_raw).strip() if isinstance(title_raw, str) else ""
             if title == "":
@@ -424,13 +422,175 @@ class FlowDecompositionService:
 
     def _parse_json_payload(self, content: str) -> dict[str, Any]:
         for candidate in self._extract_json_candidates(content):
-            try:
-                parsed = json.loads(candidate)
-            except json.JSONDecodeError:
-                continue
+            parsed = self._parse_json_candidate(candidate)
             if isinstance(parsed, dict):
                 return parsed
+            if isinstance(parsed, list):
+                return {"nodes": parsed}
+        loose_nodes_payload = self._extract_loose_nodes_payload(content)
+        if loose_nodes_payload is not None:
+            return {"nodes": loose_nodes_payload}
+        fragment_nodes_payload = self._extract_node_objects_from_fragments(content)
+        if fragment_nodes_payload is not None:
+            return {"nodes": fragment_nodes_payload}
         raise HTTPException(status_code=503, detail="Flow decomposition failed: invalid JSON payload")
+
+    def _parse_json_candidate(self, candidate: str) -> dict[str, Any] | list[Any] | None:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, (dict, list)):
+            return parsed
+
+        normalized_candidates = [
+            candidate,
+            re.sub(r"\btrue\b", "True", candidate, flags=re.IGNORECASE),
+            re.sub(r"\bfalse\b", "False", candidate, flags=re.IGNORECASE),
+            re.sub(r"\bnull\b", "None", candidate, flags=re.IGNORECASE),
+        ]
+        if len(normalized_candidates) >= 4:
+            normalized_candidates.append(
+                re.sub(
+                    r"\bnull\b",
+                    "None",
+                    re.sub(
+                        r"\bfalse\b",
+                        "False",
+                        re.sub(r"\btrue\b", "True", candidate, flags=re.IGNORECASE),
+                        flags=re.IGNORECASE,
+                    ),
+                    flags=re.IGNORECASE,
+                )
+            )
+        for normalized in normalized_candidates:
+            try:
+                parsed = ast.literal_eval(normalized)
+            except (ValueError, SyntaxError):
+                continue
+            if isinstance(parsed, (dict, list)):
+                return cast(dict[str, Any] | list[Any], parsed)
+        return None
+
+    def _extract_loose_nodes_payload(self, content: str) -> list[Any] | None:
+        key_pattern = re.compile(r"(?:\"|')?(nodes|steps|tasks|add_nodes)(?:\"|')?\s*:\s*\[", re.IGNORECASE)
+        for match in key_pattern.finditer(content):
+            open_bracket_index = match.end() - 1
+            bracket_block = self._extract_bracket_block(content, start=open_bracket_index)
+            if bracket_block is None:
+                continue
+            parsed = self._parse_json_candidate(bracket_block)
+            if isinstance(parsed, list):
+                return parsed
+        return None
+
+    def _extract_bracket_block(self, content: str, *, start: int) -> str | None:
+        if start < 0 or start >= len(content) or content[start] != "[":
+            return None
+        depth = 0
+        in_quote = False
+        quote_char = ""
+        escaped = False
+        for index in range(start, len(content)):
+            char = content[index]
+            if in_quote:
+                if escaped:
+                    escaped = False
+                    continue
+                if char == "\\":
+                    escaped = True
+                    continue
+                if char == quote_char:
+                    in_quote = False
+                continue
+            if char in {'"', "'"}:
+                in_quote = True
+                quote_char = char
+                continue
+            if char == "[":
+                depth += 1
+                continue
+            if char == "]":
+                depth -= 1
+                if depth == 0:
+                    return content[start : index + 1]
+        return None
+
+    def _extract_node_objects_from_fragments(self, content: str) -> list[Any] | None:
+        object_blocks = self._extract_object_blocks(content)
+        if not object_blocks:
+            return None
+        nodes: list[dict[str, Any]] = []
+        for block in object_blocks:
+            parsed = self._parse_json_candidate(block)
+            if not isinstance(parsed, dict):
+                continue
+            if "nodes" in parsed or "steps" in parsed or "tasks" in parsed or "add_nodes" in parsed:
+                nested = self._extract_nodes_payload(parsed)
+                if isinstance(nested, list):
+                    for item in nested:
+                        if isinstance(item, dict):
+                            nodes.append(item)
+                continue
+            title_fields = ("title", "name", "task", "step")
+            if any(str(parsed.get(field, "")).strip() != "" for field in title_fields):
+                nodes.append(parsed)
+        return nodes or None
+
+    def _extract_object_blocks(self, content: str) -> list[str]:
+        blocks: list[str] = []
+        start = -1
+        depth = 0
+        in_quote = False
+        quote_char = ""
+        escaped = False
+        for index, char in enumerate(content):
+            if in_quote:
+                if escaped:
+                    escaped = False
+                    continue
+                if char == "\\":
+                    escaped = True
+                    continue
+                if char == quote_char:
+                    in_quote = False
+                continue
+            if char in {'"', "'"}:
+                in_quote = True
+                quote_char = char
+                continue
+            if char == "{":
+                if depth == 0:
+                    start = index
+                depth += 1
+                continue
+            if char == "}":
+                if depth == 0:
+                    continue
+                depth -= 1
+                if depth == 0 and start != -1:
+                    blocks.append(content[start : index + 1])
+                    start = -1
+        return blocks
+
+    def _extract_nodes_payload(self, payload: dict[str, Any]) -> list[Any] | None:
+        direct_candidates = ("nodes", "steps", "tasks", "add_nodes")
+        for key in direct_candidates:
+            value = payload.get(key)
+            if isinstance(value, list):
+                return value
+
+        nested_containers = ("plan", "workflow", "result")
+        for container_key in nested_containers:
+            container = payload.get(container_key)
+            if not isinstance(container, dict):
+                continue
+            for key in direct_candidates:
+                nested_value = container.get(key)
+                if isinstance(nested_value, list):
+                    return nested_value
+
+        return None
 
     def _extract_json_candidates(self, content: str) -> list[str]:
         candidates: list[str] = []
@@ -681,46 +841,27 @@ class FlowDecompositionService:
             ),
         )
 
-    def _required_flow_decomposition_env(self, env_name: str, *fallback_env_names: str) -> str:
+    def _required_flow_decomposition_env(self, env_name: str) -> str:
         value = os.getenv(env_name, "").strip()
         if value != "":
             return value
-        for fallback_env_name in fallback_env_names:
-            fallback_value = os.getenv(fallback_env_name, "").strip()
-            if fallback_value != "":
-                return fallback_value
-        fallback_hint = f" (or {', '.join(fallback_env_names)})" if fallback_env_names else ""
         raise HTTPException(
             status_code=503,
-            detail=f"Flow decomposition service is not configured: missing {env_name}{fallback_hint}",
+            detail=f"Flow decomposition service is not configured: missing {env_name}",
         )
 
     def _decomposition_base_url(self) -> str:
-        return self._required_flow_decomposition_env(
-            "FLOW_DECOMPOSITION_OPENCLAW_BASE_URL",
-            "OPENCLAW_BASE_URL",
-        )
+        return self._required_flow_decomposition_env("OPENCLAW_BASE_URL")
 
     def _decomposition_origin(self) -> str | None:
-        primary = os.getenv("FLOW_DECOMPOSITION_OPENCLAW_ORIGIN", "").strip()
-        if primary != "":
-            return primary
-        fallback = os.getenv("OPENCLAW_ORIGIN", "").strip()
-        if fallback != "":
-            return fallback
-        return None
+        value = os.getenv("OPENCLAW_ORIGIN", "").strip()
+        return value or None
 
     def _decomposition_gateway_token(self) -> str:
-        return self._required_flow_decomposition_env(
-            "FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN",
-            "OPENCLAW_GATEWAY_TOKEN",
-        )
+        return self._required_flow_decomposition_env("OPENCLAW_GATEWAY_TOKEN")
 
     def _decomposition_provider_name(self) -> str:
-        value = os.getenv("FLOW_DECOMPOSITION_PROVIDER", "").strip().lower()
-        if value == "":
-            return _DEFAULT_DECOMPOSITION_PROVIDER
-        return value
+        return _DEFAULT_DECOMPOSITION_PROVIDER
 
     def _decomposition_agent_id(self) -> str:
         value = os.getenv("FLOW_DECOMPOSITION_AGENT_ID", "").strip()

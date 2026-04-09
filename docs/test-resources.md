@@ -1,99 +1,79 @@
 # 测试/联调资源
 
-## 验收服务域名
+## 单实例前置
 
-- 不在仓库固定记录验收域名，按部署环境注入（内网优先）。
+开源版按单实例联调，启动前必须配置：
 
-## 机器与访问
+- `OPENCLAW_BASE_URL`
+- `OPENCLAW_GATEWAY_TOKEN`
 
-| 机器 | 地址 | 用途 |
-|---|---|---|
-| 本机 | `127.0.0.1`（或内网地址） | Linpo 服务端（前端 5173，后端 8000） |
-| 验收执行端 | 按实际环境配置 | 远程客户端联调与浏览器验收发起端 |
+可选：
 
-- 验收执行端访问地址按环境私有配置，不在仓库公开记录。
+- `OPENCLAW_ORIGIN`
 
-## 部署形态
+## 本地启动命令
 
-- 本地开发为前端 + 后端进程本机运行，分别监听 5173 / 8000；数据库默认使用本地 SQLite（`./linpo.db`），如需外部数据库可显式配置 `LINPO_DATABASE_URL`。
-- OpenClaw 联调实例通常运行于 Docker 容器（如 `openclaw-a` / `openclaw-b` / `openclaw-planner`）。
-- v0.7 联调实例按当前配对与环境配置选择，不在文档约定默认实例。
-- v0.7 流程拆解服务由 `FLOW_DECOMPOSITION_PROVIDER + FLOW_DECOMPOSITION_*` 显式配置决定（后端服务化拆解）。
+- 后端：`source .venv/bin/activate && fastapi dev --port 8000`
+- 前端：`npm --prefix frontend run dev`
 
-## 角色分工
+## 本地联调提示（8000 路径）
 
-- 本地工作区承担代码实现、构建与测试；所有改动都需先在本地通过标准命令验证。
-- 验收执行端负责远端浏览器验收入口，自己不负责构建、测试或部署主机；如需远端执行，应事先在本地演练并确保日志可回放。
+- 后端默认会自动读取仓库根目录 `.env`。
+- 前端开发默认直连 `http://localhost:8000`（`npm run dev` 已固定注入）。
+- 前端开发端口固定为 `5173`；端口占用会直接报错（不自动漂移）。
+- 任务回调地址默认使用 `http://localhost:8000`；仅在跨机/容器网络时再覆盖 `LINPO_TASK_EVENT_CALLBACK_BASE_URL`。
 
-## 标准命令
+## 一键本地验收（最小串联）
 
-- `nvm use`：切换到仓库约定 Node 版本（`20.19.0`）。
-- `pytest`：后端核心逻辑测试。
-- `npm --prefix frontend run test`：前端单元/集成测试。
-- `npm --prefix frontend run build`：前端构建产物。
-- `make quality`：统一质量门（聚合后端测试、类型检查与前端构建）。
-- `curl -i http://127.0.0.1:8000/api/v1/health`：后端健康检查。
-- `docker compose up -d --build`：最小私有化部署启动（见 `README.md` 的 Docker 私有化部署章节）。
+先分别启动后端和前端，再在新终端执行：
 
-## CI/CD 门禁（GitHub Actions）
+```bash
+set -euo pipefail
+curl -fsS http://localhost:8000/api/v1/health >/dev/null
+INSTANCE_ID="$(curl -fsS http://localhost:8000/api/v1/instances | jq -r '.[0].id')"
+jq -n --arg instanceId "$INSTANCE_ID" \
+  '{requirement:"smoke: 拆分并推进最小流程",instanceId:$instanceId,executorAgentId:"main"}' \
+  > /tmp/linpo-flow-generate.json
+curl -fsS -X POST http://localhost:8000/api/v1/boards/default/tasks/flow/generate \
+  -H 'content-type: application/json' \
+  --data @/tmp/linpo-flow-generate.json \
+  > /tmp/linpo-flow-generate-resp.json
+jq -n \
+  --arg instanceId "$INSTANCE_ID" \
+  --arg plannerSessionKey "$(jq -r '.plannerSessionKey' /tmp/linpo-flow-generate-resp.json)" \
+  --arg executionSessionPrefix "$(jq -r '.executionSessionPrefix' /tmp/linpo-flow-generate-resp.json)" \
+  --argjson nodes "$(jq '.nodes' /tmp/linpo-flow-generate-resp.json)" \
+  --argjson edges "$(jq '.edges' /tmp/linpo-flow-generate-resp.json)" \
+  '{instanceId:$instanceId,executorAgentId:"main",managerAgentId:"main",plannerSessionKey:$plannerSessionKey,executionSessionPrefix:$executionSessionPrefix,requirementTitle:"smoke-confirm",nodes:$nodes,edges:$edges}' \
+  > /tmp/linpo-flow-confirm.json
+curl -fsS -X POST http://localhost:8000/api/v1/boards/default/tasks/flow/confirm \
+  -H 'content-type: application/json' \
+  --data @/tmp/linpo-flow-confirm.json >/tmp/linpo-flow-confirm-resp.json
+PLAYWRIGHT_DEPLOYED_BASE_URL=http://127.0.0.1:5173 npm --prefix frontend run e2e:deployed
+```
 
-- `CI Gate`：`.github/workflows/ci.yml`
-  - Backend：`py_compile + pytest(关键风险套件)`
-  - Frontend：`vitest(FlowPage/flowPageUtils/geometry) + build`
-  - Playwright：本地 dev server 下执行 `e2e/local/flow-page.local.spec.ts`
-- `CD Delivery Gate`：`.github/workflows/cd-delivery-gate.yml`
-  - 在部署环境运行 `e2e/deployed/core-path.deployed.spec.ts`
-  - `push main/master` 触发时读取仓库密钥 `PLAYWRIGHT_BASE_URL`
-  - 手动触发 `workflow_dispatch` 时使用输入参数 `base_url`
+失败优先排查：
 
-## 验收流程
+- `health` 不通：后端未监听 `8000`。
+- `generate/confirm` 异常：检查 `.env` 的 `OPENCLAW_*`。
+- `ops/setup` 的 `flow_decomposition_configured` 若提示 planner agent 不可用：优先执行 `nextStep` 给出的 `export FLOW_DECOMPOSITION_AGENT_ID=<建议值>`，并以 message 中“当前运行时可用 agents”作为可选值来源。
+- `e2e:deployed` 异常：检查前端是否监听 `5173`，以及 `PLAYWRIGHT_DEPLOYED_BASE_URL` 是否正确。
 
-1. 本地完成改动并运行对应测试命令，确认无回归。
-2. 将构建产物/服务发布到联调环境（按环境配置的前端与后端地址）。
-3. 由验收执行端发起 Playwright 验收，覆盖核心数据链路与页面行为。
-4. 若验收失败，记录失败场景与诊断路径，修复后重新验证。
+## 质量命令
 
-## 验收门禁
+- 后端：`/data/projects/linpo/.venv/bin/pytest`
+- 前端测试：`npm --prefix frontend run test`
+- 前端构建：`npm --prefix frontend run build`
 
-- 所有后端核心逻辑变更必须伴随单元测试。
-- major feature 不允许在未部署并通过验收前直接收口。
-- 页面在 success、partial-failure、failed、unauthorized 等状态要提供可诊断反馈。
+## 验收主链路
 
-## OpenClaw 联调实例资源
+1. 打开页面（默认免注册/免登录）
+2. 进入流程页生成流程
+3. confirm 后任务进入看板推进
+4. 审批/中断/继续动作可用
+5. 结果可在任务产出与文件页预览/下载
 
-| 名称 | 端口 | 令牌 |
-|---|---|---|
-| openclaw-a | `18789` | 通过本地安全配置注入，不在仓库明文记录 |
-| openclaw-b | `28789` | 通过本地安全配置注入，不在仓库明文记录 |
-| openclaw-planner | `38789` | 通过本地安全配置注入，不在仓库明文记录 |
+## 说明
 
-## 运行时前置条件（环境变量）
-
-| 变量 | 用途 |
-|---|---|
-| `LINPO_DATABASE_URL` | 可选数据库连接字符串；未配置时默认使用 `sqlite:///./linpo.db` |
-| `LINPO_SECRET_ENCRYPTION_KEY` | Gateway Token 加密存储 |
-| `LINPO_CORS_ALLOW_ORIGINS` | 前端访问源的 CORS 白名单（按部署环境显式配置） |
-| `LINPO_ALLOW_LOOPBACK_ENDPOINTS` | 实例挂载 endpoint 安全开关；默认 `false`，仅显式开启后允许 `127.0.0.1/localhost/::1` |
-| `LINPO_ALLOW_PRIVATE_ENDPOINTS` | 实例挂载 endpoint 安全开关；默认 `false`，仅显式开启后允许私网/内网地址（如 `host.docker.internal`、`10.x`、`192.168.x`） |
-| `LINPO_SESSION_COOKIE_SECURE` | 会话 Cookie `Secure` 开关；不显式配置时默认启用（`true`） |
-| `VITE_API_BASE_URL` | 前端 API 地址（如 `http://127.0.0.1:8000`）；由 `frontend/.env(.local)` 注入 |
-| `OPENCLAW_BASE_URL` | OpenClaw 网关地址（可选；不配时可在 UI 通过实例绑定提供） |
-| `OPENCLAW_GATEWAY_TOKEN` | OpenClaw 网关令牌（可选；不配时可在 UI 通过实例绑定提供） |
-| `OPENCLAW_ORIGIN` | OpenClaw 请求来源标识（可选；留空时按 `OPENCLAW_BASE_URL` 自动推导） |
-| `FLOW_DECOMPOSITION_PROVIDER` | 流程拆解 provider（默认 `openclaw`） |
-| `FLOW_DECOMPOSITION_AGENT_ID` | 流程拆解默认 planner agent（需配置为实例可见 agent） |
-| `FLOW_DECOMPOSITION_OPENCLAW_BASE_URL` | 当 provider=`openclaw` 时可选：拆解服务网关地址（留空时回退 `OPENCLAW_BASE_URL`） |
-| `FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN` | 当 provider=`openclaw` 时可选：拆解服务网关令牌（留空时回退 `OPENCLAW_GATEWAY_TOKEN`） |
-| `FLOW_DECOMPOSITION_OPENCLAW_ORIGIN` | 当 provider=`openclaw` 时可选：拆解服务 Origin（留空时回退 `OPENCLAW_ORIGIN`，若仍为空则按 base_url 自动推导） |
-| `LINPO_TASK_EVENT_CALLBACK_BASE_URL` | 任务事件回调地址基座（必填，且必须从 OpenClaw 运行位置可达）；留空时任务投放直接失败 |
-| `LINPO_TASK_RUN_STALE_SECONDS` | `running` 任务无 heartbeat 的超时阈值（秒） |
-
-补充说明：任务事件回调当前采用 `callbackToken` + `occurredAt` 时间窗 + `callbackSignature(HMAC-SHA256)` 三层校验；签名 key 直接使用该次运行下发的 `callbackToken`。
-
-## OpenClaw 参考
-
-本节仅作为引用型参考，不代表 Linpo 产品契约，正式约束仍以 `docs/prd.md` / `docs/architecture.md` 为准。
-- OpenClaw 全量接口清单（含未接入项）：`docs/openclaw-api-catalog.md`
-- WebSocket API：https://openclaw-openclaw.mintlify.app/api/websocket
-- Sessions API：https://openclaw-openclaw.mintlify.app/api/sessions
+- 本文不再维护多实例、配对会话、挂载回执相关联调内容。
+- 详细契约以 `docs/prd.md` 与 `docs/architecture.md` 为准。

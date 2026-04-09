@@ -8,14 +8,18 @@ from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
-from app.services.instance_service import InstanceService
-
-_FLOW_DECOMPOSITION_KEY_FALLBACKS = (
-    ("FLOW_DECOMPOSITION_OPENCLAW_BASE_URL", "OPENCLAW_BASE_URL"),
-    ("FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN", "OPENCLAW_GATEWAY_TOKEN"),
+from app.services.crypto import (
+    SecretEncryptionKeyConfigurationError,
+    validate_secret_encryption_key,
 )
-_FLOW_DECOMPOSITION_PROVIDER_KEY = "FLOW_DECOMPOSITION_PROVIDER"
-_DEFAULT_FLOW_DECOMPOSITION_PROVIDER = "openclaw"
+from app.services.instance_service import InstanceService
+from app.services import task_callback_base_url_service
+from app.services.flow_decomposition_service import FlowDecompositionService
+from app.services.provider_application_service import ProviderApplicationService
+
+_FLOW_DECOMPOSITION_AGENT_ID_KEY = "FLOW_DECOMPOSITION_AGENT_ID"
+_DEFAULT_FLOW_DECOMPOSITION_AGENT_ID = "planner-default"
+_FLOW_DECOMPOSITION_RECOMMENDED_AGENT_PRIORITY = ("planner-default", "main")
 _OPENCLAW_RUNTIME_REQUIRED_KEYS = (
     "OPENCLAW_BASE_URL",
     "OPENCLAW_GATEWAY_TOKEN",
@@ -80,8 +84,7 @@ class OpsService:
         self._instance_service = instance_service or InstanceService()
 
     def get_setup(self, db_session: Session, *, user_id: UUID) -> OpsSetupSnapshot:
-        instances = self._instance_service.list_instances(db_session, user_id=user_id)
-        checks = self._build_checks(instances_total=len(instances))
+        checks = self._build_checks()
         return OpsSetupSnapshot(
             checks=checks,
             ready=all(item.status == "ok" for item in checks),
@@ -95,7 +98,7 @@ class OpsService:
         )
         connectivity_items = [self._build_instance_connectivity(instance) for instance in instances]
 
-        checks = self._build_checks(instances_total=instances_total)
+        checks = self._build_checks()
         ready = all(item.status == "ok" for item in checks)
         request_id = str(uuid4())
         summary = OpsDiagnosticsSummary(
@@ -135,37 +138,53 @@ class OpsService:
             ),
         )
 
-    def _build_checks(self, *, instances_total: int) -> list[OpsCheck]:
+    def _build_checks(self) -> list[OpsCheck]:
         database_url = (os.getenv("LINPO_DATABASE_URL") or "").strip()
         db_configured = database_url != ""
 
-        secret_key_configured = (os.getenv("LINPO_SECRET_ENCRYPTION_KEY") or "").strip() != ""
+        secret_key_validation_error: SecretEncryptionKeyConfigurationError | None = None
+        try:
+            validate_secret_encryption_key()
+        except SecretEncryptionKeyConfigurationError as exc:
+            secret_key_validation_error = exc
+        secret_key_configured = secret_key_validation_error is None
 
         missing_openclaw_runtime_keys = [
             key for key in _OPENCLAW_RUNTIME_REQUIRED_KEYS if (os.getenv(key) or "").strip() == ""
         ]
-        openclaw_runtime_configured = len(missing_openclaw_runtime_keys) == 0 or instances_total > 0
+        openclaw_runtime_configured = len(missing_openclaw_runtime_keys) == 0
 
-        flow_provider = (
-            (os.getenv(_FLOW_DECOMPOSITION_PROVIDER_KEY) or "").strip().lower()
-            or _DEFAULT_FLOW_DECOMPOSITION_PROVIDER
+        flow_configured = openclaw_runtime_configured
+        flow_planner_agent_id = (
+            (os.getenv(_FLOW_DECOMPOSITION_AGENT_ID_KEY) or "").strip()
+            or _DEFAULT_FLOW_DECOMPOSITION_AGENT_ID
         )
-        flow_provider_supported = flow_provider == "openclaw"
-        missing_flow_keys = (
-            [
-                flow_key
-                for flow_key, fallback_key in _FLOW_DECOMPOSITION_KEY_FALLBACKS
-                if (os.getenv(flow_key) or "").strip() == "" and (os.getenv(fallback_key) or "").strip() == ""
-            ]
-            if flow_provider == "openclaw"
-            else []
-        )
-        flow_configured = flow_provider_supported and (len(missing_flow_keys) == 0 or instances_total > 0)
+        flow_planner_runtime_ids: list[str] | None = None
+        flow_planner_runtime_error = ""
+        flow_planner_agent_available = True
 
-        callback_base_url = (os.getenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL") or "").strip()
+        if openclaw_runtime_configured:
+            flow_planner_runtime_ids, flow_planner_runtime_error = (
+                self._resolve_flow_decomposition_runtime_agent_ids(flow_provider="openclaw")
+            )
+            if flow_planner_runtime_ids is not None:
+                flow_planner_agent_available = flow_planner_agent_id in flow_planner_runtime_ids
+            flow_configured = flow_configured and flow_planner_agent_available
+
+        flow_runtime_agents_text = ""
+        if flow_planner_runtime_ids is not None:
+            flow_runtime_agents_text = ", ".join(flow_planner_runtime_ids) if flow_planner_runtime_ids else "(empty)"
+        flow_recommended_agent_id = self._recommend_flow_decomposition_agent_id(flow_planner_runtime_ids)
+
+        callback_base_url = task_callback_base_url_service.event_callback_base_url()
         callback_base_url_configured = callback_base_url != ""
-
-        instance_bound = instances_total > 0
+        callback_candidates = task_callback_base_url_service.event_callback_base_url_candidates(
+            execution_context=None
+        )
+        callback_reachability_hint = task_callback_base_url_service.event_callback_reachability_hint(
+            execution_context=None
+        )
+        callback_candidates_text = ", ".join(callback_candidates)
 
         checks: list[OpsCheck] = [
             OpsCheck(
@@ -186,14 +205,32 @@ class OpsService:
                 key="secret_encryption_key_configured",
                 status="ok" if secret_key_configured else "failed",
                 message=(
-                    "LINPO_SECRET_ENCRYPTION_KEY 已配置。"
+                    "LINPO_SECRET_ENCRYPTION_KEY 已配置且格式合法。"
                     if secret_key_configured
-                    else "LINPO_SECRET_ENCRYPTION_KEY 未配置。"
+                    else (
+                        "LINPO_SECRET_ENCRYPTION_KEY 未配置。"
+                        if secret_key_validation_error is not None
+                        and secret_key_validation_error.reason == "missing"
+                        else (
+                            str(secret_key_validation_error)
+                            if secret_key_validation_error is not None
+                            else "LINPO_SECRET_ENCRYPTION_KEY 校验失败。"
+                        )
+                    )
                 ),
                 next_step=(
                     ""
                     if secret_key_configured
-                    else "设置 LINPO_SECRET_ENCRYPTION_KEY（Fernet 32-byte base64 key）并重启服务。"
+                    else (
+                        "设置 LINPO_SECRET_ENCRYPTION_KEY（Fernet 32-byte base64 key）并重启服务。"
+                        if secret_key_validation_error is not None
+                        and secret_key_validation_error.reason == "missing"
+                        else (
+                            "将 LINPO_SECRET_ENCRYPTION_KEY 更新为合法 Fernet key 并重启服务。"
+                            if secret_key_validation_error is not None
+                            else "重新检查 LINPO_SECRET_ENCRYPTION_KEY 配置后重启服务。"
+                        )
+                    )
                 ),
             ),
             OpsCheck(
@@ -202,16 +239,12 @@ class OpsService:
                 message=(
                     "OPENCLAW_* 已完整配置。"
                     if len(missing_openclaw_runtime_keys) == 0
-                    else (
-                        "未配置默认 OPENCLAW_*，将使用已绑定实例的 UI 配置。"
-                        if instances_total > 0
-                        else f"缺少 OPENCLAW 配置: {', '.join(missing_openclaw_runtime_keys)}"
-                    )
+                    else f"缺少 OPENCLAW 配置: {', '.join(missing_openclaw_runtime_keys)}"
                 ),
                 next_step=(
                     ""
                     if openclaw_runtime_configured
-                    else "补齐 OPENCLAW_BASE_URL / OPENCLAW_GATEWAY_TOKEN，或先在 UI 完成实例绑定。"
+                    else "补齐 OPENCLAW_BASE_URL / OPENCLAW_GATEWAY_TOKEN 并重启服务。"
                 ),
             ),
             OpsCheck(
@@ -219,15 +252,23 @@ class OpsService:
                 status="ok" if flow_configured else "failed",
                 message=(
                     (
-                        f"FLOW_DECOMPOSITION provider 不受支持: {flow_provider}"
-                        if not flow_provider_supported
-                        else (
-                            f"FLOW_DECOMPOSITION 已配置（provider={flow_provider}）。"
-                            if len(missing_flow_keys) == 0
+                        (
+                            f"FLOW_DECOMPOSITION 已配置（runtime=openclaw，planner_agent={flow_planner_agent_id}）。"
+                            if flow_planner_agent_available
                             else (
-                                "未配置 FLOW_DECOMPOSITION_OPENCLAW_*，将回退 OPENCLAW_* 或实例配置。"
-                                if instances_total > 0
-                                else f"缺少 FLOW_DECOMPOSITION 配置: {', '.join(missing_flow_keys)}"
+                                "FLOW_DECOMPOSITION 已配置（runtime=openclaw），"
+                                f"但 planner agent 不可用：{flow_planner_agent_id}。"
+                                f" 当前运行时可用 agents: {flow_runtime_agents_text or 'unknown'}。"
+                                f" 建议值: {flow_recommended_agent_id}。"
+                            )
+                        )
+                        + (
+                            ""
+                            if flow_planner_runtime_ids is None and flow_planner_runtime_error == ""
+                            else (
+                                f" 运行时 agents: {', '.join(flow_planner_runtime_ids)}。"
+                                if flow_planner_runtime_ids is not None
+                                else f" 运行时 agent 校验未完成: {flow_planner_runtime_error}"
                             )
                         )
                     )
@@ -236,11 +277,12 @@ class OpsService:
                     ""
                     if flow_configured
                     else (
-                        "将 FLOW_DECOMPOSITION_PROVIDER 设为当前受支持 provider（openclaw）并重启服务。"
-                        if not flow_provider_supported
+                        "先补齐 OPENCLAW_BASE_URL / OPENCLAW_GATEWAY_TOKEN 并重启服务。"
+                        if not openclaw_runtime_configured
                         else (
-                            "补齐 FLOW_DECOMPOSITION_OPENCLAW_*；"
-                            "若使用同一 OpenClaw，也可仅配置 OPENCLAW_* 并重启服务。"
+                            "将 FLOW_DECOMPOSITION_AGENT_ID 设置为运行时可用 agent 并重启服务。"
+                            f"可直接执行: export FLOW_DECOMPOSITION_AGENT_ID={flow_recommended_agent_id}。"
+                            f" 当前运行时可用 agents: {flow_runtime_agents_text or 'unknown'}。"
                         )
                     )
                 ),
@@ -249,32 +291,65 @@ class OpsService:
                 key="task_callback_base_url_configured",
                 status="ok" if callback_base_url_configured else "failed",
                 message=(
-                    "LINPO_TASK_EVENT_CALLBACK_BASE_URL 已配置。"
+                    (
+                        "LINPO_TASK_EVENT_CALLBACK_BASE_URL 已配置。"
+                        if callback_candidates_text == ""
+                        else f"LINPO_TASK_EVENT_CALLBACK_BASE_URL 已配置。候选地址: {callback_candidates_text}。"
+                    )
                     if callback_base_url_configured
-                    else "LINPO_TASK_EVENT_CALLBACK_BASE_URL 未配置。"
+                    else "LINPO_TASK_EVENT_CALLBACK_BASE_URL 未配置，已使用默认值。"
                 ),
                 next_step=(
-                    ""
+                    (
+                        callback_reachability_hint
+                        if callback_reachability_hint != ""
+                        else ""
+                    )
                     if callback_base_url_configured
-                    else "设置 LINPO_TASK_EVENT_CALLBACK_BASE_URL（例如 http://<linpo-host>:8000）并重启服务。"
-                ),
-            ),
-            OpsCheck(
-                key="instance_bound",
-                status="ok" if instance_bound else "failed",
-                message=(
-                    "已绑定至少一个实例。"
-                    if instance_bound
-                    else "当前用户尚未绑定实例。"
-                ),
-                next_step=(
-                    ""
-                    if instance_bound
-                    else "通过实例配对流程完成至少一个实例绑定。"
+                    else (
+                        "设置 LINPO_TASK_EVENT_CALLBACK_BASE_URL（本地开发可用 http://localhost:8000；"
+                        "Docker 默认可用 http://<linpo-host>:8000）并重启服务。"
+                    )
                 ),
             ),
         ]
         return checks
+
+    def _resolve_flow_decomposition_runtime_agent_ids(
+        self,
+        *,
+        flow_provider: str,
+    ) -> tuple[list[str] | None, str]:
+        if flow_provider != "openclaw":
+            return None, ""
+        try:
+            flow_service = FlowDecompositionService()
+            provider_service = ProviderApplicationService()
+            context = flow_service.build_realtime_execution_context()
+            data_source = provider_service.resolve_observer_data_source(
+                flow_service.decomposition_provider_name(),
+                context,
+            )
+            agent_ids: list[str] = []
+            seen: set[str] = set()
+            for agent in data_source.list_agents():
+                agent_id = str(getattr(agent, "id", "")).strip()
+                if agent_id == "" or agent_id in seen:
+                    continue
+                seen.add(agent_id)
+                agent_ids.append(agent_id)
+            return agent_ids, ""
+        except Exception as exc:  # pragma: no cover - diagnostic fallback
+            detail = str(getattr(exc, "detail", "")).strip() or str(exc).strip() or exc.__class__.__name__
+            return None, detail
+
+    def _recommend_flow_decomposition_agent_id(self, runtime_agent_ids: list[str] | None) -> str:
+        if runtime_agent_ids:
+            for preferred_agent_id in _FLOW_DECOMPOSITION_RECOMMENDED_AGENT_PRIORITY:
+                if preferred_agent_id in runtime_agent_ids:
+                    return preferred_agent_id
+            return runtime_agent_ids[0]
+        return _DEFAULT_FLOW_DECOMPOSITION_AGENT_ID
 
     def _build_instance_connectivity(self, instance: object) -> OpsInstanceConnectivity:
         endpoint_value = str(getattr(instance, "endpoint", "") or "").strip()

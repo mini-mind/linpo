@@ -165,7 +165,104 @@ def test_dispatch_next_queued_task_dispatches_first_runnable_task(monkeypatch: p
         assert "http://linpo.private:8000/api/v1/boards/default/tasks/task-runs/" in sent_message
 
 
-def test_dispatch_next_queued_task_marks_failed_when_callback_unavailable(
+def test_dispatch_next_queued_task_with_localhost_callback_adds_docker_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", "http://localhost:8000")
+    engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+
+    task_service = TaskService()
+    fake_provider = _FakeProviderApplicationService()
+    service = TaskDispatchService(
+        task_service=task_service,
+        provider_application_service=cast(Any, fake_provider),
+    )
+    execution_context = ProviderExecutionContext(
+        adapter=cast(ProviderAdapter, object()),
+        cache_key=("instance-1", "ws://127.0.0.1/ws", "gateway-token", "http://127.0.0.1"),
+    )
+
+    with Session(engine) as db_session:
+        user = _create_user(db_session, username="dispatch-localhost-callback-user")
+        task = _create_task(
+            db_session,
+            task_service=task_service,
+            user_id=user.id,
+            title="localhost-callback",
+            status="queued",
+            agent_id="agent-localhost",
+            extras={"board_id": "default"},
+        )
+
+        result = service.dispatch_next_queued_task(
+            db_session,
+            user_id=user.id,
+            board_id="default",
+            execution_context=execution_context,
+        )
+
+        assert result is not None
+        assert result.task_id == str(task.id)
+        assert result.run_id is not None
+        assert len(fake_provider.calls) == 1
+
+        sent_message = cast(str, fake_provider.calls[0]["message"])
+        expected_path = f"/api/v1/boards/default/tasks/task-runs/{result.run_id}/events"
+        assert f"1) http://host.docker.internal:8000{expected_path}" in sent_message
+        assert f"2) http://localhost:8000{expected_path}" in sent_message
+
+
+def test_dispatch_next_queued_task_with_docker_internal_callback_adds_local_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", "http://host.docker.internal:8000")
+    engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+
+    task_service = TaskService()
+    fake_provider = _FakeProviderApplicationService()
+    service = TaskDispatchService(
+        task_service=task_service,
+        provider_application_service=cast(Any, fake_provider),
+    )
+    execution_context = ProviderExecutionContext(
+        adapter=cast(ProviderAdapter, object()),
+        cache_key=("instance-1", "ws://127.0.0.1/ws", "gateway-token", "http://127.0.0.1"),
+    )
+
+    with Session(engine) as db_session:
+        user = _create_user(db_session, username="dispatch-docker-internal-callback-user")
+        task = _create_task(
+            db_session,
+            task_service=task_service,
+            user_id=user.id,
+            title="docker-internal-callback",
+            status="queued",
+            agent_id="agent-docker-internal",
+            extras={"board_id": "default"},
+        )
+
+        result = service.dispatch_next_queued_task(
+            db_session,
+            user_id=user.id,
+            board_id="default",
+            execution_context=execution_context,
+        )
+
+        assert result is not None
+        assert result.task_id == str(task.id)
+        assert result.run_id is not None
+        assert len(fake_provider.calls) == 1
+
+        sent_message = cast(str, fake_provider.calls[0]["message"])
+        expected_path = f"/api/v1/boards/default/tasks/task-runs/{result.run_id}/events"
+        assert f"1) http://host.docker.internal:8000{expected_path}" in sent_message
+        assert f"2) http://127.0.0.1:8000{expected_path}" in sent_message
+        assert f"3) http://localhost:8000{expected_path}" in sent_message
+
+
+def test_dispatch_next_queued_task_uses_default_callback_when_env_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", raising=False)
@@ -207,12 +304,16 @@ def test_dispatch_next_queued_task_marks_failed_when_callback_unavailable(
         assert result is not None
         assert result.task_id == str(task.id)
         assert result.run_id is not None
-        assert fake_provider.calls == []
+        assert len(fake_provider.calls) == 1
 
         db_session.refresh(task)
-        assert task.status == "failed"
-        assert task.extras["dispatch_status"] == "failed"
-        assert "callback base url unavailable" in task.extras["dispatch_error"]
+        assert task.status == "running"
+        assert task.extras["dispatch_status"] == "running"
+        assert task.extras["dispatch_error"] == ""
+        sent_message = cast(str, fake_provider.calls[0]["message"])
+        expected_path = f"/api/v1/boards/default/tasks/task-runs/{result.run_id}/events"
+        assert f"1) http://host.docker.internal:8000{expected_path}" in sent_message
+        assert f"2) http://localhost:8000{expected_path}" in sent_message
 
 
 def test_reconcile_stale_running_tasks_marks_only_stale_tasks(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,8 +1,11 @@
 import os
+import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from fastapi.openapi.utils import get_openapi
 
 from app.adapters.provider_registry import build_default_provider_registry
@@ -19,7 +22,10 @@ from app.api.tasks_flow_draft import router as tasks_flow_draft_router
 from app.api.tasks_runtime import router as tasks_runtime_router
 from app.db.session import init_db
 from app.services.aggregate_service import AggregateService
+from app.services.env_bootstrap import load_repo_env_defaults
+from app.services.openclaw_client import OpenClawClient
 from app.services.provider_application_service import ProviderApplicationService
+from app.services.instance_validator import UnsafeInstanceEndpointError
 
 _DEFAULT_CORS_ORIGINS = [
     "http://localhost:4173",
@@ -29,6 +35,11 @@ _DEFAULT_CORS_ORIGINS = [
 ]
 _ALLOWED_CORS_METHODS = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
 _API_V1_PREFIX = "/api/v1"
+_DEFAULT_OPENCLAW_STARTUP_HEALTH_TIMEOUT_SECONDS = 3.0
+
+logger = logging.getLogger("uvicorn.error")
+
+load_repo_env_defaults()
 
 
 def _get_cors_allow_origins() -> list[str]:
@@ -49,7 +60,68 @@ def _get_cors_allow_origins() -> list[str]:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.bootstrap_database()
+    await _log_openclaw_startup_health()
     yield
+
+
+def _openclaw_startup_health_timeout_seconds() -> float:
+    raw = (os.getenv("LINPO_OPENCLAW_STARTUP_HEALTH_TIMEOUT_SECONDS") or "").strip()
+    if raw == "":
+        return _DEFAULT_OPENCLAW_STARTUP_HEALTH_TIMEOUT_SECONDS
+    try:
+        parsed = float(raw)
+    except ValueError:
+        return _DEFAULT_OPENCLAW_STARTUP_HEALTH_TIMEOUT_SECONDS
+    return max(0.1, min(parsed, 60.0))
+
+
+async def _fetch_openclaw_snapshot_with_timeout(*, timeout_seconds: float) -> dict[str, object]:
+    snapshot = await asyncio.wait_for(
+        asyncio.to_thread(OpenClawClient().fetch_snapshot),
+        timeout=timeout_seconds,
+    )
+    return snapshot.snapshot
+
+
+async def _log_openclaw_startup_health() -> None:
+    timeout_seconds = _openclaw_startup_health_timeout_seconds()
+    base_url = (os.getenv("OPENCLAW_BASE_URL") or "").strip()
+    try:
+        snapshot = await _fetch_openclaw_snapshot_with_timeout(timeout_seconds=timeout_seconds)
+        health = snapshot.get("health")
+        agents_count = 0
+        default_agent_id = ""
+        if isinstance(health, dict):
+            agents = health.get("agents")
+            if isinstance(agents, list):
+                agents_count = len(agents)
+            default_agent_raw = health.get("defaultAgentId")
+            if isinstance(default_agent_raw, str):
+                default_agent_id = default_agent_raw
+        logger.info(
+            "startup.openclaw_health status=ok base_url=%s agents=%s default_agent=%s",
+            base_url or "(unset)",
+            agents_count,
+            default_agent_id or "(empty)",
+        )
+    except TimeoutError:
+        logger.warning(
+            "startup.openclaw_health status=failed reason=timeout base_url=%s timeout_seconds=%.1f",
+            base_url or "(unset)",
+            timeout_seconds,
+        )
+    except HTTPException as exc:
+        logger.warning(
+            "startup.openclaw_health status=failed reason=http_exception base_url=%s detail=%s",
+            base_url or "(unset)",
+            str(exc.detail),
+        )
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.warning(
+            "startup.openclaw_health status=failed reason=unexpected base_url=%s detail=%s",
+            base_url or "(unset)",
+            str(exc),
+        )
 
 
 _OPENAPI_TAGS = [
@@ -137,6 +209,15 @@ def _custom_openapi() -> dict[str, object]:
 
 
 app.openapi = _custom_openapi
+
+
+@app.exception_handler(UnsafeInstanceEndpointError)
+async def handle_unsafe_instance_endpoint_error(
+    request: Request,
+    exc: UnsafeInstanceEndpointError,
+) -> JSONResponse:
+    del request
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
 def _get_cors_allow_headers(request: Request) -> str:

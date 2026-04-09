@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from cryptography.fernet import Fernet
 
 from app.services.ops_service import OpsService
 
@@ -19,17 +20,23 @@ def _instance(name: str, status: str, endpoint: str = "http://127.0.0.1:28789") 
     return SimpleNamespace(id=f"{name}-id", name=name, status=status, endpoint=endpoint, last_check_at=None)
 
 
+@pytest.fixture(autouse=True)
+def _stub_flow_decomposition_runtime_agents(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        OpsService,
+        "_resolve_flow_decomposition_runtime_agent_ids",
+        lambda self, *, flow_provider: (["planner-default", "main"], ""),
+    )
+
+
 def test_ops_service_diagnostics_healthy_has_no_error_contexts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("LINPO_DATABASE_URL", "sqlite:///linpo.db")
-    monkeypatch.setenv("LINPO_SECRET_ENCRYPTION_KEY", "dummy-fernet-key")
+    monkeypatch.setenv("LINPO_SECRET_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
     monkeypatch.setenv("OPENCLAW_BASE_URL", "ws://127.0.0.1:28789")
     monkeypatch.setenv("OPENCLAW_GATEWAY_TOKEN", "token")
     monkeypatch.setenv("OPENCLAW_ORIGIN", "http://127.0.0.1:28789")
-    monkeypatch.setenv("FLOW_DECOMPOSITION_OPENCLAW_BASE_URL", "http://127.0.0.1:28789")
-    monkeypatch.setenv("FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN", "token")
-    monkeypatch.setenv("FLOW_DECOMPOSITION_OPENCLAW_ORIGIN", "http://localhost:5173")
     monkeypatch.setenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", "http://127.0.0.1:8000")
 
     service = OpsService(
@@ -58,11 +65,10 @@ def test_ops_service_diagnostics_failed_checks_populate_latest_and_recent_with_f
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("LINPO_DATABASE_URL", "sqlite:///linpo.db")
-    monkeypatch.setenv("LINPO_SECRET_ENCRYPTION_KEY", "dummy-fernet-key")
-    monkeypatch.setenv("OPENCLAW_BASE_URL", "ws://127.0.0.1:28789")
-    monkeypatch.setenv("OPENCLAW_GATEWAY_TOKEN", "token")
-    monkeypatch.setenv("OPENCLAW_ORIGIN", "http://127.0.0.1:28789")
-    monkeypatch.setenv("FLOW_DECOMPOSITION_PROVIDER", "unsupported-provider")
+    monkeypatch.setenv("LINPO_SECRET_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.delenv("OPENCLAW_BASE_URL", raising=False)
+    monkeypatch.delenv("OPENCLAW_GATEWAY_TOKEN", raising=False)
+    monkeypatch.delenv("OPENCLAW_ORIGIN", raising=False)
     monkeypatch.setenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", "http://127.0.0.1:8000")
 
     service = OpsService(instance_service=_FakeInstanceService([_instance("instance-active", "active")]))
@@ -71,9 +77,9 @@ def test_ops_service_diagnostics_failed_checks_populate_latest_and_recent_with_f
     assert snapshot.summary.ready is False
     assert snapshot.latest_error_context is not None
     assert snapshot.recent_error_context is not None
-    assert snapshot.latest_error_context.check_key == "flow_decomposition_configured"
-    assert "provider 不受支持" in snapshot.latest_error_context.message
-    assert snapshot.recent_error_context.check_key == "flow_decomposition_configured"
+    assert snapshot.latest_error_context.check_key == "openclaw_runtime_configured"
+    assert "缺少 OPENCLAW 配置" in snapshot.latest_error_context.message
+    assert snapshot.recent_error_context.check_key == "openclaw_runtime_configured"
     assert snapshot.recent_error_context.message == snapshot.latest_error_context.message
 
 
@@ -81,13 +87,10 @@ def test_ops_service_diagnostics_instances_degraded_populate_recent_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("LINPO_DATABASE_URL", "sqlite:///linpo.db")
-    monkeypatch.setenv("LINPO_SECRET_ENCRYPTION_KEY", "dummy-fernet-key")
+    monkeypatch.setenv("LINPO_SECRET_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
     monkeypatch.setenv("OPENCLAW_BASE_URL", "ws://127.0.0.1:28789")
     monkeypatch.setenv("OPENCLAW_GATEWAY_TOKEN", "token")
     monkeypatch.setenv("OPENCLAW_ORIGIN", "http://127.0.0.1:28789")
-    monkeypatch.setenv("FLOW_DECOMPOSITION_OPENCLAW_BASE_URL", "http://127.0.0.1:28789")
-    monkeypatch.setenv("FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN", "token")
-    monkeypatch.setenv("FLOW_DECOMPOSITION_OPENCLAW_ORIGIN", "http://localhost:5173")
     monkeypatch.setenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", "http://127.0.0.1:8000")
 
     service = OpsService(
@@ -116,9 +119,6 @@ def test_ops_service_setup_reports_missing_env_and_unbound_instance(
     monkeypatch.delenv("OPENCLAW_BASE_URL", raising=False)
     monkeypatch.delenv("OPENCLAW_GATEWAY_TOKEN", raising=False)
     monkeypatch.delenv("OPENCLAW_ORIGIN", raising=False)
-    monkeypatch.delenv("FLOW_DECOMPOSITION_OPENCLAW_BASE_URL", raising=False)
-    monkeypatch.delenv("FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN", raising=False)
-    monkeypatch.delenv("FLOW_DECOMPOSITION_OPENCLAW_ORIGIN", raising=False)
     monkeypatch.delenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", raising=False)
 
     service = OpsService(instance_service=_FakeInstanceService([]))
@@ -130,8 +130,6 @@ def test_ops_service_setup_reports_missing_env_and_unbound_instance(
         "secret_encryption_key_configured",
         "openclaw_runtime_configured",
         "flow_decomposition_configured",
-        "task_callback_base_url_configured",
-        "instance_bound",
     }
 
 
@@ -143,9 +141,6 @@ def test_ops_service_setup_check_keys_and_messages_are_stable(
     monkeypatch.delenv("OPENCLAW_BASE_URL", raising=False)
     monkeypatch.delenv("OPENCLAW_GATEWAY_TOKEN", raising=False)
     monkeypatch.delenv("OPENCLAW_ORIGIN", raising=False)
-    monkeypatch.delenv("FLOW_DECOMPOSITION_OPENCLAW_BASE_URL", raising=False)
-    monkeypatch.delenv("FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN", raising=False)
-    monkeypatch.delenv("FLOW_DECOMPOSITION_OPENCLAW_ORIGIN", raising=False)
     monkeypatch.delenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", raising=False)
 
     service = OpsService(instance_service=_FakeInstanceService([]))
@@ -158,10 +153,74 @@ def test_ops_service_setup_check_keys_and_messages_are_stable(
         "openclaw_runtime_configured",
         "flow_decomposition_configured",
         "task_callback_base_url_configured",
-        "instance_bound",
     ]
     assert checks_by_key["database_url_configured"].status == "ok"
     assert "默认 SQLite" in checks_by_key["database_url_configured"].message
     assert checks_by_key["secret_encryption_key_configured"].message == "LINPO_SECRET_ENCRYPTION_KEY 未配置。"
     assert checks_by_key["openclaw_runtime_configured"].message.startswith("缺少 OPENCLAW 配置:")
-    assert checks_by_key["task_callback_base_url_configured"].message == "LINPO_TASK_EVENT_CALLBACK_BASE_URL 未配置。"
+    assert checks_by_key["task_callback_base_url_configured"].status == "ok"
+    assert "候选地址: http://host.docker.internal:8000, http://localhost:8000" in checks_by_key["task_callback_base_url_configured"].message
+
+
+def test_ops_service_setup_reports_invalid_secret_encryption_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LINPO_SECRET_ENCRYPTION_KEY", "invalid-fernet-key")
+    monkeypatch.setenv("OPENCLAW_BASE_URL", "ws://127.0.0.1:28789")
+    monkeypatch.setenv("OPENCLAW_GATEWAY_TOKEN", "token")
+    monkeypatch.setenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", "http://127.0.0.1:8000")
+
+    service = OpsService(instance_service=_FakeInstanceService([_instance("instance-active", "active")]))
+    snapshot = service.get_setup(object(), user_id=uuid4())
+    checks_by_key = {item.key: item for item in snapshot.checks}
+
+    assert snapshot.ready is False
+    assert checks_by_key["secret_encryption_key_configured"].status == "failed"
+    assert "格式非法" in checks_by_key["secret_encryption_key_configured"].message
+    assert "Fernet key" in checks_by_key["secret_encryption_key_configured"].next_step
+
+
+def test_ops_service_setup_includes_callback_reachability_hint_for_localhost(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LINPO_SECRET_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.setenv("OPENCLAW_BASE_URL", "ws://127.0.0.1:28789")
+    monkeypatch.setenv("OPENCLAW_GATEWAY_TOKEN", "token")
+    monkeypatch.setenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", "http://localhost:8000")
+
+    service = OpsService(instance_service=_FakeInstanceService([_instance("instance-active", "active")]))
+    snapshot = service.get_setup(object(), user_id=uuid4())
+    checks_by_key = {item.key: item for item in snapshot.checks}
+    callback_check = checks_by_key["task_callback_base_url_configured"]
+
+    assert callback_check.status == "ok"
+    assert "host.docker.internal" in callback_check.message
+    assert "host.docker.internal" in callback_check.next_step
+
+
+def test_ops_service_setup_reports_decomposition_planner_agent_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LINPO_SECRET_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.setenv("OPENCLAW_BASE_URL", "ws://127.0.0.1:28789")
+    monkeypatch.setenv("OPENCLAW_GATEWAY_TOKEN", "token")
+    monkeypatch.setenv("FLOW_DECOMPOSITION_AGENT_ID", "planner-default")
+    monkeypatch.setenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", "http://127.0.0.1:8000")
+    monkeypatch.setattr(
+        OpsService,
+        "_resolve_flow_decomposition_runtime_agent_ids",
+        lambda self, *, flow_provider: (["main"], ""),
+    )
+
+    service = OpsService(instance_service=_FakeInstanceService([_instance("instance-active", "active")]))
+    snapshot = service.get_setup(object(), user_id=uuid4())
+    checks_by_key = {item.key: item for item in snapshot.checks}
+    flow_check = checks_by_key["flow_decomposition_configured"]
+
+    assert snapshot.ready is False
+    assert flow_check.status == "failed"
+    assert "planner agent 不可用" in flow_check.message
+    assert "当前运行时可用 agents: main" in flow_check.message
+    assert "建议值: main" in flow_check.message
+    assert "FLOW_DECOMPOSITION_AGENT_ID" in flow_check.next_step
+    assert "export FLOW_DECOMPOSITION_AGENT_ID=main" in flow_check.next_step

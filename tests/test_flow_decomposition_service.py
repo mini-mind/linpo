@@ -31,11 +31,10 @@ def _install_fast_clock(
 
 @pytest.fixture(autouse=True)
 def _set_required_flow_decomposition_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("FLOW_DECOMPOSITION_PROVIDER", "openclaw")
     monkeypatch.setenv("FLOW_DECOMPOSITION_AGENT_ID", "planner-default")
-    monkeypatch.setenv("FLOW_DECOMPOSITION_OPENCLAW_BASE_URL", "ws://test-openclaw:38789")
-    monkeypatch.setenv("FLOW_DECOMPOSITION_OPENCLAW_ORIGIN", "http://test-openclaw:38789")
-    monkeypatch.setenv("FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN", "test-token")
+    monkeypatch.setenv("OPENCLAW_BASE_URL", "ws://test-openclaw:38789")
+    monkeypatch.setenv("OPENCLAW_ORIGIN", "http://test-openclaw:38789")
+    monkeypatch.setenv("OPENCLAW_GATEWAY_TOKEN", "test-token")
 
 
 def test_decompose_returns_nodes_from_provider_history_payload() -> None:
@@ -318,6 +317,206 @@ def test_decompose_supports_incremental_prompt_context_and_reuses_planner_sessio
     assert result.nodes[0].description == "旧描述应保留"
 
 
+def test_decompose_supports_steps_alias_payload_and_normalizes_fields() -> None:
+    class FakeProviderApplicationService:
+        def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
+            del kwargs
+            return {"request_id": "req-1", "status": "accepted", "agent_id": "planner-default"}
+
+        def chat_history(self, **kwargs: Any) -> dict[str, Any]:
+            del kwargs
+            return {
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "text": (
+                            '{"steps":['
+                            '{"name":"需求澄清","details":"确认输入输出","dependencies":[],"approval_required":false},'
+                            '{"task":"执行交付","summary":"产出结果并审批","dependencies":["node_1"],"approval_required":true}'
+                            ']}'
+                        ),
+                    }
+                ]
+            }
+
+    service = FlowDecompositionService(
+        provider_application_service=cast(Any, FakeProviderApplicationService())
+    )
+    result = service.decompose(requirement="拆解任务", board_id="default")
+
+    assert len(result.nodes) == 2
+    assert result.nodes[0].id == "node_1"
+    assert result.nodes[0].title == "需求澄清"
+    assert result.nodes[0].description == "确认输入输出"
+    assert result.nodes[1].id == "node_2"
+    assert result.nodes[1].title == "执行交付"
+    assert result.nodes[1].depends_on == ["node_1"]
+    assert result.nodes[1].sensitive is True
+
+
+def test_decompose_supports_add_nodes_alias_payload() -> None:
+    class FakeProviderApplicationService:
+        def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
+            del kwargs
+            return {"request_id": "req-1", "status": "accepted", "agent_id": "planner-default"}
+
+        def chat_history(self, **kwargs: Any) -> dict[str, Any]:
+            del kwargs
+            return {
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "text": (
+                            '{"result":{"add_nodes":['
+                            '{"node_id":"n_init","name":"初始化","details":"准备输入","dependencies":[]},'
+                            '{"id":"n_exec","title":"执行","description":"输出结果","dependsOn":["n_init"],"sensitive":true}'
+                            ']}}'
+                        ),
+                    }
+                ]
+            }
+
+    service = FlowDecompositionService(
+        provider_application_service=cast(Any, FakeProviderApplicationService())
+    )
+    result = service.decompose(requirement="拆解任务", board_id="default")
+
+    assert len(result.nodes) == 2
+    assert result.nodes[0].id == "n_init"
+    assert result.nodes[0].title == "初始化"
+    assert result.nodes[1].id == "n_exec"
+    assert result.nodes[1].depends_on == ["n_init"]
+    assert result.nodes[1].sensitive is True
+
+
+def test_decompose_supports_python_like_nodes_payload_with_single_quotes() -> None:
+    class FakeProviderApplicationService:
+        def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
+            del kwargs
+            return {"request_id": "req-1", "status": "accepted", "agent_id": "planner-default"}
+
+        def chat_history(self, **kwargs: Any) -> dict[str, Any]:
+            del kwargs
+            return {
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "text": (
+                            "flow draft: {'add_nodes':["
+                            "{'id':'n1','title':'准备输入','depends_on':[],'sensitive':false},"
+                            "{'id':'n2','title':'执行输出','depends_on':['n1'],'sensitive':true}"
+                            "]}"
+                        ),
+                    }
+                ]
+            }
+
+    service = FlowDecompositionService(
+        provider_application_service=cast(Any, FakeProviderApplicationService())
+    )
+    result = service.decompose(requirement="拆解任务", board_id="default")
+
+    assert len(result.nodes) == 2
+    assert result.nodes[0].id == "n1"
+    assert result.nodes[1].id == "n2"
+    assert result.nodes[1].depends_on == ["n1"]
+    assert result.nodes[1].sensitive is True
+
+
+def test_decompose_supports_loose_keyed_array_payload_without_outer_object() -> None:
+    class FakeProviderApplicationService:
+        def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
+            del kwargs
+            return {"request_id": "req-1", "status": "accepted", "agent_id": "planner-default"}
+
+        def chat_history(self, **kwargs: Any) -> dict[str, Any]:
+            del kwargs
+            return {
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "text": (
+                            "add_nodes:["
+                            "{'id':'x1','name':'拆解输入','dependencies':[]},"
+                            "{'id':'x2','task':'执行交付','dependencies':['x1'],'approval_required':true}"
+                            "]"
+                        ),
+                    }
+                ]
+            }
+
+    service = FlowDecompositionService(
+        provider_application_service=cast(Any, FakeProviderApplicationService())
+    )
+    result = service.decompose(requirement="拆解任务", board_id="default")
+
+    assert len(result.nodes) == 2
+    assert result.nodes[0].id == "x1"
+    assert result.nodes[1].id == "x2"
+    assert result.nodes[1].depends_on == ["x1"]
+    assert result.nodes[1].sensitive is True
+
+
+def test_decompose_supports_fragmented_node_objects_without_wrapping_json() -> None:
+    class FakeProviderApplicationService:
+        def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
+            del kwargs
+            return {"request_id": "req-1", "status": "accepted", "agent_id": "planner-default"}
+
+        def chat_history(self, **kwargs: Any) -> dict[str, Any]:
+            del kwargs
+            return {
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "text": (
+                            "拆解建议如下："
+                            "{'id':'m1','title':'梳理输入','depends_on':[],'sensitive':false}"
+                            "{'id':'m2','name':'执行产出','dependencies':['m1'],'approval_required':true}"
+                        ),
+                    }
+                ]
+            }
+
+    service = FlowDecompositionService(
+        provider_application_service=cast(Any, FakeProviderApplicationService())
+    )
+    result = service.decompose(requirement="拆解任务", board_id="default")
+
+    assert len(result.nodes) == 2
+    assert result.nodes[0].id == "m1"
+    assert result.nodes[1].id == "m2"
+    assert result.nodes[1].depends_on == ["m1"]
+    assert result.nodes[1].sensitive is True
+
+
+def test_decompose_reports_payload_keys_when_nodes_missing() -> None:
+    class FakeProviderApplicationService:
+        def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
+            del kwargs
+            return {"request_id": "req-1", "status": "accepted", "agent_id": "planner-default"}
+
+        def chat_history(self, **kwargs: Any) -> dict[str, Any]:
+            del kwargs
+            return {
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "text": '{"result":{"summary":"ok"},"meta":{"source":"planner"}}',
+                    }
+                ]
+            }
+
+    service = FlowDecompositionService(
+        provider_application_service=cast(Any, FakeProviderApplicationService())
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        service.decompose(requirement="拆解任务", board_id="default")
+
+    assert "missing nodes" in str(exc_info.value.detail)
+    assert "payload keys" in str(exc_info.value.detail)
+
+
 def test_decompose_accepts_custom_planner_agent_id() -> None:
     class FakeProviderApplicationService:
         def send_chat_message(self, **kwargs: Any) -> dict[str, Any]:
@@ -429,13 +628,7 @@ def test_snapshot_from_history_messages_returns_latest_valid_snapshot() -> None:
     assert snapshot.nodes[1].depends_on == ["n1"]
 
 
-@pytest.mark.parametrize(
-    "missing_env",
-    [
-        "FLOW_DECOMPOSITION_OPENCLAW_BASE_URL",
-        "FLOW_DECOMPOSITION_OPENCLAW_GATEWAY_TOKEN",
-    ],
-)
+@pytest.mark.parametrize("missing_env", ["OPENCLAW_BASE_URL", "OPENCLAW_GATEWAY_TOKEN"])
 def test_build_execution_context_fails_when_required_env_missing(
     monkeypatch: pytest.MonkeyPatch,
     missing_env: str,

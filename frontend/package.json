@@ -4,12 +4,12 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0 --port 5173",
+    "dev": "VITE_API_BASE_URL=http://localhost:8000 vite --host 0.0.0.0 --port 5173 --strictPort",
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
     "e2e": "npm run e2e:local",
     "e2e:local": "playwright test --project=local",
-    "e2e:deployed": "node -e \"const required=['PLAYWRIGHT_DEPLOYED_BASE_URL','PLAYWRIGHT_E2E_IDENTIFIER','PLAYWRIGHT_E2E_PASSWORD'];const miss=required.filter((k)=>!(process.env[k]||'').trim());if(miss.length){console.error('Missing env for deployed e2e: '+miss.join(', '));process.exit(1);}\" && PLAYWRIGHT_SKIP_LOCAL_WEB_SERVER=1 playwright test --project=deployed"
+    "e2e:deployed": "node -e \"const required=['PLAYWRIGHT_DEPLOYED_BASE_URL'];const miss=required.filter((k)=>!(process.env[k]||'').trim());if(miss.length){console.error('Missing env for deployed e2e: '+miss.join(', '));process.exit(1);}\" && PLAYWRIGHT_SKIP_LOCAL_WEB_SERVER=1 playwright test --project=deployed"
   },
   "dependencies": {
     "@dagrejs/dagre": "^1.1.4",

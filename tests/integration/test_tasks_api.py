@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from urllib.parse import quote
 from uuid import UUID
@@ -69,8 +70,9 @@ def _install_planner_agent_membership(
         provider_application_service: object,
         execution_context: object,
         planner_agent_id: str,
+        data_source_name: str = "openclaw",
     ) -> None:
-        del provider_application_service, execution_context
+        del provider_application_service, execution_context, data_source_name
         if planner_agent_id not in available_agent_ids:
             raise HTTPException(status_code=400, detail="planner_agent_id is not available in current instance")
 
@@ -260,6 +262,13 @@ def test_create_and_list_tasks_with_real_task_entity(
     assert create_payload["instanceId"] == instance["id"]
     assert create_payload["extras"]["dispatch_status"] == "accepted"
     assert create_payload["extras"]["dispatch_request_id"] == "req-dispatch-1"
+    assert create_payload["extras"]["runtime_stale"] == "false"
+    assert create_payload["extras"]["runtime_recommended_action"] == "任务仍在运行窗口内，建议继续观察心跳"
+    assert isinstance(create_payload["extras"]["runtime_last_heartbeat_at"], str)
+    assert create_payload["extras"]["runtime_last_heartbeat_at"] != ""
+    assert create_payload["extras"]["runtime_callback_base_url"] == "http://linpo.test:8000"
+    assert create_payload["extras"]["runtime_callback_base_url_candidates"] == "http://linpo.test:8000"
+    assert "runtime_callback_reachability_hint" in create_payload["extras"]
     assert "dispatch_callback_token" not in create_payload["extras"]
     assert "dispatch_callback_urls" not in create_payload["extras"]
     assert isinstance(create_payload["id"], str) and create_payload["id"]
@@ -270,8 +279,70 @@ def test_create_and_list_tasks_with_real_task_entity(
     assert len(list_payload) == 1
     assert list_payload[0]["title"] == "新增一个真实任务"
     assert list_payload[0]["id"] == create_payload["id"]
+    assert list_payload[0]["extras"]["runtime_stale"] == "false"
+    assert list_payload[0]["extras"]["runtime_recommended_action"] == "任务仍在运行窗口内，建议继续观察心跳"
+    assert list_payload[0]["extras"]["runtime_callback_base_url"] == "http://linpo.test:8000"
+    assert list_payload[0]["extras"]["runtime_callback_base_url_candidates"] == "http://linpo.test:8000"
+    assert "runtime_callback_reachability_hint" in list_payload[0]["extras"]
     assert "dispatch_callback_token" not in list_payload[0]["extras"]
     assert "dispatch_callback_urls" not in list_payload[0]["extras"]
+
+
+def test_running_task_list_returns_stale_runtime_diagnostics_without_auto_interrupt(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_instance_validation(monkeypatch)
+    monkeypatch.setenv("LINPO_TASK_RUN_STALE_SECONDS", "60")
+    auth_cookie = _register_and_login("task-runtime-diagnostics-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw-runtime-diagnostics",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-runtime-diagnostics",
+    )
+
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
+        lambda self, **kwargs: {
+            "request_id": "req-runtime-diagnostics",
+            "agent_id": kwargs["agent_id"],
+            "status": "accepted",
+        },
+    )
+
+    create_status, _, create_payload = _request_json(
+        "POST",
+        DEFAULT_TASKS_PATH,
+        {
+            "requirement": "运行诊断任务",
+            "agent_id": "agent-runtime",
+            "agent_name": "Runtime Agent",
+            "instance_id": instance["id"],
+        },
+        auth_cookie,
+    )
+    assert create_status == 201
+    task_id = UUID(str(create_payload["id"]))
+    stale_heartbeat_at = datetime.now(UTC) - timedelta(minutes=5)
+
+    with Session(db_session.get_engine(isolated_database_url)) as session:
+        task = session.get(Task, task_id)
+        assert task is not None
+        extras = dict(task.extras if isinstance(task.extras, dict) else {})
+        extras["dispatch_last_heartbeat_at"] = stale_heartbeat_at.isoformat()
+        task.extras = extras
+        task.updated_at = stale_heartbeat_at
+        session.commit()
+
+    list_status, _, list_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
+    assert list_status == 200
+    tasks = cast(list[dict[str, Any]], json.loads(list_body.decode("utf-8")))
+    stale_task = next(item for item in tasks if item["id"] == str(task_id))
+    assert stale_task["status"] == "running"
+    assert stale_task["extras"]["runtime_stale"] == "true"
+    assert stale_task["extras"]["runtime_stale_after_seconds"] == "60"
+    assert stale_task["extras"]["runtime_recommended_action"] == "任务长时间无进展，建议先检查实例与日志，再由用户决定是否手动中断"
 
 
 def test_task_list_is_isolated_by_user(
@@ -362,7 +433,7 @@ def test_board_tasks_sse_returns_snapshot_payload(
         "/api/v1/sse/boards/default/tasks?snapshotOnly=1",
         headers={"cookie": auth_cookie},
     )
-    assert status_code == 200
+    assert status_code == 200, payload
     text = body.decode("utf-8")
     assert "data: " in text
     assert '"type": "snapshot_ready"' in text
@@ -608,12 +679,14 @@ def test_legacy_kanban_tasks_route_is_removed(isolated_database_url: str) -> Non
     assert status_code == 404
 
 
-def test_flow_generate_starts_persistent_planner_session(
+def test_flow_generate_returns_pending_diagnostic_when_nodes_are_still_empty_after_wait(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _install_planner_agent_membership(monkeypatch, available_agent_ids={"planner-default"})
     _allow_instance_validation(monkeypatch)
+    monkeypatch.setattr("app.api.tasks_flow_planner._FLOW_GENERATE_SYNC_WAIT_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr("app.api.tasks_flow_planner._FLOW_GENERATE_SYNC_POLL_INTERVAL_SECONDS", 0.0)
     auth_cookie = _register_and_login("flow-generate-user")
     instance = _create_instance(
         auth_cookie,
@@ -631,6 +704,10 @@ def test_flow_generate_starts_persistent_planner_session(
             planner_session_key="linpo:flow:default:planner:planner-default",
         ),
     )
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.decompose",
+        lambda self, **kwargs: (_ for _ in ()).throw(HTTPException(status_code=503, detail="planner timeout")),
+    )
 
     status_code, _, payload = _request_json(
         "POST",
@@ -645,22 +722,460 @@ def test_flow_generate_starts_persistent_planner_session(
         auth_cookie,
     )
     assert status_code == 200
-    assert payload["boardId"] == "default"
-    assert payload["plannerSessionKey"] == "linpo:flow:default:planner:planner-default"
-    assert isinstance(payload["managerSessionKey"], str) and payload["managerSessionKey"]
     assert payload["nodes"] == []
     assert payload["edges"] == []
     assert payload["createdTaskIds"] == []
-    assert [item["role"] for item in payload["messages"]] == ["user"]
-    assert payload["messages"][0]["content"] == "拆分上线计划，执行主任务，最后审批"
+    assert any(
+        "planner_nodes_pending_timeout" in cast(str, item.get("content", ""))
+        for item in cast(list[dict[str, Any]], payload["messages"])
+    )
+    assert any(
+        "planner_blocking_resolve_failed" in cast(str, item.get("content", ""))
+        for item in cast(list[dict[str, Any]], payload["messages"])
+    )
+    assert payload["plannerSessionKey"] == "linpo:flow:default:planner:planner-default"
 
     planner_token = _planner_token_for_session(isolated_database_url, "linpo:flow:default:planner:planner-default")
     assert isinstance(planner_token, str) and planner_token != ""
 
-    list_status, _, list_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
-    assert list_status == 200
-    list_payload = cast(list[dict[str, Any]], json.loads(list_body.decode("utf-8")))
-    assert list_payload == []
+
+def test_flow_generate_reuses_current_nodes_with_diagnostic_when_planner_returns_empty_nodes(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _install_planner_agent_membership(monkeypatch, available_agent_ids={"planner-default"})
+    _allow_instance_validation(monkeypatch)
+    monkeypatch.setattr("app.api.tasks_flow_planner._FLOW_GENERATE_SYNC_WAIT_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr("app.api.tasks_flow_planner._FLOW_GENERATE_SYNC_POLL_INTERVAL_SECONDS", 0.0)
+    auth_cookie = _register_and_login("flow-generate-empty-planner-reuse-current-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-flow-empty-planner-reuse-current",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-empty-planner-reuse-current",
+    )
+
+    from app.services.flow_decomposition_service import FlowDecompositionResult, FlowPlannerDispatch
+
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.dispatch_planner",
+        lambda self, **kwargs: FlowPlannerDispatch(
+            planner_agent_id="planner-default",
+            planner_session_key="linpo:flow:default:planner:planner-default:empty-nodes-reuse-current",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.read_latest_snapshot",
+        lambda self, **kwargs: FlowDecompositionResult(
+            nodes=[],
+            planner_session_key="linpo:flow:default:planner:planner-default:empty-nodes-reuse-current",
+        ),
+    )
+
+    status_code, _, payload = _request_json(
+        "POST",
+        DEFAULT_FLOW_GENERATE_PATH,
+        {
+            "requirement": "planner 返回空节点时保留当前图",
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor",
+            "planner_agent_id": "planner-default",
+            "current_nodes": [
+                {
+                    "id": "node_current_1",
+                    "title": "当前节点1",
+                    "description": "保留",
+                    "depends_on": [],
+                    "x": 120,
+                    "y": 120,
+                    "layer": 1,
+                    "sensitive": False,
+                    "status": "queued",
+                    "agent_id": "agent-executor",
+                }
+            ],
+            "current_edges": [],
+        },
+        auth_cookie,
+    )
+
+    assert status_code == 200
+    assert [node["id"] for node in payload["nodes"]] == ["node_current_1"]
+    assert any(
+        "planner_empty_nodes_reused_current_nodes" in cast(str, item.get("content", ""))
+        for item in cast(list[dict[str, Any]], payload["messages"])
+    )
+
+
+def test_flow_generate_waits_for_provider_sync_before_returning_nodes(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _install_planner_agent_membership(monkeypatch, available_agent_ids={"planner-default"})
+    _allow_instance_validation(monkeypatch)
+    monkeypatch.setattr("app.api.tasks_flow_planner._FLOW_GENERATE_SYNC_WAIT_TIMEOUT_SECONDS", 0.2)
+    monkeypatch.setattr("app.api.tasks_flow_planner._FLOW_GENERATE_SYNC_POLL_INTERVAL_SECONDS", 0.0)
+    auth_cookie = _register_and_login("flow-generate-wait-sync-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-flow-wait-sync",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-wait-sync",
+    )
+
+    from app.services.flow_decomposition_service import (
+        FlowDecompositionResult,
+        FlowNodeDraft,
+        FlowPlannerDispatch,
+    )
+
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.dispatch_planner",
+        lambda self, **kwargs: FlowPlannerDispatch(
+            planner_agent_id="planner-default",
+            planner_session_key="linpo:flow:default:planner:planner-default:wait-sync",
+        ),
+    )
+
+    read_calls = {"count": 0}
+
+    def fake_read_latest_snapshot(self: Any, **kwargs: Any) -> FlowDecompositionResult | None:
+        del self, kwargs
+        read_calls["count"] += 1
+        if read_calls["count"] == 1:
+            return None
+        return FlowDecompositionResult(
+            nodes=[
+                FlowNodeDraft(
+                    id="node_wait_1",
+                    title="等待节点1",
+                    description="first",
+                    depends_on=[],
+                    sensitive=False,
+                ),
+                FlowNodeDraft(
+                    id="node_wait_2",
+                    title="等待节点2",
+                    description="second",
+                    depends_on=["node_wait_1"],
+                    sensitive=True,
+                ),
+            ],
+            planner_session_key="linpo:flow:default:planner:planner-default:wait-sync",
+        )
+
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.read_latest_snapshot",
+        fake_read_latest_snapshot,
+    )
+
+    status_code, _, payload = _request_json(
+        "POST",
+        DEFAULT_FLOW_GENERATE_PATH,
+        {
+            "requirement": "等待 provider 同步节点",
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor",
+            "planner_agent_id": "planner-default",
+            "manager_agent_id": "agent-manager",
+        },
+        auth_cookie,
+    )
+
+    assert status_code == 200
+    assert [node["id"] for node in payload["nodes"]] == ["node_wait_1", "node_wait_2"]
+    assert read_calls["count"] >= 2
+    assert not any(
+        "planner_nodes_pending" in cast(str, item.get("content", ""))
+        for item in cast(list[dict[str, Any]], payload["messages"])
+    )
+
+
+def test_flow_generate_persists_non_retryable_provider_sync_error_message(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _install_planner_agent_membership(monkeypatch, available_agent_ids={"planner-default"})
+    _allow_instance_validation(monkeypatch)
+    monkeypatch.setattr("app.api.tasks_flow_planner._FLOW_GENERATE_SYNC_WAIT_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr("app.api.tasks_flow_planner._FLOW_GENERATE_SYNC_POLL_INTERVAL_SECONDS", 0.0)
+    auth_cookie = _register_and_login("flow-generate-provider-sync-error-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-flow-provider-sync-error",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-provider-sync-error",
+    )
+
+    from app.services.flow_decomposition_service import FlowPlannerDispatch
+
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.dispatch_planner",
+        lambda self, **kwargs: FlowPlannerDispatch(
+            planner_agent_id="planner-default",
+            planner_session_key="linpo:flow:default:planner:planner-default:provider-sync-error",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.read_latest_snapshot",
+        lambda self, **kwargs: (_ for _ in ()).throw(
+            HTTPException(status_code=400, detail="planner response malformed")
+        ),
+    )
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.decompose",
+        lambda self, **kwargs: (_ for _ in ()).throw(HTTPException(status_code=503, detail="planner timeout")),
+    )
+
+    status_code, _, payload = _request_json(
+        "POST",
+        DEFAULT_FLOW_GENERATE_PATH,
+        {
+            "requirement": "触发 provider 不可重试错误",
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor",
+            "planner_agent_id": "planner-default",
+            "manager_agent_id": "agent-manager",
+        },
+        auth_cookie,
+    )
+
+    assert status_code == 200
+    assert len(payload["nodes"]) == 2
+    assert cast(str, payload["nodes"][0]["id"]).startswith("node_fallback_intake_")
+    assert cast(str, payload["nodes"][1]["id"]).startswith("node_fallback_execute_")
+    assert cast(list[str], payload["nodes"][1]["dependsOn"]) == [payload["nodes"][0]["id"]]
+    assert any(
+        "planner_provider_sync_non_retryable_error" in cast(str, item.get("content", ""))
+        for item in cast(list[dict[str, Any]], payload["messages"])
+    )
+    assert any(
+        "planner_blocking_resolve_failed" in cast(str, item.get("content", ""))
+        for item in cast(list[dict[str, Any]], payload["messages"])
+    )
+    assert any(
+        "planner_fallback_node_created" in cast(str, item.get("content", ""))
+        for item in cast(list[dict[str, Any]], payload["messages"])
+    )
+    assert payload["plannerSessionKey"] == "linpo:flow:default:planner:planner-default:provider-sync-error"
+
+
+def test_flow_generate_pending_timeout_triggers_blocking_resolve_and_returns_nodes(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _install_planner_agent_membership(monkeypatch, available_agent_ids={"planner-default"})
+    _allow_instance_validation(monkeypatch)
+    monkeypatch.setattr("app.api.tasks_flow_planner._FLOW_GENERATE_SYNC_WAIT_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr("app.api.tasks_flow_planner._FLOW_GENERATE_SYNC_POLL_INTERVAL_SECONDS", 0.0)
+    auth_cookie = _register_and_login("flow-generate-blocking-resolve-success-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-flow-blocking-resolve-success",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-blocking-resolve-success",
+    )
+
+    from app.services.flow_decomposition_service import (
+        FlowDecompositionResult,
+        FlowNodeDraft,
+        FlowPlannerDispatch,
+    )
+
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.dispatch_planner",
+        lambda self, **kwargs: FlowPlannerDispatch(
+            planner_agent_id="planner-default",
+            planner_session_key="linpo:flow:default:planner:planner-default:blocking-resolve-success",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.read_latest_snapshot",
+        lambda self, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.decompose",
+        lambda self, **kwargs: FlowDecompositionResult(
+            nodes=[
+                FlowNodeDraft(
+                    id="node_blocking_1",
+                    title="blocking 节点1",
+                    description="first",
+                    depends_on=[],
+                    sensitive=False,
+                ),
+                FlowNodeDraft(
+                    id="node_blocking_2",
+                    title="blocking 节点2",
+                    description="second",
+                    depends_on=["node_blocking_1"],
+                    sensitive=True,
+                ),
+            ],
+            planner_session_key="linpo:flow:default:planner:planner-default:blocking-resolve-success",
+        ),
+    )
+
+    status_code, _, payload = _request_json(
+        "POST",
+        DEFAULT_FLOW_GENERATE_PATH,
+        {
+            "requirement": "pending 超时后触发 blocking resolve",
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor",
+            "planner_agent_id": "planner-default",
+            "manager_agent_id": "agent-manager",
+        },
+        auth_cookie,
+    )
+
+    assert status_code == 200
+    assert [node["id"] for node in payload["nodes"]] == ["node_blocking_1", "node_blocking_2"]
+    assert not any(
+        "planner_nodes_pending_timeout" in cast(str, item.get("content", ""))
+        for item in cast(list[dict[str, Any]], payload["messages"])
+    )
+    assert not any(
+        "planner_blocking_resolve_failed" in cast(str, item.get("content", ""))
+        for item in cast(list[dict[str, Any]], payload["messages"])
+    )
+
+
+def test_flow_generate_pending_timeout_records_blocking_resolve_failure_code(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _install_planner_agent_membership(monkeypatch, available_agent_ids={"planner-default"})
+    _allow_instance_validation(monkeypatch)
+    monkeypatch.setattr("app.api.tasks_flow_planner._FLOW_GENERATE_SYNC_WAIT_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr("app.api.tasks_flow_planner._FLOW_GENERATE_SYNC_POLL_INTERVAL_SECONDS", 0.0)
+    auth_cookie = _register_and_login("flow-generate-blocking-resolve-failed-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-flow-blocking-resolve-failed",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-blocking-resolve-failed",
+    )
+
+    from app.services.flow_decomposition_service import FlowPlannerDispatch
+
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.dispatch_planner",
+        lambda self, **kwargs: FlowPlannerDispatch(
+            planner_agent_id="planner-default",
+            planner_session_key="linpo:flow:default:planner:planner-default:blocking-resolve-failed",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.read_latest_snapshot",
+        lambda self, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.decompose",
+        lambda self, **kwargs: (_ for _ in ()).throw(HTTPException(status_code=503, detail="planner timeout")),
+    )
+
+    status_code, _, payload = _request_json(
+        "POST",
+        DEFAULT_FLOW_GENERATE_PATH,
+        {
+            "requirement": "pending 超时后 blocking resolve 失败",
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor",
+            "planner_agent_id": "planner-default",
+            "manager_agent_id": "agent-manager",
+        },
+        auth_cookie,
+    )
+
+    assert status_code == 200
+    assert len(payload["nodes"]) == 2
+    assert cast(str, payload["nodes"][0]["id"]).startswith("node_fallback_intake_")
+    assert cast(str, payload["nodes"][1]["id"]).startswith("node_fallback_execute_")
+    assert cast(list[str], payload["nodes"][1]["dependsOn"]) == [payload["nodes"][0]["id"]]
+    assert any(
+        "planner_blocking_resolve_failed" in cast(str, item.get("content", ""))
+        for item in cast(list[dict[str, Any]], payload["messages"])
+    )
+    assert any(
+        "planner_fallback_node_created" in cast(str, item.get("content", ""))
+        for item in cast(list[dict[str, Any]], payload["messages"])
+    )
+    assert payload["plannerSessionKey"] == "linpo:flow:default:planner:planner-default:blocking-resolve-failed"
+
+
+def test_flow_generate_creates_fallback_node_when_poll_returns_blocking_failure_message(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _install_planner_agent_membership(monkeypatch, available_agent_ids={"planner-default"})
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("flow-generate-blocking-message-fallback-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-flow-blocking-message-fallback",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-blocking-message-fallback",
+    )
+
+    from app.services.flow_decomposition_service import FlowPlannerDispatch
+
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.dispatch_planner",
+        lambda self, **kwargs: FlowPlannerDispatch(
+            planner_agent_id="planner-default",
+            planner_session_key="linpo:flow:default:planner:planner-default:blocking-message-fallback",
+        ),
+    )
+
+    snapshot = SimpleNamespace(
+        messages=[
+            {
+                "role": "assistant",
+                "content": "planner_blocking_resolve_failed: Flow decomposition failed",
+                "created_at": "2026-04-09T01:05:00Z",
+            },
+            {
+                "role": "assistant",
+                "content": "planner_nodes_pending_timeout: 等待 planner 节点超时（12s）。",
+                "created_at": "2026-04-09T01:05:10Z",
+            },
+        ],
+        nodes=[],
+    )
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner._poll_planner_canvas_nodes_with_active_sync",
+        lambda **kwargs: ([], snapshot, False),
+    )
+
+    status_code, _, payload = _request_json(
+        "POST",
+        DEFAULT_FLOW_GENERATE_PATH,
+        {
+            "requirement": "planner 已失败时仍需给出可执行兜底节点",
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor",
+            "planner_agent_id": "planner-default",
+            "manager_agent_id": "agent-manager",
+        },
+        auth_cookie,
+    )
+
+    assert status_code == 200
+    assert len(payload["nodes"]) == 2
+    assert cast(str, payload["nodes"][0]["id"]).startswith("node_fallback_intake_")
+    assert cast(str, payload["nodes"][1]["id"]).startswith("node_fallback_execute_")
+    assert cast(list[str], payload["nodes"][1]["dependsOn"]) == [payload["nodes"][0]["id"]]
+    assert any(
+        "planner_fallback_node_created" in cast(str, item.get("content", ""))
+        for item in cast(list[dict[str, Any]], payload["messages"])
+    )
 
 
 def test_flow_generate_accepts_custom_planner_agent(
@@ -780,8 +1295,8 @@ def test_flow_generate_persists_trimmed_planner_agent_from_request(
 
     assert status_code == 200
     assert payload["plannerSessionKey"] == "linpo:flow:default:planner:planner-selected:selected"
-    assert len(captured_dispatch_args) == 1
-    assert captured_dispatch_args[0]["planner_agent_id"] == "planner-selected"
+    assert len(captured_dispatch_args) >= 1
+    assert all(call["planner_agent_id"] == "planner-selected" for call in captured_dispatch_args)
 
     with Session(db_session.get_engine(isolated_database_url)) as session:
         planner_session = session.get(FlowPlannerSession, payload["plannerSessionKey"])
@@ -789,12 +1304,13 @@ def test_flow_generate_persists_trimmed_planner_agent_from_request(
         assert planner_session.planner_agent_id == "planner-selected"
 
 
-def test_flow_generate_uses_default_planner_agent_when_request_does_not_provide_one(
+def test_flow_generate_prefers_first_available_instance_agent_when_request_and_preference_absent(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     del isolated_database_url
     monkeypatch.setenv("FLOW_DECOMPOSITION_AGENT_ID", "planner-default-from-config")
+    _install_planner_agent_membership(monkeypatch, available_agent_ids={"agent-first-available", "agent-second"})
     _allow_instance_validation(monkeypatch)
     auth_cookie = _register_and_login("flow-generate-planner-default-user")
     instance = _create_instance(
@@ -804,7 +1320,7 @@ def test_flow_generate_uses_default_planner_agent_when_request_does_not_provide_
         gateway_token="token-flow-planner-default",
     )
     captured_dispatch_args: list[dict[str, Any]] = []
-    from app.services.flow_decomposition_service import FlowPlannerDispatch
+    from app.services.flow_decomposition_service import FlowDecompositionResult, FlowNodeDraft, FlowPlannerDispatch
 
     def fake_dispatch(self: Any, **kwargs: Any) -> FlowPlannerDispatch:
         captured_dispatch_args.append(kwargs)
@@ -817,6 +1333,32 @@ def test_flow_generate_uses_default_planner_agent_when_request_does_not_provide_
     monkeypatch.setattr(
         "app.api.tasks_flow_planner.FlowDecompositionService.dispatch_planner",
         fake_dispatch,
+    )
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.read_latest_snapshot",
+        lambda self, **kwargs: FlowDecompositionResult(
+            nodes=[
+                FlowNodeDraft(
+                    id="node_default_1",
+                    title="default node",
+                    description="",
+                    depends_on=[],
+                    sensitive=False,
+                ),
+                FlowNodeDraft(
+                    id="node_default_2",
+                    title="default node 2",
+                    description="",
+                    depends_on=["node_default_1"],
+                    sensitive=True,
+                ),
+            ],
+            planner_session_key="linpo:flow:default:planner:agent-first-available:default",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner._list_available_planner_agent_ids",
+        lambda **kwargs: ["agent-first-available", "agent-second"],
     )
 
     status_code, _, payload = _request_json(
@@ -832,9 +1374,409 @@ def test_flow_generate_uses_default_planner_agent_when_request_does_not_provide_
     )
 
     assert status_code == 200
-    assert payload["plannerSessionKey"] == "linpo:flow:default:planner:planner-default-from-config:default"
+    assert payload["plannerSessionKey"] == "linpo:flow:default:planner:agent-first-available:default"
     assert len(captured_dispatch_args) == 1
-    assert captured_dispatch_args[0]["planner_agent_id"] == "planner-default-from-config"
+    assert captured_dispatch_args[0]["planner_agent_id"] == "agent-first-available"
+
+
+def test_flow_generate_selects_planner_agent_from_decomposition_runtime_context(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("flow-generate-planner-decomposition-context-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-flow-planner-decomposition-context",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-planner-decomposition-context",
+    )
+    captured_dispatch_args: list[dict[str, Any]] = []
+    from app.services.flow_decomposition_service import FlowDecompositionResult, FlowNodeDraft, FlowPlannerDispatch
+
+    decomposition_execution_context = object()
+    captured_list_context: dict[str, object] = {}
+    captured_validate_context: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.build_realtime_execution_context",
+        lambda self: decomposition_execution_context,
+    )
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner._list_available_planner_agent_ids",
+        lambda **kwargs: (
+            captured_list_context.update({"execution_context": kwargs["execution_context"]})
+            or ["planner-from-decomposition", "planner-second"]
+        ),
+    )
+
+    def fake_validate(
+        *,
+        provider_application_service: object,
+        execution_context: object,
+        planner_agent_id: str,
+        data_source_name: str = "openclaw",
+    ) -> None:
+        del provider_application_service, planner_agent_id, data_source_name
+        captured_validate_context["execution_context"] = execution_context
+
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner._validate_planner_agent_membership_if_available",
+        fake_validate,
+    )
+
+    def fake_dispatch(self: Any, **kwargs: Any) -> FlowPlannerDispatch:
+        captured_dispatch_args.append(kwargs)
+        agent_id = cast(str, kwargs["planner_agent_id"])
+        return FlowPlannerDispatch(
+            planner_agent_id=agent_id,
+            planner_session_key=f"linpo:flow:default:planner:{agent_id}:decomposition-context",
+        )
+
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.dispatch_planner",
+        fake_dispatch,
+    )
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.read_latest_snapshot",
+        lambda self, **kwargs: FlowDecompositionResult(
+            nodes=[
+                FlowNodeDraft(
+                    id="node_decomposition_ctx_1",
+                    title="decomposition ctx node",
+                    description="",
+                    depends_on=[],
+                    sensitive=False,
+                ),
+                FlowNodeDraft(
+                    id="node_decomposition_ctx_2",
+                    title="decomposition ctx node 2",
+                    description="",
+                    depends_on=["node_decomposition_ctx_1"],
+                    sensitive=True,
+                ),
+            ],
+            planner_session_key="linpo:flow:default:planner:planner-from-decomposition:decomposition-context",
+        ),
+    )
+
+    status_code, _, payload = _request_json(
+        "POST",
+        DEFAULT_FLOW_GENERATE_PATH,
+        {
+            "requirement": "未指定 planner，优先使用拆解 runtime 的 agent 列表",
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor",
+            "manager_agent_id": "agent-manager",
+        },
+        auth_cookie,
+    )
+
+    assert status_code == 200
+    assert payload["plannerSessionKey"] == "linpo:flow:default:planner:planner-default:decomposition-context"
+    assert len(captured_dispatch_args) == 1
+    assert captured_dispatch_args[0]["planner_agent_id"] == "planner-default"
+    assert captured_validate_context["execution_context"] is decomposition_execution_context
+
+
+def test_flow_generate_uses_decomposition_provider_name_for_planner_agent_queries(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("flow-generate-planner-provider-name-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-flow-planner-provider-name",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-planner-provider-name",
+    )
+    captured_dispatch_args: list[dict[str, Any]] = []
+    from app.services.flow_decomposition_service import FlowDecompositionResult, FlowNodeDraft, FlowPlannerDispatch
+
+    decomposition_execution_context = object()
+    captured_list_kwargs: dict[str, object] = {}
+    captured_validate_kwargs: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.decomposition_provider_name",
+        lambda self: "mock-provider",
+    )
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.build_realtime_execution_context",
+        lambda self: decomposition_execution_context,
+    )
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner._list_available_planner_agent_ids",
+        lambda **kwargs: (
+            captured_list_kwargs.update(kwargs)
+            or ["planner-from-provider", "planner-second"]
+        ),
+    )
+
+    def fake_validate(
+        *,
+        provider_application_service: object,
+        execution_context: object,
+        planner_agent_id: str,
+        data_source_name: str = "openclaw",
+    ) -> None:
+        captured_validate_kwargs.update(
+            {
+                "provider_application_service": provider_application_service,
+                "execution_context": execution_context,
+                "planner_agent_id": planner_agent_id,
+                "data_source_name": data_source_name,
+            }
+        )
+        if planner_agent_id == "planner-default":
+            raise HTTPException(status_code=400, detail="planner_agent_id is not available in current instance")
+
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner._validate_planner_agent_membership_if_available",
+        fake_validate,
+    )
+
+    def fake_dispatch(self: Any, **kwargs: Any) -> FlowPlannerDispatch:
+        captured_dispatch_args.append(kwargs)
+        agent_id = cast(str, kwargs["planner_agent_id"])
+        return FlowPlannerDispatch(
+            planner_agent_id=agent_id,
+            planner_session_key=f"linpo:flow:default:planner:{agent_id}:provider-name",
+        )
+
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.dispatch_planner",
+        fake_dispatch,
+    )
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.read_latest_snapshot",
+        lambda self, **kwargs: FlowDecompositionResult(
+            nodes=[
+                FlowNodeDraft(
+                    id="node_provider_name_1",
+                    title="provider node 1",
+                    description="",
+                    depends_on=[],
+                    sensitive=False,
+                ),
+                FlowNodeDraft(
+                    id="node_provider_name_2",
+                    title="provider node 2",
+                    description="",
+                    depends_on=["node_provider_name_1"],
+                    sensitive=True,
+                ),
+            ],
+            planner_session_key="linpo:flow:default:planner:planner-from-provider:provider-name",
+        ),
+    )
+
+    status_code, _, payload = _request_json(
+        "POST",
+        DEFAULT_FLOW_GENERATE_PATH,
+        {
+            "requirement": "未指定 planner，按 decomposition provider 查询可用 agent",
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor",
+            "manager_agent_id": "agent-manager",
+        },
+        auth_cookie,
+    )
+
+    assert status_code == 200
+    assert payload["plannerSessionKey"] == "linpo:flow:default:planner:planner-from-provider:provider-name"
+    assert len(captured_dispatch_args) == 1
+    assert captured_dispatch_args[0]["planner_agent_id"] == "planner-from-provider"
+    assert captured_list_kwargs["execution_context"] is decomposition_execution_context
+    assert captured_list_kwargs["data_source_name"] == "mock-provider"
+    assert captured_validate_kwargs["execution_context"] is decomposition_execution_context
+    assert captured_validate_kwargs["data_source_name"] == "mock-provider"
+
+
+def test_flow_generate_falls_back_to_first_available_agent_when_implicit_default_is_unavailable(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    monkeypatch.setenv("FLOW_DECOMPOSITION_AGENT_ID", "planner-default-from-config")
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("flow-generate-planner-default-fallback-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-flow-planner-default-fallback",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-planner-default-fallback",
+    )
+
+    def fake_validate(
+        *,
+        provider_application_service: object,
+        execution_context: object,
+        planner_agent_id: str,
+        data_source_name: str = "openclaw",
+    ) -> None:
+        del provider_application_service, execution_context, data_source_name
+        if planner_agent_id == "planner-default-from-config":
+            raise HTTPException(status_code=400, detail="planner_agent_id is not available in current instance")
+
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner._validate_planner_agent_membership_if_available",
+        fake_validate,
+    )
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner._list_available_planner_agent_ids",
+        lambda **kwargs: ["agent-fallback-first", "agent-fallback-second"],
+    )
+
+    captured_dispatch_args: list[dict[str, Any]] = []
+    from app.services.flow_decomposition_service import FlowDecompositionResult, FlowNodeDraft, FlowPlannerDispatch
+
+    def fake_dispatch(self: Any, **kwargs: Any) -> FlowPlannerDispatch:
+        captured_dispatch_args.append(kwargs)
+        agent_id = cast(str, kwargs["planner_agent_id"])
+        return FlowPlannerDispatch(
+            planner_agent_id=agent_id,
+            planner_session_key=f"linpo:flow:default:planner:{agent_id}:default-fallback",
+        )
+
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.dispatch_planner",
+        fake_dispatch,
+    )
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.read_latest_snapshot",
+        lambda self, **kwargs: FlowDecompositionResult(
+            nodes=[
+                FlowNodeDraft(
+                    id="node_fallback_1",
+                    title="fallback node",
+                    description="",
+                    depends_on=[],
+                    sensitive=False,
+                ),
+                FlowNodeDraft(
+                    id="node_fallback_2",
+                    title="fallback node 2",
+                    description="",
+                    depends_on=["node_fallback_1"],
+                    sensitive=True,
+                ),
+            ],
+            planner_session_key="linpo:flow:default:planner:agent-fallback-first:default-fallback",
+        ),
+    )
+
+    status_code, _, payload = _request_json(
+        "POST",
+        DEFAULT_FLOW_GENERATE_PATH,
+        {
+            "requirement": "未指定 planner，默认不可用时自动回退",
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor",
+            "manager_agent_id": "agent-manager",
+        },
+        auth_cookie,
+    )
+
+    assert status_code == 200
+    assert payload["plannerSessionKey"] == "linpo:flow:default:planner:agent-fallback-first:default-fallback"
+    assert len(captured_dispatch_args) == 1
+    assert captured_dispatch_args[0]["planner_agent_id"] == "agent-fallback-first"
+
+
+def test_flow_generate_falls_back_when_explicit_default_planner_is_unavailable(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    monkeypatch.delenv("FLOW_DECOMPOSITION_AGENT_ID", raising=False)
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("flow-generate-planner-explicit-default-fallback-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-flow-planner-explicit-default-fallback",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-planner-explicit-default-fallback",
+    )
+
+    def fake_validate(
+        *,
+        provider_application_service: object,
+        execution_context: object,
+        planner_agent_id: str,
+        data_source_name: str = "openclaw",
+    ) -> None:
+        del provider_application_service, execution_context, data_source_name
+        if planner_agent_id == "planner-default":
+            raise HTTPException(status_code=400, detail="planner_agent_id is not available in current instance")
+
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner._validate_planner_agent_membership_if_available",
+        fake_validate,
+    )
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner._list_available_planner_agent_ids",
+        lambda **kwargs: ["agent-fallback-first", "agent-fallback-second"],
+    )
+
+    captured_dispatch_args: list[dict[str, Any]] = []
+    from app.services.flow_decomposition_service import FlowDecompositionResult, FlowNodeDraft, FlowPlannerDispatch
+
+    def fake_dispatch(self: Any, **kwargs: Any) -> FlowPlannerDispatch:
+        captured_dispatch_args.append(kwargs)
+        agent_id = cast(str, kwargs["planner_agent_id"])
+        return FlowPlannerDispatch(
+            planner_agent_id=agent_id,
+            planner_session_key=f"linpo:flow:default:planner:{agent_id}:explicit-default-fallback",
+        )
+
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.dispatch_planner",
+        fake_dispatch,
+    )
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.read_latest_snapshot",
+        lambda self, **kwargs: FlowDecompositionResult(
+            nodes=[
+                FlowNodeDraft(
+                    id="node_explicit_default_1",
+                    title="explicit fallback node",
+                    description="",
+                    depends_on=[],
+                    sensitive=False,
+                ),
+                FlowNodeDraft(
+                    id="node_explicit_default_2",
+                    title="explicit fallback node 2",
+                    description="",
+                    depends_on=["node_explicit_default_1"],
+                    sensitive=True,
+                ),
+            ],
+            planner_session_key="linpo:flow:default:planner:agent-fallback-first:explicit-default-fallback",
+        ),
+    )
+
+    status_code, _, payload = _request_json(
+        "POST",
+        DEFAULT_FLOW_GENERATE_PATH,
+        {
+            "requirement": "显式默认 planner 不可用时自动回退",
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor",
+            "planner_agent_id": "planner-default",
+            "manager_agent_id": "agent-manager",
+        },
+        auth_cookie,
+    )
+
+    assert status_code == 200
+    assert payload["plannerSessionKey"] == "linpo:flow:default:planner:agent-fallback-first:explicit-default-fallback"
+    assert len(captured_dispatch_args) == 1
+    assert captured_dispatch_args[0]["planner_agent_id"] == "agent-fallback-first"
 
 
 def test_flow_generate_prefers_persisted_instance_planner_agent_when_request_omits_one(
@@ -892,8 +1834,8 @@ def test_flow_generate_prefers_persisted_instance_planner_agent_when_request_omi
 
     assert status_code == 200
     assert payload["plannerSessionKey"] == "linpo:flow:default:planner:planner-from-instance:persisted"
-    assert len(captured_dispatch_args) == 1
-    assert captured_dispatch_args[0]["planner_agent_id"] == "planner-from-instance"
+    assert len(captured_dispatch_args) >= 1
+    assert all(call["planner_agent_id"] == "planner-from-instance" for call in captured_dispatch_args)
 
 
 def test_flow_generate_rejects_unavailable_custom_planner_agent(
@@ -976,14 +1918,14 @@ def test_flow_generate_prompt_includes_history_workflow_json_and_planner_http_in
     )
 
     assert status_code == 200
-    assert len(send_calls) == 1
-    assert send_calls[0]["agent_id"] == "planner-default"
-    prompt = cast(str, send_calls[0]["message"])
-    assert "/flow/planner-sessions/" not in prompt
-    assert "X-Linpo-Planner-Token" not in prompt
-    assert "当前流程上下文" in prompt or "用户需求" in prompt
-    assert "历史会话摘要" in prompt
-    assert "今天 github 上 star 飙升的 openclaw 相关项目，并输出商业画布" in prompt
+    assert len(send_calls) >= 1
+    assert all(call["agent_id"] == "planner-default" for call in send_calls)
+    prompts = [cast(str, call["message"]) for call in send_calls]
+    assert all("/flow/planner-sessions/" not in prompt for prompt in prompts)
+    assert all("X-Linpo-Planner-Token" not in prompt for prompt in prompts)
+    assert any("当前流程上下文" in prompt or "用户需求" in prompt for prompt in prompts)
+    assert any("历史会话摘要" in prompt for prompt in prompts)
+    assert any("今天 github 上 star 飙升的 openclaw 相关项目，并输出商业画布" in prompt for prompt in prompts)
 
 
 def test_flow_generate_returns_current_snapshot_from_persisted_planner_session(
@@ -1055,6 +1997,110 @@ def test_flow_generate_returns_current_snapshot_from_persisted_planner_session(
     assert payload["nodes"][1]["dependsOn"] == ["node_1"]
     assert payload["edges"] == [{"id": "edge-node_1-node_2", "source": "node_1", "target": "node_2"}]
     assert [item["role"] for item in payload["messages"]] == ["user"]
+
+
+def test_flow_generate_nodes_without_explicit_agent_fallback_to_executor_on_confirm(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _install_planner_agent_membership(monkeypatch, available_agent_ids={"planner-default"})
+    _allow_instance_validation(monkeypatch)
+    monkeypatch.setattr("app.api.tasks_flow_planner._FLOW_GENERATE_SYNC_WAIT_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr("app.api.tasks_flow_planner._FLOW_GENERATE_SYNC_POLL_INTERVAL_SECONDS", 0.0)
+    auth_cookie = _register_and_login("flow-generate-node-agent-fallback-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-flow-node-agent-fallback",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-node-agent-fallback",
+    )
+
+    from app.services.flow_decomposition_service import (
+        FlowDecompositionResult,
+        FlowNodeDraft,
+        FlowPlannerDispatch,
+    )
+
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.dispatch_planner",
+        lambda self, **kwargs: FlowPlannerDispatch(
+            planner_agent_id="planner-default",
+            planner_session_key="linpo:flow:default:planner:planner-default:agent-fallback",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.api.tasks_flow_planner.FlowDecompositionService.read_latest_snapshot",
+        lambda self, **kwargs: FlowDecompositionResult(
+            nodes=[
+                FlowNodeDraft(
+                    id="node_agent_fallback_1",
+                    title="节点1",
+                    description="first",
+                    depends_on=[],
+                    sensitive=False,
+                ),
+                FlowNodeDraft(
+                    id="node_agent_fallback_2",
+                    title="节点2",
+                    description="second",
+                    depends_on=["node_agent_fallback_1"],
+                    sensitive=True,
+                ),
+            ],
+            planner_session_key="linpo:flow:default:planner:planner-default:agent-fallback",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
+        lambda self, **kwargs: {
+            "request_id": f"req-{kwargs['agent_id']}",
+            "agent_id": kwargs["agent_id"],
+            "status": "accepted",
+        },
+    )
+
+    generate_status, _, generate_payload = _request_json(
+        "POST",
+        DEFAULT_FLOW_GENERATE_PATH,
+        {
+            "requirement": "验证 planner agent 不污染执行 agent",
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor-fallback",
+            "planner_agent_id": "planner-default",
+            "manager_agent_id": "agent-manager",
+        },
+        auth_cookie,
+    )
+    assert generate_status == 200
+    assert all(item.get("agentId") is None for item in cast(list[dict[str, Any]], generate_payload["nodes"]))
+
+    confirm_status, _, confirm_payload = _request_json(
+        "POST",
+        DEFAULT_FLOW_CONFIRM_PATH,
+        {
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor-fallback",
+            "manager_agent_id": "agent-manager",
+            "planner_session_key": generate_payload["plannerSessionKey"],
+            "nodes": generate_payload["nodes"],
+            "edges": generate_payload["edges"],
+        },
+        auth_cookie,
+    )
+    assert confirm_status == 200
+    assert len(confirm_payload["createdTaskIds"]) == 2
+
+    list_status, _, list_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
+    assert list_status == 200
+    list_payload = cast(list[dict[str, Any]], json.loads(list_body.decode("utf-8")))
+    flow_tasks = [
+        item
+        for item in list_payload
+        if item["extras"].get("planner_session_key") == "linpo:flow:default:planner:planner-default:agent-fallback"
+    ]
+    assert len(flow_tasks) == 2
+    assert all(item.get("agentId") == "agent-executor-fallback" for item in flow_tasks)
 
 
 def test_flow_planner_sse_returns_latest_planner_messages_snapshot(
@@ -2947,7 +3993,50 @@ def test_task_dispatch_prompt_contains_tasks_callback_path(
     assert "failed" in prompt
 
 
-def test_task_dispatch_without_explicit_callback_base_url_fails(
+def test_task_dispatch_prompt_adds_host_docker_internal_candidate_for_localhost_callback(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_instance_validation(monkeypatch)
+    monkeypatch.setenv("LINPO_TASK_EVENT_CALLBACK_BASE_URL", "http://localhost:8000")
+
+    auth_cookie = _register_and_login("dispatch-prompt-localhost-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-dispatch-prompt-localhost",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-dispatch-prompt-localhost",
+    )
+
+    captured_messages: list[str] = []
+    install_send_chat_message_fake(
+        monkeypatch,
+        request_id="req-dispatch-prompt-localhost",
+        capture_messages=captured_messages,
+    )
+
+    create_status, _, create_payload = _request_json(
+        "POST",
+        DEFAULT_TASKS_PATH,
+        {
+            "requirement": "验证 localhost 回调候选",
+            "agent_id": "agent-alpha",
+            "agent_name": "Alpha Agent",
+            "instance_id": instance["id"],
+        },
+        auth_cookie,
+    )
+    assert create_status == 201
+    assert captured_messages
+
+    run_id = create_payload["extras"]["dispatch_run_id"]
+    callback_path = f"/api/v1/boards/default/tasks/task-runs/{run_id}/events"
+    prompt = captured_messages[0]
+    assert f"1) http://host.docker.internal:8000{callback_path}" in prompt
+    assert f"2) http://localhost:8000{callback_path}" in prompt
+
+
+def test_task_dispatch_without_explicit_callback_base_url_uses_default_localhost(
     isolated_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2962,12 +4051,18 @@ def test_task_dispatch_without_explicit_callback_base_url_fails(
         endpoint="http://175.178.213.10:18789",
         gateway_token="token-dispatch-fallback",
     )
+    captured_messages: list[str] = []
+    install_send_chat_message_fake(
+        monkeypatch,
+        request_id="req-dispatch-prompt-default-callback",
+        capture_messages=captured_messages,
+    )
 
     create_status, _, create_payload = _request_json(
         "POST",
         DEFAULT_TASKS_PATH,
         {
-            "requirement": "未配置回调地址时应失败",
+            "requirement": "未配置回调地址时使用默认地址",
             "agent_id": "agent-alpha",
             "agent_name": "Alpha Agent",
             "instance_id": instance["id"],
@@ -2975,8 +4070,13 @@ def test_task_dispatch_without_explicit_callback_base_url_fails(
         auth_cookie,
     )
     assert create_status == 201
-    assert create_payload["status"] == "failed"
-    assert "LINPO_TASK_EVENT_CALLBACK_BASE_URL" in create_payload["extras"]["dispatch_error"]
+    assert create_payload["status"] in {"queued", "running"}
+    assert captured_messages
+    run_id = create_payload["extras"]["dispatch_run_id"]
+    callback_path = f"/api/v1/boards/default/tasks/task-runs/{run_id}/events"
+    prompt = captured_messages[0]
+    assert f"1) http://host.docker.internal:8000{callback_path}" in prompt
+    assert f"2) http://localhost:8000{callback_path}" in prompt
 
 
 def test_task_dispatch_fails_when_callback_candidate_list_is_empty(
@@ -3636,6 +4736,70 @@ def test_delete_requirement_tasks_removes_entire_requirement_group(
     assert after_status == 200
     after_tasks = cast(list[dict[str, Any]], json.loads(after_body.decode("utf-8")))
     assert after_tasks == []
+
+
+def test_flow_confirm_sanitizes_openclaw_workspace_path_in_task_summary(
+    isolated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database_url
+    _allow_instance_validation(monkeypatch)
+    auth_cookie = _register_and_login("flow-confirm-sanitize-summary-user")
+    instance = _create_instance(
+        auth_cookie,
+        name="claw1-flow-confirm-sanitize-summary",
+        endpoint="http://175.178.213.10:18789",
+        gateway_token="token-flow-confirm-sanitize-summary",
+    )
+
+    monkeypatch.setattr(
+        "app.services.provider_application_service.ProviderApplicationService.send_chat_message",
+        lambda self, **kwargs: {
+            "request_id": f"req-{kwargs['agent_id']}",
+            "agent_id": kwargs["agent_id"],
+            "status": "accepted",
+        },
+    )
+
+    confirm_status, _, confirm_payload = _request_json(
+        "POST",
+        DEFAULT_FLOW_CONFIRM_PATH,
+        {
+            "instance_id": instance["id"],
+            "executor_agent_id": "agent-executor",
+            "requirement_title": "路径脱敏需求",
+            "nodes": [
+                {
+                    "id": "node_1",
+                    "title": "梳理输入输出",
+                    "description": (
+                        "输入: /home/node/.openclaw/workspace/inbox/request.txt; "
+                        "输出: /root/.openclaw/workspace/flows/context.json"
+                    ),
+                    "x": 100,
+                    "y": 100,
+                    "layer": 1,
+                    "sensitive": False,
+                    "status": "queued",
+                    "agent_id": "agent-executor",
+                }
+            ],
+            "edges": [],
+        },
+        auth_cookie,
+    )
+    assert confirm_status == 200
+    assert len(confirm_payload["createdTaskIds"]) == 1
+
+    list_status, _, list_body = request("GET", DEFAULT_TASKS_PATH, headers={"cookie": auth_cookie})
+    assert list_status == 200
+    tasks = cast(list[dict[str, Any]], json.loads(list_body.decode("utf-8")))
+    assert len(tasks) == 1
+    summary = str(tasks[0]["summary"])
+    assert "/home/node/.openclaw/workspace" not in summary
+    assert "/root/.openclaw/workspace" not in summary
+    assert "/workspace/inbox/request.txt" in summary
+    assert "/workspace/flows/context.json" in summary
 
 
 def test_delete_task_node_post_alias_removed(

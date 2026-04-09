@@ -116,7 +116,7 @@ class TaskDispatchService:
                 db_session=db_session,
                 task=candidate,
                 extras=extras,
-                dispatch_error="callback base url unavailable; set LINPO_TASK_EVENT_CALLBACK_BASE_URL",
+                dispatch_error="callback base url unavailable",
             )
             return TaskDispatchResult(task_id=str(candidate.id), run_id=run_id)
 
