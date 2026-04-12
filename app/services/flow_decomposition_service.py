@@ -1,0 +1,922 @@
+from __future__ import annotations
+
+import ast
+import json
+import logging
+import os
+import re
+import time
+from dataclasses import dataclass
+from typing import Any, cast
+from uuid import uuid4
+
+from fastapi import HTTPException
+
+from app.adapters.provider_adapter import ProviderAdapter
+from app.adapters.openclaw_adapter import OpenClawAdapter
+from app.adapters.provider_registry import ProviderRegistry, build_default_provider_registry
+from app.services.openclaw_client import OpenClawClient
+from app.services.provider_application_service import (
+    ProviderApplicationService,
+    ProviderExecutionContext,
+)
+
+
+_DEFAULT_DECOMPOSITION_PROVIDER = "openclaw"
+_DEFAULT_DECOMPOSITION_AGENT_ID = "main"
+_DEFAULT_HISTORY_LIMIT = 60
+_DEFAULT_MAX_NODES = 12
+_DEFAULT_POLL_INTERVAL_SECONDS = 0.6
+_DEFAULT_POLL_TIMEOUT_SECONDS = 60.0
+_DEFAULT_JSON_REPAIR_ATTEMPTS = 2
+logger = logging.getLogger("uvicorn.error")
+
+
+def _short_session_key(value: str) -> str:
+    normalized = value.strip()
+    if normalized == "":
+        return "<empty>"
+    if len(normalized) <= 20:
+        return normalized
+    return f"{normalized[:10]}...{normalized[-8:]}"
+
+
+@dataclass(frozen=True)
+class FlowNodeDraft:
+    id: str
+    title: str
+    depends_on: list[str]
+    sensitive: bool
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class FlowDecompositionResult:
+    nodes: list[FlowNodeDraft]
+    planner_session_key: str
+
+
+@dataclass(frozen=True)
+class FlowPlannerDispatch:
+    planner_agent_id: str
+    planner_session_key: str
+
+
+class FlowDecompositionService:
+    def __init__(
+        self,
+        *,
+        provider_application_service: ProviderApplicationService | None = None,
+        provider_registry: ProviderRegistry | None = None,
+    ) -> None:
+        self._provider_application_service = provider_application_service or ProviderApplicationService()
+        self._provider_registry = provider_registry or build_default_provider_registry()
+
+    def decompose(
+        self,
+        *,
+        requirement: str,
+        board_id: str,
+        planner_agent_id: str | None = None,
+        planner_session_key: str | None = None,
+        flow_name: str | None = None,
+        current_nodes: list[dict[str, Any]] | None = None,
+        current_edges: list[dict[str, Any]] | None = None,
+        prompt_history: list[dict[str, str]] | None = None,
+        execution_context: ProviderExecutionContext | None = None,
+        provider_name: str | None = None,
+    ) -> FlowDecompositionResult:
+        normalized_requirement = requirement.strip()
+        if normalized_requirement == "":
+            raise HTTPException(status_code=400, detail="requirement is required")
+
+        normalized_nodes = current_nodes or []
+        dispatch = self.dispatch_planner(
+            requirement=normalized_requirement,
+            board_id=board_id,
+            planner_agent_id=planner_agent_id,
+            planner_session_key=planner_session_key,
+            flow_name=flow_name,
+            current_nodes=normalized_nodes,
+            current_edges=current_edges or [],
+            prompt_history=prompt_history,
+            execution_context=execution_context,
+            provider_name=provider_name,
+        )
+        resolved_provider_name = provider_name or self.decomposition_provider_name()
+        resolved_context = execution_context or self.build_realtime_execution_context()
+        assistant_message = self._wait_for_assistant_json(
+            provider_name=resolved_provider_name,
+            context=resolved_context,
+            session_key=dispatch.planner_session_key,
+            planner_agent_id=dispatch.planner_agent_id,
+        )
+        nodes = self._parse_nodes_from_message(assistant_message, current_nodes=normalized_nodes)
+        return FlowDecompositionResult(
+            nodes=nodes,
+            planner_session_key=dispatch.planner_session_key,
+        )
+
+    def build_realtime_execution_context(self) -> ProviderExecutionContext:
+        return self._build_flow_decomposition_execution_context()
+
+    def decomposition_provider_name(self) -> str:
+        return self._decomposition_provider_name()
+
+    def resolve_planner_agent_id(self, planner_agent_id: str | None) -> str:
+        return self._resolve_planner_agent_id(planner_agent_id)
+
+    def dispatch_planner(
+        self,
+        *,
+        requirement: str,
+        board_id: str,
+        planner_agent_id: str | None = None,
+        planner_session_key: str | None = None,
+        flow_name: str | None = None,
+        current_nodes: list[dict[str, Any]] | None = None,
+        current_edges: list[dict[str, Any]] | None = None,
+        prompt_history: list[dict[str, str]] | None = None,
+        execution_context: ProviderExecutionContext | None = None,
+        provider_name: str | None = None,
+    ) -> FlowPlannerDispatch:
+        normalized_requirement = requirement.strip()
+        logger.info(
+            "[planner.dispatch] begin board=%s requirement_len=%s planner_agent=%s session=%s provider=%s",
+            board_id,
+            len(normalized_requirement),
+            (planner_agent_id or "").strip() or "<default>",
+            _short_session_key(str(planner_session_key or "")),
+            (provider_name or "").strip() or "<default>",
+        )
+        if normalized_requirement == "":
+            logger.warning("[planner.dispatch] invalid_missing_requirement board=%s", board_id)
+            raise HTTPException(status_code=400, detail="requirement is required")
+
+        normalized_planner_agent_id = self._resolve_planner_agent_id(planner_agent_id)
+        normalized_planner_session_key = self._normalize_planner_session_key(
+            board_id=board_id,
+            planner_session_key=planner_session_key,
+            planner_agent_id=normalized_planner_agent_id,
+        )
+        prompt = self._build_decomposition_prompt(
+            normalized_requirement,
+            flow_name=flow_name,
+            current_nodes=current_nodes or [],
+            current_edges=current_edges or [],
+            prompt_history=prompt_history or [],
+            planner_session_key=normalized_planner_session_key,
+            board_id=board_id,
+        )
+
+        resolved_provider_name = provider_name or self.decomposition_provider_name()
+        resolved_execution_context = execution_context or self.build_realtime_execution_context()
+        try:
+            self._send_chat_message(
+                provider_name=resolved_provider_name,
+                execution_context=resolved_execution_context,
+                agent_id=normalized_planner_agent_id,
+                message=prompt,
+                session_key=normalized_planner_session_key,
+            )
+            logger.info(
+                "[planner.dispatch] send_chat_ok board=%s session=%s planner_agent=%s provider=%s",
+                board_id,
+                _short_session_key(normalized_planner_session_key),
+                normalized_planner_agent_id,
+                resolved_provider_name,
+            )
+        except HTTPException:
+            logger.exception(
+                "[planner.dispatch] send_chat_http_error board=%s session=%s planner_agent=%s",
+                board_id,
+                _short_session_key(normalized_planner_session_key),
+                normalized_planner_agent_id,
+            )
+            raise
+        except Exception as exc:
+            logger.exception(
+                "[planner.dispatch] send_chat_unexpected_error board=%s session=%s planner_agent=%s",
+                board_id,
+                _short_session_key(normalized_planner_session_key),
+                normalized_planner_agent_id,
+            )
+            raise HTTPException(status_code=503, detail=f"Flow decomposition dispatch failed: {exc}") from exc
+
+        logger.info(
+            "[planner.dispatch] done board=%s session=%s planner_agent=%s",
+            board_id,
+            _short_session_key(normalized_planner_session_key),
+            normalized_planner_agent_id,
+        )
+        return FlowPlannerDispatch(
+            planner_agent_id=normalized_planner_agent_id,
+            planner_session_key=normalized_planner_session_key,
+        )
+
+    def read_latest_snapshot(
+        self,
+        *,
+        planner_session_key: str,
+        current_nodes: list[dict[str, Any]] | None = None,
+        limit: int = _DEFAULT_HISTORY_LIMIT,
+        execution_context: ProviderExecutionContext | None = None,
+        provider_name: str | None = None,
+    ) -> FlowDecompositionResult | None:
+        resolved_provider_name = provider_name or self.decomposition_provider_name()
+        context = execution_context or self.build_realtime_execution_context()
+        try:
+            history_payload = self._chat_history(
+                provider_name=resolved_provider_name,
+                execution_context=context,
+                session_key=planner_session_key,
+                limit=limit,
+            )
+        except HTTPException as exc:
+            if self._is_retryable_history_error(exc):
+                return None
+            raise
+        return self.snapshot_from_history_messages(
+            messages_raw=history_payload.get("messages", []),
+            planner_session_key=planner_session_key,
+            current_nodes=current_nodes,
+        )
+
+    def snapshot_from_history_messages(
+        self,
+        *,
+        messages_raw: object,
+        planner_session_key: str,
+        current_nodes: list[dict[str, Any]] | None = None,
+    ) -> FlowDecompositionResult | None:
+        if not isinstance(messages_raw, list):
+            return None
+
+        for item in reversed(messages_raw):
+            if not isinstance(item, dict):
+                continue
+            role = item.get("role")
+            if not isinstance(role, str) or role != "assistant":
+                continue
+            text = self._extract_history_item_text(item).strip()
+            if text == "" or not self._extract_json_candidates(text):
+                continue
+            try:
+                nodes = self._parse_nodes_from_message(text, current_nodes=current_nodes)
+            except HTTPException:
+                continue
+            return FlowDecompositionResult(
+                nodes=nodes,
+                planner_session_key=planner_session_key,
+            )
+        return None
+
+    def _build_flow_decomposition_execution_context(self) -> ProviderExecutionContext:
+        provider_name = self._decomposition_provider_name()
+        base_url = self._decomposition_base_url()
+        token = self._decomposition_gateway_token()
+
+        client = OpenClawClient(
+            base_url=base_url,
+            gateway_token=token,
+        )
+        adapter = OpenClawAdapter(
+            client=client,
+            instance_id=f"flow-decomposer-{self._decomposition_agent_id()}",
+            instance_name=self._decomposition_agent_id(),
+        )
+        return ProviderExecutionContext(
+            adapter=cast(ProviderAdapter, adapter),
+            cache_key=(f"flow-decomposer-{provider_name}", base_url, self._decomposition_agent_id()),
+        )
+
+    def _wait_for_assistant_json(
+        self,
+        *,
+        provider_name: str,
+        context: ProviderExecutionContext,
+        session_key: str,
+        planner_agent_id: str,
+    ) -> str:
+        repaired_signatures: set[str] = set()
+        repair_attempts = 0
+        deadline = time.monotonic() + max(_DEFAULT_POLL_TIMEOUT_SECONDS, 0.0)
+        while True:
+            try:
+                payload = self._chat_history(
+                    provider_name=provider_name,
+                    execution_context=context,
+                    session_key=session_key,
+                    limit=_DEFAULT_HISTORY_LIMIT,
+                )
+            except HTTPException as exc:
+                if self._is_retryable_history_error(exc):
+                    time.sleep(_DEFAULT_POLL_INTERVAL_SECONDS)
+                    continue
+                raise
+            messages = payload.get("messages", [])
+            if isinstance(messages, list):
+                for message in reversed(messages):
+                    if not isinstance(message, dict):
+                        continue
+                    role = message.get("role")
+                    if not isinstance(role, str) or role != "assistant":
+                        continue
+                    text = self._extract_history_item_text(message).strip()
+                    if text == "":
+                        continue
+                    if self._extract_json_candidates(text):
+                        return text
+                    signature = self._assistant_message_signature(message, text=text)
+                    if (
+                        signature not in repaired_signatures
+                        and repair_attempts < _DEFAULT_JSON_REPAIR_ATTEMPTS
+                    ):
+                        self._send_chat_message(
+                            provider_name=provider_name,
+                            execution_context=context,
+                            agent_id=planner_agent_id,
+                            message=self._build_json_repair_prompt(text),
+                            session_key=session_key,
+                        )
+                        repaired_signatures.add(signature)
+                        repair_attempts += 1
+                        break
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(_DEFAULT_POLL_INTERVAL_SECONDS)
+
+        raise HTTPException(
+            status_code=503,
+            detail=f"Flow decomposition failed: {planner_agent_id} did not return structured JSON",
+        )
+
+    def _normalize_planner_session_key(
+        self,
+        *,
+        board_id: str,
+        planner_session_key: str | None,
+        planner_agent_id: str,
+    ) -> str:
+        return (
+            planner_session_key.strip()
+            if isinstance(planner_session_key, str) and planner_session_key.strip()
+            else f"linpo:flow:{board_id}:planner:{planner_agent_id}:{uuid4().hex[:8]}"
+        )
+
+    def _parse_nodes_from_message(
+        self,
+        assistant_message: str,
+        *,
+        current_nodes: list[dict[str, Any]] | None = None,
+    ) -> list[FlowNodeDraft]:
+        payload = self._parse_json_payload(assistant_message)
+        nodes_payload = self._extract_nodes_payload(payload)
+        if not isinstance(nodes_payload, list) or len(nodes_payload) == 0:
+            payload_keys = sorted(str(key) for key in payload.keys())
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Flow decomposition failed: missing nodes"
+                    f" (supported keys: nodes/steps/tasks/add_nodes; payload keys: {payload_keys})"
+                ),
+            )
+
+        normalized_nodes: list[FlowNodeDraft] = []
+        seen_ids: set[str] = set()
+        for index, item in enumerate(nodes_payload[:_DEFAULT_MAX_NODES]):
+            if not isinstance(item, dict):
+                continue
+
+            node_id_raw = item.get("id", item.get("node_id"))
+            title_raw = item.get("title", item.get("name", item.get("task", item.get("step"))))
+            description_raw = item.get(
+                "description",
+                item.get("details", item.get("summary", "")),
+            )
+            depends_raw = item.get("depends_on", item.get("dependsOn", item.get("dependencies", [])))
+            sensitive_raw = item.get("sensitive", item.get("requires_approval", item.get("approval_required")))
+
+            title = str(title_raw).strip() if isinstance(title_raw, str) else ""
+            if title == "":
+                continue
+            description = str(description_raw).strip() if isinstance(description_raw, str) else ""
+
+            normalized_id = self._normalize_node_id(node_id_raw, fallback_index=index + 1, seen_ids=seen_ids)
+            seen_ids.add(normalized_id)
+
+            depends_on: list[str] = []
+            if isinstance(depends_raw, list):
+                for dep in depends_raw:
+                    if isinstance(dep, str):
+                        dep_id = dep.strip()
+                        if dep_id:
+                            depends_on.append(dep_id)
+
+            normalized_nodes.append(
+                FlowNodeDraft(
+                    id=normalized_id,
+                    title=title,
+                    depends_on=depends_on,
+                    sensitive=bool(sensitive_raw) if isinstance(sensitive_raw, bool) else False,
+                    description=description,
+                )
+            )
+
+        if len(normalized_nodes) == 0:
+            raise HTTPException(status_code=503, detail="Flow decomposition failed: empty nodes")
+
+        known_ids = {node.id for node in normalized_nodes}
+        sanitized_nodes: list[FlowNodeDraft] = []
+        description_by_node_id = self._build_existing_description_map(current_nodes)
+        for node in normalized_nodes:
+            depends_on = [dep for dep in node.depends_on if dep in known_ids and dep != node.id]
+            description = node.description
+            if description == "":
+                description = description_by_node_id.get(node.id, "")
+            sanitized_nodes.append(
+                FlowNodeDraft(
+                    id=node.id,
+                    title=node.title,
+                    depends_on=depends_on,
+                    sensitive=node.sensitive,
+                    description=description,
+                )
+            )
+
+        if not any(node.sensitive for node in sanitized_nodes):
+            last = sanitized_nodes[-1]
+            sanitized_nodes[-1] = FlowNodeDraft(
+                id=last.id,
+                title=last.title,
+                depends_on=last.depends_on,
+                sensitive=True,
+                description=last.description,
+            )
+        return sanitized_nodes
+
+    def _parse_json_payload(self, content: str) -> dict[str, Any]:
+        for candidate in self._extract_json_candidates(content):
+            parsed = self._parse_json_candidate(candidate)
+            if isinstance(parsed, dict):
+                return parsed
+            if isinstance(parsed, list):
+                return {"nodes": parsed}
+        loose_nodes_payload = self._extract_loose_nodes_payload(content)
+        if loose_nodes_payload is not None:
+            return {"nodes": loose_nodes_payload}
+        fragment_nodes_payload = self._extract_node_objects_from_fragments(content)
+        if fragment_nodes_payload is not None:
+            return {"nodes": fragment_nodes_payload}
+        raise HTTPException(status_code=503, detail="Flow decomposition failed: invalid JSON payload")
+
+    def _parse_json_candidate(self, candidate: str) -> dict[str, Any] | list[Any] | None:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, (dict, list)):
+            return parsed
+
+        normalized_candidates = [
+            candidate,
+            re.sub(r"\btrue\b", "True", candidate, flags=re.IGNORECASE),
+            re.sub(r"\bfalse\b", "False", candidate, flags=re.IGNORECASE),
+            re.sub(r"\bnull\b", "None", candidate, flags=re.IGNORECASE),
+        ]
+        if len(normalized_candidates) >= 4:
+            normalized_candidates.append(
+                re.sub(
+                    r"\bnull\b",
+                    "None",
+                    re.sub(
+                        r"\bfalse\b",
+                        "False",
+                        re.sub(r"\btrue\b", "True", candidate, flags=re.IGNORECASE),
+                        flags=re.IGNORECASE,
+                    ),
+                    flags=re.IGNORECASE,
+                )
+            )
+        for normalized in normalized_candidates:
+            try:
+                parsed = ast.literal_eval(normalized)
+            except (ValueError, SyntaxError):
+                continue
+            if isinstance(parsed, (dict, list)):
+                return cast(dict[str, Any] | list[Any], parsed)
+        return None
+
+    def _extract_loose_nodes_payload(self, content: str) -> list[Any] | None:
+        key_pattern = re.compile(r"(?:\"|')?(nodes|steps|tasks|add_nodes)(?:\"|')?\s*:\s*\[", re.IGNORECASE)
+        for match in key_pattern.finditer(content):
+            open_bracket_index = match.end() - 1
+            bracket_block = self._extract_bracket_block(content, start=open_bracket_index)
+            if bracket_block is None:
+                continue
+            parsed = self._parse_json_candidate(bracket_block)
+            if isinstance(parsed, list):
+                return parsed
+        return None
+
+    def _extract_bracket_block(self, content: str, *, start: int) -> str | None:
+        if start < 0 or start >= len(content) or content[start] != "[":
+            return None
+        depth = 0
+        in_quote = False
+        quote_char = ""
+        escaped = False
+        for index in range(start, len(content)):
+            char = content[index]
+            if in_quote:
+                if escaped:
+                    escaped = False
+                    continue
+                if char == "\\":
+                    escaped = True
+                    continue
+                if char == quote_char:
+                    in_quote = False
+                continue
+            if char in {'"', "'"}:
+                in_quote = True
+                quote_char = char
+                continue
+            if char == "[":
+                depth += 1
+                continue
+            if char == "]":
+                depth -= 1
+                if depth == 0:
+                    return content[start : index + 1]
+        return None
+
+    def _extract_node_objects_from_fragments(self, content: str) -> list[Any] | None:
+        object_blocks = self._extract_object_blocks(content)
+        if not object_blocks:
+            return None
+        nodes: list[dict[str, Any]] = []
+        for block in object_blocks:
+            parsed = self._parse_json_candidate(block)
+            if not isinstance(parsed, dict):
+                continue
+            if "nodes" in parsed or "steps" in parsed or "tasks" in parsed or "add_nodes" in parsed:
+                nested = self._extract_nodes_payload(parsed)
+                if isinstance(nested, list):
+                    for item in nested:
+                        if isinstance(item, dict):
+                            nodes.append(item)
+                continue
+            title_fields = ("title", "name", "task", "step")
+            if any(str(parsed.get(field, "")).strip() != "" for field in title_fields):
+                nodes.append(parsed)
+        return nodes or None
+
+    def _extract_object_blocks(self, content: str) -> list[str]:
+        blocks: list[str] = []
+        start = -1
+        depth = 0
+        in_quote = False
+        quote_char = ""
+        escaped = False
+        for index, char in enumerate(content):
+            if in_quote:
+                if escaped:
+                    escaped = False
+                    continue
+                if char == "\\":
+                    escaped = True
+                    continue
+                if char == quote_char:
+                    in_quote = False
+                continue
+            if char in {'"', "'"}:
+                in_quote = True
+                quote_char = char
+                continue
+            if char == "{":
+                if depth == 0:
+                    start = index
+                depth += 1
+                continue
+            if char == "}":
+                if depth == 0:
+                    continue
+                depth -= 1
+                if depth == 0 and start != -1:
+                    blocks.append(content[start : index + 1])
+                    start = -1
+        return blocks
+
+    def _extract_nodes_payload(self, payload: dict[str, Any]) -> list[Any] | None:
+        direct_candidates = ("nodes", "steps", "tasks", "add_nodes")
+        for key in direct_candidates:
+            value = payload.get(key)
+            if isinstance(value, list):
+                return value
+
+        nested_containers = ("plan", "workflow", "result")
+        for container_key in nested_containers:
+            container = payload.get(container_key)
+            if not isinstance(container, dict):
+                continue
+            for key in direct_candidates:
+                nested_value = container.get(key)
+                if isinstance(nested_value, list):
+                    return nested_value
+
+        return None
+
+    def _extract_json_candidates(self, content: str) -> list[str]:
+        candidates: list[str] = []
+        seen: set[str] = set()
+
+        def add_candidate(value: str) -> None:
+            normalized = value.strip()
+            if normalized != "" and normalized not in seen:
+                seen.add(normalized)
+                candidates.append(normalized)
+
+        for fenced in re.findall(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", content, flags=re.IGNORECASE):
+            add_candidate(fenced)
+
+        stripped = content.strip()
+        if stripped.startswith("{") and stripped.endswith("}"):
+            add_candidate(stripped)
+
+        start = content.find("{")
+        end = content.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            add_candidate(content[start : end + 1])
+
+        return candidates
+
+    def _extract_history_item_text(self, item: dict[str, Any]) -> str:
+        text = item.get("text")
+        if isinstance(text, str):
+            return text
+
+        content = item.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            text_parts: list[str] = []
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                block_text = block.get("text")
+                if isinstance(block_text, str):
+                    text_parts.append(block_text)
+            return "\n".join(text_parts)
+        return ""
+
+    def _assistant_message_signature(self, item: dict[str, Any], *, text: str) -> str:
+        timestamp = item.get("timestamp")
+        if isinstance(timestamp, (int, float)):
+            return f"{timestamp}:{text}"
+        return text
+
+    def _build_json_repair_prompt(self, invalid_reply: str) -> str:
+        preview = invalid_reply.strip()
+        if len(preview) > 400:
+            preview = f"{preview[:400]}..."
+        return (
+            "你上一条回复不符合流程拆解协议。"
+            "不要解释，不要提问，不要 markdown，不要代码块。"
+            '现在仅输出一个合法 JSON 对象，顶层必须是 {"nodes":[...]}。'
+            "每个节点必须包含 id/title/description/depends_on/sensitive。"
+            "若上一条回复内容与需求冲突，以当前会话中的用户需求为准，直接给出完整 nodes。"
+            f"上一条无效回复参考：{preview}"
+        )
+
+    def _is_retryable_history_error(self, exc: HTTPException) -> bool:
+        if exc.status_code != 503:
+            return False
+        detail = str(exc.detail).lower()
+        return (
+            "too many non-target control messages" in detail
+            or "control response timed out" in detail
+        )
+
+    def _normalize_node_id(self, raw: Any, *, fallback_index: int, seen_ids: set[str]) -> str:
+        value = str(raw).strip() if isinstance(raw, str) else ""
+        if value == "":
+            value = f"node_{fallback_index}"
+        value = re.sub(r"[^a-zA-Z0-9_-]+", "_", value).strip("_")
+        if value == "":
+            value = f"node_{fallback_index}"
+        if value in seen_ids:
+            suffix = 2
+            while f"{value}_{suffix}" in seen_ids:
+                suffix += 1
+            value = f"{value}_{suffix}"
+        return value
+
+    def _build_decomposition_prompt(
+        self,
+        requirement: str,
+        *,
+        flow_name: str | None,
+        current_nodes: list[dict[str, Any]],
+        current_edges: list[dict[str, Any]],
+        prompt_history: list[dict[str, str]],
+        planner_session_key: str,
+        board_id: str,
+    ) -> str:
+        base_prompt = (
+            "你是 Linpo 的流程规划 Agent。"
+            "目标：把用户需求拆解为可执行的任务 DAG（流程图节点），并持续增量更新。"
+            "你可以委派 subagent 并行执行子任务，但必须保持依赖关系可验证。"
+            "输出过程中不要发送“正在规划/处理中”等占位语，改为流式输出真实规划内容与决策。"
+            "硬性约束："
+            "1) 只输出可执行任务，不输出寒暄/解释/占位文本；"
+            "2) id 全局唯一，格式建议 node_xxx；"
+            "3) depends_on 只能引用已存在节点 id，禁止循环依赖；"
+            "4) 节点数控制在 2-12；"
+            "5) 优先并行拆解：能并发就并发，避免把所有步骤串行化；"
+            "6) 每个节点 description 必须包含：目标、输入、输出、验收标准；"
+            "7) 至少一个 sensitive=true 节点作为审批闸口（通常放在高风险或最终发布前）；"
+            "8) description 必须包含文件交接规则：若执行环境不能直接访问默认路径，可在可访问目录处理中间文件，但 completed 前必须回写指定输出路径；否则 failed 并说明原因；"
+            "9) 每次修改都应输出“完整最新 nodes”，不要只给差量片段。"
+        )
+        # 破坏性协议切换：planner 不再执行 HTTP callback，改为在 assistant 流内直接输出事件信封。
+        stream_event_prompt = (
+            "assistant 流输出事件信封（JSON Lines）协议（必须严格遵守）："
+            "1) 仅通过 assistant 流输出事件信封，禁止输出额外寒暄文本；"
+            "2) 每行输出一个 JSON 对象（JSON Lines），字段至少包含 type；"
+            "3) 支持 type: assistant_delta/tool_call_start/tool_call_delta/tool_call_end/flow.nodes/status/error；"
+            "4) assistant_delta 需携带 content；tool_call_* 需携带 payload（tool_name/tool_call_id/delta/result 等）；"
+            "4.1) 在输出第一条 flow.nodes 前，至少先输出 1 条 assistant_delta，简要说明拆解策略；"
+            "4.2) 若规划过程包含多个阶段（如调研/拆解/校验），每个阶段至少输出 1 条 assistant_delta；"
+            "4.3) assistant_delta.content 不能为空，且必须是自然语言可读句子，禁止只输出符号或 JSON 片段；"
+            "5) flow.nodes 需携带 payload.nodes（完整最新节点数组，不要差量）；"
+            "6) status 必须给出 status=completed|failed|stopped；"
+            "7) 必须使用同一 planner_session_key："
+            f"{planner_session_key}；"
+            "8) 严禁输出要求人工批准的命令、curl、/approve 指令。"
+        )
+        if not current_nodes and not current_edges:
+            history_prompt = self._render_prompt_history(prompt_history)
+            return f"{base_prompt}{stream_event_prompt}{history_prompt}用户需求：{requirement}"
+
+        compact_nodes: list[dict[str, Any]] = []
+        for node in current_nodes[:24]:
+            if not isinstance(node, dict):
+                continue
+            compact_nodes.append(
+                {
+                    "id": str(node.get("id", "")).strip(),
+                    "title": str(node.get("title", "")).strip(),
+                    "description": str(node.get("description", "")).strip(),
+                    "sensitive": bool(node.get("sensitive", False)),
+                }
+            )
+        compact_edges: list[dict[str, Any]] = []
+        for edge in current_edges[:48]:
+            if not isinstance(edge, dict):
+                continue
+            compact_edges.append(
+                {
+                    "source": str(edge.get("source", "")).strip(),
+                    "target": str(edge.get("target", "")).strip(),
+                }
+            )
+
+        context_payload = {
+            "flow_name": (flow_name or "").strip() or "未命名流程",
+            "nodes": compact_nodes,
+            "edges": compact_edges,
+        }
+        context_json = json.dumps(context_payload, ensure_ascii=False)
+        return (
+            f"{base_prompt}"
+            f"{stream_event_prompt}"
+            f"{self._render_prompt_history(prompt_history)}"
+            "你会收到“当前流程上下文”和“新增指令”，请基于当前流程做增量修改并输出完整最新 nodes。"
+            "若指令仅修改局部，未提及的有效节点可保留。"
+            f"当前流程上下文：{context_json}"
+            f"新增指令：{requirement}"
+        )
+
+    def _render_prompt_history(self, prompt_history: list[dict[str, str]]) -> str:
+        if not prompt_history:
+            return ""
+        compact_history: list[dict[str, str]] = []
+        for item in prompt_history[-20:]:
+            role = str(item.get("role", "")).strip() if isinstance(item, dict) else ""
+            content = str(item.get("content", "")).strip() if isinstance(item, dict) else ""
+            if role == "" or content == "":
+                continue
+            compact_history.append(
+                {
+                    "role": role,
+                    "content": content[:1200],
+                }
+            )
+        if not compact_history:
+            return ""
+        return f"历史会话摘要：{json.dumps(compact_history, ensure_ascii=False)}"
+
+    def _build_existing_description_map(
+        self,
+        current_nodes: list[dict[str, Any]] | None,
+    ) -> dict[str, str]:
+        if not current_nodes:
+            return {}
+        result: dict[str, str] = {}
+        for node in current_nodes:
+            if not isinstance(node, dict):
+                continue
+            node_id = str(node.get("id", "")).strip()
+            if node_id == "":
+                continue
+            description = str(node.get("description", "")).strip()
+            if description != "":
+                result[node_id] = description
+        return result
+
+    def _send_chat_message(
+        self,
+        *,
+        provider_name: str,
+        execution_context: ProviderExecutionContext,
+        agent_id: str,
+        message: str,
+        session_key: str | None,
+    ) -> dict[str, Any]:
+        if hasattr(self._provider_application_service, "send_chat_message_for_provider"):
+            return cast(
+                dict[str, Any],
+                self._provider_application_service.send_chat_message_for_provider(
+                    data_source=provider_name,
+                    execution_context=execution_context,
+                    agent_id=agent_id,
+                    message=message,
+                    session_key=session_key,
+                ),
+            )
+        return cast(
+            dict[str, Any],
+            self._provider_application_service.send_chat_message(
+                data_source=provider_name,
+                execution_context=execution_context,
+                agent_id=agent_id,
+                message=message,
+                session_key=session_key,
+            ),
+        )
+
+    def _chat_history(
+        self,
+        *,
+        provider_name: str,
+        execution_context: ProviderExecutionContext,
+        session_key: str,
+        limit: int,
+    ) -> dict[str, Any]:
+        if hasattr(self._provider_application_service, "chat_history_for_provider"):
+            return cast(
+                dict[str, Any],
+                self._provider_application_service.chat_history_for_provider(
+                    data_source=provider_name,
+                    execution_context=execution_context,
+                    session_key=session_key,
+                    limit=limit,
+                ),
+            )
+        return cast(
+            dict[str, Any],
+            self._provider_application_service.chat_history(
+                data_source=provider_name,
+                execution_context=execution_context,
+                session_key=session_key,
+                limit=limit,
+            ),
+        )
+
+    def _required_flow_decomposition_env(self, env_name: str) -> str:
+        value = os.getenv(env_name, "").strip()
+        if value != "":
+            return value
+        raise HTTPException(
+            status_code=503,
+            detail=f"Flow decomposition service is not configured: missing {env_name}",
+        )
+
+    def _decomposition_base_url(self) -> str:
+        return self._required_flow_decomposition_env("OPENCLAW_BASE_URL")
+
+    def _decomposition_gateway_token(self) -> str:
+        return self._required_flow_decomposition_env("OPENCLAW_GATEWAY_TOKEN")
+
+    def _decomposition_provider_name(self) -> str:
+        return _DEFAULT_DECOMPOSITION_PROVIDER
+
+    def _decomposition_agent_id(self) -> str:
+        return _DEFAULT_DECOMPOSITION_AGENT_ID
+
+    def _resolve_planner_agent_id(self, planner_agent_id: str | None) -> str:
+        candidate = (planner_agent_id or "").strip()
+        if candidate == "":
+            return self._decomposition_agent_id()
+        return candidate

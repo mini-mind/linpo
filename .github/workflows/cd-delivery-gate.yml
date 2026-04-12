@@ -1,0 +1,56 @@
+name: CD Delivery Gate
+
+on:
+  pull_request:
+  push:
+    branches: ["main", "master"]
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "部署环境 URL（例如 https://linpo.duckdns.org）"
+        required: true
+        type: string
+
+jobs:
+  e2e-smoke:
+    name: Smoke on deployed env
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      TARGET_BASE_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.base_url || secrets.PLAYWRIGHT_BASE_URL }}
+      PLAYWRIGHT_E2E_IDENTIFIER: ${{ secrets.PLAYWRIGHT_E2E_IDENTIFIER }}
+      PLAYWRIGHT_E2E_PASSWORD: ${{ secrets.PLAYWRIGHT_E2E_PASSWORD }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Validate target base url
+        run: |
+          if [ -z "${TARGET_BASE_URL}" ]; then
+            echo "TARGET_BASE_URL is empty. For push events, configure repository secret PLAYWRIGHT_BASE_URL; or use workflow_dispatch with base_url input."
+            exit 1
+          fi
+          if [ -z "${PLAYWRIGHT_E2E_IDENTIFIER}" ] || [ -z "${PLAYWRIGHT_E2E_PASSWORD}" ]; then
+            echo "PLAYWRIGHT_E2E_IDENTIFIER / PLAYWRIGHT_E2E_PASSWORD must be configured as repository secrets."
+            exit 1
+          fi
+          echo "Using TARGET_BASE_URL=${TARGET_BASE_URL}"
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run deployed core-path smoke
+        run: |
+          PLAYWRIGHT_BASE_URL="${TARGET_BASE_URL}" npm run e2e -- e2e/deployed/core-path.deployed.spec.ts

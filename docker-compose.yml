@@ -1,0 +1,47 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+        PIP_EXTRA_INDEX_URL: ${PIP_EXTRA_INDEX_URL:-}
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      LINPO_DATABASE_URL: ${LINPO_DATABASE_URL:-sqlite:////data/linpo.db}
+      LINPO_SECRET_ENCRYPTION_KEY: ${LINPO_SECRET_ENCRYPTION_KEY}
+      LINPO_CORS_ALLOW_ORIGINS: ${LINPO_CORS_ALLOW_ORIGINS:-http://localhost:4173}
+      LINPO_TASK_EVENT_CALLBACK_BASE_URL: ${LINPO_TASK_EVENT_CALLBACK_BASE_URL}
+      LINPO_ALLOW_LOOPBACK_ENDPOINTS: ${LINPO_ALLOW_LOOPBACK_ENDPOINTS:-false}
+      LINPO_ALLOW_PRIVATE_ENDPOINTS: ${LINPO_ALLOW_PRIVATE_ENDPOINTS:-false}
+      OPENCLAW_BASE_URL: ${OPENCLAW_BASE_URL:-}
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - linpo_data:/data
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health').read()"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "4173:80"
+
+volumes:
+  linpo_data:

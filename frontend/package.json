@@ -1,0 +1,41 @@
+{
+  "name": "linpo-visible-mvp-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5173 --strictPort",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
+    "e2e": "npm run e2e:local",
+    "e2e:local": "playwright test --project=local",
+    "e2e:deployed": "node -e \"const required=['PLAYWRIGHT_DEPLOYED_BASE_URL'];const miss=required.filter((k)=>!(process.env[k]||'').trim());if(miss.length){console.error('Missing env for deployed e2e: '+miss.join(', '));process.exit(1);}\" && PLAYWRIGHT_SKIP_LOCAL_WEB_SERVER=1 playwright test --project=deployed"
+  },
+  "dependencies": {
+    "@dagrejs/dagre": "^1.1.4",
+    "@xyflow/react": "^12.6.4",
+    "lucide-react": "^0.536.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "react-router-dom": "^7.13.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "happy-dom": "^15.11.7",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=20 <23",
+    "npm": ">=10"
+  },
+  "packageManager": "pnpm@10.33.0+sha512.10568bb4a6afb58c9eb3630da90cc9516417abebd3fabbe6739f0ae795728da1491e9db5a544c76ad8eb7570f5c4bb3d6c637b2cb41bfdcdb47fa823c8649319"
+}
